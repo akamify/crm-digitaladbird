@@ -1,0 +1,3389 @@
+const router = require('express').Router();
+const auth    = require('../controllers/authController');
+const users   = require('../controllers/userController');
+const leads   = require('../controllers/leadController');
+const reports = require('../controllers/reportController');
+const meta    = require('../controllers/metaController');
+const { authenticate, invalidateUser }    = require('../middleware/auth');
+const { requireRole, requireMemberType }  = require('../middleware/rbac');
+const { responseCache }                   = require('../middleware/cache');
+
+// ---- Auth ---------------------------------------------------------
+router.post('/auth/login',       auth.login);        // demo mode: direct password login
+router.post('/auth/request-otp', auth.requestOtp);   // production: step 1
+router.post('/auth/verify-otp',  auth.verifyOtp);    // production: step 2
+router.post('/auth/refresh',     auth.refresh);
+router.post('/auth/logout',      auth.logout);
+router.get ('/auth/me',          authenticate, auth.me);
+
+// ---- Users --------------------------------------------------------
+router.get   ('/users',           authenticate, responseCache(10000), users.list);
+router.get   ('/users/hierarchy', authenticate, requireRole('super_admin', 'rm'), users.hierarchy);
+router.post  ('/users',           authenticate, requireRole('super_admin'), users.create);
+router.patch ('/users/:id',       authenticate, requireRole('super_admin'), users.update);
+router.delete('/users/:id',       authenticate, requireRole('super_admin'), users.softDelete);
+
+// ---- Leads --------------------------------------------------------
+router.get  ('/leads',            authenticate, leads.list);
+router.get  ('/leads/:id',        authenticate, leads.getOne);
+router.post ('/leads',            authenticate, requireRole('super_admin', 'rm'), leads.create);
+router.post ('/leads/:id/lock',   authenticate, leads.lock);
+router.post ('/leads/:id/unlock', authenticate, leads.unlock);
+router.post ('/leads/:id/remarks',  authenticate, leads.addRemark);
+router.post ('/leads/:id/reassign', authenticate, requireRole('super_admin', 'rm'), leads.reassign);
+
+// ---- Reports (cached for performance) ---------------------------------
+router.get('/reports/summary', authenticate, responseCache(15000), reports.summary);
+router.get('/reports/daily',   authenticate, responseCache(30000), reports.daily);
+router.get('/reports/by-user', authenticate, requireRole('super_admin', 'rm'), responseCache(15000), reports.byUser);
+router.get('/reports/funnel',  authenticate, responseCache(30000), reports.funnel);
+router.get('/reports/sources', authenticate, responseCache(30000), reports.sources);
+
+// ---- Admin: Distribution rules + Meta management ------------------
+const { query } = require('../config/database');
+const { asyncHandler, AppError } = require('../utils/errors');
+
+router.get('/rules',  authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const { rows } = await query(`SELECT * FROM distribution_rules ORDER BY priority`);
+  res.json({ success: true, data: rows });
+}));
+router.post('/rules', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { name, form_id, strategy, eligible_user_ids, priority } = req.body;
+  if (!name || !strategy) throw new AppError(400, 'INVALID', 'name & strategy required');
+  const { rows: [r] } = await query(
+    `INSERT INTO distribution_rules(name, form_id, strategy, eligible_user_ids, priority)
+       VALUES ($1, $2, $3, $4, COALESCE($5, 100)) RETURNING *`,
+    [name, form_id || null, strategy, eligible_user_ids || [], priority]
+  );
+  res.status(201).json({ success: true, data: r });
+}));
+
+router.get('/meta/pages',  authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const { rows } = await query(`SELECT id, page_id, page_name, is_active, created_at FROM meta_pages`);
+  res.json({ success: true, data: rows });
+}));
+router.post('/meta/pages', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { page_id, page_name, page_access_token } = req.body;
+  if (!page_id || !page_access_token) throw new AppError(400, 'INVALID', 'page_id and page_access_token required');
+  const { rows: [r] } = await query(
+    `INSERT INTO meta_pages(page_id, page_name, page_access_token)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (page_id) DO UPDATE SET page_access_token = EXCLUDED.page_access_token,
+                                            page_name        = EXCLUDED.page_name,
+                                            is_active        = TRUE
+       RETURNING id, page_id, page_name`,
+    [page_id, page_name || null, page_access_token]
+  );
+  res.json({ success: true, data: r });
+}));
+
+router.get('/meta/forms',  authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (_req, res) => {
+  const { rows } = await query(`SELECT * FROM meta_forms ORDER BY form_name`);
+  res.json({ success: true, data: rows });
+}));
+router.post('/meta/forms', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { form_id, form_name, page_id, campaign_label, product_tag } = req.body;
+  const { rows: [r] } = await query(
+    `INSERT INTO meta_forms(form_id, form_name, page_id, campaign_label, product_tag)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (form_id) DO UPDATE SET form_name = EXCLUDED.form_name,
+                                            campaign_label = EXCLUDED.campaign_label,
+                                            product_tag    = EXCLUDED.product_tag,
+                                            is_active      = TRUE
+       RETURNING *`,
+    [form_id, form_name, page_id, campaign_label, product_tag]
+  );
+  res.json({ success: true, data: r });
+}));
+
+// ---- Distribution Settings (Super Admin) --------------------------
+const { distributeQueue, getSetting } = require('../services/distributionScheduler');
+
+router.get('/settings/distribution', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const { rows } = await query(`SELECT key, value, label, updated_at FROM distribution_settings ORDER BY key`);
+  res.json({ success: true, data: rows });
+}));
+
+router.patch('/settings/distribution', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const allowed = new Set(['auto_distribution_enabled', 'distribution_start_hour', 'distribution_end_hour', 'pending_block_threshold']);
+  const updated = [];
+  for (const [key, value] of Object.entries(req.body || {})) {
+    if (!allowed.has(key)) continue;
+    await query(
+      `INSERT INTO distribution_settings (key, value, updated_at)
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [key, String(value)]
+    );
+    updated.push(key);
+  }
+  res.json({ success: true, data: { updated } });
+}));
+
+// Force-distribute all queued leads right now (admin override)
+router.post('/settings/distribution/run-now', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const result = await distributeQueue();
+  res.json({ success: true, data: result });
+}));
+
+// ---- Distribution Queue Status (Super Admin / RM) -------------------
+router.get('/distribution/queue', authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (_req, res) => {
+  const { rows: [q] } = await query(`
+    SELECT COUNT(*) AS queued,
+           MIN(created_at) AS oldest_queued_at
+      FROM leads
+     WHERE assigned_to_user_id IS NULL AND deleted_at IS NULL
+  `);
+  res.json({ success: true, data: { queued: parseInt(q.queued, 10), oldestQueuedAt: q.oldest_queued_at } });
+}));
+
+// ---- Approval System (Super Admin) ----------------------------------
+const { checkPendingBlocking } = require('../services/leadDistributionService');
+
+// List blocked members
+router.get('/distribution/blocked', authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (req, res) => {
+  const { rows } = await query(`
+    SELECT u.id, u.full_name, u.email, u.team_name, u.distribution_blocked_reason,
+           u.distribution_blocked_at,
+           (SELECT COUNT(*) FROM leads l WHERE l.assigned_to_user_id = u.id
+              AND l.is_pending = TRUE AND l.deleted_at IS NULL) AS pending_count,
+           (SELECT COUNT(*) FROM leads l2 WHERE l2.assigned_to_user_id = u.id
+              AND l2.deleted_at IS NULL) AS total_leads,
+           (SELECT COUNT(*) FROM leads l3 WHERE l3.assigned_to_user_id = u.id
+              AND l3.call_status <> 'not_called' AND l3.deleted_at IS NULL) AS worked_count
+      FROM users u
+     WHERE u.distribution_blocked = TRUE AND u.deleted_at IS NULL
+     ORDER BY u.distribution_blocked_at DESC
+  `);
+  res.json({ success: true, data: rows });
+}));
+
+// List pending approvals
+router.get('/distribution/approvals', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const status = req.query.status || 'pending';
+  const { rows } = await query(`
+    SELECT da.*, u.full_name, u.email, u.team_name,
+           r.full_name AS resolved_by_name
+      FROM distribution_approvals da
+      JOIN users u ON u.id = da.user_id
+      LEFT JOIN users r ON r.id = da.resolved_by
+     WHERE da.status = $1
+     ORDER BY da.requested_at DESC
+     LIMIT 100
+  `, [status]);
+  res.json({ success: true, data: rows });
+}));
+
+// Admin: approve (unblock) a member
+router.post('/distribution/approvals/:id/approve', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { rows: [approval] } = await query(
+    `UPDATE distribution_approvals SET status = 'approved', resolved_by = $1, resolved_at = NOW(), notes = $2
+       WHERE id = $3 AND status = 'pending' RETURNING user_id`,
+    [req.user.id, req.body.notes || null, id]
+  );
+  if (!approval) throw new AppError(404, 'NOT_FOUND', 'Approval not found or already resolved');
+
+  await query(
+    `UPDATE users SET distribution_blocked = FALSE, distribution_blocked_reason = NULL, distribution_blocked_at = NULL
+       WHERE id = $1`,
+    [approval.user_id]
+  );
+  res.json({ success: true, data: { unblocked: approval.user_id } });
+}));
+
+// Admin: reject (keep blocked)
+router.post('/distribution/approvals/:id/reject', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { rows: [approval] } = await query(
+    `UPDATE distribution_approvals SET status = 'rejected', resolved_by = $1, resolved_at = NOW(), notes = $2
+       WHERE id = $3 AND status = 'pending' RETURNING user_id`,
+    [req.user.id, req.body.notes || null, id]
+  );
+  if (!approval) throw new AppError(404, 'NOT_FOUND', 'Approval not found or already resolved');
+  res.json({ success: true, data: { rejected: approval.user_id } });
+}));
+
+// Admin: force unblock a user (override without approval)
+router.post('/distribution/unblock/:userId', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  await query(
+    `UPDATE users SET distribution_blocked = FALSE, distribution_blocked_reason = NULL, distribution_blocked_at = NULL
+       WHERE id = $1`,
+    [req.params.userId]
+  );
+  // Resolve any pending approvals for this user
+  await query(
+    `UPDATE distribution_approvals SET status = 'approved', resolved_by = $1, resolved_at = NOW(), notes = 'Admin force-unblock'
+       WHERE user_id = $2 AND status = 'pending'`,
+    [req.user.id, req.params.userId]
+  );
+  res.json({ success: true });
+}));
+
+// Re-check pending blocking manually
+router.post('/distribution/check-blocking', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const blocked = await checkPendingBlocking();
+  res.json({ success: true, data: { blockedCount: blocked } });
+}));
+
+// ---- Google Sheets Sync (Super Admin) --------------------------------
+const { syncAllLeads: sheetSync, appendLead: sheetAppend, getSheets, checkConnectivity: sheetsCheck, listSharedSheets } = require('../services/googleSheetsService');
+
+router.post('/sheets/sync', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const result = await sheetSync();
+  res.json({ success: true, data: result });
+}));
+
+router.get('/sheets/status', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const result = await sheetsCheck();
+  res.json({ success: true, data: result });
+}));
+
+router.get('/sheets/list', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const files = await listSharedSheets();
+  res.json({ success: true, data: files });
+}));
+
+// ---- Integration Health (Super Admin) --------------------------------
+router.get('/integrations/status', authenticate, requireRole('super_admin'), responseCache(15000), asyncHandler(async (_req, res) => {
+  // Meta status
+  const metaPages = await query(`SELECT page_id, page_name, is_active, page_access_token FROM meta_pages WHERE is_active = TRUE`);
+  const metaConfigured = !!(process.env.META_PAGE_ACCESS_TOKEN || process.env.META_USER_ACCESS_TOKEN || process.env.META_APP_SECRET);
+  const metaVerifyToken = process.env.META_VERIFY_TOKEN || '';
+  const metaPages_ = metaPages.rows.map(p => ({
+    page_id: p.page_id,
+    page_name: p.page_name,
+    has_token: !!(p.page_access_token && p.page_access_token !== 'PENDING_TOKEN'),
+  }));
+
+  // Meta campaigns & ad accounts
+  const { rows: metaCampaigns } = await query(`SELECT COUNT(*) AS cnt FROM meta_campaigns`);
+  const { rows: metaAdAccounts } = await query(`SELECT COUNT(*) AS cnt FROM meta_ad_accounts WHERE is_active = TRUE`);
+
+  // Google Sheets status
+  const sheetsStatus = await sheetsCheck();
+
+  // Lead counts
+  const { rows: [counts] } = await query(`
+    SELECT
+      (SELECT COUNT(*) FROM leads WHERE source = 'meta' AND deleted_at IS NULL) AS meta_leads,
+      (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL) AS total_leads,
+      (SELECT MAX(created_at) FROM leads WHERE source = 'meta' AND deleted_at IS NULL) AS last_meta_lead_at
+  `);
+
+  res.json({
+    success: true,
+    data: {
+      meta: {
+        configured: metaConfigured,
+        verify_token_set: !!metaVerifyToken,
+        pages: metaPages_,
+        campaigns: parseInt(metaCampaigns[0]?.cnt || '0', 10),
+        ad_accounts: parseInt(metaAdAccounts[0]?.cnt || '0', 10),
+        total_meta_leads: parseInt(counts.meta_leads, 10),
+        last_meta_lead_at: counts.last_meta_lead_at,
+      },
+      sheets: sheetsStatus,
+      leads: {
+        total: parseInt(counts.total_leads, 10),
+      },
+    },
+  });
+}));
+
+// ---- Distribution Live Stats (for dashboards, cached 10s) -----------
+router.get('/distribution/stats', authenticate, responseCache(10000), asyncHandler(async (req, res) => {
+  const { rows: [stats] } = await query(`
+    SELECT
+      (SELECT COUNT(*) FROM leads WHERE assigned_to_user_id IS NULL AND deleted_at IS NULL) AS queued_leads,
+      (SELECT COUNT(*) FROM leads WHERE is_pending = TRUE AND deleted_at IS NULL) AS total_pending,
+      (SELECT COUNT(*) FROM leads WHERE assigned_at::date = CURRENT_DATE AND deleted_at IS NULL) AS today_distributed,
+      (SELECT COUNT(*) FROM leads WHERE created_at::date = CURRENT_DATE AND deleted_at IS NULL) AS today_received,
+      (SELECT COUNT(*) FROM users WHERE distribution_blocked = TRUE AND deleted_at IS NULL) AS blocked_members,
+      (SELECT COUNT(*) FROM distribution_approvals WHERE status = 'pending') AS pending_approvals,
+      (SELECT value FROM distribution_settings WHERE key = 'auto_distribution_enabled') AS distribution_enabled
+  `);
+  res.json({ success: true, data: stats });
+}));
+
+// ---- RM Teams: lead counts by user + category (Admin) ----------------
+router.get('/reports/team-leads', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const { rows } = await query(`
+    SELECT l.assigned_to_user_id AS user_id,
+           l.category,
+           COUNT(*) AS count
+      FROM leads l
+     WHERE l.assigned_to_user_id IS NOT NULL AND l.deleted_at IS NULL
+     GROUP BY l.assigned_to_user_id, l.category
+  `);
+  res.json({ success: true, data: rows });
+}));
+
+// ---- Lead Request System -----------------------------------------------
+const { assignLead: assignLeadFn } = require('../services/leadDistributionService');
+
+// Member: submit a lead request — auto-assigns immediately from queue
+router.post('/lead-requests', authenticate, asyncHandler(async (req, res) => {
+  const { quantity, category, note } = req.body;
+  const qty = Math.min(500, Math.max(1, parseInt(quantity || '1', 10)));
+  // 'partner', 'trader', or null (both)
+  const cat = ['partner', 'trader'].includes(category) ? category : null;
+
+  // Check for existing pending request
+  const { rows: existing } = await query(
+    `SELECT id FROM lead_requests WHERE user_id = $1 AND status = 'pending' LIMIT 1`,
+    [req.user.id]
+  );
+  if (existing.length > 0) {
+    throw new AppError(400, 'ALREADY_PENDING', 'You already have a pending lead request');
+  }
+
+  // Create the request
+  const { rows: [r] } = await query(
+    `INSERT INTO lead_requests (user_id, quantity, category, note)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+    [req.user.id, qty, cat, note || null]
+  );
+
+  // Auto-assign immediately from queue (no RM approval needed)
+  let assigned = 0;
+  const { isDistributionActive: isActive } = require('../services/distributionScheduler');
+  if (await isActive()) {
+    // Find available leads from global queue
+    let leadSql = `SELECT id FROM leads WHERE assigned_to_user_id IS NULL AND deleted_at IS NULL`;
+    const leadParams = [];
+    if (cat) {
+      leadParams.push(cat);
+      leadSql += ` AND category = $${leadParams.length}`;
+    }
+    leadSql += ` ORDER BY created_at ASC LIMIT ${qty}`;
+    const { rows: availableLeads } = await query(leadSql, leadParams);
+
+    for (const lead of availableLeads) {
+      try {
+        const res2 = await query(
+          `UPDATE leads SET assigned_to_user_id = $1, assigned_at = NOW(), updated_at = NOW()
+            WHERE id = $2 AND assigned_to_user_id IS NULL`,
+          [req.user.id, lead.id]
+        );
+        if (res2.rowCount > 0) {
+          await query(
+            `INSERT INTO lead_assignments(lead_id, user_id, reason) VALUES ($1, $2, 'lead_request')`,
+            [lead.id, req.user.id]
+          );
+          assigned++;
+        }
+      } catch { /* skip race condition */ }
+    }
+
+    // Update request status
+    const status = assigned >= qty ? 'fulfilled' : (assigned > 0 ? 'fulfilled' : 'pending');
+    const resolvedAt = status === 'fulfilled' ? new Date() : null;
+    await query(
+      `UPDATE lead_requests SET status = $1, leads_assigned = $2, resolved_at = $3, updated_at = NOW()
+        WHERE id = $4`,
+      [status, assigned, resolvedAt, r.id]
+    );
+    r.status = status;
+    r.leads_assigned = assigned;
+  }
+
+  // Audit log
+  await query(
+    `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata, ip_address)
+       VALUES ($1, 'lead_request', $2, 'submit', $3, $4)`,
+    [req.user.id, r.id, JSON.stringify({ quantity: qty, category: cat, assigned }), req.ip]
+  );
+
+  res.status(201).json({ success: true, data: r });
+}));
+
+// Member: get own request status
+router.get('/lead-requests/my', authenticate, asyncHandler(async (req, res) => {
+  const { rows } = await query(
+    `SELECT lr.*, u.full_name AS resolved_by_name
+       FROM lead_requests lr
+       LEFT JOIN users u ON u.id = lr.resolved_by
+      WHERE lr.user_id = $1
+      ORDER BY lr.created_at DESC LIMIT 10`,
+    [req.user.id]
+  );
+  res.json({ success: true, data: rows });
+}));
+
+// RM/Admin: list pending requests (scoped by role)
+router.get('/lead-requests', authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (req, res) => {
+  const status = req.query.status || 'pending';
+  let scopeSql = '';
+  const params = [status];
+
+  if (req.user.role === 'rm') {
+    params.push(req.user.id);
+    scopeSql = ` AND lr.user_id IN (SELECT id FROM users WHERE report_to_id = $${params.length})`;
+  }
+
+  const { rows } = await query(`
+    SELECT lr.*, u.full_name, u.email, u.team_name, u.member_type,
+           r.full_name AS resolved_by_name
+      FROM lead_requests lr
+      JOIN users u ON u.id = lr.user_id
+      LEFT JOIN users r ON r.id = lr.resolved_by
+     WHERE lr.status = $1 ${scopeSql}
+     ORDER BY lr.created_at DESC
+     LIMIT 100
+  `, params);
+  res.json({ success: true, data: rows });
+}));
+
+// RM/Admin: approve a request — assigns leads from queue
+router.post('/lead-requests/:id/approve', authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { rows: [request] } = await query(
+    `SELECT lr.*, u.full_name FROM lead_requests lr JOIN users u ON u.id = lr.user_id
+      WHERE lr.id = $1 AND lr.status = 'pending'`, [id]
+  );
+  if (!request) throw new AppError(404, 'NOT_FOUND', 'Request not found or already resolved');
+
+  // RM can only approve their own team members
+  if (req.user.role === 'rm') {
+    const { rows: [member] } = await query(
+      `SELECT id FROM users WHERE id = $1 AND report_to_id = $2`, [request.user_id, req.user.id]
+    );
+    if (!member) throw new AppError(403, 'FORBIDDEN', 'You can only approve requests from your team');
+  }
+
+  // Find available leads — prefer RM pool first, then global queue
+  const rmId = req.user.role === 'rm' ? req.user.id : null;
+  let leadSql;
+  const leadParams = [];
+
+  if (rmId) {
+    // RM approving: pull from RM's own pool first
+    leadSql = `SELECT id FROM leads WHERE pool_rm_id = $1 AND assigned_to_user_id IS NULL AND deleted_at IS NULL`;
+    leadParams.push(rmId);
+  } else {
+    // Super admin approving: pull from global queue
+    leadSql = `SELECT id FROM leads WHERE assigned_to_user_id IS NULL AND deleted_at IS NULL`;
+  }
+  if (request.category) {
+    leadParams.push(request.category);
+    leadSql += ` AND category = $${leadParams.length}`;
+  }
+  leadSql += ` ORDER BY created_at ASC LIMIT ${request.quantity}`;
+
+  const { rows: availableLeads } = await query(leadSql, leadParams);
+
+  let assigned = 0;
+  for (const lead of availableLeads) {
+    try {
+      await query(
+        `UPDATE leads SET assigned_to_user_id = $1, assigned_at = NOW(), updated_at = NOW()
+          WHERE id = $2 AND assigned_to_user_id IS NULL`,
+        [request.user_id, lead.id]
+      );
+      await query(
+        `INSERT INTO lead_assignments(lead_id, user_id, assigned_by, reason)
+           VALUES ($1, $2, $3, 'lead_request')`,
+        [lead.id, request.user_id, req.user.id]
+      );
+      assigned++;
+    } catch { /* skip on race condition */ }
+  }
+
+  await query(
+    `UPDATE lead_requests SET status = 'fulfilled', resolved_by = $1, resolved_at = NOW(),
+            resolve_note = $2, leads_assigned = $3, updated_at = NOW()
+      WHERE id = $4`,
+    [req.user.id, req.body.note || null, assigned, id]
+  );
+
+  res.json({ success: true, data: { approved: true, leads_assigned: assigned, requested: request.quantity } });
+}));
+
+// RM/Admin: reject a request
+router.post('/lead-requests/:id/reject', authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  // RM scope check
+  if (req.user.role === 'rm') {
+    const { rows: [lr] } = await query(
+      `SELECT lr.user_id FROM lead_requests lr
+         JOIN users u ON u.id = lr.user_id AND u.report_to_id = $1
+        WHERE lr.id = $2 AND lr.status = 'pending'`, [req.user.id, id]
+    );
+    if (!lr) throw new AppError(403, 'FORBIDDEN', 'Request not found or not your team');
+  }
+
+  const { rows: [r] } = await query(
+    `UPDATE lead_requests SET status = 'rejected', resolved_by = $1, resolved_at = NOW(),
+            resolve_note = $2, updated_at = NOW()
+      WHERE id = $3 AND status = 'pending' RETURNING id`,
+    [req.user.id, req.body.note || null, id]
+  );
+  if (!r) throw new AppError(404, 'NOT_FOUND', 'Request not found or already resolved');
+  res.json({ success: true });
+}));
+
+// Member: cancel own pending request
+router.delete('/lead-requests/:id', authenticate, asyncHandler(async (req, res) => {
+  const { rows: [r] } = await query(
+    `DELETE FROM lead_requests WHERE id = $1 AND user_id = $2 AND status = 'pending' RETURNING id`,
+    [req.params.id, req.user.id]
+  );
+  if (!r) throw new AppError(404, 'NOT_FOUND', 'Request not found or cannot be cancelled');
+  res.json({ success: true });
+}));
+
+// RM: team request activity — all recent requests from team members (monitoring view)
+router.get('/lead-requests/team-activity', authenticate, requireRole('rm', 'super_admin'), asyncHandler(async (req, res) => {
+  let scopeSql = '';
+  const params = [];
+
+  if (req.user.role === 'rm') {
+    params.push(req.user.id);
+    scopeSql = ` AND lr.user_id IN (SELECT id FROM users WHERE report_to_id = $${params.length} AND deleted_at IS NULL)`;
+  }
+
+  const { rows } = await query(`
+    SELECT lr.*, u.full_name, u.email, u.team_name, u.member_type
+      FROM lead_requests lr
+      JOIN users u ON u.id = lr.user_id
+     WHERE 1=1 ${scopeSql}
+     ORDER BY lr.created_at DESC
+     LIMIT 50
+  `, params);
+  res.json({ success: true, data: rows });
+}));
+
+// Lead request stats (for all dashboards)
+router.get('/lead-requests/stats', authenticate, asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+  const role = req.user.role;
+
+  // Available leads in queue
+  const { rows: [q] } = await query(`
+    SELECT COUNT(*) AS available_leads FROM leads
+    WHERE assigned_to_user_id IS NULL AND deleted_at IS NULL
+  `);
+
+  // My assigned leads count
+  const { rows: [my] } = await query(`
+    SELECT COUNT(*) AS my_leads,
+           COUNT(*) FILTER (WHERE is_pending = TRUE) AS my_pending
+      FROM leads WHERE assigned_to_user_id = $1 AND deleted_at IS NULL
+  `, [userId]);
+
+  // My pending request
+  const { rows: myReqs } = await query(
+    `SELECT id, quantity, category, status, created_at FROM lead_requests
+      WHERE user_id = $1 AND status = 'pending' LIMIT 1`, [userId]
+  );
+
+  // Pending requests count (for RM/admin)
+  let pendingRequests = 0;
+  if (role === 'super_admin') {
+    const { rows: [c] } = await query(`SELECT COUNT(*) AS cnt FROM lead_requests WHERE status = 'pending'`);
+    pendingRequests = parseInt(c.cnt, 10);
+  } else if (role === 'rm') {
+    const { rows: [c] } = await query(
+      `SELECT COUNT(*) AS cnt FROM lead_requests lr
+         JOIN users u ON u.id = lr.user_id AND u.report_to_id = $1
+        WHERE lr.status = 'pending'`, [userId]
+    );
+    pendingRequests = parseInt(c.cnt, 10);
+  }
+
+  // Distribution status
+  const distEnabled = await getSetting('auto_distribution_enabled', 'true');
+
+  // RM pool stats (for RMs)
+  let rmPoolCount = 0;
+  let rmPendingRmRequests = 0;
+  if (role === 'rm') {
+    const { rows: [pool] } = await query(
+      `SELECT COUNT(*) AS cnt FROM leads WHERE pool_rm_id = $1 AND assigned_to_user_id IS NULL AND deleted_at IS NULL`,
+      [userId]
+    );
+    rmPoolCount = parseInt(pool.cnt, 10);
+    const { rows: [rmReqs] } = await query(
+      `SELECT COUNT(*) AS cnt FROM rm_lead_requests WHERE rm_id = $1 AND status IN ('pending', 'partial')`,
+      [userId]
+    );
+    rmPendingRmRequests = parseInt(rmReqs.cnt, 10);
+  }
+
+  res.json({
+    success: true,
+    data: {
+      available_leads: parseInt(q.available_leads, 10),
+      my_leads: parseInt(my.my_leads, 10),
+      my_pending: parseInt(my.my_pending, 10),
+      my_pending_request: myReqs[0] || null,
+      pending_requests: pendingRequests,
+      distribution_enabled: distEnabled === 'true',
+      rm_pool_count: rmPoolCount,
+      rm_pending_requests: rmPendingRmRequests,
+    },
+  });
+}));
+
+// ---- RM Lead Requests & Pool Management --------------------------------
+const reqEngine = require('../services/requestDistributionEngine');
+
+// RM: submit a lead request (request leads from global queue into RM pool)
+router.post('/rm-lead-requests', authenticate, requireRole('rm', 'super_admin'), asyncHandler(async (req, res) => {
+  const { quantity, category, note } = req.body;
+  const qty = Math.min(500, Math.max(1, parseInt(quantity || '1', 10)));
+  const cat = ['partner', 'trader'].includes(category) ? category : null;
+
+  const { rows: [r] } = await query(
+    `INSERT INTO rm_lead_requests (rm_id, quantity, category, note)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+    [req.user.id, qty, cat, note || null]
+  );
+
+  // Try to fulfill immediately if distribution is active
+  const { isDistributionActive: isActive } = require('../services/distributionScheduler');
+  if (await isActive()) {
+    try {
+      await reqEngine.fulfillRmRequest(r.id);
+    } catch (err) {
+      // Will retry on next scheduler tick
+    }
+  }
+
+  // Re-fetch to get updated status
+  const { rows: [updated] } = await query(`SELECT * FROM rm_lead_requests WHERE id = $1`, [r.id]);
+  res.status(201).json({ success: true, data: updated });
+}));
+
+// RM: get own requests
+router.get('/rm-lead-requests/my', authenticate, requireRole('rm', 'super_admin'), asyncHandler(async (req, res) => {
+  const { rows } = await query(
+    `SELECT * FROM rm_lead_requests WHERE rm_id = $1 ORDER BY created_at DESC LIMIT 20`,
+    [req.user.id]
+  );
+  res.json({ success: true, data: rows });
+}));
+
+// RM: cancel own pending request
+router.delete('/rm-lead-requests/:id', authenticate, requireRole('rm', 'super_admin'), asyncHandler(async (req, res) => {
+  const { rows: [r] } = await query(
+    `UPDATE rm_lead_requests SET status = 'cancelled' WHERE id = $1 AND rm_id = $2 AND status IN ('pending', 'partial') RETURNING id`,
+    [req.params.id, req.user.id]
+  );
+  if (!r) throw new AppError(404, 'NOT_FOUND', 'Request not found or cannot be cancelled');
+  res.json({ success: true });
+}));
+
+// Admin: list all RM requests
+router.get('/rm-lead-requests', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const status = req.query.status;
+  let sql = `SELECT r.*, u.full_name AS rm_name, u.team_name
+               FROM rm_lead_requests r
+               JOIN users u ON u.id = r.rm_id`;
+  const params = [];
+  if (status) {
+    params.push(status);
+    sql += ` WHERE r.status = $1`;
+  }
+  sql += ` ORDER BY r.created_at DESC LIMIT 100`;
+  const { rows } = await query(sql, params);
+  res.json({ success: true, data: rows });
+}));
+
+// RM Pool: get pool stats for requesting RM
+router.get('/rm-pool/stats', authenticate, requireRole('rm', 'super_admin'), asyncHandler(async (req, res) => {
+  const rmId = req.query.rm_id || req.user.id;
+  // super_admin can query any RM, RMs only their own
+  if (req.user.role === 'rm' && rmId !== req.user.id) {
+    throw new AppError(403, 'FORBIDDEN', 'You can only view your own pool');
+  }
+  const stats = await reqEngine.getRmPoolStats(rmId);
+  res.json({ success: true, data: stats });
+}));
+
+// RM Pool: list leads in RM's pool (unassigned to members)
+router.get('/rm-pool/leads', authenticate, requireRole('rm', 'super_admin'), asyncHandler(async (req, res) => {
+  const rmId = req.query.rm_id || req.user.id;
+  if (req.user.role === 'rm' && rmId !== req.user.id) {
+    throw new AppError(403, 'FORBIDDEN', 'You can only view your own pool');
+  }
+  const page = Math.max(1, parseInt(req.query.page || '1', 10));
+  const limit = Math.min(100, Math.max(10, parseInt(req.query.limit || '50', 10)));
+  const offset = (page - 1) * limit;
+
+  const { rows } = await query(
+    `SELECT id, full_name, phone, email, category, source, campaign_label, stage, created_at, pool_assigned_at
+       FROM leads
+      WHERE pool_rm_id = $1 AND assigned_to_user_id IS NULL AND deleted_at IS NULL
+      ORDER BY created_at ASC
+      LIMIT $2 OFFSET $3`,
+    [rmId, limit, offset]
+  );
+  const { rows: [cnt] } = await query(
+    `SELECT COUNT(*) AS total FROM leads WHERE pool_rm_id = $1 AND assigned_to_user_id IS NULL AND deleted_at IS NULL`,
+    [rmId]
+  );
+  res.json({ success: true, data: { rows, total: parseInt(cnt.total, 10), page } });
+}));
+
+// RM: manually assign lead from pool to a specific member
+router.post('/rm-pool/assign', authenticate, requireRole('rm', 'super_admin'), asyncHandler(async (req, res) => {
+  const { lead_id, member_id } = req.body;
+  if (!lead_id || !member_id) throw new AppError(400, 'INVALID', 'lead_id and member_id required');
+
+  const rmId = req.user.id;
+
+  // Verify the lead is in this RM's pool
+  const { rows: [lead] } = await query(
+    `SELECT id FROM leads WHERE id = $1 AND pool_rm_id = $2 AND assigned_to_user_id IS NULL AND deleted_at IS NULL`,
+    [lead_id, rmId]
+  );
+  if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not in your pool or already assigned');
+
+  // Verify member belongs to this RM
+  const { rows: [member] } = await query(
+    `SELECT id FROM users WHERE id = $1 AND report_to_id = $2 AND role = 'member' AND status = 'active' AND deleted_at IS NULL`,
+    [member_id, rmId]
+  );
+  if (!member) throw new AppError(403, 'FORBIDDEN', 'Member not in your team');
+
+  await query(
+    `UPDATE leads SET assigned_to_user_id = $1, assigned_at = NOW(), updated_at = NOW() WHERE id = $2`,
+    [member_id, lead_id]
+  );
+  await query(
+    `INSERT INTO lead_assignments(lead_id, user_id, assigned_by, reason) VALUES ($1, $2, $3, 'rm_manual')`,
+    [lead_id, member_id, rmId]
+  );
+
+  res.json({ success: true, data: { lead_id, member_id, assigned: true } });
+}));
+
+// Global queue stats (admin)
+router.get('/distribution/queue-stats', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const stats = await reqEngine.getGlobalQueueStats();
+  res.json({ success: true, data: stats });
+}));
+
+// Admin: manually trigger distribution cycle
+router.post('/distribution/run-cycle', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const result = await reqEngine.runDistributionCycle();
+  res.json({ success: true, data: result });
+}));
+
+// ====================================================================
+// ---- ADMIN TOOLS (Super Admin Only) ---------------------------------
+// ====================================================================
+const bcrypt = require('bcryptjs');
+
+// --- 1. Activity Logs (audit_logs viewer) ---
+router.get('/admin/activity-logs', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page || '1', 10));
+  const pageSize = Math.min(100, Math.max(10, parseInt(req.query.page_size || '25', 10)));
+  const offset = (page - 1) * pageSize;
+
+  let where = 'WHERE 1=1';
+  const params = [];
+
+  if (req.query.user_id) { params.push(req.query.user_id); where += ` AND a.user_id = $${params.length}`; }
+  if (req.query.entity)  { params.push(req.query.entity);  where += ` AND a.entity = $${params.length}`; }
+  if (req.query.action)  { params.push(req.query.action);  where += ` AND a.action = $${params.length}`; }
+  if (req.query.from)    { params.push(req.query.from);    where += ` AND a.created_at >= $${params.length}`; }
+  if (req.query.to)      { params.push(req.query.to);      where += ` AND a.created_at <= $${params.length}`; }
+
+  const countParams = [...params];
+  const { rows: [{ total }] } = await query(
+    `SELECT COUNT(*) AS total FROM audit_logs a ${where}`, countParams
+  );
+
+  params.push(pageSize, offset);
+  const { rows } = await query(`
+    SELECT a.id, a.user_id, u.full_name AS user_name, u.role AS user_role,
+           a.entity, a.entity_id, a.action, a.metadata, a.ip_address, a.created_at
+      FROM audit_logs a
+      LEFT JOIN users u ON u.id = a.user_id
+      ${where}
+     ORDER BY a.created_at DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}
+  `, params);
+
+  res.json({ success: true, data: { rows, total: parseInt(total, 10), page, pageSize } });
+}));
+
+// --- 2. Export Leads as CSV ---
+router.get('/admin/export/leads', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  let where = 'WHERE l.deleted_at IS NULL';
+  const params = [];
+  if (req.query.category) { params.push(req.query.category); where += ` AND l.category = $${params.length}`; }
+  if (req.query.stage)    { params.push(req.query.stage);    where += ` AND l.stage = $${params.length}`; }
+  if (req.query.call_status) { params.push(req.query.call_status); where += ` AND l.call_status = $${params.length}`; }
+  if (req.query.from) { params.push(req.query.from); where += ` AND l.created_at >= $${params.length}`; }
+  if (req.query.to)   { params.push(req.query.to);   where += ` AND l.created_at <= $${params.length}`; }
+  if (req.query.assigned_to) { params.push(req.query.assigned_to); where += ` AND l.assigned_to_user_id = $${params.length}`; }
+
+  const { rows } = await query(`
+    SELECT l.id, l.full_name, l.phone, l.email, l.city, l.state,
+           l.source, l.category, l.stage, l.call_status,
+           l.campaign_label, l.product_tag,
+           l.campaign_name, l.adset_name, l.ad_name,
+           u.full_name AS assigned_to,
+           l.assigned_at, l.next_followup_at, l.call_attempts,
+           l.created_at, l.updated_at
+      FROM leads l
+      LEFT JOIN users u ON u.id = l.assigned_to_user_id
+      ${where}
+     ORDER BY l.created_at DESC
+  `, params);
+
+  // Build CSV
+  const headers = ['ID','Name','Phone','Email','City','State','Source','Category','Stage','Call Status','Campaign Label','Product','Campaign Name','Ad Set','Ad Name','Assigned To','Assigned At','Next Followup','Call Attempts','Created','Updated'];
+  const csvRows = [headers.join(',')];
+  for (const r of rows) {
+    csvRows.push([
+      r.id, esc(r.full_name), esc(r.phone), esc(r.email), esc(r.city), esc(r.state),
+      r.source, r.category, r.stage, r.call_status,
+      esc(r.campaign_label), esc(r.product_tag),
+      esc(r.campaign_name), esc(r.adset_name), esc(r.ad_name),
+      esc(r.assigned_to),
+      r.assigned_at || '', r.next_followup_at || '', r.call_attempts,
+      r.created_at, r.updated_at
+    ].join(','));
+  }
+
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename=leads_export_${new Date().toISOString().slice(0,10)}.csv`);
+  res.send(csvRows.join('\n'));
+}));
+
+function esc(v) {
+  if (v == null) return '';
+  const s = String(v);
+  return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+// --- 3. Export Reports as CSV ---
+router.get('/admin/export/reports', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { rows } = await query(`
+    SELECT u.id, u.full_name, u.email, u.role, u.team_name, u.member_type,
+           COUNT(l.id) AS total_leads,
+           COUNT(l.id) FILTER (WHERE l.is_pending) AS pending,
+           COUNT(l.id) FILTER (WHERE l.call_status = 'converted') AS conversions,
+           COUNT(l.id) FILTER (WHERE l.call_status IN ('ni', 'not_interested')) AS not_interested,
+           COUNT(l.id) FILTER (WHERE l.call_status = 'cnr') AS cnr,
+           ROUND(
+             COUNT(l.id) FILTER (WHERE l.call_status = 'converted')::numeric /
+             NULLIF(COUNT(l.id), 0) * 100, 2
+           ) AS conv_rate
+      FROM users u
+      LEFT JOIN leads l ON l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
+     WHERE u.deleted_at IS NULL AND u.role IN ('rm', 'member')
+     GROUP BY u.id, u.full_name, u.email, u.role, u.team_name, u.member_type
+     ORDER BY u.role, u.full_name
+  `);
+
+  const headers = ['ID','Name','Email','Role','Team','Member Type','Total Leads','Pending','Conversions','Not Interested','CNR','Conv Rate %'];
+  const csvRows = [headers.join(',')];
+  for (const r of rows) {
+    csvRows.push([r.id, esc(r.full_name), esc(r.email), r.role, esc(r.team_name), r.member_type || '', r.total_leads, r.pending, r.conversions, r.not_interested, r.cnr, r.conv_rate || '0.00'].join(','));
+  }
+
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename=team_report_${new Date().toISOString().slice(0,10)}.csv`);
+  res.send(csvRows.join('\n'));
+}));
+
+// --- 4. Reset Password (Admin resets for any user) ---
+router.post('/admin/reset-password/:userId', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+  const { new_password } = req.body;
+  if (!new_password || new_password.length < 6) {
+    throw new AppError(400, 'INVALID', 'Password must be at least 6 characters');
+  }
+
+  const { rows: [user] } = await query(`SELECT id, full_name FROM users WHERE id = $1 AND deleted_at IS NULL`, [userId]);
+  if (!user) throw new AppError(404, 'NOT_FOUND', 'User not found');
+
+  const hash = await bcrypt.hash(new_password, 12);
+  await query(`UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`, [hash, userId]);
+
+  // Revoke all sessions for this user
+  await query(`UPDATE auth_sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL`, [userId]);
+
+  // Log the reset
+  await query(
+    `INSERT INTO password_resets (user_id, reset_by, ip_address) VALUES ($1, $2, $3)`,
+    [userId, req.user.id, req.ip]
+  );
+  await query(
+    `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata, ip_address) VALUES ($1, 'user', $2, 'password_reset', $3, $4)`,
+    [req.user.id, userId, JSON.stringify({ target_user: user.full_name }), req.ip]
+  );
+
+  res.json({ success: true, data: { message: `Password reset for ${user.full_name}` } });
+}));
+
+// --- 5. Force Assign Leads ---
+router.post('/admin/force-assign', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { lead_ids, user_id, reason } = req.body;
+  if (!lead_ids || !Array.isArray(lead_ids) || lead_ids.length === 0) {
+    throw new AppError(400, 'INVALID', 'lead_ids array required');
+  }
+  if (!user_id) throw new AppError(400, 'INVALID', 'user_id required');
+
+  const { rows: [target] } = await query(
+    `SELECT id, full_name FROM users WHERE id = $1 AND deleted_at IS NULL AND status = 'active'`, [user_id]
+  );
+  if (!target) throw new AppError(404, 'NOT_FOUND', 'Target user not found or inactive');
+
+  let assigned = 0;
+  for (const leadId of lead_ids) {
+    const { rows: [lead] } = await query(
+      `UPDATE leads SET assigned_to_user_id = $1, assigned_at = NOW(), updated_at = NOW()
+         WHERE id = $2 AND deleted_at IS NULL RETURNING id, assigned_to_user_id AS prev_user`,
+      [user_id, leadId]
+    );
+    if (lead) {
+      await query(
+        `INSERT INTO lead_assignments(lead_id, user_id, assigned_by, reason)
+           VALUES ($1, $2, $3, $4)`,
+        [leadId, user_id, req.user.id, reason || 'admin_force_assign']
+      );
+      assigned++;
+    }
+  }
+
+  await query(
+    `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata, ip_address)
+       VALUES ($1, 'lead', $2, 'force_assign', $3, $4)`,
+    [req.user.id, lead_ids[0], JSON.stringify({ count: assigned, target: target.full_name, reason }), req.ip]
+  );
+
+  res.json({ success: true, data: { assigned, target: target.full_name } });
+}));
+
+// --- 6. Broadcast Message ---
+router.post('/admin/broadcast', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { title, body: msgBody, priority, target_role, target_user_ids } = req.body;
+  if (!title || !msgBody) throw new AppError(400, 'INVALID', 'title and body are required');
+
+  const { rows: [msg] } = await query(
+    `INSERT INTO broadcast_messages (sender_id, title, body, priority, target_role, target_user_ids)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+    [req.user.id, title, msgBody, priority || 'normal', target_role || 'all', target_user_ids || null]
+  );
+
+  await query(
+    `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata, ip_address)
+       VALUES ($1, 'broadcast', $2, 'send', $3, $4)`,
+    [req.user.id, msg.id, JSON.stringify({ title, target_role, priority }), req.ip]
+  );
+
+  res.status(201).json({ success: true, data: msg });
+}));
+
+router.get('/admin/broadcast', authenticate, asyncHandler(async (req, res) => {
+  const limit = Math.min(50, parseInt(req.query.limit || '20', 10));
+  let where = '1=1';
+  const params = [];
+
+  // Non-admin users only see messages targeted to them
+  if (req.user.role !== 'super_admin') {
+    where = `(bm.target_role = 'all' OR bm.target_role = $1 OR $2 = ANY(bm.target_user_ids))
+             AND (bm.expires_at IS NULL OR bm.expires_at > NOW())`;
+    params.push(req.user.role, req.user.id);
+  }
+
+  params.push(limit);
+  const { rows } = await query(`
+    SELECT bm.*, u.full_name AS sender_name
+      FROM broadcast_messages bm
+      JOIN users u ON u.id = bm.sender_id
+     WHERE ${where}
+     ORDER BY bm.created_at DESC
+     LIMIT $${params.length}
+  `, params);
+
+  res.json({ success: true, data: rows });
+}));
+
+// --- 7. Block / Unblock User (status toggle) ---
+router.post('/admin/block-user/:userId', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+  const { reason } = req.body;
+
+  const { rows: [user] } = await query(
+    `UPDATE users SET status = 'blocked', is_available = FALSE, updated_at = NOW()
+       WHERE id = $1 AND deleted_at IS NULL AND status != 'blocked' RETURNING id, full_name`,
+    [userId]
+  );
+  if (!user) throw new AppError(404, 'NOT_FOUND', 'User not found or already blocked');
+
+  await query(
+    `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata, ip_address)
+       VALUES ($1, 'user', $2, 'block', $3, $4)`,
+    [req.user.id, userId, JSON.stringify({ target: user.full_name, reason }), req.ip]
+  );
+
+  invalidateUser(userId);
+  res.json({ success: true, data: { blocked: user.full_name } });
+}));
+
+router.post('/admin/unblock-user/:userId', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+
+  const { rows: [user] } = await query(
+    `UPDATE users SET status = 'active', is_available = TRUE, updated_at = NOW()
+       WHERE id = $1 AND deleted_at IS NULL AND status = 'blocked' RETURNING id, full_name`,
+    [userId]
+  );
+  if (!user) throw new AppError(404, 'NOT_FOUND', 'User not found or not blocked');
+
+  await query(
+    `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata, ip_address)
+       VALUES ($1, 'user', $2, 'unblock', $3, $4)`,
+    [req.user.id, userId, JSON.stringify({ target: user.full_name }), req.ip]
+  );
+
+  invalidateUser(userId);
+  res.json({ success: true, data: { unblocked: user.full_name } });
+}));
+
+// --- 8. Notifications ---
+router.get('/admin/notifications', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const unreadOnly = req.query.unread === 'true';
+  const limit = Math.min(50, parseInt(req.query.limit || '20', 10));
+  const where = unreadOnly ? 'WHERE is_read = FALSE' : '';
+
+  const { rows } = await query(
+    `SELECT * FROM admin_notifications ${where} ORDER BY created_at DESC LIMIT $1`, [limit]
+  );
+  const { rows: [{ count: unread_count }] } = await query(
+    `SELECT COUNT(*) FROM admin_notifications WHERE is_read = FALSE`
+  );
+  res.json({ success: true, data: { rows, unread_count: parseInt(unread_count, 10) } });
+}));
+
+router.post('/admin/notifications/:id/read', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  await query(`UPDATE admin_notifications SET is_read = TRUE WHERE id = $1`, [req.params.id]);
+  res.json({ success: true });
+}));
+
+router.post('/admin/notifications/read-all', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  await query(`UPDATE admin_notifications SET is_read = TRUE WHERE is_read = FALSE`);
+  res.json({ success: true });
+}));
+
+// --- 9. Team Hierarchy Controls (reassign member to different RM) ---
+router.post('/admin/reassign-member', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { member_id, new_rm_id, new_team_name } = req.body;
+  if (!member_id) throw new AppError(400, 'INVALID', 'member_id required');
+
+  const setClauses = ['updated_at = NOW()'];
+  const params = [];
+
+  if (new_rm_id !== undefined) {
+    if (new_rm_id) {
+      const { rows: [rm] } = await query(`SELECT id FROM users WHERE id = $1 AND role = 'rm' AND deleted_at IS NULL`, [new_rm_id]);
+      if (!rm) throw new AppError(404, 'NOT_FOUND', 'Target RM not found');
+    }
+    params.push(new_rm_id || null);
+    setClauses.push(`report_to_id = $${params.length}`);
+  }
+  if (new_team_name !== undefined) {
+    params.push(new_team_name || null);
+    setClauses.push(`team_name = $${params.length}`);
+  }
+
+  params.push(member_id);
+  const { rows: [user] } = await query(
+    `UPDATE users SET ${setClauses.join(', ')} WHERE id = $${params.length} AND deleted_at IS NULL RETURNING id, full_name`,
+    params
+  );
+  if (!user) throw new AppError(404, 'NOT_FOUND', 'Member not found');
+
+  await query(
+    `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata, ip_address)
+       VALUES ($1, 'user', $2, 'reassign_team', $3, $4)`,
+    [req.user.id, member_id, JSON.stringify({ new_rm_id, new_team_name }), req.ip]
+  );
+
+  res.json({ success: true, data: { member: user.full_name } });
+}));
+
+// --- 10. Bulk Lead Actions ---
+router.post('/admin/bulk-leads', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { action, lead_ids, params: actionParams } = req.body;
+  if (!lead_ids || !Array.isArray(lead_ids) || lead_ids.length === 0) {
+    throw new AppError(400, 'INVALID', 'lead_ids array required');
+  }
+
+  let affected = 0;
+
+  switch (action) {
+    case 'delete': {
+      const { rowCount } = await query(
+        `UPDATE leads SET deleted_at = NOW(), updated_at = NOW()
+           WHERE id = ANY($1) AND deleted_at IS NULL`, [lead_ids]
+      );
+      affected = rowCount;
+      break;
+    }
+    case 'reassign': {
+      if (!actionParams?.user_id) throw new AppError(400, 'INVALID', 'params.user_id required for reassign');
+      for (const leadId of lead_ids) {
+        const { rowCount } = await query(
+          `UPDATE leads SET assigned_to_user_id = $1, assigned_at = NOW(), updated_at = NOW()
+             WHERE id = $2 AND deleted_at IS NULL`, [actionParams.user_id, leadId]
+        );
+        if (rowCount > 0) {
+          await query(
+            `INSERT INTO lead_assignments(lead_id, user_id, assigned_by, reason)
+               VALUES ($1, $2, $3, 'bulk_reassign')`, [leadId, actionParams.user_id, req.user.id]
+          );
+          affected++;
+        }
+      }
+      break;
+    }
+    case 'update_stage': {
+      if (!actionParams?.stage) throw new AppError(400, 'INVALID', 'params.stage required');
+      const { rowCount } = await query(
+        `UPDATE leads SET stage = $1, updated_at = NOW()
+           WHERE id = ANY($2) AND deleted_at IS NULL`, [actionParams.stage, lead_ids]
+      );
+      affected = rowCount;
+      break;
+    }
+    case 'unassign': {
+      const { rowCount } = await query(
+        `UPDATE leads SET assigned_to_user_id = NULL, assigned_at = NULL, updated_at = NOW()
+           WHERE id = ANY($1) AND deleted_at IS NULL`, [lead_ids]
+      );
+      affected = rowCount;
+      break;
+    }
+    default:
+      throw new AppError(400, 'INVALID', `Unknown action: ${action}`);
+  }
+
+  await query(
+    `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata, ip_address)
+       VALUES ($1, 'lead', $2, 'bulk_action', $3, $4)`,
+    [req.user.id, lead_ids[0], JSON.stringify({ action, count: affected, lead_ids: lead_ids.slice(0, 10) }), req.ip]
+  );
+
+  res.json({ success: true, data: { action, affected } });
+}));
+
+// --- 11. Live Admin Stats (comprehensive real-time) ---
+router.get('/admin/live-stats', authenticate, requireRole('super_admin'), responseCache(10000), asyncHandler(async (_req, res) => {
+  const { rows: [s] } = await query(`
+    SELECT
+      (SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND role = 'rm') AS total_rms,
+      (SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND role = 'member') AS total_members,
+      (SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND status = 'active') AS active_users,
+      (SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND status = 'blocked') AS blocked_users,
+      (SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND is_available = TRUE AND role = 'member') AS available_members,
+      (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL) AS total_leads,
+      (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND assigned_to_user_id IS NULL) AS unassigned_leads,
+      (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND is_pending = TRUE) AS pending_leads,
+      (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND call_status = 'converted') AS converted_leads,
+      (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND created_at::date = CURRENT_DATE) AS today_leads,
+      (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND assigned_at::date = CURRENT_DATE) AS today_assigned,
+      (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND call_status = 'converted' AND updated_at::date = CURRENT_DATE) AS today_conversions,
+      (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND next_followup_at::date = CURRENT_DATE) AS today_followups,
+      (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND next_followup_at < NOW() AND next_followup_at IS NOT NULL) AS overdue_followups,
+      (SELECT COUNT(*) FROM lead_requests WHERE status = 'pending') AS pending_lead_requests,
+      (SELECT COUNT(*) FROM distribution_approvals WHERE status = 'pending') AS pending_approvals,
+      (SELECT COUNT(*) FROM lead_remarks WHERE created_at::date = CURRENT_DATE) AS today_remarks,
+      (SELECT COUNT(DISTINCT user_id) FROM audit_logs WHERE created_at::date = CURRENT_DATE) AS today_active_users,
+      (SELECT COUNT(*) FROM broadcast_messages WHERE created_at::date = CURRENT_DATE) AS today_broadcasts,
+      (SELECT COUNT(*) FROM admin_notifications WHERE is_read = FALSE) AS unread_notifications
+  `);
+  // Cast all to numbers
+  const data = {};
+  for (const [k, v] of Object.entries(s)) data[k] = parseInt(v, 10) || 0;
+  res.json({ success: true, data });
+}));
+
+// --- 12. Unassigned Leads (for force-assign picker) ---
+router.get('/admin/unassigned-leads', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const limit = Math.min(100, parseInt(req.query.limit || '50', 10));
+  const category = req.query.category;
+
+  let where = 'WHERE l.assigned_to_user_id IS NULL AND l.deleted_at IS NULL';
+  const params = [];
+  if (category) { params.push(category); where += ` AND l.category = $${params.length}`; }
+
+  params.push(limit);
+  const { rows } = await query(`
+    SELECT l.id, l.full_name, l.phone, l.category, l.source, l.stage, l.created_at
+      FROM leads l
+      ${where}
+     ORDER BY l.created_at ASC
+     LIMIT $${params.length}
+  `, params);
+
+  const { rows: [{ total }] } = await query(
+    `SELECT COUNT(*) AS total FROM leads l ${where}`, params.slice(0, -1)
+  );
+
+  res.json({ success: true, data: { rows, total: parseInt(total, 10) } });
+}));
+
+// --- 13. Active Members list (for assignment dropdowns) ---
+router.get('/admin/active-members', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const { rows } = await query(`
+    SELECT u.id, u.full_name, u.role, u.team_name, u.member_type, u.is_available,
+           r.full_name AS rm_name,
+           (SELECT COUNT(*) FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL) AS lead_count,
+           (SELECT COUNT(*) FROM leads l2 WHERE l2.assigned_to_user_id = u.id AND l2.is_pending = TRUE AND l2.deleted_at IS NULL) AS pending_count
+      FROM users u
+      LEFT JOIN users r ON r.id = u.report_to_id
+     WHERE u.deleted_at IS NULL AND u.role IN ('rm', 'member')
+     ORDER BY u.role, u.full_name
+  `);
+  res.json({ success: true, data: rows });
+}));
+
+// ---- Campaign Reports & Filter Data ------------------------------------
+
+// Distinct campaign names (for filter dropdowns) — merges meta_campaigns + leads
+router.get('/campaigns/names', authenticate, responseCache(60000), asyncHandler(async (_req, res) => {
+  const { rows } = await query(`
+    SELECT DISTINCT name FROM (
+      SELECT campaign_name AS name FROM meta_campaigns WHERE campaign_name IS NOT NULL
+      UNION
+      SELECT campaign_name AS name FROM leads WHERE campaign_name IS NOT NULL AND deleted_at IS NULL
+    ) AS combined
+    ORDER BY name
+  `);
+  res.json({ success: true, data: rows.map(r => r.name) });
+}));
+
+// Distinct adset names (for filter dropdowns)
+router.get('/campaigns/adsets', authenticate, responseCache(60000), asyncHandler(async (_req, res) => {
+  const { rows } = await query(`
+    SELECT DISTINCT adset_name
+      FROM leads
+     WHERE adset_name IS NOT NULL AND deleted_at IS NULL
+     ORDER BY adset_name
+  `);
+  res.json({ success: true, data: rows.map(r => r.adset_name) });
+}));
+
+// Campaign performance report (leads per campaign with stats)
+router.get('/reports/campaigns', authenticate, asyncHandler(async (_req, res) => {
+  const { rows } = await query(`
+    SELECT
+      COALESCE(l.campaign_name, l.campaign_label, 'Unknown') AS campaign,
+      l.adset_name AS adset,
+      COUNT(*) AS total_leads,
+      COUNT(*) FILTER (WHERE l.created_at::date = CURRENT_DATE) AS today_leads,
+      COUNT(*) FILTER (WHERE l.call_status = 'converted') AS conversions,
+      COUNT(*) FILTER (WHERE l.call_status = 'interested') AS interested,
+      COUNT(*) FILTER (WHERE l.call_status = 'not_interested') AS not_interested,
+      COUNT(*) FILTER (WHERE l.stage = 'new') AS new_leads,
+      COUNT(*) FILTER (WHERE l.is_pending = TRUE) AS pending,
+      ROUND(
+        COUNT(*) FILTER (WHERE l.call_status = 'converted')::numeric /
+        NULLIF(COUNT(*), 0) * 100, 2
+      ) AS conv_rate
+    FROM leads l
+    WHERE l.deleted_at IS NULL
+    GROUP BY COALESCE(l.campaign_name, l.campaign_label, 'Unknown'), l.adset_name
+    ORDER BY total_leads DESC
+  `);
+  res.json({ success: true, data: rows });
+}));
+
+// Campaign summary cards (aggregated, no adset breakdown)
+router.get('/reports/campaign-summary', authenticate, asyncHandler(async (_req, res) => {
+  const { rows } = await query(`
+    SELECT
+      COALESCE(l.campaign_name, l.campaign_label, 'Unknown') AS campaign,
+      COUNT(*) AS total_leads,
+      COUNT(*) FILTER (WHERE l.created_at::date = CURRENT_DATE) AS today_leads,
+      COUNT(*) FILTER (WHERE l.call_status = 'converted') AS conversions,
+      ROUND(
+        COUNT(*) FILTER (WHERE l.call_status = 'converted')::numeric /
+        NULLIF(COUNT(*), 0) * 100, 2
+      ) AS conv_rate
+    FROM leads l
+    WHERE l.deleted_at IS NULL
+    GROUP BY COALESCE(l.campaign_name, l.campaign_label, 'Unknown')
+    ORDER BY total_leads DESC
+  `);
+  res.json({ success: true, data: rows });
+}));
+
+// ---- Meta Token Update + Campaign Sync Trigger (Super Admin) ----------
+const metaSync = require('../services/metaSyncService');
+const config = require('../config/env');
+
+// Update Meta access token at runtime (no restart needed)
+router.post('/meta/update-token', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { user_access_token, page_access_token } = req.body;
+  if (!user_access_token && !page_access_token) {
+    throw new AppError(400, 'INVALID', 'Provide user_access_token or page_access_token');
+  }
+  if (user_access_token) {
+    process.env.META_USER_ACCESS_TOKEN = user_access_token;
+    config.meta.userAccessToken = user_access_token;
+  }
+  if (page_access_token) {
+    process.env.META_PAGE_ACCESS_TOKEN = page_access_token;
+    config.meta.pageAccessToken = page_access_token;
+  }
+
+  // Immediately try to sync campaigns with the new token
+  let syncResult = null;
+  try {
+    syncResult = await metaSync.syncAllCampaigns();
+  } catch (err) {
+    syncResult = { error: err.message };
+  }
+
+  await query(
+    `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata, ip_address)
+       VALUES ($1, 'meta', 'token', 'update_token', $2, $3)`,
+    [req.user.id, JSON.stringify({ updated: Object.keys(req.body), sync: syncResult ? 'attempted' : 'skipped' }), req.ip]
+  );
+
+  res.json({ success: true, data: { token_updated: true, campaign_sync: syncResult } });
+}));
+
+// Force campaign sync now (uses current token)
+router.post('/meta/sync-campaigns-now', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const results = await metaSync.syncAllCampaigns();
+  res.json({ success: true, data: results });
+}));
+
+// ---- Meta Sync & Campaign Management (Super Admin) -------------------
+
+// Check Meta connectivity (live Graph API test)
+router.get('/meta/connectivity', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const result = await metaSync.checkConnectivity();
+  res.json({ success: true, data: result });
+}));
+
+// Debug/validate access token
+router.get('/meta/debug-token', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const data = await metaSync.debugToken();
+  res.json({ success: true, data });
+}));
+
+// List campaigns from DB
+router.get('/meta/campaigns', authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (_req, res) => {
+  const { rows } = await query(`SELECT * FROM meta_campaigns ORDER BY internal_label, campaign_name`);
+  res.json({ success: true, data: rows });
+}));
+
+// Update campaign label/category
+router.patch('/meta/campaigns/:campaignId', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { campaignId } = req.params;
+  const { internal_label, category, description } = req.body;
+  const sets = [];
+  const vals = [];
+  let idx = 1;
+  if (internal_label) { sets.push(`internal_label = $${idx++}`); vals.push(internal_label); }
+  if (category) { sets.push(`category = $${idx++}`); vals.push(category); }
+  if (description !== undefined) { sets.push(`description = $${idx++}`); vals.push(description); }
+  if (!sets.length) throw new AppError(400, 'INVALID', 'Nothing to update');
+  vals.push(campaignId);
+  const { rows: [r] } = await query(
+    `UPDATE meta_campaigns SET ${sets.join(', ')} WHERE campaign_id = $${idx} RETURNING *`,
+    vals
+  );
+  if (!r) throw new AppError(404, 'NOT_FOUND', 'Campaign not found');
+  res.json({ success: true, data: r });
+}));
+
+// Sync campaigns from Meta ad accounts
+router.post('/meta/sync-campaigns', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const results = await metaSync.syncAllCampaigns();
+  res.json({ success: true, data: results });
+}));
+
+// Sync leads from all active forms
+router.post('/meta/sync-leads', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { form_id, since } = req.body || {};
+  let results;
+  if (form_id) {
+    results = await metaSync.syncFormLeads(form_id, { since });
+  } else {
+    results = await metaSync.syncAllFormLeads({ since });
+  }
+  res.json({ success: true, data: results });
+}));
+
+// Get campaign stats (leads grouped by campaign)
+router.get('/meta/campaign-stats', authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (_req, res) => {
+  const stats = await metaSync.getCampaignStats();
+  res.json({ success: true, data: stats });
+}));
+
+// List ad accounts from DB
+router.get('/meta/ad-accounts', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const { rows } = await query(`SELECT * FROM meta_ad_accounts ORDER BY account_id`);
+  res.json({ success: true, data: rows });
+}));
+
+// Fetch ad accounts from Meta API
+router.get('/meta/ad-accounts/discover', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const accounts = await metaSync.listAdAccounts();
+  res.json({ success: true, data: accounts });
+}));
+
+// List forms for a page from Meta API
+router.get('/meta/forms/discover', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const pageId = req.query.page_id || null;
+  const forms = await metaSync.listPageForms(pageId);
+  res.json({ success: true, data: forms });
+}));
+
+// Sync log history
+router.get('/meta/sync-log', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+  const { rows } = await query(
+    `SELECT * FROM meta_sync_log ORDER BY started_at DESC LIMIT $1`,
+    [limit]
+  );
+  res.json({ success: true, data: rows });
+}));
+
+// Page subscriptions (webhook prep)
+router.get('/meta/subscriptions', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const pageId = req.query.page_id || null;
+  const data = await metaSync.getPageSubscriptions(pageId);
+  res.json({ success: true, data });
+}));
+
+router.post('/meta/subscriptions', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { page_id } = req.body || {};
+  const data = await metaSync.subscribePageToLeadgen(page_id);
+  res.json({ success: true, data });
+}));
+
+// ══════════════════════════════════════════════════════════════════════
+// PARTNER LEAD REQUESTS — full workflow with timeline + notifications
+// ══════════════════════════════════════════════════════════════════════
+
+async function notifyUser(userId, type, title, body, metadata = {}) {
+  await query(
+    `INSERT INTO user_notifications(user_id, type, title, body, metadata)
+       VALUES ($1, $2, $3, $4, $5)`,
+    [userId, type, title, body, JSON.stringify(metadata)]
+  ).catch(() => {});
+}
+
+async function notifyAdmins(type, title, body, metadata = {}) {
+  const { rows } = await query(`SELECT id FROM users WHERE role = 'super_admin' AND deleted_at IS NULL`);
+  for (const r of rows) await notifyUser(r.id, type, title, body, metadata);
+}
+
+async function logTimeline(requestId, actorId, action, detail, metadata = {}) {
+  await query(
+    `INSERT INTO partner_request_timeline(request_id, actor_id, action, detail, metadata)
+       VALUES ($1, $2, $3, $4, $5)`,
+    [requestId, actorId, action, detail, JSON.stringify(metadata)]
+  ).catch(() => {});
+}
+
+// Partner submits lead request
+router.post('/partner-requests', authenticate, asyncHandler(async (req, res) => {
+  if (!['partner', 'member'].includes(req.user.role)) throw new AppError(403, 'FORBIDDEN', 'Only partners can request leads');
+  const { quantity, category, note } = req.body;
+  if (!quantity || quantity < 1) throw new AppError(400, 'INVALID', 'Quantity required (1-500)');
+
+  const dup = await query(`SELECT id FROM partner_lead_requests WHERE partner_id = $1 AND status = 'pending' LIMIT 1`, [req.user.id]);
+  if (dup.rowCount > 0) throw new AppError(409, 'DUPLICATE', 'You already have a pending request');
+
+  const { rows: [r] } = await query(
+    `INSERT INTO partner_lead_requests(partner_id, quantity, category, note)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+    [req.user.id, Math.min(500, quantity), category || null, note || null]
+  );
+
+  await logTimeline(r.id, req.user.id, 'created', `Requested ${r.quantity} leads${r.category ? ` (${r.category})` : ''}`);
+  await notifyAdmins('partner_request', 'New Partner Request', `${req.user.name} requested ${r.quantity} leads`, { request_id: r.id, partner_id: req.user.id });
+
+  const rmId = req.user.reportToId || req.user.report_to_id;
+  if (rmId) {
+    await notifyUser(rmId, 'partner_request', 'Partner Lead Request', `${req.user.name} requested ${r.quantity} leads`, { request_id: r.id });
+  }
+
+  res.status(201).json({ success: true, data: r });
+}));
+
+// List partner requests — admin sees all, RM sees their partners, partner sees own
+router.get('/partner-requests', authenticate, asyncHandler(async (req, res) => {
+  const status = req.query.status;
+  const page = Math.max(1, parseInt(req.query.page || '1', 10));
+  const pageSize = Math.min(100, parseInt(req.query.page_size || '25', 10));
+  const offset = (page - 1) * pageSize;
+
+  let where = '1=1';
+  const params = [];
+
+  if (req.user.role === 'partner' || req.user.role === 'member') {
+    params.push(req.user.id);
+    where += ` AND pr.partner_id = $${params.length}`;
+  } else if (req.user.role === 'rm') {
+    params.push(req.user.id);
+    where += ` AND (pr.assigned_rm_id = $${params.length} OR u.report_to_id = $${params.length})`;
+  }
+
+  if (status) {
+    params.push(status);
+    where += ` AND pr.status = $${params.length}`;
+  }
+
+  const countSql = `SELECT COUNT(*) FROM partner_lead_requests pr JOIN users u ON u.id = pr.partner_id WHERE ${where}`;
+  const { rows: [{ count: total }] } = await query(countSql, params);
+
+  params.push(pageSize, offset);
+  const { rows } = await query(`
+    SELECT pr.*,
+           u.full_name AS partner_name, u.email AS partner_email, u.phone AS partner_phone,
+           u.cp_id AS partner_cp_id, u.member_type AS partner_type, u.team_name,
+           rm.full_name AS rm_name,
+           rb.full_name AS resolved_by_name
+      FROM partner_lead_requests pr
+      JOIN users u ON u.id = pr.partner_id
+      LEFT JOIN users rm ON rm.id = pr.assigned_rm_id
+      LEFT JOIN users rb ON rb.id = pr.resolved_by
+     WHERE ${where}
+     ORDER BY pr.created_at DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}
+  `, params);
+
+  res.json({ success: true, data: { rows, total: parseInt(total, 10), page, pageSize } });
+}));
+
+// Dashboard stats for partner requests (must be before :id route)
+router.get('/partner-requests/stats/summary', authenticate, asyncHandler(async (req, res) => {
+  const { rows: [s] } = await query(`
+    SELECT
+      (SELECT COUNT(*) FROM partner_lead_requests) AS total_requests,
+      (SELECT COUNT(*) FROM partner_lead_requests WHERE status = 'pending') AS pending,
+      (SELECT COUNT(*) FROM partner_lead_requests WHERE status = 'approved' AND updated_at::date = CURRENT_DATE) AS approved_today,
+      (SELECT COUNT(*) FROM partner_lead_requests WHERE status IN ('assigned','completed')) AS assigned_total,
+      (SELECT COALESCE(SUM(leads_assigned), 0) FROM partner_lead_requests WHERE status IN ('assigned','completed')) AS total_leads_assigned,
+      (SELECT COUNT(DISTINCT partner_id) FROM partner_lead_requests WHERE created_at > NOW() - INTERVAL '7 days') AS active_partners_week
+  `);
+  const data = {};
+  for (const [k, v] of Object.entries(s)) data[k] = parseInt(v, 10) || 0;
+  res.json({ success: true, data });
+}));
+
+// Get single request with timeline
+router.get('/partner-requests/:id', authenticate, asyncHandler(async (req, res) => {
+  const { rows: [r] } = await query(`
+    SELECT pr.*,
+           u.full_name AS partner_name, u.email AS partner_email, u.phone AS partner_phone,
+           u.cp_id AS partner_cp_id, u.member_type AS partner_type, u.team_name,
+           rm.full_name AS rm_name,
+           rb.full_name AS resolved_by_name
+      FROM partner_lead_requests pr
+      JOIN users u ON u.id = pr.partner_id
+      LEFT JOIN users rm ON rm.id = pr.assigned_rm_id
+      LEFT JOIN users rb ON rb.id = pr.resolved_by
+     WHERE pr.id = $1
+  `, [req.params.id]);
+  if (!r) throw new AppError(404, 'NOT_FOUND', 'Request not found');
+
+  const { rows: timeline } = await query(`
+    SELECT t.*, a.full_name AS actor_name
+      FROM partner_request_timeline t
+      LEFT JOIN users a ON a.id = t.actor_id
+     WHERE t.request_id = $1
+     ORDER BY t.created_at ASC
+  `, [req.params.id]);
+
+  res.json({ success: true, data: { ...r, timeline } });
+}));
+
+// Approve request (RM/Admin)
+router.post('/partner-requests/:id/approve', authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (req, res) => {
+  const { note } = req.body || {};
+  const { rows: [r] } = await query(
+    `SELECT pr.*, u.full_name FROM partner_lead_requests pr JOIN users u ON u.id = pr.partner_id WHERE pr.id = $1 AND pr.status = 'pending'`,
+    [req.params.id]
+  );
+  if (!r) throw new AppError(404, 'NOT_FOUND', 'Request not found or not pending');
+
+  await query(
+    `UPDATE partner_lead_requests SET status = 'approved', assigned_rm_id = COALESCE(assigned_rm_id, $1),
+            resolved_by = $1, resolved_at = NOW(), resolve_note = $2, updated_at = NOW()
+       WHERE id = $3`,
+    [req.user.id, note || null, r.id]
+  );
+
+  await logTimeline(r.id, req.user.id, 'approved', `Approved by ${req.user.name}${note ? ': ' + note : ''}`);
+  await notifyUser(r.partner_id, 'request_approved', 'Request Approved', `Your request for ${r.quantity} leads has been approved`, { request_id: r.id });
+
+  res.json({ success: true, data: { message: 'Request approved' } });
+}));
+
+// Reject request (RM/Admin)
+router.post('/partner-requests/:id/reject', authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (req, res) => {
+  const { note } = req.body || {};
+  const { rows: [r] } = await query(
+    `SELECT pr.*, u.full_name FROM partner_lead_requests pr JOIN users u ON u.id = pr.partner_id WHERE pr.id = $1 AND pr.status = 'pending'`,
+    [req.params.id]
+  );
+  if (!r) throw new AppError(404, 'NOT_FOUND', 'Request not found or not pending');
+
+  await query(
+    `UPDATE partner_lead_requests SET status = 'rejected', resolved_by = $1, resolved_at = NOW(),
+            resolve_note = $2, updated_at = NOW()
+       WHERE id = $3`,
+    [req.user.id, note || null, r.id]
+  );
+
+  await logTimeline(r.id, req.user.id, 'rejected', `Rejected by ${req.user.name}${note ? ': ' + note : ''}`);
+  await notifyUser(r.partner_id, 'request_rejected', 'Request Rejected', `Your request for ${r.quantity} leads was rejected${note ? ': ' + note : ''}`, { request_id: r.id });
+
+  res.json({ success: true, data: { message: 'Request rejected' } });
+}));
+
+// Auto-assign leads to partner from approved request
+router.post('/partner-requests/:id/assign', authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (req, res) => {
+  const { rows: [r] } = await query(
+    `SELECT * FROM partner_lead_requests WHERE id = $1 AND status IN ('approved','assigned')`,
+    [req.params.id]
+  );
+  if (!r) throw new AppError(404, 'NOT_FOUND', 'Request not found or not approved');
+
+  const remaining = r.quantity - r.leads_assigned;
+  if (remaining <= 0) throw new AppError(400, 'ALREADY_FULFILLED', 'All leads already assigned');
+
+  const { rows: leads } = await query(
+    `SELECT id FROM leads
+       WHERE assigned_to_user_id IS NULL AND deleted_at IS NULL
+       ${r.category ? 'AND category = $2' : ''}
+       ORDER BY created_at ASC
+       LIMIT $1`,
+    r.category ? [remaining, r.category] : [remaining]
+  );
+
+  let assigned = 0;
+  for (const l of leads) {
+    await query(
+      `UPDATE leads SET assigned_to_user_id = $1, assigned_at = NOW(), updated_at = NOW() WHERE id = $2`,
+      [r.partner_id, l.id]
+    );
+    await query(
+      `INSERT INTO lead_assignments(lead_id, user_id, reason) VALUES ($1, $2, 'partner_request')`,
+      [l.id, r.partner_id]
+    );
+    assigned++;
+  }
+
+  const newTotal = r.leads_assigned + assigned;
+  const newStatus = newTotal >= r.quantity ? 'completed' : 'assigned';
+  await query(
+    `UPDATE partner_lead_requests SET leads_assigned = $1, status = $2, updated_at = NOW() WHERE id = $3`,
+    [newTotal, newStatus, r.id]
+  );
+
+  await logTimeline(r.id, req.user.id, 'assigned', `${assigned} leads auto-assigned (${newTotal}/${r.quantity} total)`, { assigned, total: newTotal });
+  await notifyUser(r.partner_id, 'leads_delivered', 'Leads Delivered', `${assigned} leads have been assigned to you`, { request_id: r.id, count: assigned });
+
+  res.json({ success: true, data: { assigned, total_assigned: newTotal, remaining: r.quantity - newTotal, status: newStatus } });
+}));
+
+// Manual assign specific leads to partner
+router.post('/partner-requests/:id/manual-assign', authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (req, res) => {
+  const { lead_ids } = req.body;
+  if (!lead_ids?.length) throw new AppError(400, 'INVALID', 'lead_ids required');
+
+  const { rows: [r] } = await query(
+    `SELECT * FROM partner_lead_requests WHERE id = $1 AND status IN ('approved','assigned')`,
+    [req.params.id]
+  );
+  if (!r) throw new AppError(404, 'NOT_FOUND', 'Request not found or not approved');
+
+  let assigned = 0;
+  for (const lid of lead_ids) {
+    const { rowCount } = await query(
+      `UPDATE leads SET assigned_to_user_id = $1, assigned_at = NOW(), updated_at = NOW()
+         WHERE id = $2 AND assigned_to_user_id IS NULL AND deleted_at IS NULL`,
+      [r.partner_id, lid]
+    );
+    if (rowCount > 0) {
+      await query(`INSERT INTO lead_assignments(lead_id, user_id, reason) VALUES ($1, $2, 'partner_manual')`, [lid, r.partner_id]);
+      assigned++;
+    }
+  }
+
+  const newTotal = r.leads_assigned + assigned;
+  const newStatus = newTotal >= r.quantity ? 'completed' : 'assigned';
+  await query(
+    `UPDATE partner_lead_requests SET leads_assigned = $1, status = $2, updated_at = NOW() WHERE id = $3`,
+    [newTotal, newStatus, r.id]
+  );
+
+  await logTimeline(r.id, req.user.id, 'manual_assign', `${assigned} leads manually assigned`, { lead_ids: lead_ids.slice(0, 10), assigned });
+  await notifyUser(r.partner_id, 'leads_delivered', 'Leads Delivered', `${assigned} leads have been assigned to you`, { request_id: r.id, count: assigned });
+
+  res.json({ success: true, data: { assigned, total_assigned: newTotal, status: newStatus } });
+}));
+
+// Cancel own request (partner)
+router.delete('/partner-requests/:id', authenticate, asyncHandler(async (req, res) => {
+  const { rowCount } = await query(
+    `DELETE FROM partner_lead_requests WHERE id = $1 AND partner_id = $2 AND status = 'pending' RETURNING id`,
+    [req.params.id, req.user.id]
+  );
+  if (rowCount === 0) throw new AppError(404, 'NOT_FOUND', 'Cannot cancel — not found or not pending');
+  res.json({ success: true, data: { deleted: true } });
+}));
+
+// ══════════════════════════════════════════════════════════════════════
+// USER NOTIFICATIONS — bell system for ALL roles
+// ══════════════════════════════════════════════════════════════════════
+
+router.get('/notifications', authenticate, asyncHandler(async (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page || '1', 10));
+  const pageSize = Math.min(50, parseInt(req.query.page_size || '20', 10));
+  const offset = (page - 1) * pageSize;
+
+  const { rows } = await query(
+    `SELECT * FROM user_notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+    [req.user.id, pageSize, offset]
+  );
+  const { rows: [{ count: unread }] } = await query(
+    `SELECT COUNT(*) FROM user_notifications WHERE user_id = $1 AND is_read = FALSE`,
+    [req.user.id]
+  );
+
+  res.json({ success: true, data: { notifications: rows, unread: parseInt(unread, 10) } });
+}));
+
+router.post('/notifications/:id/read', authenticate, asyncHandler(async (req, res) => {
+  await query(`UPDATE user_notifications SET is_read = TRUE WHERE id = $1 AND user_id = $2`, [req.params.id, req.user.id]);
+  res.json({ success: true });
+}));
+
+router.post('/notifications/read-all', authenticate, asyncHandler(async (req, res) => {
+  await query(`UPDATE user_notifications SET is_read = TRUE WHERE user_id = $1 AND is_read = FALSE`, [req.user.id]);
+  res.json({ success: true });
+}));
+
+// ══════════════════════════════════════════════════════════════════════
+// PERFORMANCE RANKINGS — real-time scoring from actual CRM activity
+// ══════════════════════════════════════════════════════════════════════
+
+const RANK_LABELS = [
+  { pos: 1,  emoji: '⭐', label: 'Superstar Performer' },
+  { pos: 2,  emoji: '👑', label: 'Excellent Leader' },
+  { pos: 3,  emoji: '🔥', label: 'Great Performer' },
+  { pos: 4,  emoji: '🚀', label: 'Rising Star' },
+  { pos: 5,  emoji: '💎', label: 'Smart Worker' },
+  { pos: 6,  emoji: '🎯', label: 'Fast Responder' },
+  { pos: 7,  emoji: '⚡', label: 'Active Performer' },
+  { pos: 8,  emoji: '🏆', label: 'Team Player' },
+  { pos: 9,  emoji: '🌟', label: 'Consistent Worker' },
+  { pos: 10, emoji: '🎉', label: 'Good Performer' },
+];
+
+const BADGE_MAP = {
+  star: '⭐', excellent: '🔥', good_work: '👏', outstanding: '💎',
+  fast_worker: '🚀', top_closer: '🏆', best_followup: '🎯',
+};
+
+function buildScoreSQL(roleFilter, teamFilter) {
+  const where = [];
+  const params = [];
+  let pidx = 0;
+
+  where.push("u.deleted_at IS NULL", "u.status = 'active'");
+
+  if (roleFilter) {
+    pidx++;
+    where.push(`u.role = $${pidx}`);
+    params.push(roleFilter);
+  }
+  if (teamFilter) {
+    pidx++;
+    where.push(`u.team_name = $${pidx}`);
+    params.push(teamFilter);
+  }
+
+  return {
+    sql: `
+      SELECT
+        u.id, u.full_name, u.role, u.team_name, u.email,
+        COALESCE(ls.total, 0)       AS leads_total,
+        COALESCE(ls.converted, 0)   AS leads_converted,
+        COALESCE(rm.calls, 0)       AS calls_made,
+        COALESCE(rm.followups, 0)   AS followups_done,
+        COALESCE(rm.avg_resp, 0)    AS avg_response_hrs,
+        CASE WHEN COALESCE(ls.total, 0) > 0
+             THEN ROUND(COALESCE(ls.converted, 0)::numeric / ls.total * 100, 2)
+             ELSE 0 END AS conv_rate,
+        -- Composite score: conversions*10 + calls*2 + followups*3 + speed_bonus
+        (COALESCE(ls.converted, 0) * 10
+         + COALESCE(rm.calls, 0) * 2
+         + COALESCE(rm.followups, 0) * 3
+         + CASE WHEN COALESCE(rm.avg_resp, 999) < 2 THEN 15
+                WHEN COALESCE(rm.avg_resp, 999) < 6 THEN 8
+                WHEN COALESCE(rm.avg_resp, 999) < 24 THEN 3
+                ELSE 0 END
+         + COALESCE(ls.total, 0)
+        ) AS score
+      FROM users u
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(*) AS total,
+          COUNT(*) FILTER (WHERE l.call_status = 'converted') AS converted
+        FROM leads l
+        WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
+      ) ls ON true
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(*) AS calls,
+          COUNT(*) FILTER (WHERE r.next_followup_at IS NOT NULL) AS followups,
+          EXTRACT(EPOCH FROM AVG(r.created_at - l2.assigned_at)) / 3600 AS avg_resp
+        FROM lead_remarks r
+        JOIN leads l2 ON l2.id = r.lead_id
+        WHERE r.user_id = u.id
+      ) rm ON true
+      WHERE ${where.join(' AND ')}
+      ORDER BY score DESC
+      LIMIT 10
+    `,
+    params,
+  };
+}
+
+// Compute & store daily rankings (called by scheduler or manually)
+async function computeDailyRankings() {
+  const today = new Date().toISOString().slice(0, 10);
+
+  const scopes = [
+    { scope: 'member',  roleFilter: 'member',  teamFilter: null },
+    { scope: 'partner', roleFilter: 'partner', teamFilter: null },
+    { scope: 'rm',      roleFilter: 'rm',      teamFilter: null },
+    { scope: 'overall', roleFilter: null,       teamFilter: null },
+  ];
+
+  let totalInserted = 0;
+
+  for (const { scope, roleFilter } of scopes) {
+    const { sql, params } = buildScoreSQL(roleFilter, null);
+    const { rows } = await query(sql, params);
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const pos = i + 1;
+
+      const { rows: prev } = await query(
+        `SELECT rank_position FROM daily_rankings
+         WHERE user_id = $1 AND scope = $2 AND rank_date < $3
+         ORDER BY rank_date DESC LIMIT 1`,
+        [r.id, scope, today]
+      );
+      const prevPos = prev[0]?.rank_position || null;
+      const movement = !prevPos ? 'new' : prevPos > pos ? 'up' : prevPos < pos ? 'down' : 'stable';
+
+      await query(`
+        INSERT INTO daily_rankings (user_id, rank_date, scope, team_name, rank_position, prev_position, score,
+          leads_total, leads_converted, calls_made, followups_done, avg_response_hrs, conv_rate, movement)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        ON CONFLICT (user_id, rank_date, scope) DO UPDATE SET
+          rank_position = EXCLUDED.rank_position, prev_position = EXCLUDED.prev_position,
+          score = EXCLUDED.score, leads_total = EXCLUDED.leads_total,
+          leads_converted = EXCLUDED.leads_converted, calls_made = EXCLUDED.calls_made,
+          followups_done = EXCLUDED.followups_done, avg_response_hrs = EXCLUDED.avg_response_hrs,
+          conv_rate = EXCLUDED.conv_rate, movement = EXCLUDED.movement
+      `, [r.id, today, scope, r.team_name, pos, prevPos, r.score,
+          r.leads_total, r.leads_converted, r.calls_made, r.followups_done,
+          r.avg_response_hrs || 0, r.conv_rate, movement]);
+      totalInserted++;
+    }
+  }
+
+  // Team rankings — aggregate scores by team
+  const { rows: teamRows } = await query(`
+    SELECT u.team_name,
+           SUM(COALESCE(ls.converted, 0) * 10 + COALESCE(rm2.calls, 0) * 2 + COALESCE(rm2.followups, 0) * 3 + COALESCE(ls.total, 0)) AS score,
+           SUM(COALESCE(ls.total, 0)) AS leads_total,
+           SUM(COALESCE(ls.converted, 0)) AS leads_converted,
+           SUM(COALESCE(rm2.calls, 0)) AS calls_made,
+           SUM(COALESCE(rm2.followups, 0)) AS followups_done,
+           COUNT(u.id) AS member_count
+    FROM users u
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE l.call_status = 'converted') AS converted
+      FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
+    ) ls ON true
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*) AS calls, COUNT(*) FILTER (WHERE r.next_followup_at IS NOT NULL) AS followups
+      FROM lead_remarks r WHERE r.user_id = u.id
+    ) rm2 ON true
+    WHERE u.deleted_at IS NULL AND u.status = 'active' AND u.team_name IS NOT NULL
+    GROUP BY u.team_name
+    ORDER BY score DESC
+    LIMIT 10
+  `);
+
+  for (let i = 0; i < teamRows.length; i++) {
+    const t = teamRows[i];
+    const pos = i + 1;
+    const { rows: prev } = await query(
+      `SELECT rank_position FROM daily_rankings WHERE team_name = $1 AND scope = 'team' AND rank_date < $2 ORDER BY rank_date DESC LIMIT 1`,
+      [t.team_name, today]
+    );
+    const prevPos = prev[0]?.rank_position || null;
+    const movement = !prevPos ? 'new' : prevPos > pos ? 'up' : prevPos < pos ? 'down' : 'stable';
+
+    const dummyId = (await query(`SELECT id FROM users WHERE team_name = $1 AND role = 'rm' LIMIT 1`, [t.team_name])).rows[0]?.id;
+    if (!dummyId) continue;
+
+    await query(`
+      INSERT INTO daily_rankings (user_id, rank_date, scope, team_name, rank_position, prev_position, score,
+        leads_total, leads_converted, calls_made, followups_done, avg_response_hrs, conv_rate, movement)
+      VALUES ($1,$2,'team',$3,$4,$5,$6,$7,$8,$9,$10,0,$11,$12)
+      ON CONFLICT (user_id, rank_date, scope) DO UPDATE SET
+        rank_position = EXCLUDED.rank_position, prev_position = EXCLUDED.prev_position,
+        score = EXCLUDED.score, leads_total = EXCLUDED.leads_total,
+        leads_converted = EXCLUDED.leads_converted, calls_made = EXCLUDED.calls_made,
+        followups_done = EXCLUDED.followups_done, conv_rate = EXCLUDED.conv_rate, movement = EXCLUDED.movement
+    `, [dummyId, today, t.team_name, pos, prevPos, t.score || 0,
+        t.leads_total, t.leads_converted, t.calls_made, t.followups_done,
+        t.leads_total > 0 ? Math.round(t.leads_converted / t.leads_total * 10000) / 100 : 0, movement]);
+    totalInserted++;
+  }
+
+  return totalInserted;
+}
+
+// POST /rankings/compute — manually trigger ranking computation (must be before :scope)
+router.post('/rankings/compute', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const count = await computeDailyRankings();
+  res.json({ success: true, data: { computed: count, date: new Date().toISOString().slice(0, 10) } });
+}));
+
+// GET /rankings/my — current user's rank across all scopes (must be before :scope)
+router.get('/rankings/my', authenticate, asyncHandler(async (req, res) => {
+  const { rows } = await query(`
+    SELECT scope, rank_position, prev_position, score, movement, rank_date
+    FROM daily_rankings
+    WHERE user_id = $1 AND rank_date = CURRENT_DATE
+    ORDER BY scope
+  `, [req.user.id]);
+
+  const badges = await query(`
+    SELECT badge_type, COUNT(*) AS count FROM appreciations WHERE to_user_id = $1 GROUP BY badge_type
+  `, [req.user.id]);
+
+  res.json({ success: true, data: { ranks: rows, badges: badges.rows } });
+}));
+
+// GET /rankings/rm-insights — RM-specific: top/weak members, daily changes
+router.get('/rankings/rm-insights', authenticate, requireRole('rm'), asyncHandler(async (req, res) => {
+  const { rows: topMembers } = await query(`
+    SELECT dr.*, u.full_name, u.team_name AS user_team
+    FROM daily_rankings dr JOIN users u ON u.id = dr.user_id
+    WHERE dr.scope = 'member' AND dr.rank_date = CURRENT_DATE
+      AND u.report_to_id = $1
+    ORDER BY dr.score DESC LIMIT 5
+  `, [req.user.id]);
+
+  const { rows: weakMembers } = await query(`
+    SELECT u.id, u.full_name, u.team_name,
+           COALESCE(ls.total, 0) AS leads_total,
+           COALESCE(ls.converted, 0) AS leads_converted,
+           COALESCE(rm3.calls, 0) AS calls_made
+    FROM users u
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE l.call_status = 'converted') AS converted
+      FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
+    ) ls ON true
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*) AS calls FROM lead_remarks r WHERE r.user_id = u.id
+    ) rm3 ON true
+    WHERE u.report_to_id = $1 AND u.deleted_at IS NULL AND u.status = 'active' AND u.role = 'member'
+    ORDER BY COALESCE(ls.converted, 0) ASC, COALESCE(rm3.calls, 0) ASC
+    LIMIT 5
+  `, [req.user.id]);
+
+  const { rows: bestConverter } = await query(`
+    SELECT u.id, u.full_name, COUNT(*) FILTER (WHERE l.call_status = 'converted') AS conversions,
+           COUNT(*) AS total
+    FROM users u JOIN leads l ON l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
+    WHERE u.report_to_id = $1 AND u.role = 'member' AND u.deleted_at IS NULL
+    GROUP BY u.id, u.full_name
+    ORDER BY conversions DESC LIMIT 1
+  `, [req.user.id]);
+
+  const { rows: mostActive } = await query(`
+    SELECT u.id, u.full_name, COUNT(*) AS activity
+    FROM users u JOIN lead_remarks r ON r.user_id = u.id
+    WHERE u.report_to_id = $1 AND u.role = 'member' AND u.deleted_at IS NULL
+      AND r.created_at >= CURRENT_DATE - INTERVAL '7 days'
+    GROUP BY u.id, u.full_name
+    ORDER BY activity DESC LIMIT 1
+  `, [req.user.id]);
+
+  res.json({
+    success: true,
+    data: {
+      top_members: topMembers,
+      weak_members: weakMembers,
+      best_converter: bestConverter[0] || null,
+      most_active: mostActive[0] || null,
+      rank_labels: RANK_LABELS,
+    },
+  });
+}));
+
+// GET /rankings/user-history/:userId — ranking trend over time
+router.get('/rankings/user-history/:userId', authenticate, asyncHandler(async (req, res) => {
+  const days = Math.min(90, parseInt(req.query.days || '30', 10));
+  const scope = req.query.scope || 'overall';
+
+  const { rows } = await query(`
+    SELECT rank_date, rank_position, prev_position, score, leads_converted, calls_made, followups_done, conv_rate, movement
+    FROM daily_rankings
+    WHERE user_id = $1 AND scope = $2 AND rank_date >= CURRENT_DATE - INTERVAL '${days} days'
+    ORDER BY rank_date ASC
+  `, [req.params.userId, scope]);
+
+  const current = rows[rows.length - 1];
+  const oldest = rows[0];
+  const growth = current && oldest && oldest.score > 0
+    ? Math.round((current.score - oldest.score) / oldest.score * 100)
+    : 0;
+
+  res.json({ success: true, data: { history: rows, growth_pct: growth, current_rank: current?.rank_position || null } });
+}));
+
+// GET /rankings/:scope — live top 10 (MUST be after all static /rankings/* routes)
+router.get('/rankings/:scope', authenticate, asyncHandler(async (req, res) => {
+  const scope = req.params.scope;
+  if (!['member', 'partner', 'rm', 'team', 'overall'].includes(scope)) {
+    throw new AppError(400, 'INVALID', 'Scope must be member, partner, rm, team, or overall');
+  }
+  const period = req.query.period || 'today';
+  const teamFilter = req.query.team || null;
+
+  let dateFilter;
+  if (period === 'week') dateFilter = "rank_date >= CURRENT_DATE - INTERVAL '7 days'";
+  else if (period === 'month') dateFilter = "rank_date >= CURRENT_DATE - INTERVAL '30 days'";
+  else dateFilter = 'rank_date = CURRENT_DATE';
+
+  const { rows } = await query(`
+    SELECT dr.*, u.full_name, u.email, u.role, u.team_name AS user_team,
+           (SELECT COUNT(*) FROM appreciations a WHERE a.to_user_id = dr.user_id AND a.created_at > NOW() - INTERVAL '30 days') AS recent_appreciations,
+           (SELECT json_agg(json_build_object('badge_type', a2.badge_type, 'note', a2.note, 'from_name', fu.full_name, 'created_at', a2.created_at))
+            FROM (SELECT * FROM appreciations WHERE to_user_id = dr.user_id ORDER BY created_at DESC LIMIT 3) a2
+            LEFT JOIN users fu ON fu.id = a2.from_user_id) AS latest_badges
+    FROM daily_rankings dr
+    JOIN users u ON u.id = dr.user_id
+    WHERE dr.scope = $1 AND ${dateFilter}
+    ${teamFilter ? 'AND dr.team_name = $2' : ''}
+    ORDER BY dr.rank_position ASC
+    LIMIT 10
+  `, teamFilter ? [scope, teamFilter] : [scope]);
+
+  const ranked = rows.map((r, i) => ({
+    ...r,
+    rank_label: RANK_LABELS[i] || null,
+    badge_emoji: BADGE_MAP,
+  }));
+
+  res.json({ success: true, data: ranked });
+}));
+
+// ══════════════════════════════════════════════════════════════════════
+// APPRECIATION SYSTEM — RM/Admin can give badges
+// ══════════════════════════════════════════════════════════════════════
+
+router.post('/appreciations', authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (req, res) => {
+  const { to_user_id, badge_type, note } = req.body;
+  if (!to_user_id || !badge_type) throw new AppError(400, 'INVALID', 'to_user_id and badge_type required');
+
+  const validBadges = ['star', 'excellent', 'good_work', 'outstanding', 'fast_worker', 'top_closer', 'best_followup'];
+  if (!validBadges.includes(badge_type)) throw new AppError(400, 'INVALID', 'Invalid badge type');
+
+  const { rows: [target] } = await query(`SELECT id, full_name FROM users WHERE id = $1 AND deleted_at IS NULL`, [to_user_id]);
+  if (!target) throw new AppError(404, 'NOT_FOUND', 'User not found');
+
+  const { rows: [a] } = await query(`
+    INSERT INTO appreciations (from_user_id, to_user_id, badge_type, note)
+    VALUES ($1, $2, $3, $4) RETURNING *
+  `, [req.user.id, to_user_id, badge_type, note || null]);
+
+  await notifyUser(to_user_id, 'appreciation', `${BADGE_MAP[badge_type] || '⭐'} ${req.user.name} gave you "${badge_type.replace(/_/g, ' ')}"`,
+    note || 'Great work! Keep it up.', { badge_type, from_user_id: req.user.id });
+
+  res.json({ success: true, data: a });
+}));
+
+router.get('/appreciations/:userId', authenticate, asyncHandler(async (req, res) => {
+  const { rows } = await query(`
+    SELECT a.*, fu.full_name AS from_name
+    FROM appreciations a JOIN users fu ON fu.id = a.from_user_id
+    WHERE a.to_user_id = $1
+    ORDER BY a.created_at DESC LIMIT 50
+  `, [req.params.userId]);
+
+  const { rows: summary } = await query(`
+    SELECT badge_type, COUNT(*) AS count FROM appreciations WHERE to_user_id = $1 GROUP BY badge_type
+  `, [req.params.userId]);
+
+  res.json({ success: true, data: { appreciations: rows, summary } });
+}));
+
+// GET /rankings/user-badge/:userId — compact badge info for displaying beside name
+router.get('/rankings/user-badge/:userId', authenticate, asyncHandler(async (req, res) => {
+  const { rows: [rank] } = await query(`
+    SELECT rank_position, score, movement, scope FROM daily_rankings
+    WHERE user_id = $1 AND scope = 'overall' AND rank_date = CURRENT_DATE
+  `, [req.params.userId]);
+
+  const { rows: badges } = await query(`
+    SELECT badge_type, COUNT(*) AS count FROM appreciations
+    WHERE to_user_id = $1 AND created_at > NOW() - INTERVAL '30 days'
+    GROUP BY badge_type ORDER BY count DESC LIMIT 3
+  `, [req.params.userId]);
+
+  const label = rank ? RANK_LABELS[rank.rank_position - 1] || null : null;
+
+  res.json({ success: true, data: { rank: rank || null, label, badges, badge_map: BADGE_MAP } });
+}));
+
+// ══════════════════════════════════════════════════════════════════════
+// RM MONITORING — read-only team activity & request visibility layer
+// ══════════════════════════════════════════════════════════════════════
+
+// Live counters for RM dashboard
+router.get('/rm-monitoring/live-counters', authenticate, requireRole('rm', 'super_admin'), asyncHandler(async (req, res) => {
+  const rmId = req.user.role === 'rm' ? req.user.id : req.query.rm_id;
+  if (!rmId) throw new AppError(400, 'INVALID', 'rm_id required for admin view');
+
+  const { rows: [c] } = await query(`
+    SELECT
+      (SELECT COUNT(*) FROM lead_requests lr
+         JOIN users u2 ON u2.id = lr.user_id AND u2.report_to_id = $1
+       WHERE lr.created_at::date = CURRENT_DATE) AS requests_today,
+      (SELECT COUNT(*) FROM lead_requests lr
+         JOIN users u2 ON u2.id = lr.user_id AND u2.report_to_id = $1
+       WHERE lr.status = 'pending') AS requests_pending,
+      (SELECT COUNT(*) FROM leads l2
+         JOIN users u2 ON u2.id = l2.assigned_to_user_id AND u2.report_to_id = $1
+       WHERE l2.assigned_at::date = CURRENT_DATE AND l2.deleted_at IS NULL) AS leads_distributed_today,
+      (SELECT COUNT(*) FROM leads l2
+         JOIN users u2 ON u2.id = l2.assigned_to_user_id AND u2.report_to_id = $1
+       WHERE l2.deleted_at IS NULL) AS leads_total,
+      (SELECT COUNT(*) FROM users
+       WHERE report_to_id = $1 AND deleted_at IS NULL AND role IN ('member','partner')) AS team_size,
+      (SELECT COUNT(DISTINCT r2.user_id) FROM lead_remarks r2
+         JOIN users u2 ON u2.id = r2.user_id AND u2.report_to_id = $1
+       WHERE r2.created_at::date = CURRENT_DATE) AS active_today,
+      (SELECT COUNT(DISTINCT l2.assigned_to_user_id) FROM leads l2
+         JOIN users u2 ON u2.id = l2.assigned_to_user_id AND u2.report_to_id = $1
+       WHERE l2.is_pending = TRUE AND l2.deleted_at IS NULL) AS pending_work_users,
+      (SELECT COUNT(DISTINCT lr.user_id) FROM lead_requests lr
+         JOIN users u2 ON u2.id = lr.user_id AND u2.report_to_id = $1
+       WHERE lr.status = 'pending') AS members_waiting,
+      (SELECT COUNT(*) FROM leads l2
+         JOIN users u2 ON u2.id = l2.assigned_to_user_id AND u2.report_to_id = $1
+       WHERE l2.call_status = 'converted' AND l2.updated_at::date = CURRENT_DATE AND l2.deleted_at IS NULL) AS conversions_today
+  `, [rmId]);
+
+  const { rows: [topActive] } = await query(`
+    SELECT u.id, u.full_name, COUNT(*)::int AS activity
+    FROM lead_remarks r JOIN users u ON u.id = r.user_id AND u.report_to_id = $1
+    WHERE r.created_at::date = CURRENT_DATE AND u.deleted_at IS NULL
+    GROUP BY u.id, u.full_name ORDER BY activity DESC LIMIT 1
+  `, [rmId]);
+
+  const { rows: [topConverter] } = await query(`
+    SELECT u.id, u.full_name, COUNT(*)::int AS conversions
+    FROM leads l JOIN users u ON u.id = l.assigned_to_user_id AND u.report_to_id = $1
+    WHERE l.call_status = 'converted' AND l.deleted_at IS NULL AND u.deleted_at IS NULL
+    GROUP BY u.id, u.full_name ORDER BY conversions DESC LIMIT 1
+  `, [rmId]);
+
+  const data = {};
+  for (const [k, v] of Object.entries(c)) data[k] = parseInt(v, 10) || 0;
+  data.top_active_member = topActive || null;
+  data.top_conversion_member = topConverter || null;
+
+  res.json({ success: true, data });
+}));
+
+// Per-member comprehensive overview for monitoring
+router.get('/rm-monitoring/team-overview', authenticate, requireRole('rm', 'super_admin'), asyncHandler(async (req, res) => {
+  const rmId = req.user.role === 'rm' ? req.user.id : req.query.rm_id;
+  if (!rmId) throw new AppError(400, 'INVALID', 'rm_id required');
+
+  const { rows } = await query(`
+    SELECT
+      u.id, u.full_name, u.email, u.role, u.member_type, u.team_name,
+      u.is_available, u.status,
+      COALESCE(lc.total, 0)::int AS leads_received_total,
+      COALESCE(lc.today_count, 0)::int AS leads_received_today,
+      COALESCE(lc.pending, 0)::int AS leads_pending,
+      COALESCE(lc.worked, 0)::int AS leads_worked,
+      COALESCE(lc.converted, 0)::int AS leads_converted,
+      (COALESCE(lc.total, 0) - COALESCE(lc.worked, 0))::int AS leads_remaining,
+      CASE WHEN COALESCE(lc.total, 0) > 0
+        THEN ROUND(COALESCE(lc.converted, 0)::numeric / lc.total * 100, 1)
+        ELSE 0 END AS conv_rate,
+      COALESCE(rq.total_req, 0)::int AS requests_total,
+      COALESCE(rq.today_req, 0)::int AS requests_today,
+      COALESCE(rq.pending_req, 0)::int AS requests_pending,
+      lact.last_remark_at,
+      COALESCE(lact.remarks_today, 0)::int AS remarks_today,
+      CASE WHEN COALESCE(lact.remarks_today, 0) > 0
+                OR COALESCE(lc.today_count, 0) > 0 THEN true ELSE false END AS is_active_today
+    FROM users u
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*) AS total,
+             COUNT(*) FILTER (WHERE l.assigned_at::date = CURRENT_DATE) AS today_count,
+             COUNT(*) FILTER (WHERE l.is_pending = TRUE) AS pending,
+             COUNT(*) FILTER (WHERE l.call_status <> 'not_called') AS worked,
+             COUNT(*) FILTER (WHERE l.call_status = 'converted') AS converted
+      FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
+    ) lc ON true
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*) AS total_req,
+             COUNT(*) FILTER (WHERE lr.created_at::date = CURRENT_DATE) AS today_req,
+             COUNT(*) FILTER (WHERE lr.status = 'pending') AS pending_req
+      FROM lead_requests lr WHERE lr.user_id = u.id
+    ) rq ON true
+    LEFT JOIN LATERAL (
+      SELECT MAX(r.created_at) AS last_remark_at,
+             COUNT(*) FILTER (WHERE r.created_at::date = CURRENT_DATE) AS remarks_today
+      FROM lead_remarks r WHERE r.user_id = u.id
+    ) lact ON true
+    WHERE u.report_to_id = $1 AND u.deleted_at IS NULL AND u.role IN ('member', 'partner')
+    ORDER BY lc.converted DESC NULLS LAST, lc.worked DESC NULLS LAST, u.full_name
+  `, [rmId]);
+
+  res.json({ success: true, data: rows });
+}));
+
+// Enhanced member/partner requests with lead stats
+router.get('/rm-monitoring/member-requests', authenticate, requireRole('rm', 'super_admin'), asyncHandler(async (req, res) => {
+  const rmId = req.user.role === 'rm' ? req.user.id : req.query.rm_id;
+  if (!rmId) throw new AppError(400, 'INVALID', 'rm_id required');
+  const category = req.query.category;
+
+  const params1 = [rmId];
+  let catFilter1 = '';
+  if (category && ['partner', 'trader'].includes(category)) {
+    params1.push(category);
+    catFilter1 = ` AND lr.category = $${params1.length}`;
+  }
+
+  const { rows: memberReqs } = await query(`
+    SELECT 'member' AS request_source,
+           lr.id, lr.user_id, lr.quantity, lr.category, lr.status,
+           COALESCE(lr.leads_assigned, 0)::int AS leads_assigned,
+           lr.note, lr.created_at, lr.updated_at,
+           u.full_name, u.email, u.member_type, u.team_name, u.role,
+           (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL) AS member_leads_total,
+           (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
+              AND l.assigned_at::date = CURRENT_DATE) AS member_leads_today,
+           (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
+              AND l.is_pending = TRUE) AS member_leads_pending,
+           (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
+              AND l.call_status <> 'not_called') AS member_leads_worked,
+           (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
+              AND l.call_status = 'converted') AS member_leads_converted
+    FROM lead_requests lr
+    JOIN users u ON u.id = lr.user_id AND u.report_to_id = $1 AND u.deleted_at IS NULL
+    WHERE 1=1 ${catFilter1}
+    ORDER BY lr.created_at DESC LIMIT 30
+  `, params1);
+
+  const params2 = [rmId];
+  let catFilter2 = '';
+  if (category && ['partner', 'trader'].includes(category)) {
+    params2.push(category);
+    catFilter2 = ` AND pr.category = $${params2.length}`;
+  }
+
+  const { rows: partnerReqs } = await query(`
+    SELECT 'partner' AS request_source,
+           pr.id, pr.partner_id AS user_id, pr.quantity, pr.category, pr.status,
+           COALESCE(pr.leads_assigned, 0)::int AS leads_assigned,
+           pr.note, pr.created_at, pr.updated_at,
+           u.full_name, u.email, u.member_type, u.team_name, u.role,
+           (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL) AS member_leads_total,
+           (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
+              AND l.assigned_at::date = CURRENT_DATE) AS member_leads_today,
+           (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
+              AND l.is_pending = TRUE) AS member_leads_pending,
+           (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
+              AND l.call_status <> 'not_called') AS member_leads_worked,
+           (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
+              AND l.call_status = 'converted') AS member_leads_converted
+    FROM partner_lead_requests pr
+    JOIN users u ON u.id = pr.partner_id AND u.deleted_at IS NULL
+      AND (u.report_to_id = $1 OR pr.assigned_rm_id = $1)
+    WHERE 1=1 ${catFilter2}
+    ORDER BY pr.created_at DESC LIMIT 30
+  `, params2);
+
+  const all = [...memberReqs, ...partnerReqs]
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    .slice(0, 50);
+
+  res.json({ success: true, data: all });
+}));
+
+// ═══════════════════════════════════════════════════════════════════
+// ADMIN ENTERPRISE CONTROL CENTER ENDPOINTS
+// ═══════════════════════════════════════════════════════════════════
+
+// ── Campaign Management (CRUD) ───────────────────────────────────
+router.get('/admin/campaigns', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { rows } = await query(`
+    SELECT mc.*,
+      (SELECT COUNT(*)::int FROM leads l WHERE l.meta_campaign_id = mc.campaign_id AND l.deleted_at IS NULL) AS total_leads,
+      (SELECT COUNT(*)::int FROM leads l WHERE l.meta_campaign_id = mc.campaign_id AND l.deleted_at IS NULL
+        AND l.created_at::date = CURRENT_DATE) AS today_leads,
+      (SELECT COUNT(*)::int FROM leads l WHERE l.meta_campaign_id = mc.campaign_id AND l.deleted_at IS NULL
+        AND l.call_status = 'converted') AS conversions,
+      (SELECT COUNT(*)::int FROM leads l WHERE l.meta_campaign_id = mc.campaign_id AND l.deleted_at IS NULL
+        AND l.is_pending = TRUE) AS pending_leads
+    FROM meta_campaigns mc
+    ORDER BY mc.created_at DESC
+  `);
+  res.json({ success: true, data: rows });
+}));
+
+router.post('/admin/campaigns', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { campaign_name, internal_label, category, ad_account_id } = req.body;
+  if (!campaign_name) throw new AppError(400, 'INVALID', 'campaign_name is required');
+  const campaignId = 'manual_' + Date.now();
+  const { rows: [c] } = await query(
+    `INSERT INTO meta_campaigns (campaign_id, campaign_name, internal_label, category, ad_account_id, is_active, created_at)
+     VALUES ($1, $2, $3, $4, $5, true, NOW()) RETURNING *`,
+    [campaignId, campaign_name, internal_label || null, category || null, ad_account_id || null]
+  );
+  await query(`INSERT INTO activity_logs(user_id, user_name, user_role, entity, entity_id, action, metadata, ip_address)
+    VALUES($1,$2,$3,'campaign',$4,'create',$5,$6)`,
+    [req.user.id, req.user.full_name, req.user.role, c.id, JSON.stringify({ campaign_name }), req.ip]);
+  res.status(201).json({ success: true, data: c });
+}));
+
+router.patch('/admin/campaigns/:id', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { campaign_name, internal_label, is_active, category } = req.body;
+  const sets = []; const vals = []; let idx = 0;
+  if (campaign_name !== undefined) { sets.push(`campaign_name = $${++idx}`); vals.push(campaign_name); }
+  if (internal_label !== undefined) { sets.push(`internal_label = $${++idx}`); vals.push(internal_label); }
+  if (is_active !== undefined) { sets.push(`is_active = $${++idx}`); vals.push(is_active); }
+  if (category !== undefined) { sets.push(`category = $${++idx}`); vals.push(category); }
+  if (sets.length === 0) throw new AppError(400, 'INVALID', 'Nothing to update');
+  vals.push(id);
+  const { rows: [c] } = await query(
+    `UPDATE meta_campaigns SET ${sets.join(', ')} WHERE id = $${vals.length} RETURNING *`, vals
+  );
+  if (!c) throw new AppError(404, 'NOT_FOUND', 'Campaign not found');
+  await query(`INSERT INTO activity_logs(user_id, user_name, user_role, entity, entity_id, action, metadata, ip_address)
+    VALUES($1,$2,$3,'campaign',$4,'update',$5,$6)`,
+    [req.user.id, req.user.full_name, req.user.role, id, JSON.stringify(req.body), req.ip]);
+  res.json({ success: true, data: c });
+}));
+
+router.delete('/admin/campaigns/:id', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { rowCount } = await query(`DELETE FROM meta_campaigns WHERE id = $1`, [req.params.id]);
+  if (rowCount === 0) throw new AppError(404, 'NOT_FOUND', 'Campaign not found');
+  await query(`INSERT INTO activity_logs(user_id, user_name, user_role, entity, entity_id, action, metadata, ip_address)
+    VALUES($1,$2,$3,'campaign',$4,'delete',$5,$6)`,
+    [req.user.id, req.user.full_name, req.user.role, req.params.id, '{}', req.ip]);
+  res.json({ success: true, data: { message: 'Campaign deleted' } });
+}));
+
+// ── Lead Sources Analytics ───────────────────────────────────────
+router.get('/admin/lead-sources', authenticate, requireRole('super_admin'), responseCache(10000), asyncHandler(async (req, res) => {
+  const { rows: sources } = await query(`
+    SELECT l.source,
+      COUNT(*)::int AS total_leads,
+      COUNT(*) FILTER (WHERE l.created_at::date = CURRENT_DATE)::int AS today_leads,
+      COUNT(*) FILTER (WHERE l.call_status = 'converted')::int AS conversions,
+      COUNT(*) FILTER (WHERE l.is_pending = TRUE)::int AS pending,
+      COUNT(*) FILTER (WHERE l.stage = 'won')::int AS won,
+      ROUND(COUNT(*) FILTER (WHERE l.call_status = 'converted')::numeric / NULLIF(COUNT(*), 0) * 100, 1) AS conv_rate,
+      MAX(l.created_at) AS last_lead_at
+    FROM leads l WHERE l.deleted_at IS NULL
+    GROUP BY l.source ORDER BY total_leads DESC
+  `);
+
+  const { rows: campaigns } = await query(`
+    SELECT COALESCE(l.campaign_name, mc.campaign_name, 'Unknown') AS campaign,
+      l.source,
+      COUNT(*)::int AS total_leads,
+      COUNT(*) FILTER (WHERE l.created_at::date = CURRENT_DATE)::int AS today_leads,
+      COUNT(*) FILTER (WHERE l.call_status = 'converted')::int AS conversions,
+      ROUND(COUNT(*) FILTER (WHERE l.call_status = 'converted')::numeric / NULLIF(COUNT(*), 0) * 100, 1) AS conv_rate
+    FROM leads l
+    LEFT JOIN meta_campaigns mc ON mc.campaign_id = l.meta_campaign_id
+    WHERE l.deleted_at IS NULL
+    GROUP BY campaign, l.source ORDER BY total_leads DESC LIMIT 50
+  `);
+
+  const { rows: daily } = await query(`
+    SELECT l.created_at::date AS day, l.source, COUNT(*)::int AS count
+    FROM leads l WHERE l.deleted_at IS NULL AND l.created_at >= CURRENT_DATE - INTERVAL '14 days'
+    GROUP BY l.created_at::date, l.source ORDER BY day
+  `);
+
+  res.json({ success: true, data: { sources, campaigns, daily } });
+}));
+
+// ── Google Sheets Control ────────────────────────────────────────
+router.get('/admin/sheets/config', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const config = {
+    sheet_id: process.env.GOOGLE_SHEET_ID || null,
+    service_account_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || null,
+    sheet_name: process.env.GOOGLE_SHEET_NAME || 'Sheet1',
+    key_path: process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH || null,
+    configured: !!(process.env.GOOGLE_SHEET_ID && process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL),
+  };
+  let syncLog = [];
+  try {
+    const { rows } = await query(`SELECT * FROM activity_logs WHERE entity = 'sheets' ORDER BY created_at DESC LIMIT 20`);
+    syncLog = rows;
+  } catch { /* table may not have sheets entries */ }
+  res.json({ success: true, data: { config, sync_logs: syncLog } });
+}));
+
+router.post('/admin/sheets/trigger-sync', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  await query(`INSERT INTO activity_logs(user_id, user_name, user_role, entity, entity_id, action, metadata, ip_address)
+    VALUES($1,$2,$3,'sheets','manual','sync_triggered',$4,$5)`,
+    [req.user.id, req.user.full_name, req.user.role, '{}', req.ip]);
+  let result = { message: 'Sync triggered', synced: 0 };
+  try {
+    const sheetSync = require('../services/googleSheets');
+    if (sheetSync && typeof sheetSync.syncNow === 'function') {
+      const r = await sheetSync.syncNow();
+      result = { message: 'Sync completed', synced: r?.count || 0 };
+    }
+  } catch (err) {
+    result = { message: 'Sync service not available', error: err.message };
+  }
+  res.json({ success: true, data: result });
+}));
+
+// ── Distribution Rules Management ────────────────────────────────
+router.patch('/admin/rules/:id', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { name, strategy, is_active, eligible_user_ids, priority, form_id } = req.body;
+  const sets = []; const vals = []; let idx = 0;
+  if (name !== undefined) { sets.push(`name = $${++idx}`); vals.push(name); }
+  if (strategy !== undefined) { sets.push(`strategy = $${++idx}`); vals.push(strategy); }
+  if (is_active !== undefined) { sets.push(`is_active = $${++idx}`); vals.push(is_active); }
+  if (eligible_user_ids !== undefined) { sets.push(`eligible_user_ids = $${++idx}`); vals.push(JSON.stringify(eligible_user_ids)); }
+  if (priority !== undefined) { sets.push(`priority = $${++idx}`); vals.push(priority); }
+  if (form_id !== undefined) { sets.push(`form_id = $${++idx}`); vals.push(form_id); }
+  if (sets.length === 0) throw new AppError(400, 'INVALID', 'Nothing to update');
+  vals.push(id);
+  const { rows: [r] } = await query(`UPDATE distribution_rules SET ${sets.join(', ')} WHERE id = $${vals.length} RETURNING *`, vals);
+  if (!r) throw new AppError(404, 'NOT_FOUND', 'Rule not found');
+  res.json({ success: true, data: r });
+}));
+
+router.delete('/admin/rules/:id', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { rowCount } = await query(`DELETE FROM distribution_rules WHERE id = $1`, [req.params.id]);
+  if (rowCount === 0) throw new AppError(404, 'NOT_FOUND', 'Rule not found');
+  res.json({ success: true, data: { message: 'Rule deleted' } });
+}));
+
+// ── Admin Analytics Dashboard ────────────────────────────────────
+router.get('/admin/analytics/overview', authenticate, requireRole('super_admin'), responseCache(15000), asyncHandler(async (_req, res) => {
+  const { rows: [counts] } = await query(`
+    SELECT
+      (SELECT COUNT(*)::int FROM users WHERE deleted_at IS NULL AND status = 'active') AS active_users,
+      (SELECT COUNT(*)::int FROM users WHERE deleted_at IS NULL AND role = 'rm') AS total_rms,
+      (SELECT COUNT(*)::int FROM users WHERE deleted_at IS NULL AND role = 'member') AS total_members,
+      (SELECT COUNT(*)::int FROM users WHERE deleted_at IS NULL AND role = 'partner') AS total_partners,
+      (SELECT COUNT(*)::int FROM users WHERE deleted_at IS NULL AND status = 'blocked') AS blocked_users,
+      (SELECT COUNT(*)::int FROM leads WHERE deleted_at IS NULL) AS total_leads,
+      (SELECT COUNT(*)::int FROM leads WHERE deleted_at IS NULL AND assigned_to_user_id IS NULL) AS unassigned_leads,
+      (SELECT COUNT(*)::int FROM leads WHERE deleted_at IS NULL AND is_pending = TRUE) AS pending_leads,
+      (SELECT COUNT(*)::int FROM leads WHERE deleted_at IS NULL AND call_status = 'converted') AS converted_leads,
+      (SELECT COUNT(*)::int FROM leads WHERE deleted_at IS NULL AND stage = 'won') AS won_leads,
+      (SELECT COUNT(*)::int FROM leads WHERE deleted_at IS NULL AND stage = 'lost') AS lost_leads,
+      (SELECT COUNT(*)::int FROM leads WHERE deleted_at IS NULL AND created_at::date = CURRENT_DATE) AS today_leads,
+      (SELECT COUNT(*)::int FROM leads WHERE deleted_at IS NULL AND call_status = 'converted' AND created_at::date = CURRENT_DATE) AS today_conversions,
+      (SELECT COUNT(*)::int FROM lead_requests WHERE status = 'pending') AS pending_requests,
+      (SELECT COUNT(*)::int FROM lead_remarks WHERE created_at::date = CURRENT_DATE) AS today_remarks
+  `);
+
+  const { rows: dailyTrend } = await query(`
+    SELECT d::date AS day,
+      (SELECT COUNT(*)::int FROM leads WHERE deleted_at IS NULL AND created_at::date = d::date) AS leads,
+      (SELECT COUNT(*)::int FROM leads WHERE deleted_at IS NULL AND call_status = 'converted' AND created_at::date = d::date) AS conversions,
+      (SELECT COUNT(*)::int FROM lead_remarks WHERE created_at::date = d::date) AS remarks
+    FROM generate_series(CURRENT_DATE - INTERVAL '30 days', CURRENT_DATE, '1 day') AS d
+    ORDER BY d
+  `);
+
+  const { rows: topPerformers } = await query(`
+    SELECT u.id, u.full_name, u.role, u.team_name,
+      COUNT(l.id)::int AS total_leads,
+      COUNT(l.id) FILTER (WHERE l.call_status = 'converted')::int AS conversions,
+      ROUND(COUNT(l.id) FILTER (WHERE l.call_status = 'converted')::numeric / NULLIF(COUNT(l.id), 0) * 100, 1) AS conv_rate
+    FROM users u
+    LEFT JOIN leads l ON l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
+    WHERE u.deleted_at IS NULL AND u.role IN ('member', 'partner')
+    GROUP BY u.id, u.full_name, u.role, u.team_name
+    ORDER BY conversions DESC LIMIT 15
+  `);
+
+  const { rows: stageBreakdown } = await query(`
+    SELECT stage, COUNT(*)::int AS count
+    FROM leads WHERE deleted_at IS NULL GROUP BY stage ORDER BY count DESC
+  `);
+
+  const { rows: statusBreakdown } = await query(`
+    SELECT call_status, COUNT(*)::int AS count
+    FROM leads WHERE deleted_at IS NULL GROUP BY call_status ORDER BY count DESC
+  `);
+
+  const { rows: hourlyToday } = await query(`
+    SELECT EXTRACT(HOUR FROM created_at)::int AS hour, COUNT(*)::int AS count
+    FROM leads WHERE deleted_at IS NULL AND created_at::date = CURRENT_DATE
+    GROUP BY hour ORDER BY hour
+  `);
+
+  res.json({ success: true, data: { counts, dailyTrend, topPerformers, stageBreakdown, statusBreakdown, hourlyToday } });
+}));
+
+// ── Admin: User Detail (enhanced) ────────────────────────────────
+router.get('/admin/users/:userId/detail', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+  const { rows: [user] } = await query(`SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL`, [userId]);
+  if (!user) throw new AppError(404, 'NOT_FOUND', 'User not found');
+
+  const { rows: leadStats } = await query(`
+    SELECT
+      COUNT(*)::int AS total_leads,
+      COUNT(*) FILTER (WHERE is_pending = TRUE)::int AS pending,
+      COUNT(*) FILTER (WHERE call_status = 'converted')::int AS conversions,
+      COUNT(*) FILTER (WHERE call_status = 'not_called')::int AS not_called,
+      COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE)::int AS today_received,
+      COUNT(*) FILTER (WHERE call_status = 'converted' AND created_at::date = CURRENT_DATE)::int AS today_conversions
+    FROM leads WHERE assigned_to_user_id = $1 AND deleted_at IS NULL
+  `, [userId]);
+
+  const { rows: recentRemarks } = await query(`
+    SELECT lr.*, l.full_name AS lead_name
+    FROM lead_remarks lr
+    JOIN leads l ON l.id = lr.lead_id AND l.deleted_at IS NULL
+    WHERE lr.user_id = $1
+    ORDER BY lr.created_at DESC LIMIT 10
+  `, [userId]);
+
+  const { rows: reportees } = await query(`
+    SELECT id, full_name, email, role, status, team_name FROM users WHERE report_to_id = $1 AND deleted_at IS NULL
+  `, [userId]);
+
+  res.json({ success: true, data: { user, lead_stats: leadStats[0], recent_remarks: recentRemarks, reportees } });
+}));
+
+// ── Admin: Update user lead cap / weight / role ──────────────────
+router.post('/admin/users/:userId/update-settings', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+  const { daily_lead_cap, distribution_weight, role, is_available, team_name, report_to_id } = req.body;
+  const sets = []; const vals = []; let idx = 0;
+  if (daily_lead_cap !== undefined) { sets.push(`daily_lead_cap = $${++idx}`); vals.push(daily_lead_cap); }
+  if (distribution_weight !== undefined) { sets.push(`distribution_weight = $${++idx}`); vals.push(distribution_weight); }
+  if (role !== undefined) { sets.push(`role = $${++idx}`); vals.push(role); }
+  if (is_available !== undefined) { sets.push(`is_available = $${++idx}`); vals.push(is_available); }
+  if (team_name !== undefined) { sets.push(`team_name = $${++idx}`); vals.push(team_name); }
+  if (report_to_id !== undefined) { sets.push(`report_to_id = $${++idx}`); vals.push(report_to_id || null); }
+  if (sets.length === 0) throw new AppError(400, 'INVALID', 'Nothing to update');
+  sets.push(`updated_at = NOW()`);
+  vals.push(userId);
+  const { rows: [u] } = await query(`UPDATE users SET ${sets.join(', ')} WHERE id = $${vals.length} AND deleted_at IS NULL RETURNING *`, vals);
+  if (!u) throw new AppError(404, 'NOT_FOUND', 'User not found');
+  await query(`INSERT INTO activity_logs(user_id, user_name, user_role, entity, entity_id, action, metadata, ip_address)
+    VALUES($1,$2,$3,'user',$4,'admin_update_settings',$5,$6)`,
+    [req.user.id, req.user.full_name, req.user.role, userId, JSON.stringify(req.body), req.ip]);
+  invalidateUser(userId);
+  res.json({ success: true, data: u });
+}));
+
+// ── Campaign Performance Report ──────────────────────────────────
+router.get('/reports/campaign-summary', authenticate, asyncHandler(async (_req, res) => {
+  const { rows } = await query(`
+    SELECT COALESCE(l.campaign_name, 'Unknown') AS campaign,
+      COUNT(*)::int AS total_leads,
+      COUNT(*) FILTER (WHERE l.created_at::date = CURRENT_DATE)::int AS today_leads,
+      COUNT(*) FILTER (WHERE l.call_status = 'converted')::int AS conversions,
+      ROUND(COUNT(*) FILTER (WHERE l.call_status = 'converted')::numeric / NULLIF(COUNT(*), 0) * 100, 1) AS conv_rate
+    FROM leads l WHERE l.deleted_at IS NULL
+    GROUP BY campaign ORDER BY total_leads DESC
+  `);
+  res.json({ success: true, data: rows });
+}));
+
+// ── Meta Forms + Subscriptions (extended for admin) ──────────────
+router.get('/admin/meta/overview', authenticate, requireRole('super_admin'), responseCache(30000), asyncHandler(async (_req, res) => {
+  const { rows: forms } = await query(`SELECT * FROM meta_forms ORDER BY created_at DESC`);
+  const { rows: pages } = await query(`SELECT * FROM meta_pages ORDER BY created_at DESC`);
+
+  let campaigns = [];
+  try { const r = await query(`SELECT * FROM meta_campaigns ORDER BY created_at DESC`); campaigns = r.rows; } catch {}
+
+  const { rows: recentLeads } = await query(`
+    SELECT l.id, l.full_name, l.phone, l.source, l.campaign_name, l.meta_form_id, l.created_at
+    FROM leads l WHERE l.deleted_at IS NULL AND l.source IN ('meta', 'google', 'website')
+    ORDER BY l.created_at DESC LIMIT 20
+  `);
+
+  res.json({ success: true, data: { forms, pages, campaigns, recent_leads: recentLeads } });
+}));
+
+// ── Followup Management ──────────────────────────────────────────
+router.get('/admin/followups', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const type = req.query.type || 'all';
+  let filter = '';
+  if (type === 'overdue') filter = `AND l.next_followup_at < NOW() AND l.next_followup_at::date < CURRENT_DATE`;
+  else if (type === 'today') filter = `AND l.next_followup_at::date = CURRENT_DATE`;
+  else if (type === 'upcoming') filter = `AND l.next_followup_at::date > CURRENT_DATE AND l.next_followup_at::date <= CURRENT_DATE + INTERVAL '7 days'`;
+
+  const { rows } = await query(`
+    SELECT l.id, l.full_name, l.phone, l.source, l.campaign_name, l.stage, l.call_status,
+      l.next_followup_at, l.assigned_to_user_id, u.full_name AS assigned_to_name
+    FROM leads l
+    LEFT JOIN users u ON u.id = l.assigned_to_user_id
+    WHERE l.deleted_at IS NULL AND l.next_followup_at IS NOT NULL
+      AND l.stage NOT IN ('won', 'lost') ${filter}
+    ORDER BY l.next_followup_at ASC LIMIT 100
+  `);
+  res.json({ success: true, data: rows });
+}));
+
+// ── Conversion Analytics ─────────────────────────────────────────
+router.get('/admin/analytics/conversions', authenticate, requireRole('super_admin'), responseCache(20000), asyncHandler(async (_req, res) => {
+  const { rows: byUser } = await query(`
+    SELECT u.id, u.full_name, u.role, u.team_name,
+      COUNT(l.id)::int AS total_leads,
+      COUNT(l.id) FILTER (WHERE l.call_status = 'converted')::int AS conversions,
+      ROUND(COUNT(l.id) FILTER (WHERE l.call_status = 'converted')::numeric / NULLIF(COUNT(l.id), 0) * 100, 1) AS conv_rate,
+      AVG(EXTRACT(EPOCH FROM (lr_first.first_remark - l.created_at)) / 3600)::numeric(10,1) AS avg_response_hours
+    FROM users u
+    LEFT JOIN leads l ON l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
+    LEFT JOIN LATERAL (
+      SELECT MIN(lr.created_at) AS first_remark FROM lead_remarks lr WHERE lr.lead_id = l.id
+    ) lr_first ON TRUE
+    WHERE u.deleted_at IS NULL AND u.role IN ('member', 'partner')
+    GROUP BY u.id, u.full_name, u.role, u.team_name
+    HAVING COUNT(l.id) > 0
+    ORDER BY conversions DESC
+  `);
+
+  const { rows: bySource } = await query(`
+    SELECT source,
+      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE call_status = 'converted')::int AS conversions,
+      ROUND(COUNT(*) FILTER (WHERE call_status = 'converted')::numeric / NULLIF(COUNT(*), 0) * 100, 1) AS conv_rate
+    FROM leads WHERE deleted_at IS NULL GROUP BY source ORDER BY total DESC
+  `);
+
+  const { rows: byCampaign } = await query(`
+    SELECT COALESCE(campaign_name, 'Unknown') AS campaign,
+      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE call_status = 'converted')::int AS conversions,
+      ROUND(COUNT(*) FILTER (WHERE call_status = 'converted')::numeric / NULLIF(COUNT(*), 0) * 100, 1) AS conv_rate
+    FROM leads WHERE deleted_at IS NULL GROUP BY campaign ORDER BY total DESC
+  `);
+
+  res.json({ success: true, data: { byUser, bySource, byCampaign } });
+}));
+
+// ══════════════════════════════════════════════════════════════════════
+// ENTERPRISE SETTINGS — Meta Pages/Forms enriched, Webhook logs, Sheets detail
+// ══════════════════════════════════════════════════════════════════════
+
+// Enriched Meta pages — with lead counts, form counts, token status
+router.get('/admin/meta/pages-enriched', authenticate, requireRole('super_admin'), responseCache(15000), asyncHandler(async (_req, res) => {
+  const { rows } = await query(`
+    SELECT p.id, p.page_id, p.page_name, p.is_active, p.created_at,
+      (p.page_access_token IS NOT NULL AND p.page_access_token != '') AS has_token,
+      (SELECT COUNT(*)::int FROM meta_forms f WHERE f.page_id = p.page_id) AS form_count,
+      (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_page_id = p.page_id) AS lead_count,
+      (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_page_id = p.page_id AND l.created_at::date = CURRENT_DATE) AS today_leads,
+      (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_page_id = p.page_id AND l.call_status = 'converted') AS conversions,
+      (SELECT MAX(l.created_at) FROM leads l WHERE l.deleted_at IS NULL AND l.meta_page_id = p.page_id) AS last_lead_at
+    FROM meta_pages p ORDER BY p.page_name
+  `);
+  res.json({ success: true, data: rows });
+}));
+
+// Enriched Meta forms — with lead counts, latest leads, page name
+router.get('/admin/meta/forms-enriched', authenticate, requireRole('super_admin'), responseCache(15000), asyncHandler(async (_req, res) => {
+  const { rows } = await query(`
+    SELECT f.id, f.form_id, f.form_name, f.page_id, f.campaign_label, f.product_tag, f.is_active, f.created_at,
+      p.page_name,
+      (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_form_id = f.form_id) AS lead_count,
+      (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_form_id = f.form_id AND l.created_at::date = CURRENT_DATE) AS today_leads,
+      (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_form_id = f.form_id AND l.call_status = 'converted') AS conversions,
+      (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_form_id = f.form_id AND l.is_pending = TRUE) AS pending_leads,
+      (SELECT MAX(l.created_at) FROM leads l WHERE l.deleted_at IS NULL AND l.meta_form_id = f.form_id) AS last_lead_at
+    FROM meta_forms f
+    LEFT JOIN meta_pages p ON p.page_id = f.page_id
+    ORDER BY f.form_name
+  `);
+  res.json({ success: true, data: rows });
+}));
+
+// Leads for a specific form — with pagination and filters
+router.get('/admin/meta/form-leads/:formId', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { formId } = req.params;
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const pageSize = Math.min(50, parseInt(req.query.page_size) || 20);
+  const offset = (page - 1) * pageSize;
+  const stage = req.query.stage || null;
+  const callStatus = req.query.call_status || null;
+
+  let where = `l.deleted_at IS NULL AND l.meta_form_id = $1`;
+  const vals = [formId];
+  let idx = 1;
+  if (stage) { where += ` AND l.stage = $${++idx}`; vals.push(stage); }
+  if (callStatus) { where += ` AND l.call_status = $${++idx}`; vals.push(callStatus); }
+
+  const countQ = await query(`SELECT COUNT(*)::int AS total FROM leads l WHERE ${where}`, vals);
+  const total = countQ.rows[0].total;
+
+  vals.push(pageSize, offset);
+  const { rows } = await query(`
+    SELECT l.id, l.full_name, l.phone, l.email, l.source, l.stage, l.call_status,
+      l.campaign_name, l.is_pending, l.assigned_to_user_id, l.created_at,
+      u.full_name AS assigned_to_name
+    FROM leads l
+    LEFT JOIN users u ON u.id = l.assigned_to_user_id
+    WHERE ${where}
+    ORDER BY l.created_at DESC
+    LIMIT $${idx + 1} OFFSET $${idx + 2}
+  `, vals);
+
+  res.json({ success: true, data: { rows, total, page, page_size: pageSize } });
+}));
+
+// Leads for a specific page — with pagination
+router.get('/admin/meta/page-leads/:pageId', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { pageId } = req.params;
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const pageSize = Math.min(50, parseInt(req.query.page_size) || 20);
+  const offset = (page - 1) * pageSize;
+
+  const countQ = await query(`SELECT COUNT(*)::int AS total FROM leads WHERE deleted_at IS NULL AND meta_page_id = $1`, [pageId]);
+  const total = countQ.rows[0].total;
+
+  const { rows } = await query(`
+    SELECT l.id, l.full_name, l.phone, l.email, l.source, l.stage, l.call_status,
+      l.campaign_name, l.meta_form_id, l.is_pending, l.created_at,
+      u.full_name AS assigned_to_name
+    FROM leads l
+    LEFT JOIN users u ON u.id = l.assigned_to_user_id
+    WHERE l.deleted_at IS NULL AND l.meta_page_id = $1
+    ORDER BY l.created_at DESC
+    LIMIT $2 OFFSET $3
+  `, [pageId, pageSize, offset]);
+
+  res.json({ success: true, data: { rows, total, page, page_size: pageSize } });
+}));
+
+// Meta webhook & sync logs combined
+router.get('/admin/meta/webhook-logs', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const limit = Math.min(50, parseInt(req.query.limit) || 30);
+
+  // Sync logs from meta_sync_log table
+  let syncLogs = [];
+  try {
+    const r = await query(`SELECT id, sync_type, source_id, status, leads_fetched, leads_created, leads_duplicate, errors, started_at, completed_at FROM meta_sync_log ORDER BY started_at DESC LIMIT $1`, [limit]);
+    syncLogs = r.rows;
+  } catch { /* table may not exist */ }
+
+  // Audit logs for meta-related actions
+  let auditLogs = [];
+  try {
+    const r = await query(`
+      SELECT id, user_id, entity, entity_id, action, metadata, ip_address, created_at,
+        (SELECT full_name FROM users WHERE id = a.user_id) AS user_name
+      FROM audit_logs a WHERE entity IN ('meta', 'webhook', 'lead_ingestion')
+      ORDER BY created_at DESC LIMIT $1
+    `, [limit]);
+    auditLogs = r.rows;
+  } catch { /* audit_logs may have different schema */ }
+
+  // Activity logs for meta-related actions
+  let activityLogs = [];
+  try {
+    const r = await query(`
+      SELECT id, user_name, user_role, entity, entity_id, action, metadata, ip_address, created_at
+      FROM activity_logs WHERE entity IN ('meta', 'webhook', 'campaign')
+      ORDER BY created_at DESC LIMIT $1
+    `, [limit]);
+    activityLogs = r.rows;
+  } catch { /* ok */ }
+
+  res.json({ success: true, data: { sync_logs: syncLogs, audit_logs: auditLogs, activity_logs: activityLogs } });
+}));
+
+// Enriched Google Sheets status with detailed sync history
+router.get('/admin/sheets/enriched', authenticate, requireRole('super_admin'), responseCache(15000), asyncHandler(async (_req, res) => {
+  const config = {
+    sheet_id: process.env.GOOGLE_SHEET_ID || null,
+    service_account_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || null,
+    sheet_name: process.env.GOOGLE_SHEET_NAME || 'Sheet1',
+    key_path: process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH || null,
+    configured: !!(process.env.GOOGLE_SHEET_ID && process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL),
+  };
+
+  // Try to get live sheet status from integration check
+  let liveStatus = null;
+  try {
+    const sheetsCheck = require('../services/googleSheetsService').checkConnectivity;
+    if (typeof sheetsCheck === 'function') {
+      liveStatus = await sheetsCheck();
+    }
+  } catch { /* not available */ }
+
+  // Sync activity logs
+  let syncLogs = [];
+  try {
+    const { rows } = await query(`SELECT * FROM activity_logs WHERE entity = 'sheets' ORDER BY created_at DESC LIMIT 30`);
+    syncLogs = rows;
+  } catch { /* ok */ }
+
+  // Total leads + synced count
+  const { rows: [stats] } = await query(`
+    SELECT
+      (SELECT COUNT(*)::int FROM leads WHERE deleted_at IS NULL) AS total_leads,
+      (SELECT COUNT(*)::int FROM leads WHERE deleted_at IS NULL AND created_at::date = CURRENT_DATE) AS today_leads
+  `);
+
+  res.json({ success: true, data: { config, live_status: liveStatus, sync_logs: syncLogs, stats } });
+}));
+
+// Meta token status check (wraps debug-token with friendly output)
+router.get('/admin/meta/token-status', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  let tokenInfo = null;
+  let connectivity = null;
+  let error = null;
+  try {
+    connectivity = await metaSync.checkConnectivity();
+  } catch (e) { error = e.message; }
+  try {
+    tokenInfo = await metaSync.debugToken();
+  } catch (e) { if (!error) error = e.message; }
+
+  const pageToken = !!(process.env.META_PAGE_ACCESS_TOKEN || config.meta?.pageAccessToken);
+  const userToken = !!(process.env.META_USER_ACCESS_TOKEN || config.meta?.userAccessToken);
+  const appSecret = !!process.env.META_APP_SECRET;
+  const verifyToken = !!process.env.META_VERIFY_TOKEN;
+
+  res.json({
+    success: true,
+    data: {
+      has_page_token: pageToken,
+      has_user_token: userToken,
+      has_app_secret: appSecret,
+      has_verify_token: verifyToken,
+      connectivity,
+      token_info: tokenInfo,
+      error,
+    },
+  });
+}));
+
+// Webhook subscription status for all pages
+router.get('/admin/meta/subscription-status', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const { rows: pages } = await query(`SELECT page_id, page_name FROM meta_pages WHERE is_active = TRUE`);
+  const results = [];
+  for (const p of pages) {
+    try {
+      const subs = await metaSync.getPageSubscriptions(p.page_id);
+      results.push({ page_id: p.page_id, page_name: p.page_name, subscriptions: subs, status: 'ok' });
+    } catch (e) {
+      results.push({ page_id: p.page_id, page_name: p.page_name, subscriptions: null, status: 'error', error: e.message });
+    }
+  }
+  res.json({ success: true, data: results });
+}));
+
+// Campaign enriched list (with lead stats from DB)
+router.get('/admin/meta/campaigns-enriched', authenticate, requireRole('super_admin'), responseCache(15000), asyncHandler(async (_req, res) => {
+  const { rows } = await query(`
+    SELECT mc.id, mc.campaign_id, mc.campaign_name, mc.internal_label, mc.ad_account_id,
+      mc.is_active, mc.category, mc.description, mc.created_at,
+      (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_campaign_id = mc.campaign_id) AS lead_count,
+      (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_campaign_id = mc.campaign_id AND l.created_at::date = CURRENT_DATE) AS today_leads,
+      (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_campaign_id = mc.campaign_id AND l.call_status = 'converted') AS conversions,
+      (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_campaign_id = mc.campaign_id AND l.is_pending = TRUE) AS pending_leads,
+      (SELECT MAX(l.created_at) FROM leads l WHERE l.deleted_at IS NULL AND l.meta_campaign_id = mc.campaign_id) AS last_lead_at,
+      (SELECT DISTINCT f.form_name FROM meta_forms f WHERE f.campaign_label = mc.internal_label LIMIT 1) AS connected_form,
+      (SELECT p.page_name FROM meta_pages p WHERE p.page_id = (
+        SELECT f2.page_id FROM meta_forms f2 WHERE f2.campaign_label = mc.internal_label LIMIT 1
+      )) AS connected_page
+    FROM meta_campaigns mc
+    ORDER BY mc.is_active DESC, lead_count DESC
+  `);
+  res.json({ success: true, data: rows });
+}));
+
+// ══════════════════════════════════════════════════════════════════════
+// MEMBER LEAD WORKFLOW — 4-step sequential workflow system
+// ══════════════════════════════════════════════════════════════════════
+
+const REMARK_OPTIONS = [
+  'communication_completed', 'recall', 'respond_hi', 'cnr',
+  'so', 'cw', 'nn', 'nc', 'ni', 'in', 'cb',
+  'session_730_attend', 'yes_after_730_session'
+];
+
+const LEAD_LEVEL_OPTIONS = [
+  'new_partner', 'new_trader', 'followup_partner', 'followup_trader',
+  'hot_partner', 'hot_trader', 'cold_partner', 'cold_trader',
+  'hu_partner', 'hu_trader', 'advance_payment', 'closed'
+];
+
+// GET workflow state for a lead
+router.get('/leads/:id/workflow', authenticate, asyncHandler(async (req, res) => {
+  const leadId = req.params.id;
+
+  const { rows: [lead] } = await query(
+    `SELECT id, assigned_to_user_id FROM leads WHERE id = $1 AND deleted_at IS NULL`, [leadId]
+  );
+  if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
+
+  if (req.user.role === 'member' && lead.assigned_to_user_id !== req.user.id) {
+    throw new AppError(403, 'FORBIDDEN', 'Lead not assigned to you');
+  }
+
+  const { rows: [wf] } = await query(
+    `SELECT * FROM lead_workflow WHERE lead_id = $1`, [leadId]
+  );
+  const { rows: [ft] } = await query(
+    `SELECT * FROM lead_followup_tracker WHERE lead_id = $1`, [leadId]
+  );
+  const { rows: [conv] } = await query(
+    `SELECT * FROM lead_conversion WHERE lead_id = $1`, [leadId]
+  );
+
+  const currentStep = !wf?.remark_status ? 1
+    : !wf?.lead_level ? 2
+    : !wf?.followup_completed ? 3
+    : !wf?.conversion_completed ? 4
+    : 5;
+
+  res.json({
+    success: true,
+    data: {
+      workflow: wf || null,
+      followup_tracker: ft || null,
+      conversion: conv || null,
+      current_step: currentStep,
+      remark_options: REMARK_OPTIONS,
+      lead_level_options: LEAD_LEVEL_OPTIONS,
+    },
+  });
+}));
+
+// Step 1: Save remark status
+router.post('/leads/:id/workflow/remark', authenticate, asyncHandler(async (req, res) => {
+  const leadId = req.params.id;
+  const { remark_status } = req.body;
+  if (!remark_status) throw new AppError(400, 'INVALID', 'remark_status required');
+
+  const { rows: [lead] } = await query(
+    `SELECT id, assigned_to_user_id FROM leads WHERE id = $1 AND deleted_at IS NULL`, [leadId]
+  );
+  if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
+  if (req.user.role === 'member' && lead.assigned_to_user_id !== req.user.id) {
+    throw new AppError(403, 'FORBIDDEN', 'Lead not assigned to you');
+  }
+
+  const { rows: [wf] } = await query(`
+    INSERT INTO lead_workflow (lead_id, user_id, remark_status, remark_saved_at)
+    VALUES ($1, $2, $3, NOW())
+    ON CONFLICT (lead_id) DO UPDATE SET
+      remark_status = $3, remark_saved_at = NOW(), updated_at = NOW()
+    RETURNING *
+  `, [leadId, req.user.id, remark_status]);
+
+  await query(`
+    INSERT INTO lead_workflow_history (lead_id, user_id, step, action, new_value)
+    VALUES ($1, $2, 1, 'remark_saved', $3)
+  `, [leadId, req.user.id, remark_status]);
+
+  res.json({ success: true, data: wf });
+}));
+
+// Step 2: Save lead level
+router.post('/leads/:id/workflow/level', authenticate, asyncHandler(async (req, res) => {
+  const leadId = req.params.id;
+  const { lead_level } = req.body;
+  if (!lead_level) throw new AppError(400, 'INVALID', 'lead_level required');
+
+  const { rows: [lead] } = await query(
+    `SELECT id, assigned_to_user_id FROM leads WHERE id = $1 AND deleted_at IS NULL`, [leadId]
+  );
+  if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
+  if (req.user.role === 'member' && lead.assigned_to_user_id !== req.user.id) {
+    throw new AppError(403, 'FORBIDDEN', 'Lead not assigned to you');
+  }
+
+  const { rows: [existing] } = await query(
+    `SELECT remark_status FROM lead_workflow WHERE lead_id = $1`, [leadId]
+  );
+  if (!existing?.remark_status) {
+    throw new AppError(400, 'STEP_LOCKED', 'Complete Step 1 (Remark) first');
+  }
+
+  const { rows: [wf] } = await query(`
+    UPDATE lead_workflow SET lead_level = $1, lead_level_saved_at = NOW(), updated_at = NOW()
+    WHERE lead_id = $2 RETURNING *
+  `, [lead_level, leadId]);
+
+  await query(`
+    INSERT INTO lead_workflow_history (lead_id, user_id, step, action, new_value)
+    VALUES ($1, $2, 2, 'level_saved', $3)
+  `, [leadId, req.user.id, lead_level]);
+
+  res.json({ success: true, data: wf });
+}));
+
+// Step 3: Update follow-up tracker checkboxes
+router.patch('/leads/:id/workflow/followup', authenticate, asyncHandler(async (req, res) => {
+  const leadId = req.params.id;
+  const fields = req.body;
+
+  const { rows: [lead] } = await query(
+    `SELECT id, assigned_to_user_id FROM leads WHERE id = $1 AND deleted_at IS NULL`, [leadId]
+  );
+  if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
+  if (req.user.role === 'member' && lead.assigned_to_user_id !== req.user.id) {
+    throw new AppError(403, 'FORBIDDEN', 'Lead not assigned to you');
+  }
+
+  const { rows: [existing] } = await query(
+    `SELECT lead_level FROM lead_workflow WHERE lead_id = $1`, [leadId]
+  );
+  if (!existing?.lead_level) {
+    throw new AppError(400, 'STEP_LOCKED', 'Complete Step 2 (Lead Level) first');
+  }
+
+  const allowed = [
+    'attendance_730', 'yes_confirmation',
+    'day_1', 'day_2', 'day_3', 'day_4', 'day_5', 'day_6', 'day_7',
+    'day_8', 'day_9', 'day_10', 'day_11', 'day_12', 'day_13', 'day_14', 'day_15'
+  ];
+  const forceComplete = !!fields._force_complete;
+
+  const sets = [];
+  const params = [leadId];
+  const changedFields = [];
+
+  for (const f of allowed) {
+    if (fields[f] !== undefined) {
+      const val = !!fields[f];
+      params.push(val);
+      sets.push(`${f} = $${params.length}`);
+      if (val) {
+        sets.push(`${f}_at = NOW()`);
+      }
+      changedFields.push(`${f}=${val}`);
+    }
+  }
+
+  if (sets.length === 0 && !forceComplete) throw new AppError(400, 'INVALID', 'No valid fields to update');
+  if (sets.length > 0) sets.push('updated_at = NOW()');
+
+  // Ensure row exists first
+  await query(
+    `INSERT INTO lead_followup_tracker (lead_id, user_id) VALUES ($1, $2) ON CONFLICT (lead_id) DO NOTHING`,
+    [leadId, req.user.id]
+  );
+
+  let ft;
+  if (sets.length > 0) {
+    const { rows: [row] } = await query(
+      `UPDATE lead_followup_tracker SET ${sets.join(', ')} WHERE lead_id = $1 RETURNING *`,
+      params
+    );
+    ft = row;
+  } else {
+    const { rows: [row] } = await query(
+      `SELECT * FROM lead_followup_tracker WHERE lead_id = $1`, [leadId]
+    );
+    ft = row;
+  }
+
+  // Flexible completion: attendance + confirmation + at least 1 day selected
+  const dayKeys = allowed.filter(k => k.startsWith('day_'));
+  const hasAttendance = !!ft.attendance_730;
+  const hasConfirmation = !!ft.yes_confirmation;
+  const hasAtLeastOneDay = dayKeys.some(k => !!ft[k]);
+  const flexibleComplete = hasAttendance && hasConfirmation && hasAtLeastOneDay;
+  const shouldComplete = forceComplete && flexibleComplete;
+
+  if (shouldComplete) {
+    await query(`
+      UPDATE lead_workflow SET followup_completed = TRUE, followup_completed_at = NOW(), updated_at = NOW()
+      WHERE lead_id = $1
+    `, [leadId]);
+  }
+
+  await query(`
+    INSERT INTO lead_workflow_history (lead_id, user_id, step, action, new_value, metadata)
+    VALUES ($1, $2, 3, $3, $4, $5)
+  `, [leadId, req.user.id, shouldComplete ? 'followup_completed' : 'followup_updated',
+      changedFields.join(','), JSON.stringify(fields)]);
+
+  res.json({ success: true, data: { followup_tracker: ft, all_complete: shouldComplete } });
+}));
+
+// Step 3: Mark follow-up complete manually (admin/RM override)
+router.post('/leads/:id/workflow/followup/complete', authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (req, res) => {
+  const leadId = req.params.id;
+
+  await query(`
+    UPDATE lead_workflow SET followup_completed = TRUE, followup_completed_at = NOW(), updated_at = NOW()
+    WHERE lead_id = $1
+  `, [leadId]);
+
+  await query(`
+    INSERT INTO lead_workflow_history (lead_id, user_id, step, action, new_value)
+    VALUES ($1, $2, 3, 'followup_force_completed', 'admin_override')
+  `, [leadId, req.user.id]);
+
+  res.json({ success: true });
+}));
+
+// Step 4: Save conversion data
+router.post('/leads/:id/workflow/conversion', authenticate, asyncHandler(async (req, res) => {
+  const leadId = req.params.id;
+  const { followup_status, address, total_payment, part_payment, customer_type, services } = req.body;
+
+  if (!customer_type || !['partner', 'trader'].includes(customer_type)) {
+    throw new AppError(400, 'INVALID', 'customer_type must be partner or trader');
+  }
+
+  const { rows: [lead] } = await query(
+    `SELECT id, assigned_to_user_id FROM leads WHERE id = $1 AND deleted_at IS NULL`, [leadId]
+  );
+  if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
+  if (req.user.role === 'member' && lead.assigned_to_user_id !== req.user.id) {
+    throw new AppError(403, 'FORBIDDEN', 'Lead not assigned to you');
+  }
+
+  const { rows: [existing] } = await query(
+    `SELECT followup_completed FROM lead_workflow WHERE lead_id = $1`, [leadId]
+  );
+  if (!existing?.followup_completed) {
+    throw new AppError(400, 'STEP_LOCKED', 'Complete Step 3 (Follow-up Tracker) first');
+  }
+
+  const { rows: [conv] } = await query(`
+    INSERT INTO lead_conversion (lead_id, user_id, followup_status, address, total_payment, part_payment, customer_type, services)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    ON CONFLICT (lead_id) DO UPDATE SET
+      followup_status = $3, address = $4, total_payment = $5, part_payment = $6,
+      customer_type = $7, services = $8,
+      submitted_at = NOW(), updated_at = NOW()
+    RETURNING *
+  `, [leadId, req.user.id, followup_status || null, address || null,
+      total_payment || null, part_payment || null,
+      customer_type, services || null]);
+
+  await query(`
+    UPDATE lead_workflow SET conversion_completed = TRUE, conversion_completed_at = NOW(), updated_at = NOW()
+    WHERE lead_id = $1
+  `, [leadId]);
+
+  await query(`
+    UPDATE leads SET stage = 'won', call_status = 'converted', updated_at = NOW()
+    WHERE id = $1
+  `, [leadId]);
+
+  await query(`
+    INSERT INTO lead_workflow_history (lead_id, user_id, step, action, new_value, metadata)
+    VALUES ($1, $2, 4, 'conversion_submitted', $3, $4)
+  `, [leadId, req.user.id, customer_type, JSON.stringify({ total_payment, part_payment, services })]);
+
+  res.json({ success: true, data: conv });
+}));
+
+// GET workflow history (audit trail)
+router.get('/leads/:id/workflow/history', authenticate, asyncHandler(async (req, res) => {
+  const { rows } = await query(`
+    SELECT h.*, u.full_name AS user_name
+    FROM lead_workflow_history h
+    JOIN users u ON u.id = h.user_id
+    WHERE h.lead_id = $1
+    ORDER BY h.created_at DESC
+    LIMIT 50
+  `, [req.params.id]);
+  res.json({ success: true, data: rows });
+}));
+
+// Admin/RM: Bulk workflow status for multiple leads
+router.get('/workflow/summary', authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page || '1', 10));
+  const limit = Math.min(100, parseInt(req.query.limit || '50', 10));
+  const offset = (page - 1) * limit;
+  const stepFilter = req.query.step ? parseInt(req.query.step) : null;
+  const userId = req.query.user_id;
+
+  let where = 'WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL';
+  const params = [];
+
+  if (req.user.role === 'rm') {
+    params.push(req.user.id);
+    where += ` AND l.assigned_to_user_id IN (SELECT id FROM users WHERE report_to_id = $${params.length})`;
+  }
+  if (userId) {
+    params.push(userId);
+    where += ` AND l.assigned_to_user_id = $${params.length}`;
+  }
+
+  let having = '';
+  if (stepFilter) {
+    having = `HAVING (CASE
+      WHEN wf.remark_status IS NULL THEN 1
+      WHEN wf.lead_level IS NULL THEN 2
+      WHEN wf.followup_completed IS NOT TRUE THEN 3
+      WHEN wf.conversion_completed IS NOT TRUE THEN 4
+      ELSE 5 END) = ${stepFilter}`;
+  }
+
+  const { rows: [{ total }] } = await query(`
+    SELECT COUNT(*) AS total FROM leads l
+    LEFT JOIN lead_workflow wf ON wf.lead_id = l.id
+    ${where}
+    ${stepFilter ? `AND (CASE
+      WHEN wf.remark_status IS NULL THEN 1
+      WHEN wf.lead_level IS NULL THEN 2
+      WHEN wf.followup_completed IS NOT TRUE THEN 3
+      WHEN wf.conversion_completed IS NOT TRUE THEN 4
+      ELSE 5 END) = ${stepFilter}` : ''}
+  `, params);
+
+  params.push(limit, offset);
+  const { rows } = await query(`
+    SELECT l.id AS lead_id, l.full_name, l.phone, l.category,
+           l.assigned_to_user_id, u.full_name AS assigned_to_name, u.team_name,
+           wf.remark_status, wf.lead_level, wf.followup_completed, wf.conversion_completed,
+           wf.remark_saved_at, wf.lead_level_saved_at, wf.followup_completed_at, wf.conversion_completed_at,
+           CASE
+             WHEN wf.remark_status IS NULL THEN 1
+             WHEN wf.lead_level IS NULL THEN 2
+             WHEN wf.followup_completed IS NOT TRUE THEN 3
+             WHEN wf.conversion_completed IS NOT TRUE THEN 4
+             ELSE 5
+           END AS current_step
+    FROM leads l
+    LEFT JOIN lead_workflow wf ON wf.lead_id = l.id
+    LEFT JOIN users u ON u.id = l.assigned_to_user_id
+    ${where}
+    ${stepFilter ? `AND (CASE
+      WHEN wf.remark_status IS NULL THEN 1
+      WHEN wf.lead_level IS NULL THEN 2
+      WHEN wf.followup_completed IS NOT TRUE THEN 3
+      WHEN wf.conversion_completed IS NOT TRUE THEN 4
+      ELSE 5 END) = ${stepFilter}` : ''}
+    ORDER BY COALESCE(wf.updated_at, l.created_at) DESC
+    LIMIT $${params.length - 1} OFFSET $${params.length}
+  `, params);
+
+  res.json({ success: true, data: { rows, total: parseInt(total, 10), page } });
+}));
+
+// Admin/RM: Workflow stats overview
+router.get('/workflow/stats', authenticate, requireRole('super_admin', 'rm'), responseCache(10000), asyncHandler(async (req, res) => {
+  let scope = '';
+  const params = [];
+  if (req.user.role === 'rm') {
+    params.push(req.user.id);
+    scope = `AND l.assigned_to_user_id IN (SELECT id FROM users WHERE report_to_id = $1)`;
+  }
+
+  const { rows: [s] } = await query(`
+    SELECT
+      (SELECT COUNT(*) FROM leads l WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}) AS total_assigned,
+      (SELECT COUNT(*) FROM leads l LEFT JOIN lead_workflow wf ON wf.lead_id = l.id
+        WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}
+        AND wf.remark_status IS NULL) AS step1_pending,
+      (SELECT COUNT(*) FROM leads l JOIN lead_workflow wf ON wf.lead_id = l.id
+        WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}
+        AND wf.remark_status IS NOT NULL AND wf.lead_level IS NULL) AS step2_pending,
+      (SELECT COUNT(*) FROM leads l JOIN lead_workflow wf ON wf.lead_id = l.id
+        WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}
+        AND wf.lead_level IS NOT NULL AND wf.followup_completed IS NOT TRUE) AS step3_pending,
+      (SELECT COUNT(*) FROM leads l JOIN lead_workflow wf ON wf.lead_id = l.id
+        WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}
+        AND wf.followup_completed = TRUE AND wf.conversion_completed IS NOT TRUE) AS step4_pending,
+      (SELECT COUNT(*) FROM leads l JOIN lead_workflow wf ON wf.lead_id = l.id
+        WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}
+        AND wf.conversion_completed = TRUE) AS completed,
+      (SELECT COUNT(*) FROM lead_workflow_history h
+        JOIN leads l ON l.id = h.lead_id
+        WHERE h.created_at::date = CURRENT_DATE ${scope}) AS today_actions
+  `, params);
+
+  const data = {};
+  for (const [k, v] of Object.entries(s)) data[k] = parseInt(v, 10) || 0;
+  res.json({ success: true, data });
+}));
+
+// Admin: Edit any workflow step (override)
+router.patch('/leads/:id/workflow/admin-edit', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const leadId = req.params.id;
+  const { remark_status, lead_level, followup_completed, conversion_completed } = req.body;
+
+  const sets = ['updated_at = NOW()'];
+  const params = [leadId];
+
+  if (remark_status !== undefined) {
+    params.push(remark_status);
+    sets.push(`remark_status = $${params.length}`, 'remark_saved_at = NOW()');
+  }
+  if (lead_level !== undefined) {
+    params.push(lead_level);
+    sets.push(`lead_level = $${params.length}`, 'lead_level_saved_at = NOW()');
+  }
+  if (followup_completed !== undefined) {
+    params.push(followup_completed);
+    sets.push(`followup_completed = $${params.length}`, 'followup_completed_at = NOW()');
+  }
+  if (conversion_completed !== undefined) {
+    params.push(conversion_completed);
+    sets.push(`conversion_completed = $${params.length}`, 'conversion_completed_at = NOW()');
+  }
+
+  await query(
+    `INSERT INTO lead_workflow (lead_id, user_id) VALUES ($1, $2) ON CONFLICT (lead_id) DO NOTHING`,
+    [leadId, req.user.id]
+  );
+  const { rows: [wf] } = await query(
+    `UPDATE lead_workflow SET ${sets.join(', ')} WHERE lead_id = $1 RETURNING *`,
+    params
+  );
+
+  await query(`
+    INSERT INTO lead_workflow_history (lead_id, user_id, step, action, new_value, metadata)
+    VALUES ($1, $2, 0, 'admin_edit', 'override', $3)
+  `, [leadId, req.user.id, JSON.stringify(req.body)]);
+
+  res.json({ success: true, data: wf });
+}));
+
+module.exports = router;

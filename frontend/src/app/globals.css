@@ -1,0 +1,92 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&family=JetBrains+Mono&display=swap&subset=latin');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body { @apply h-full; }
+  body { @apply text-slate-800 bg-slate-50; }
+  * { @apply border-slate-200; }
+}
+
+@layer components {
+  .card        { @apply rounded-xl border border-slate-200 bg-white shadow-card; }
+  .card-padded { @apply card p-5 sm:p-6; }
+
+  .btn-primary {
+    @apply bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-700
+           shadow-glow border border-brand-600/60;
+  }
+  .btn-ghost {
+    @apply bg-white text-slate-700 hover:bg-slate-100 border border-slate-200;
+  }
+  .btn-outline {
+    @apply bg-white text-brand-700 hover:bg-brand-50 border border-brand-200;
+  }
+  .btn-danger {
+    @apply bg-red-600 text-white hover:bg-red-700 border border-red-600/70;
+  }
+
+  .input {
+    @apply block w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5
+           text-sm text-slate-900 placeholder:text-slate-400
+           focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200/70
+           disabled:bg-slate-100 disabled:text-slate-500;
+  }
+  .label {
+    @apply mb-1.5 block text-xs font-medium text-slate-600;
+  }
+
+  .chip-amber { @apply inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-amber-200; }
+  .chip-green { @apply inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200; }
+  .chip-red   { @apply inline-flex items-center rounded-full bg-rose-50 px-2.5 py-0.5 text-[11px] font-medium text-rose-700 ring-1 ring-rose-200; }
+  .chip-blue  { @apply inline-flex items-center rounded-full bg-sky-50 px-2.5 py-0.5 text-[11px] font-medium text-sky-700 ring-1 ring-sky-200; }
+  .chip-slate { @apply inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-medium text-slate-700 ring-1 ring-slate-200; }
+  .chip-pink  { @apply inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-[11px] font-medium text-blue-700 ring-1 ring-blue-200; }
+
+  .table-row {
+    @apply border-b border-slate-100 hover:bg-slate-50/70 transition;
+  }
+}
+
+@layer utilities {
+  .bg-grid-faint {
+    background-image: linear-gradient(rgba(15,23,42,0.04) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(15,23,42,0.04) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+  .scroll-thin::-webkit-scrollbar       { width: 8px; height: 8px; }
+  .scroll-thin::-webkit-scrollbar-thumb { background: rgba(15,23,42,0.15); border-radius: 9999px; }
+
+  /* Smooth page transitions */
+  .page-enter { animation: fadeSlideIn 0.2s ease-out; }
+  .content-fade { animation: fadeIn 0.15s ease-out; }
+}
+
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* GPU-accelerated transitions for interactive elements */
+.card, .card-padded, .btn-primary, .btn-ghost, .btn-outline, .chip-amber, .chip-green, .chip-red, .chip-blue, .chip-slate {
+  will-change: auto;
+}
+
+/* Smooth skeleton pulse */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}

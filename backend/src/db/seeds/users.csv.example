@@ -1,0 +1,7 @@
+emp_code,full_name,email,phone,role,report_to_email,team_name,daily_lead_cap,distribution_weight
+ADB-001,Admin User,admin@digitaladbird.com,+919999999999,admin,,Leadership,200,1
+ADB-100,RM North,rm.north@digitaladbird.com,+919999900001,rm,admin@digitaladbird.com,North,150,2
+ADB-101,RM South,rm.south@digitaladbird.com,+919999900002,rm,admin@digitaladbird.com,South,150,2
+ADB-200,Member A,member.a@digitaladbird.com,+919999900010,member,rm.north@digitaladbird.com,North,60,1
+ADB-201,Member B,member.b@digitaladbird.com,+919999900011,member,rm.north@digitaladbird.com,North,60,1
+ADB-202,Member C,member.c@digitaladbird.com,+919999900012,member,rm.south@digitaladbird.com,South,60,1
