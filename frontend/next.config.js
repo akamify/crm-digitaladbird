@@ -29,7 +29,7 @@ const nextConfig = {
     }
     return config;
   },
-  output: process.env.NODE_ENV === 'production' ? 'standalone' : undefined,
+  output:undefined,
   compiler: {
     removeConsole: process.env.NODE_ENV === 'production' ? { exclude: ['error', 'warn'] } : false,
   },
