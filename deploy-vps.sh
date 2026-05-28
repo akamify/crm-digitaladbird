@@ -163,11 +163,16 @@ echo "[12/16] Seeding production users..."
 cd $APP_DIR/backend
 node src/db/seeds/seed_production_users.js 2>/dev/null && echo "  Users seeded" || echo "  Seed skipped (may already exist)"
 
-# ── 13. Build Frontend ──
-echo "[13/16] Building Next.js frontend (3-5 min)..."
+# ── 13. Build Frontend (standalone) ──
+echo "[13/16] Building Next.js frontend in standalone mode (3-5 min)..."
 cd $APP_DIR/frontend
 NODE_ENV=production npx next build 2>&1 | tail -10
-echo "  Frontend built"
+# Standalone mode produces .next/standalone/server.js but does NOT bundle
+# the static assets or the public/ folder — copy them in manually so the
+# self-contained server can serve them.
+cp -r .next/static .next/standalone/.next/static
+[ -d public ] && cp -r public .next/standalone/public || true
+echo "  Frontend built (standalone: .next/standalone/server.js)"
 
 # ── 14. PM2 Setup ──
 echo "[14/16] Configuring PM2..."
@@ -194,10 +199,14 @@ module.exports = {
     {
       name: 'crm-frontend',
       cwd: '/opt/digitaladbird-crm/frontend',
-      script: 'node_modules/.bin/next',
-      args: 'start -p 3000',
+      script: '.next/standalone/server.js',
       instances: 1,
       exec_mode: 'fork',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3000,
+        HOSTNAME: '0.0.0.0'
+      },
       max_memory_restart: '512M',
       error_file: '/var/log/crm/frontend-error.log',
       out_file: '/var/log/crm/frontend-out.log',
