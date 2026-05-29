@@ -3,6 +3,7 @@ const { AppError, asyncHandler } = require('../utils/errors');
 const { getVisibleUserIds } = require('../middleware/rbac');
 const { assignLead, reassignLead } = require('../services/leadDistributionService');
 const { appendLead: sheetAppend } = require('../services/googleSheetsService');
+const { onLeadCreated, findExistingByContact } = require('../services/leadEventService');
 const logger = require('../utils/logger');
 const config = require('../config/env');
 
@@ -243,6 +244,15 @@ exports.create = asyncHandler(async (req, res) => {
   const { full_name, phone, email, city, state, source, product_tag, campaign_label, raw_payload, assigned_to_user_id } = req.body;
   if (!full_name && !phone && !email) throw new AppError(400, 'INVALID_LEAD', 'Provide at least name/phone/email');
 
+  // Phone/email dedup — the same person shouldn't be entered twice from a
+  // manual form either.
+  if (phone || email) {
+    const dup = await findExistingByContact({ phone, email });
+    if (dup) {
+      return res.status(409).json({ success: false, error: { code: 'DUPLICATE_LEAD', message: `Lead already exists (matched by ${dup.reason})`, data: { id: dup.id } } });
+    }
+  }
+
   const { rows: [lead] } = await query(
     `INSERT INTO leads (full_name, phone, email, city, state, source, product_tag, campaign_label, raw_payload)
         VALUES ($1, $2, $3, $4, $5, COALESCE($6, 'manual')::lead_source, $7, $8, $9)
@@ -257,8 +267,8 @@ exports.create = asyncHandler(async (req, res) => {
     assignment = await assignLead(lead.id);
   }
 
-  // Auto-sync to Google Sheet (fire-and-forget)
-  sheetAppend(lead.id).catch(err => logger.error({ err: err.message, leadId: lead.id }, '[Sheets] Append after create failed'));
+  // Single chokepoint: Socket.IO broadcast + Google Sheet append (non-blocking)
+  onLeadCreated(lead.id, { source: 'manual_create' });
 
   res.status(201).json({ success: true, data: { id: lead.id, assignment } });
 });

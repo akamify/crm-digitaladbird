@@ -81,7 +81,7 @@ cat > $APP_DIR/backend/.env << ENVEOF
 NODE_ENV=production
 PORT=4000
 APP_URL=https://$DOMAIN
-CORS_ORIGINS=https://$DOMAIN
+CORS_ORIGINS=https://$DOMAIN,https://www.$DOMAIN
 
 DATABASE_URL=postgres://$DB_USER:$DB_PASS@localhost:5432/$DB_NAME
 DB_SSL=false

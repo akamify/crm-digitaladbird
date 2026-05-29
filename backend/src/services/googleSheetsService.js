@@ -1,28 +1,29 @@
 /**
- * Google Sheets Sync Service
+ * Google Sheets Sync Service — dynamic, admin-controlled.
  *
- * Syncs leads from PostgreSQL → Google Sheet with retry logic.
+ * Auth precedence (per request):
+ *   1. Active row in `integration_configs` (kind='google_sheets', is_active=true)
+ *      — admin uploaded the service-account JSON via the Settings UI.
+ *   2. Env vars (back-compat): GOOGLE_SERVICE_ACCOUNT_KEY{,_PATH}
  *
- * Auth: GOOGLE_SERVICE_ACCOUNT_KEY_PATH (path to .json key file)
- *    or GOOGLE_SERVICE_ACCOUNT_KEY      (raw JSON / base64 string)
+ * The DB-backed row holds the sheet_id, sheet_name AND the encrypted service-
+ * account JSON. Admins can swap the active row at any time and the next sync
+ * call picks up the new config without restarting PM2.
  *
  * The Google Sheet MUST be shared (Editor) with the service account email.
  *
- * Modes:
+ * Public API (callers don't pass a config — they just call):
  *   - syncAllLeads()       : full sync — clears sheet and re-writes all leads
  *   - appendLead(leadId)   : append a single new lead row
  *   - updateLeadRow(leadId): update an existing row in-place
  *   - checkConnectivity()  : test API access and permissions
+ *   - reloadActiveConfig() : drop cached clients so the next call uses new creds
  */
 const path = require('path');
 const { google } = require('googleapis');
 const { query }  = require('../config/database');
 const logger     = require('../utils/logger');
-
-const SHEET_ID   = process.env.GOOGLE_SHEET_ID || '';
-const KEY_PATH   = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH || '';
-const KEY_JSON   = process.env.GOOGLE_SERVICE_ACCOUNT_KEY || '';
-const SHEET_NAME = process.env.GOOGLE_SHEET_NAME || 'Leads';
+const { decrypt } = require('../utils/secretsCrypto');
 
 const SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets',
@@ -32,47 +33,85 @@ const SCOPES = [
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1500;
 
-let _sheets = null;
-let _drive = null;
-let _initError = null;
+// Cached per-config-id. When admin switches the active row, the cache is
+// invalidated by `reloadActiveConfig()` (called from the route handlers).
+let _clientCache = null; // { configId, sheetId, sheetName, sheets, drive, clientEmail }
+let _initError   = null;
 
-// ─── Auth & initialization ──────────────────────────────────────────
+// ─── Load active config (DB → env fallback) ─────────────────────────
+
+async function loadActiveConfig() {
+  // 1. Active DB row
+  try {
+    const { rows: [row] } = await query(
+      `SELECT id, config, secrets_encrypted
+         FROM integration_configs
+        WHERE kind = 'google_sheets' AND is_active = TRUE
+        LIMIT 1`,
+    );
+    if (row && row.secrets_encrypted) {
+      const secrets = decrypt(row.secrets_encrypted);
+      if (!secrets || !secrets.client_email) throw new Error('Stored credentials missing client_email');
+      const cfg = row.config || {};
+      return {
+        configId:   row.id,
+        sheetId:    cfg.sheet_id || '',
+        sheetName:  cfg.sheet_name || 'Leads',
+        creds:      secrets,
+        source:     'db',
+      };
+    }
+  } catch (err) {
+    // Don't fall back silently if the DB row exists but decryption failed —
+    // that's a real misconfiguration the admin needs to see.
+    if (err.message && /malformed|bad iv|tag|auth/i.test(err.message)) {
+      throw new Error('Active Google Sheets credentials in DB cannot be decrypted — re-upload the service-account JSON.');
+    }
+    // Otherwise (DB not migrated yet, etc.) fall through to env.
+  }
+
+  // 2. Env fallback (legacy)
+  const sheetId = process.env.GOOGLE_SHEET_ID || '';
+  const keyPath = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH || '';
+  const keyJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY || '';
+  if (!sheetId) throw new Error('No active Google Sheets config — upload credentials in Settings → Google Sheets.');
+  if (!keyPath && !keyJson) throw new Error('No Google credentials configured — upload service-account JSON in Settings.');
+
+  let creds;
+  if (keyJson) {
+    try { creds = JSON.parse(keyJson); }
+    catch { creds = JSON.parse(Buffer.from(keyJson, 'base64').toString('utf8')); }
+  } else {
+    const resolved = path.isAbsolute(keyPath) ? keyPath : path.resolve(process.cwd(), keyPath);
+    creds = require(resolved);
+  }
+  return {
+    configId:  null,
+    sheetId,
+    sheetName: process.env.GOOGLE_SHEET_NAME || 'Leads',
+    creds,
+    source:    'env',
+  };
+}
 
 async function initClients() {
-  if (_sheets && _drive) return { sheets: _sheets, drive: _drive };
+  if (_clientCache) return _clientCache;
   if (_initError) throw _initError;
 
-  if (!SHEET_ID) {
-    _initError = new Error('GOOGLE_SHEET_ID not set — sync disabled');
-    logger.warn('[Sheets] ' + _initError.message);
-    throw _initError;
-  }
-  if (!KEY_PATH && !KEY_JSON) {
-    _initError = new Error('No Google credentials configured');
-    logger.warn('[Sheets] ' + _initError.message);
-    throw _initError;
-  }
-
   try {
-    let auth;
-    if (KEY_PATH) {
-      const resolved = path.isAbsolute(KEY_PATH)
-        ? KEY_PATH
-        : path.resolve(process.cwd(), KEY_PATH);
-      auth = new google.auth.GoogleAuth({ keyFile: resolved, scopes: SCOPES });
-    } else {
-      let creds;
-      try { creds = JSON.parse(KEY_JSON); }
-      catch { creds = JSON.parse(Buffer.from(KEY_JSON, 'base64').toString('utf8')); }
-      auth = new google.auth.GoogleAuth({ credentials: creds, scopes: SCOPES });
-    }
-
+    const cfg = await loadActiveConfig();
+    const auth = new google.auth.GoogleAuth({ credentials: cfg.creds, scopes: SCOPES });
     const client = await auth.getClient();
-    _sheets = google.sheets({ version: 'v4', auth: client });
-    _drive  = google.drive({ version: 'v3', auth: client });
-
-    logger.info('[Sheets] Google Sheets + Drive API initialized');
-    return { sheets: _sheets, drive: _drive };
+    _clientCache = {
+      configId:    cfg.configId,
+      sheetId:     cfg.sheetId,
+      sheetName:   cfg.sheetName,
+      clientEmail: cfg.creds.client_email,
+      sheets:      google.sheets({ version: 'v4', auth: client }),
+      drive:       google.drive({ version: 'v3', auth: client }),
+    };
+    logger.info({ source: cfg.source, sheetId: cfg.sheetId.slice(0, 8) + '…' }, '[Sheets] Google APIs initialized');
+    return _clientCache;
   } catch (err) {
     _initError = err;
     logger.error({ err: err.message }, '[Sheets] Failed to initialize Google APIs');
@@ -80,21 +119,33 @@ async function initClients() {
   }
 }
 
-/** Get sheets client (lazy init). Returns null if disabled. */
+/** Lazy init. Returns null if disabled / misconfigured. */
 async function getSheets() {
-  try {
-    const { sheets } = await initClients();
-    return sheets;
-  } catch {
-    return null;
-  }
+  try { return (await initClients()).sheets; }
+  catch { return null; }
 }
 
-/** Reset cached clients (useful after credential rotation). */
+/** Reset cached clients (called after admin updates / activates a new config). */
 function resetClients() {
-  _sheets = null;
-  _drive = null;
-  _initError = null;
+  _clientCache = null;
+  _initError   = null;
+}
+
+/** Public alias used by the admin route after a config change. */
+function reloadActiveConfig() { resetClients(); }
+
+/** Currently-active sheet ID (env or DB), exposed for the legacy callers. */
+async function getActiveSheetId() {
+  try { return (await initClients()).sheetId; }
+  catch { return ''; }
+}
+async function getActiveSheetName() {
+  try { return (await initClients()).sheetName; }
+  catch { return 'Leads'; }
+}
+async function getActiveClientEmail() {
+  try { return (await initClients()).clientEmail; }
+  catch { return null; }
 }
 
 // ─── Retry wrapper ──────────────────────────────────────────────────
@@ -175,7 +226,8 @@ const LEAD_SELECT_SQL = `
 // ─── Full sync ──────────────────────────────────────────────────────
 
 async function syncAllLeads() {
-  const { sheets } = await initClients();
+  const c = await initClients();
+  const SHEET_ID = c.sheetId, SHEET_NAME = c.sheetName, sheets = c.sheets;
 
   const { rows } = await query(LEAD_SELECT_SQL + ' ORDER BY l.created_at DESC');
   if (rows.length === 0) {
@@ -202,6 +254,13 @@ async function syncAllLeads() {
     });
   }, 'fullSync');
 
+  if (c.configId) {
+    await query(
+      `UPDATE integration_configs SET last_synced_at = NOW(), last_sync_count = $1 WHERE id = $2`,
+      [rows.length, c.configId],
+    ).catch(() => {});
+  }
+
   logger.info({ count: rows.length }, '[Sheets] Full sync complete');
   return { synced: rows.length };
 }
@@ -209,8 +268,9 @@ async function syncAllLeads() {
 // ─── Append single lead ─────────────────────────────────────────────
 
 async function appendLead(leadId) {
-  const sheets = await getSheets();
-  if (!sheets) return { appended: false, reason: 'disabled' };
+  let c;
+  try { c = await initClients(); } catch { return { appended: false, reason: 'disabled' }; }
+  const SHEET_ID = c.sheetId, SHEET_NAME = c.sheetName, sheets = c.sheets;
 
   const { rows: [l] } = await query(
     LEAD_SELECT_SQL + ' AND l.id = $1',
@@ -238,8 +298,9 @@ async function appendLead(leadId) {
 // ─── Update existing lead row ───────────────────────────────────────
 
 async function updateLeadRow(leadId) {
-  const sheets = await getSheets();
-  if (!sheets) return { updated: false, reason: 'disabled' };
+  let c;
+  try { c = await initClients(); } catch { return { updated: false, reason: 'disabled' }; }
+  const SHEET_ID = c.sheetId, SHEET_NAME = c.sheetName, sheets = c.sheets;
 
   // Find the row with this lead ID
   let existingData;
@@ -280,10 +341,11 @@ async function updateLeadRow(leadId) {
 
 async function checkConnectivity() {
   const result = {
-    configured: !!(SHEET_ID && (KEY_PATH || KEY_JSON)),
-    sheet_id: SHEET_ID,
-    sheet_name: SHEET_NAME,
-    service_account_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || '',
+    configured: false,
+    source: null,
+    sheet_id: '',
+    sheet_name: 'Leads',
+    service_account_email: '',
     api_connected: false,
     sheet_accessible: false,
     sheet_title: null,
@@ -291,14 +353,23 @@ async function checkConnectivity() {
     error: null,
   };
 
-  if (!result.configured) {
-    result.error = 'Missing GOOGLE_SHEET_ID or credentials';
+  let c;
+  try {
+    c = await initClients();
+  } catch (err) {
+    result.error = err.message;
     return result;
   }
+  result.configured = true;
+  result.sheet_id = c.sheetId;
+  result.sheet_name = c.sheetName;
+  result.service_account_email = c.clientEmail;
+  result.source = c.configId ? 'db' : 'env';
 
   try {
-    const { sheets } = await initClients();
     result.api_connected = true;
+    const sheets = c.sheets;
+    const SHEET_ID = c.sheetId, SHEET_NAME = c.sheetName;
 
     // Test sheet access
     const meta = await sheets.spreadsheets.get({
@@ -343,6 +414,56 @@ async function listSharedSheets() {
   }
 }
 
+// ─── Ad-hoc credential test (no caching, used by the admin "Test" button) ──
+
+async function testCredentials({ creds, sheetId, sheetName = 'Leads' }) {
+  if (!sheetId) return { ok: false, error: 'sheet_id is required' };
+  if (!creds || !creds.client_email || !creds.private_key) return { ok: false, error: 'Invalid service-account JSON' };
+  try {
+    const auth = new google.auth.GoogleAuth({ credentials: creds, scopes: SCOPES });
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: 'v4', auth: client });
+    const meta = await sheets.spreadsheets.get({ spreadsheetId: sheetId, fields: 'properties.title,sheets.properties' });
+    const tabs = (meta.data.sheets || []).map(s => s.properties?.title).filter(Boolean);
+    let rowCount = 0;
+    try {
+      const res = await sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range: `${sheetName}!A:A` });
+      rowCount = Math.max(0, (res.data.values?.length || 0) - 1);
+    } catch (_) { /* sheet tab may not exist yet */ }
+    return {
+      ok: true,
+      sheet_title: meta.data.properties?.title || '',
+      service_account_email: creds.client_email,
+      tabs,
+      row_count: rowCount,
+    };
+  } catch (err) {
+    const status = err?.response?.status;
+    let msg = err.message;
+    if (status === 403) msg = `Permission denied — share the sheet with ${creds.client_email} (Editor access).`;
+    else if (status === 404) msg = 'Sheet not found — check the Sheet ID.';
+    return { ok: false, error: msg };
+  }
+}
+
+// ─── Preview last N rows of the active sheet (admin Preview button) ────
+
+async function previewRows(limit = 10) {
+  const c = await initClients();
+  const res = await c.sheets.spreadsheets.values.get({
+    spreadsheetId: c.sheetId,
+    range: `${c.sheetName}!A1:R${Math.max(2, limit + 1)}`,
+  });
+  const values = res.data.values || [];
+  const header = values[0] || [];
+  return {
+    sheet_id:   c.sheetId,
+    sheet_name: c.sheetName,
+    header,
+    rows: values.slice(1),
+  };
+}
+
 module.exports = {
   syncAllLeads,
   appendLead,
@@ -351,4 +472,10 @@ module.exports = {
   listSharedSheets,
   getSheets,
   resetClients,
+  reloadActiveConfig,
+  getActiveSheetId,
+  getActiveSheetName,
+  getActiveClientEmail,
+  testCredentials,
+  previewRows,
 };

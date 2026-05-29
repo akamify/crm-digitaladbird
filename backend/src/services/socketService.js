@@ -143,4 +143,28 @@ function emitToRole(role, event, data) {
   if (io) io.to(`role:${role}`).emit(event, data);
 }
 
-module.exports = { initSocket, getIO, emitToUser, emitToConversation, emitToRole };
+/**
+ * Broadcast a freshly-created lead to every dashboard that should refresh.
+ * Loads a thin summary row (no PII beyond what UIs already show) and fans it
+ * out to: all super_admins, the RM rooms, and (if assigned) the assignee's
+ * personal room. Safe to call from inside a webhook/handler — Socket.IO emit
+ * never blocks the response.
+ *
+ * @param {object} payload - { id, full_name, phone, email, source,
+ *                             campaign_name, ad_name, adset_name, form_id,
+ *                             assigned_to_user_id, created_at }
+ */
+function broadcastNewLead(payload) {
+  if (!io || !payload || !payload.id) return;
+  const event = 'lead:new';
+  // Admins see everything
+  io.to('role:super_admin').emit(event, payload);
+  // RMs see the team feed (they'll filter by assigned RM client-side)
+  io.to('role:rm').emit(event, payload);
+  // Members only see their own
+  if (payload.assigned_to_user_id) {
+    io.to(`user:${payload.assigned_to_user_id}`).emit(event, payload);
+  }
+}
+
+module.exports = { initSocket, getIO, emitToUser, emitToConversation, emitToRole, broadcastNewLead };

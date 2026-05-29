@@ -86,7 +86,7 @@ cat > $APP_DIR/backend/.env << ENVEOF
 NODE_ENV=production
 PORT=4000
 APP_URL=https://$DOMAIN
-CORS_ORIGINS=https://$DOMAIN
+CORS_ORIGINS=https://$DOMAIN,https://www.$DOMAIN
 
 # Database
 DATABASE_URL=postgres://$DB_USER:$DB_PASS@localhost:5432/$DB_NAME
@@ -176,10 +176,13 @@ node src/db/migrate.js
 echo -e "\n[11/15] Seeding production users..."
 node src/db/seeds/seed_production_users.js 2>/dev/null || echo "  Seed script not found or already seeded"
 
-# ── Step 12: Build Frontend ──
-echo -e "\n[12/15] Building Next.js frontend (this takes a few minutes)..."
+# ── Step 12: Build Frontend (standalone) ──
+echo -e "\n[12/15] Building Next.js frontend in standalone mode..."
 cd $APP_DIR/frontend
 NODE_ENV=production npm run build
+# Next.js standalone server doesn't auto-include static/ or public/ — copy them in.
+cp -r .next/static .next/standalone/.next/static
+[ -d public ] && cp -r public .next/standalone/public || true
 
 # ── Step 13: Configure PM2 ──
 echo -e "\n[13/15] Configuring PM2 process manager..."
@@ -208,13 +211,13 @@ module.exports = {
     {
       name: 'crm-frontend',
       cwd: '/opt/digitaladbird-crm/frontend',
-      script: 'node_modules/.bin/next',
-      args: 'start -p 3000',
+      script: '.next/standalone/server.js',
       instances: 1,
       exec_mode: 'fork',
       env: {
         NODE_ENV: 'production',
-        PORT: 3000
+        PORT: 3000,
+        HOSTNAME: '0.0.0.0'
       },
       max_memory_restart: '512M',
       error_file: '/var/log/crm/frontend-error.log',

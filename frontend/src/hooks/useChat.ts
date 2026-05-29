@@ -1,6 +1,7 @@
 'use client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import toast from 'react-hot-toast';
 import { apiGet, apiPost, api } from '@/lib/api';
 import { getSocket, connectSocket, joinConversation, leaveConversation, emitTyping, emitStopTyping } from '@/lib/socket';
 import { useAuth } from '@/lib/auth';
@@ -158,6 +159,20 @@ export function useSocketConnection() {
       'user:online': () => enqueue('chat-contacts', 'chat-conversations'),
       'user:offline': () => enqueue('chat-contacts', 'chat-conversations'),
       'reconnect': () => enqueue('chat-conversations', 'chat-messages', 'chat-unread'),
+
+      // Real-time lead ingestion — fired by the backend whenever a Meta webhook,
+      // periodic Meta pull, sheet import or manual create lands a new lead.
+      // We invalidate every list/aggregate the UI uses so the leads page,
+      // dashboards, reports and RM panels refresh without a page reload.
+      'lead:new': (lead: { id: string; full_name: string | null; campaign_name: string | null; assigned_to_user_id: string | null; _source?: string }) => {
+        enqueue('leads', 'reports', 'admin', 'rankings', 'dist-stats');
+        // RMs + admins get a passive toast — members only if it's their lead
+        const mine = lead.assigned_to_user_id === user.id;
+        if (user.role === 'super_admin' || user.role === 'rm' || mine) {
+          const tag = lead.campaign_name ? `· ${lead.campaign_name}` : '';
+          toast.success(`New lead${lead.full_name ? `: ${lead.full_name}` : ''} ${tag}`, { id: `lead-${lead.id}`, duration: 4000 });
+        }
+      },
     } as const;
 
     let socketRef: ReturnType<typeof getSocket> = null;

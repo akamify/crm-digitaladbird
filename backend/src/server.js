@@ -4,6 +4,8 @@ const config = require('./config/env');
 const logger = require('./utils/logger');
 const { closePool } = require('./config/database');
 const { startLeadLockJob } = require('./jobs/leadLockJob');
+const { startSheetImportJob } = require('./jobs/sheetImportJob');
+const { startMetaPullJob } = require('./jobs/metaPullJob');
 const { startDistributionScheduler } = require('./services/distributionScheduler');
 const { syncAllCampaigns } = require('./services/metaSyncService');
 const { initSocket } = require('./services/socketService');
@@ -19,6 +21,8 @@ server.listen(config.port, () => {
 
 // Background jobs
 const leadLockTimer         = startLeadLockJob();
+const sheetImportTimer      = startSheetImportJob();
+const metaPullTimer         = startMetaPullJob();
 const distributionTimer     = startDistributionScheduler();
 
 // Auto-sync Meta campaigns on startup + every 30 min
@@ -43,6 +47,8 @@ const campaignSyncTimer = setInterval(async () => {
 function shutdown(signal) {
   logger.info(`Received ${signal}, shutting down gracefully...`);
   clearInterval(leadLockTimer);
+  clearInterval(sheetImportTimer);
+  clearInterval(metaPullTimer);
   clearInterval(distributionTimer);
   clearInterval(campaignSyncTimer);
   server.close(async () => {

@@ -22,6 +22,7 @@ import { useSummary, useDaily, useByUser } from '@/hooks/useReports';
 import { useLeadList } from '@/hooks/useLeads';
 import { useLeadRequestStats, usePendingLeadRequests, useApproveLeadRequest, useRejectLeadRequest } from '@/hooks/useLeadRequests';
 import { useRankings, RANK_LABELS, type RankedEntry } from '@/hooks/useRankings';
+import { useCampaignsEnriched } from '@/hooks/useAdminEnterprise';
 import { MovementIndicator } from '@/components/rankings/RankBadge';
 import { useAuth } from '@/lib/auth';
 import { apiGet } from '@/lib/api';
@@ -168,7 +169,13 @@ function AdminDashboardInner() {
               <span>{lrs?.available_leads ?? 0} leads in queue</span>
             </div>
           </div>
-          {pendingReqs.data && pendingReqs.data.length > 0 ? (
+          {pendingReqs.isLoading ? (
+            <div className="space-y-2">{Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-14" />)}</div>
+          ) : !pendingReqs.data?.length ? (
+            <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/60 px-4 py-3 text-center text-xs text-slate-500">
+              Counter shows pending requests but none returned — they may have just been resolved.
+            </div>
+          ) : (
             <div className="space-y-2">
               {pendingReqs.data.map(r => (
                 <div key={r.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-3">
@@ -209,7 +216,7 @@ function AdminDashboardInner() {
                 </div>
               ))}
             </div>
-          ) : null}
+          )}
         </div>
       )}
 
@@ -251,7 +258,19 @@ function AdminDashboardInner() {
             </Link>
           </div>
           <div className="h-72">
-            {daily.isLoading ? <Skeleton className="h-full" /> : <DailyChart data={daily.data ?? []} />}
+            {daily.isLoading ? (
+              <Skeleton className="h-full" />
+            ) : !daily.data?.length || daily.data.every(d => Number(d.leads) === 0 && Number(d.conversions) === 0) ? (
+              <div className="flex h-full items-center justify-center">
+                <EmptyState
+                  title="No lead activity yet"
+                  description="The 14-day chart will populate as leads come in."
+                  icon={<BarChart3 className="h-6 w-6" />}
+                />
+              </div>
+            ) : (
+              <DailyChart data={daily.data} />
+            )}
           </div>
         </div>
 
@@ -291,6 +310,9 @@ function AdminDashboardInner() {
 
       {/* Leaderboard Quick View */}
       <AdminLeaderboardWidget />
+
+      {/* Campaign → Lead Tracking — which campaigns are bringing in leads */}
+      <CampaignLeadsTracker />
 
       {/* All-team performance */}
       <div className="card-padded">
@@ -399,7 +421,11 @@ function AdminLeaderboardWidget() {
             {sec.loading ? (
               <Skeleton className="h-32" />
             ) : !sec.data?.length ? (
-              <div className="py-4 text-center text-xs text-slate-400">No rankings yet</div>
+              <div className="flex h-32 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-slate-200 bg-slate-50/60 px-3 text-center">
+                <Trophy className="h-5 w-5 text-slate-300" />
+                <div className="text-xs font-medium text-slate-600">No rankings for today yet</div>
+                <div className="text-[10px] leading-tight text-slate-400">Updates after the daily ranking job runs.</div>
+              </div>
             ) : (
               <div className="space-y-1.5">
                 {sec.data.slice(0, 5).map((entry, i) => {
@@ -474,3 +500,133 @@ const TeamTable = memo(function TeamTable({ data }: { data: UserPerformance[] })
     </div>
   );
 });
+
+/* ═══════════════════ CAMPAIGN → LEADS TRACKER ═══════════════════
+ * Shows: which Meta campaigns are bringing in leads + recent leads stream
+ * with campaign name + arrival time. Admin can click into any lead.
+ */
+function CampaignLeadsTracker() {
+  const campaigns = useCampaignsEnriched();
+  const recentMeta = useLeadList({ source: 'meta', page: 1, page_size: 10, sort: 'created_at', order: 'desc' });
+
+  const topCampaigns = (campaigns.data || [])
+    .filter(c => Number(c.lead_count) > 0)
+    .sort((a, b) => Number(b.today_leads) - Number(a.today_leads) || Number(b.lead_count) - Number(a.lead_count))
+    .slice(0, 6);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Megaphone className="h-5 w-5 text-rose-500" />
+          <h2 className="text-sm font-semibold text-slate-900">Campaign → Leads Tracking</h2>
+          <span className="chip-slate text-[10px]">Live</span>
+        </div>
+        <Link href="/settings?tab=campaigns" className="text-xs text-brand-600 hover:text-brand-700 inline-flex items-center gap-1">
+          Manage campaigns <ArrowRight className="h-3 w-3" />
+        </Link>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        {/* Top campaigns by activity */}
+        <div className="card-padded lg:col-span-2">
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-slate-700">Top Campaigns by Volume</h3>
+            <span className="text-[10px] text-slate-500">{(campaigns.data || []).length} total</span>
+          </div>
+          {campaigns.isLoading ? (
+            <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12" />)}</div>
+          ) : !topCampaigns.length ? (
+            <EmptyState
+              title="No campaign activity yet"
+              description="Meta campaigns will appear once leads are ingested via webhooks or sync."
+              icon={<Megaphone className="h-6 w-6" />}
+            />
+          ) : (
+            <div className="space-y-2">
+              {topCampaigns.map(c => (
+                <Link
+                  key={c.id}
+                  href={`/leads?campaign=${encodeURIComponent(c.campaign_name)}`}
+                  className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5 hover:bg-slate-50 transition"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <div className={clsx('h-2 w-2 rounded-full shrink-0', c.is_active ? 'bg-emerald-500' : 'bg-slate-300')} />
+                      <span className="text-sm font-medium text-slate-900 truncate">{c.campaign_name}</span>
+                      {c.internal_label && <span className="chip-blue text-[10px]">{c.internal_label}</span>}
+                    </div>
+                    {(c.connected_page || c.connected_form) && (
+                      <div className="ml-4 mt-0.5 text-[10px] text-slate-500 truncate">
+                        {c.connected_page && <span>📄 {c.connected_page}</span>}
+                        {c.connected_page && c.connected_form && <span> · </span>}
+                        {c.connected_form && <span>📋 {c.connected_form}</span>}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <div className="text-right">
+                      <div className="text-sm font-bold tabular-nums text-brand-700">{c.today_leads}</div>
+                      <div className="text-[9px] uppercase tracking-wide text-slate-500">Today</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm font-bold tabular-nums text-slate-900">{c.lead_count}</div>
+                      <div className="text-[9px] uppercase tracking-wide text-slate-500">Total</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm font-bold tabular-nums text-emerald-700">{c.conversions}</div>
+                      <div className="text-[9px] uppercase tracking-wide text-slate-500">Conv</div>
+                    </div>
+                    <ArrowRight className="h-3.5 w-3.5 text-slate-300" />
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Recent meta leads stream */}
+        <div className="card-padded">
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-slate-700">Recent Meta Leads</h3>
+            <Link href="/leads?source=meta" className="text-[11px] text-brand-600 hover:text-brand-700">View all</Link>
+          </div>
+          {recentMeta.isLoading ? (
+            <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12" />)}</div>
+          ) : !recentMeta.data?.rows.length ? (
+            <EmptyState
+              title="No Meta leads yet"
+              description="Live leads will appear here as Meta webhooks fire."
+              icon={<Inbox className="h-6 w-6" />}
+            />
+          ) : (
+            <ul className="space-y-1.5">
+              {recentMeta.data.rows.slice(0, 6).map(l => (
+                <li key={l.id}>
+                  <Link
+                    href={`/leads/${l.id}`}
+                    className="block rounded-lg border border-slate-200 bg-white px-2.5 py-2 hover:bg-slate-50 transition"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-slate-900 truncate">{l.full_name || 'Unnamed'}</span>
+                      <span className="text-[10px] text-slate-500 shrink-0">{fmtRelative(l.created_at)}</span>
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-1 text-[10px] text-slate-500">
+                      {l.campaign_name ? (
+                        <span className="truncate">📣 {l.campaign_name}</span>
+                      ) : l.campaign_label ? (
+                        <span className="chip-blue text-[9px]">{l.campaign_label}</span>
+                      ) : (
+                        <span className="text-slate-400">No campaign</span>
+                      )}
+                    </div>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

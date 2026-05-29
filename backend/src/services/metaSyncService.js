@@ -17,6 +17,7 @@ const { query, withTransaction } = require('../config/database');
 const logger = require('../utils/logger');
 const { assignLead } = require('./leadDistributionService');
 const { isDistributionActive } = require('./distributionScheduler');
+const { onLeadCreated, findExistingByContact } = require('./leadEventService');
 
 const GRAPH_BASE = `https://graph.facebook.com/${config.meta.graphVersion}`;
 
@@ -222,12 +223,17 @@ async function syncFormLeads(formId, options = {}) {
 async function ingestGraphLead(lead, formId) {
   const leadgenId = lead.id;
 
-  // Check duplicate
+  // Check duplicate by meta_lead_id first (fast path)
   const dup = await query(`SELECT id FROM leads WHERE meta_lead_id = $1`, [leadgenId]);
-  if (dup.rowCount > 0) return { status: 'duplicate', leadId: dup.rows[0].id };
+  if (dup.rowCount > 0) return { status: 'duplicate', leadId: dup.rows[0].id, reason: 'meta_lead_id' };
 
   // Parse field data
   const fields = parseFieldData(lead.field_data || []);
+
+  // Cross-dedup by phone/email so the same person submitting multiple Meta
+  // forms doesn't generate a duplicate CRM lead.
+  const dupContact = await findExistingByContact({ phone: fields.phone, email: fields.email });
+  if (dupContact) return { status: 'duplicate', leadId: dupContact.id, reason: dupContact.reason };
 
   // Get form metadata for campaign_label and product_tag
   const { rows: [formRow] } = await query(
@@ -302,6 +308,9 @@ async function ingestGraphLead(lead, formId) {
       assigned = { reason: 'DISTRIBUTION_ERROR', error: err.message };
     }
   }
+
+  // Real-time broadcast + Google Sheet append (non-blocking).
+  onLeadCreated(inserted, { source: 'meta_periodic_sync' });
 
   logger.info({ leadId: inserted, leadgen_id: leadgenId, campaign: campaignLabel, assigned }, 'Synced lead ingested');
   return { status: 'created', leadId: inserted, assigned };

@@ -84,6 +84,223 @@ export function useTriggerSheetSync() {
   });
 }
 
+// ── Dynamic Google Sheets Configs (admin-uploaded credentials) ───
+export interface SheetConfigPublic {
+  id: string;
+  kind: 'google_sheets';
+  label: string;
+  is_active: boolean;
+  sheet_id: string | null;
+  sheet_name: string;
+  service_account_email: string | null;
+  has_credentials: boolean;
+  last_tested_at: string | null;
+  last_test_ok: boolean | null;
+  last_test_error: string | null;
+  last_synced_at: string | null;
+  last_sync_count: number | null;
+  auto_import_enabled: boolean;
+  auto_import_minutes: number;
+  last_import_at: string | null;
+  last_import_stats: { total: number; imported: number; duplicates: number; failed: number; finished_at?: string } | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SheetsConnectivity {
+  configured: boolean;
+  source: 'db' | 'env' | null;
+  sheet_id: string;
+  sheet_name: string;
+  service_account_email: string;
+  api_connected: boolean;
+  sheet_accessible: boolean;
+  sheet_title: string | null;
+  row_count: number;
+  error: string | null;
+}
+
+export function useSheetConfigs() {
+  return useQuery({
+    queryKey: ['admin', 'sheet-configs'],
+    queryFn: () => apiGet<SheetConfigPublic[]>('/admin/sheets/configs'),
+    staleTime: 15_000,
+  });
+}
+
+export function useSheetsConnectivity() {
+  return useQuery({
+    queryKey: ['admin', 'sheets-connectivity'],
+    queryFn: () => apiGet<SheetsConnectivity>('/admin/sheets/connectivity'),
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * Upload a new config — supports either a File (drag-drop / file picker) OR a
+ * pasted JSON string. The endpoint accepts both.
+ */
+export function useCreateSheetConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: {
+      sheet_id: string;
+      label: string;
+      sheet_name?: string;
+      make_active?: boolean;
+      file?: File | null;
+      credentials_json?: string;
+    }) => {
+      const fd = new FormData();
+      fd.append('sheet_id', body.sheet_id);
+      fd.append('label', body.label);
+      if (body.sheet_name) fd.append('sheet_name', body.sheet_name);
+      if (body.make_active) fd.append('make_active', 'true');
+      if (body.file) fd.append('credentials_file', body.file);
+      else if (body.credentials_json) fd.append('credentials_json', body.credentials_json);
+      else throw new Error('Provide either a file or pasted JSON.');
+      // Use the underlying axios instance so multipart Content-Type is set
+      // automatically AND the auth header is attached by our interceptor.
+      const { api } = await import('@/lib/api');
+      const { data } = await api.post('/admin/sheets/configs', fd);
+      return data.data as SheetConfigPublic;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'sheet-configs'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'sheets-connectivity'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'sheets-enriched'] });
+    },
+  });
+}
+
+export function useUpdateSheetConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, ...patch }: { id: string; sheet_id?: string; sheet_name?: string; label?: string; credentials_json?: string; file?: File | null }) => {
+      const fd = new FormData();
+      if (patch.sheet_id   !== undefined) fd.append('sheet_id', patch.sheet_id);
+      if (patch.sheet_name !== undefined) fd.append('sheet_name', patch.sheet_name);
+      if (patch.label      !== undefined) fd.append('label', patch.label);
+      if (patch.file) fd.append('credentials_file', patch.file);
+      else if (patch.credentials_json) fd.append('credentials_json', patch.credentials_json);
+      const { api } = await import('@/lib/api');
+      const { data } = await api.patch(`/admin/sheets/configs/${id}`, fd);
+      return data.data as SheetConfigPublic;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'sheet-configs'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'sheets-connectivity'] });
+    },
+  });
+}
+
+export function useActivateSheetConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiPost(`/admin/sheets/configs/${id}/activate`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'sheet-configs'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'sheets-connectivity'] });
+    },
+  });
+}
+
+export function useTestSheetConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiPost<{ ok: boolean; sheet_title?: string; tabs?: string[]; row_count?: number; error?: string }>(`/admin/sheets/configs/${id}/test`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'sheet-configs'] }),
+  });
+}
+
+export function useSyncSheetConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiPost<{ synced: number }>(`/admin/sheets/configs/${id}/sync-now`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'sheet-configs'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'sheets-enriched'] });
+    },
+  });
+}
+
+export function useDeleteSheetConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => {
+      return import('@/lib/api').then(({ api }) => api.delete(`/admin/sheets/configs/${id}`).then(r => r.data.data));
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'sheet-configs'] }),
+  });
+}
+
+export function useSheetPreview(limit = 10) {
+  return useQuery({
+    queryKey: ['admin', 'sheet-preview', limit],
+    queryFn: () => apiGet<{ sheet_id: string; sheet_name: string; header: string[]; rows: string[][] }>(`/admin/sheets/preview?limit=${limit}`),
+    enabled: false, // user clicks "Preview" to trigger
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
+// ── Sheet → CRM Import ────────────────────────────────────────────
+export interface SheetImportStats {
+  total: number; imported: number; duplicates: number; failed: number;
+  failed_samples?: { row_index: number; error: string }[];
+  log_id?: string;
+}
+
+export interface SheetImportLog {
+  id: string;
+  triggered_by: 'manual' | 'auto';
+  triggered_by_name: string | null;
+  started_at: string;
+  finished_at: string | null;
+  total_rows: number;
+  imported: number;
+  duplicates: number;
+  failed: number;
+  error_message: string | null;
+  failed_samples: { row_index: number; error: string }[] | null;
+}
+
+export function useSheetImport() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, max_rows = 5000, assign = true }: { id: string; max_rows?: number; assign?: boolean }) =>
+      apiPost<SheetImportStats>(`/admin/sheets/configs/${id}/import`, { max_rows, assign }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'sheet-configs'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'sheet-import-logs'] });
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['reports'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'live-stats'] });
+    },
+  });
+}
+
+export function useSheetImportLogs(configId: string | null, limit = 10) {
+  return useQuery({
+    queryKey: ['admin', 'sheet-import-logs', configId, limit],
+    queryFn: () => apiGet<SheetImportLog[]>(`/admin/sheets/configs/${configId}/import-logs?limit=${limit}`),
+    enabled: !!configId,
+    staleTime: 10_000,
+  });
+}
+
+export function useToggleAutoImport() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, enabled, minutes }: { id: string; enabled?: boolean; minutes?: number }) =>
+      apiPatch<{ id: string; auto_import_enabled: boolean; auto_import_minutes: number }>(
+        `/admin/sheets/configs/${id}/auto-import`,
+        { enabled, minutes },
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'sheet-configs'] }),
+  });
+}
+
 // ── Distribution Rules ───────────────────────────────────────────
 export function useDistributionRules() {
   return useQuery({
@@ -191,6 +408,36 @@ export function useMetaPagesEnriched() {
     queryFn: () => apiGet<MetaPageEnriched[]>('/admin/meta/pages-enriched'),
     staleTime: 30_000,
     refetchInterval: 60_000,
+  });
+}
+
+// ── Per-page token management ───────────────────────────────────
+export interface PageTokenTestResult {
+  ok: boolean;
+  page_id?: string;
+  name?: string;
+  category?: string;
+  reason?: string;
+  meta_code?: number;
+  type?: string;
+  is_expired?: boolean;
+}
+
+export function useTestPageToken() {
+  return useMutation({
+    mutationFn: (pageId: string) => apiGet<PageTokenTestResult>(`/meta/pages/${pageId}/token-test`),
+  });
+}
+
+export function useUpdatePageToken() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pageId, token }: { pageId: string; token: string }) =>
+      apiPatch(`/meta/pages/${pageId}/token`, { page_access_token: token }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin'] });
+      qc.invalidateQueries({ queryKey: ['integration-status'] });
+    },
   });
 }
 

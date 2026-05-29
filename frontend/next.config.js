@@ -1,8 +1,22 @@
+// Stable, deterministic build ID — when the source changes, this changes;
+// when nothing changes, identical chunk URLs come out and existing caches stay valid.
+// Falls back to a timestamped ID for local dev builds without git.
+function deterministicBuildId() {
+  try {
+    const { execSync } = require('child_process');
+    const sha = execSync('git rev-parse HEAD', { cwd: __dirname, stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString().trim();
+    if (sha) return sha.slice(0, 12);
+  } catch (_) { /* fall through */ }
+  return `build-${Date.now()}`;
+}
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   compress: true,
+  generateBuildId: () => deterministicBuildId(),
   experimental: {
     typedRoutes: false,
     optimizePackageImports: [
@@ -29,12 +43,15 @@ const nextConfig = {
     }
     return config;
   },
-  output:undefined,
+  output: process.env.NODE_ENV === 'production' ? 'standalone' : undefined,
   compiler: {
     removeConsole: process.env.NODE_ENV === 'production' ? { exclude: ['error', 'warn'] } : false,
   },
   async headers() {
     return [
+      // Default: all HTML pages must always re-validate so a deploy is picked up
+      // immediately across Chrome / Edge / Safari / mobile. Without this, browsers
+      // use heuristic caching that differs per vendor and shows stale UI.
       {
         source: '/:path*',
         headers: [
@@ -42,8 +59,12 @@ const nextConfig = {
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' },
+          { key: 'Pragma', value: 'no-cache' },
+          { key: 'Expires', value: '0' },
         ],
       },
+      // Fingerprinted static chunks — safe to cache forever (filename changes with build ID).
       {
         source: '/static/:path*',
         headers: [
@@ -56,10 +77,20 @@ const nextConfig = {
           { key: 'Cache-Control', value: 'public, max-age=31536000, immutable' },
         ],
       },
+      // API responses are dynamic.
       {
         source: '/api/:path*',
         headers: [
           { key: 'Cache-Control', value: 'no-store, must-revalidate' },
+        ],
+      },
+      // Service-worker kill script: never let any browser cache this — it must be
+      // re-fetched fresh so the unregister logic runs.
+      {
+        source: '/sw.js',
+        headers: [
+          { key: 'Cache-Control', value: 'no-store, must-revalidate' },
+          { key: 'Content-Type', value: 'application/javascript; charset=utf-8' },
         ],
       },
     ];

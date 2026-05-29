@@ -1,5 +1,6 @@
 'use client';
-import { useState, FormEvent } from 'react';
+import { useState, useEffect, FormEvent } from 'react';
+import * as React from 'react';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -8,7 +9,7 @@ import {
   CheckCircle2, XCircle, AlertCircle, RefreshCw, Sheet, ExternalLink, Eye,
   Loader2, ChevronDown, ChevronRight, Zap, Shield, Globe, Search,
   ArrowLeft, Database, Activity, Radio, Key, Megaphone, BarChart3,
-  ChevronLeft, Download, Filter, Users,
+  ChevronLeft, Download, Filter, Users, Pencil,
 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/Button';
@@ -22,7 +23,16 @@ import {
   useMetaWebhookLogs, useSheetsEnriched, useMetaTokenStatus,
   useMetaSubscriptionStatus, useCampaignsEnriched,
   useSyncCampaigns, useSyncLeads, useUpdateMetaToken, useSubscribePage,
+  useTestPageToken, useUpdatePageToken,
+  // Dynamic Google Sheets credential management
+  useSheetConfigs, useSheetsConnectivity, useCreateSheetConfig, useUpdateSheetConfig,
+  useActivateSheetConfig, useTestSheetConfig, useSyncSheetConfig, useDeleteSheetConfig,
+  useSheetPreview,
+  // Sheet → CRM import
+  useSheetImport, useSheetImportLogs, useToggleAutoImport,
+  type SheetConfigPublic,
 } from '@/hooks/useAdminEnterprise';
+import { Upload, Power, FlaskConical, PlayCircle, Trash, Table as TableIcon, ArrowDownToLine, Timer, ScrollText } from 'lucide-react';
 import type { DistributionRule, MetaPage, MetaForm } from '@/types';
 
 type SettingsTab = 'overview' | 'meta-pages' | 'meta-forms' | 'campaigns' | 'sheets' | 'admin-tools' | 'webhook-logs';
@@ -138,6 +148,9 @@ function OverviewTab({ onNavigate }: { onNavigate: (tab: SettingsTab) => void })
         ))}
       </div>
 
+      {/* Meta Admin Quick Actions — all admin controls inline */}
+      <MetaAdminQuickActions onNavigate={onNavigate} />
+
       {/* Integration status cards */}
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-slate-900">Integration Status</h2>
@@ -238,6 +251,131 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   return <div className="flex items-center justify-between"><span className="text-slate-600">{label}</span>{children}</div>;
 }
 
+/* ═══════════════════ META ADMIN QUICK ACTIONS — inline panel on Overview ═══════════════════ */
+function MetaAdminQuickActions({ onNavigate }: { onNavigate: (tab: SettingsTab) => void }) {
+  const tokenStatus = useMetaTokenStatus();
+  const syncCampaigns = useSyncCampaigns();
+  const syncLeads = useSyncLeads();
+  const updateToken = useUpdateMetaToken();
+  const qc = useQueryClient();
+
+  const [tokenModal, setTokenModal] = useState(false);
+  const [pageModal, setPageModal] = useState(false);
+  const [userToken, setUserToken] = useState('');
+  const [pageToken, setPageToken] = useState('');
+  const [newPageId, setNewPageId] = useState('');
+  const [newPageName, setNewPageName] = useState('');
+  const [newPageToken, setNewPageToken] = useState('');
+
+  const addPage = useMutation({
+    mutationFn: () => apiPost('/meta/pages', { page_id: newPageId, page_name: newPageName, page_access_token: newPageToken }),
+    onSuccess: () => {
+      toast.success('Meta page connected');
+      qc.invalidateQueries({ queryKey: ['admin'] });
+      qc.invalidateQueries({ queryKey: ['integration-status'] });
+      setPageModal(false); setNewPageId(''); setNewPageName(''); setNewPageToken('');
+    },
+    onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Failed to connect page'),
+  });
+
+  function handleUpdateToken() {
+    if (!userToken && !pageToken) { toast.error('Enter at least one token'); return; }
+    updateToken.mutate(
+      { user_access_token: userToken || undefined, page_access_token: pageToken || undefined },
+      {
+        onSuccess: () => {
+          toast.success('Token updated + campaigns syncing');
+          setTokenModal(false); setUserToken(''); setPageToken('');
+          qc.invalidateQueries({ queryKey: ['integration-status'] });
+        },
+        onError: () => toast.error('Update failed — check token validity'),
+      },
+    );
+  }
+
+  const ts = tokenStatus.data;
+  const tokenOk = ts?.has_page_token && ts?.has_user_token;
+
+  return (
+    <div className="rounded-xl border border-violet-200 bg-gradient-to-br from-violet-50 to-blue-50 p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <Shield className="h-4 w-4 text-violet-600" />
+        <h2 className="text-sm font-semibold text-slate-900">Meta Admin — Quick Actions</h2>
+        <span className={clsx('chip text-[10px]', tokenOk ? 'chip-emerald' : 'chip-amber')}>
+          {tokenOk ? 'Token OK' : ts ? 'Token issue' : 'Checking…'}
+        </span>
+        <button onClick={() => onNavigate('admin-tools')} className="ml-auto text-[11px] text-violet-700 hover:text-violet-900 font-medium inline-flex items-center gap-1">
+          More tools <ChevronRight className="h-3 w-3" />
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+        <button onClick={() => setTokenModal(true)}
+          className="flex flex-col items-center gap-1.5 rounded-lg border border-amber-200 bg-white px-3 py-3 text-center transition hover:bg-amber-50 hover:shadow-sm">
+          <Key className="h-5 w-5 text-amber-600" />
+          <span className="text-xs font-semibold text-slate-800">Add / Update Token</span>
+          <span className="text-[10px] text-slate-500">User + Page access</span>
+        </button>
+
+        <button onClick={() => setPageModal(true)}
+          className="flex flex-col items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-3 text-center transition hover:bg-blue-50 hover:shadow-sm">
+          <Facebook className="h-5 w-5 text-blue-600" />
+          <span className="text-xs font-semibold text-slate-800">Connect Meta Page</span>
+          <span className="text-[10px] text-slate-500">Add page + token</span>
+        </button>
+
+        <button onClick={() => syncCampaigns.mutate(undefined, { onSuccess: () => toast.success('Campaigns synced from Meta'), onError: () => toast.error('Sync failed') })}
+          disabled={syncCampaigns.isPending}
+          className="flex flex-col items-center gap-1.5 rounded-lg border border-violet-200 bg-white px-3 py-3 text-center transition hover:bg-violet-50 hover:shadow-sm disabled:opacity-60">
+          {syncCampaigns.isPending ? <Loader2 className="h-5 w-5 text-violet-600 animate-spin" /> : <Megaphone className="h-5 w-5 text-violet-600" />}
+          <span className="text-xs font-semibold text-slate-800">Sync Campaigns</span>
+          <span className="text-[10px] text-slate-500">All ad accounts</span>
+        </button>
+
+        <button onClick={() => syncLeads.mutate({}, { onSuccess: () => toast.success('Lead sync triggered'), onError: () => toast.error('Sync failed') })}
+          disabled={syncLeads.isPending}
+          className="flex flex-col items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 py-3 text-center transition hover:bg-emerald-50 hover:shadow-sm disabled:opacity-60">
+          {syncLeads.isPending ? <Loader2 className="h-5 w-5 text-emerald-600 animate-spin" /> : <Download className="h-5 w-5 text-emerald-600" />}
+          <span className="text-xs font-semibold text-slate-800">Sync Leads</span>
+          <span className="text-[10px] text-slate-500">From all forms</span>
+        </button>
+
+        <button onClick={() => onNavigate('meta-forms')}
+          className="flex flex-col items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3 py-3 text-center transition hover:bg-rose-50 hover:shadow-sm">
+          <FileText className="h-5 w-5 text-rose-600" />
+          <span className="text-xs font-semibold text-slate-800">Register Form</span>
+          <span className="text-[10px] text-slate-500">Track new lead form</span>
+        </button>
+      </div>
+
+      {/* Update Token Modal */}
+      <Modal open={tokenModal} onClose={() => setTokenModal(false)} title="Update Meta Access Token" size="md"
+        footer={<><Button variant="ghost" onClick={() => setTokenModal(false)}>Cancel</Button><Button onClick={handleUpdateToken} loading={updateToken.isPending}>Update & Sync</Button></>}>
+        <div className="space-y-3">
+          <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+            <AlertCircle className="h-3.5 w-3.5 inline mr-1" />
+            Generate tokens from <a className="underline" href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener noreferrer">Graph API Explorer</a> with scopes: <code className="bg-amber-100 px-1 rounded">leads_retrieval, pages_show_list, pages_read_engagement, ads_read, business_management</code>.
+          </div>
+          <Input label="User Access Token (long-lived)" type="password" value={userToken} onChange={(e) => setUserToken(e.target.value)} placeholder="EAAxxx..." />
+          <Input label="Page Access Token (long-lived)" type="password" value={pageToken} onChange={(e) => setPageToken(e.target.value)} placeholder="EAAxxx..." />
+          <p className="text-[11px] text-slate-500">Tokens are saved in-memory immediately; campaigns auto-sync after update. To persist across restarts, also update <code>backend/.env</code>.</p>
+        </div>
+      </Modal>
+
+      {/* Connect Meta Page Modal */}
+      <Modal open={pageModal} onClose={() => setPageModal(false)} title="Connect Meta Page" size="md"
+        footer={<><Button variant="ghost" onClick={() => setPageModal(false)}>Cancel</Button><Button onClick={() => addPage.mutate()} loading={addPage.isPending} disabled={!newPageId || !newPageName}>Connect Page</Button></>}>
+        <div className="space-y-3">
+          <Input label="Page ID" value={newPageId} onChange={(e) => setNewPageId(e.target.value)} required placeholder="220342467819979" />
+          <Input label="Page Name" value={newPageName} onChange={(e) => setNewPageName(e.target.value)} required placeholder="Digital AdBird" />
+          <Input label="Page Access Token" type="password" value={newPageToken} onChange={(e) => setNewPageToken(e.target.value)} placeholder="EAAxxx... (recommended for live webhooks)" />
+          <p className="text-[11px] text-slate-500">Page access token lets the CRM fetch full lead data when Meta webhooks fire. Without it, lead ingestion will fail.</p>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
 /* ═══════════════════ META PAGES TAB ═══════════════════ */
 function MetaPagesTab() {
   const { data: pages, isLoading } = useMetaPagesEnriched();
@@ -251,11 +389,49 @@ function MetaPagesTab() {
   const [token, setToken] = useState('');
   const qc = useQueryClient();
 
+  // Per-page token update state
+  const [updateTokenPage, setUpdateTokenPage] = useState<{ page_id: string; page_name: string } | null>(null);
+  const [newToken, setNewToken] = useState('');
+  const testToken = useTestPageToken();
+  const updatePageToken = useUpdatePageToken();
+
   const add = useMutation({
     mutationFn: () => apiPost('/meta/pages', { page_id: pageId, page_name: pageName, page_access_token: token }),
-    onSuccess: () => { toast.success('Page connected'); qc.invalidateQueries({ queryKey: ['admin'] }); setAddOpen(false); setPageId(''); setPageName(''); setToken(''); },
-    onError: () => toast.error('Failed to connect page'),
+    onSuccess: () => {
+      toast.success('Page connected + token validated');
+      qc.invalidateQueries({ queryKey: ['admin'] });
+      setAddOpen(false); setPageId(''); setPageName(''); setToken('');
+    },
+    onError: (e: unknown) =>
+      toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Failed to connect page'),
   });
+
+  function handleTestToken(pid: string) {
+    testToken.mutate(pid, {
+      onSuccess: (r) => {
+        if (r.ok) toast.success(`✓ Token valid for "${r.name}"`);
+        else toast.error(`✗ ${r.is_expired ? 'Expired' : 'Invalid'}: ${r.reason || 'unknown'}`, { duration: 6000 });
+      },
+      onError: () => toast.error('Test failed'),
+    });
+  }
+
+  function handleUpdateToken() {
+    if (!updateTokenPage || !newToken.trim()) { toast.error('Paste a new token'); return; }
+    updatePageToken.mutate(
+      { pageId: updateTokenPage.page_id, token: newToken.trim() },
+      {
+        onSuccess: () => {
+          toast.success(`✓ Token updated for "${updateTokenPage.page_name}"`);
+          setUpdateTokenPage(null); setNewToken('');
+        },
+        onError: (err) => {
+          const e = err as { response?: { data?: { error?: { message?: string } } } };
+          toast.error(e?.response?.data?.error?.message || 'Update failed', { duration: 6000 });
+        },
+      },
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -305,7 +481,7 @@ function MetaPagesTab() {
                   className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-100 transition">
                   <Globe className="h-3 w-3" /> Meta Business <ExternalLink className="h-2.5 w-2.5" />
                 </a>
-                <a href={`https://www.facebook.com/ads/lead_forms/?page_id=${p.page_id}`} target="_blank" rel="noopener noreferrer"
+                <a href={`https://business.facebook.com/latest/instant_forms?asset_id=${p.page_id}`} target="_blank" rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[11px] font-medium text-violet-700 hover:bg-violet-100 transition">
                   <FileText className="h-3 w-3" /> Lead Ads <ExternalLink className="h-2.5 w-2.5" />
                 </a>
@@ -313,11 +489,67 @@ function MetaPagesTab() {
                   className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 transition">
                   <Eye className="h-3 w-3" /> View Leads ({p.lead_count})
                 </button>
+                <button onClick={() => handleTestToken(p.page_id)} disabled={testToken.isPending}
+                  className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] font-medium text-amber-700 hover:bg-amber-100 transition disabled:opacity-60">
+                  {testToken.isPending && testToken.variables === p.page_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Shield className="h-3 w-3" />}
+                  Test Token
+                </button>
+                <button onClick={() => { setUpdateTokenPage({ page_id: p.page_id, page_name: p.page_name || p.page_id }); setNewToken(''); }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] font-medium text-rose-700 hover:bg-rose-100 transition">
+                  <Key className="h-3 w-3" /> Update Token
+                </button>
               </div>
             </div>
           ))}
         </div>
       )}
+
+      {/* Per-page Update Token Modal */}
+      <Modal
+        open={!!updateTokenPage}
+        onClose={() => { setUpdateTokenPage(null); setNewToken(''); }}
+        title={`Update Token — ${updateTokenPage?.page_name || ''}`}
+        size="md"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => { setUpdateTokenPage(null); setNewToken(''); }}>Cancel</Button>
+            <Button onClick={handleUpdateToken} loading={updatePageToken.isPending} disabled={!newToken.trim()}>
+              Validate & Save
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 space-y-1">
+            <div className="flex items-start gap-1">
+              <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              <div>
+                <strong>Generate a new long-lived Page Access Token:</strong>
+                <ol className="mt-1 ml-3 list-decimal space-y-0.5">
+                  <li>Go to <a className="underline" href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener noreferrer">Graph API Explorer</a></li>
+                  <li>Select your app → click <em>Get User Access Token</em> with scopes: <code className="bg-amber-100 px-1 rounded">pages_show_list, pages_read_engagement, pages_manage_metadata, leads_retrieval, ads_read, business_management</code></li>
+                  <li>Then call <code className="bg-amber-100 px-1 rounded">GET /me/accounts</code> — find your page → copy its <code>access_token</code></li>
+                  <li>Extend with the <a className="underline" href="https://developers.facebook.com/tools/debug/accesstoken/" target="_blank" rel="noopener noreferrer">Access Token Debugger</a> to make it long-lived (~60 days)</li>
+                </ol>
+              </div>
+            </div>
+          </div>
+          <div>
+            <label className="label">Page ID</label>
+            <input className="input font-mono text-xs" value={updateTokenPage?.page_id || ''} disabled />
+          </div>
+          <Input
+            label="New Page Access Token"
+            type="password"
+            value={newToken}
+            onChange={(e) => setNewToken(e.target.value)}
+            placeholder="EAAxxxx..."
+          />
+          <p className="text-[11px] text-slate-500">
+            Token will be validated against Meta Graph API (<code>GET /{updateTokenPage?.page_id}?fields=id,name</code>) before saving. If validation fails, you'll see the exact error from Meta.
+          </p>
+        </div>
+      </Modal>
 
       {/* Page Leads Modal */}
       <Modal open={!!viewPageId} onClose={() => setViewPageId(null)} title={`Leads from Page`} size="lg">
@@ -384,6 +616,7 @@ function MetaFormsTab() {
   const [viewFormId, setViewFormId] = useState<string | null>(null);
   const [formLeadFilters, setFormLeadFilters] = useState<{ page?: number; stage?: string; call_status?: string }>({});
   const formLeads = useFormLeads(viewFormId, formLeadFilters);
+  const [detailsFormId, setDetailsFormId] = useState<string | null>(null);
 
   const [addOpen, setAddOpen] = useState(false);
   const [formId, setFormId] = useState('');
@@ -450,16 +683,19 @@ function MetaFormsTab() {
                   className="inline-flex items-center gap-1 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1.5 text-[11px] font-medium text-brand-700 hover:bg-brand-100 transition">
                   <Eye className="h-3 w-3" /> View Leads ({f.lead_count})
                 </button>
-                <a href={`https://www.facebook.com/ads/lead_forms/?form_id=${f.form_id}`} target="_blank" rel="noopener noreferrer"
+                <button type="button" onClick={() => setDetailsFormId(f.form_id)}
                   className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-[11px] font-medium text-blue-700 hover:bg-blue-100 transition">
-                  <FileText className="h-3 w-3" /> View Form <ExternalLink className="h-2.5 w-2.5" />
-                </a>
-                <a href={`https://www.facebook.com/ads/leadgen/form_details/?form_id=${f.form_id}`} target="_blank" rel="noopener noreferrer"
+                  <FileText className="h-3 w-3" /> View Form
+                </button>
+                <a href={f.page_id
+                    ? `https://business.facebook.com/latest/instant_forms?asset_id=${f.page_id}&selected_form_id=${f.form_id}`
+                    : `https://business.facebook.com/leadgen_forms/?ids=${f.form_id}`}
+                  target="_blank" rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[11px] font-medium text-violet-700 hover:bg-violet-100 transition">
                   <Database className="h-3 w-3" /> Form Details <ExternalLink className="h-2.5 w-2.5" />
                 </a>
                 {f.page_id && (
-                  <a href={`https://www.facebook.com/${f.page_id}`} target="_blank" rel="noopener noreferrer"
+                  <a href={`https://www.facebook.com/profile.php?id=${f.page_id}`} target="_blank" rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-100 transition">
                     <Facebook className="h-3 w-3" /> Open in Meta <ExternalLink className="h-2.5 w-2.5" />
                   </a>
@@ -535,6 +771,9 @@ function MetaFormsTab() {
         </div>
       </Modal>
 
+      {/* Live Form Details Modal */}
+      <FormDetailsModal formId={detailsFormId} onClose={() => setDetailsFormId(null)} />
+
       {/* Add Form Modal */}
       <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Register Meta Lead Form" size="lg"
         footer={<><Button variant="ghost" onClick={() => setAddOpen(false)}>Cancel</Button><Button onClick={() => add.mutate()} loading={add.isPending} disabled={!formId || !formName}>Save</Button></>}>
@@ -547,6 +786,160 @@ function MetaFormsTab() {
         </div>
       </Modal>
     </div>
+  );
+}
+
+/* ═══════════════════ FORM DETAILS MODAL — live data from Graph API ═══════════════════ */
+interface FormQuestion { key?: string; label?: string; type?: string; options?: { key?: string; value: string }[] }
+interface FormPage { id?: string; name?: string; username?: string; link?: string; picture?: { data?: { url?: string } } }
+interface LiveForm {
+  id: string; name: string; status: string; locale: string; created_time: string;
+  leads_count?: number; expired_leads_count?: number; organic_leads_count?: number;
+  questions?: FormQuestion[];
+  privacy_policy_url?: string; follow_up_action_url?: string;
+  thank_you_page?: { title?: string; body?: string; button_text?: string };
+  context_card?: { title?: string; content?: string[]; button_text?: string };
+  page?: FormPage;
+}
+interface FormDetailsResponse {
+  local: { form_id: string; form_name: string; page_id: string | null; page_name: string | null; campaign_label: string | null; product_tag: string | null; is_active: boolean; created_at: string };
+  live: LiveForm | null;
+}
+
+function FormDetailsModal({ formId, onClose }: { formId: string | null; onClose: () => void }) {
+  const q = useQuery<FormDetailsResponse, { response?: { data?: { error?: { message?: string; code?: string; meta_code?: number } } } }>({
+    queryKey: ['meta-form-details', formId],
+    queryFn: () => apiGet<FormDetailsResponse>(`/meta/forms/${formId}/details`),
+    enabled: !!formId,
+    staleTime: 30_000,
+    retry: false,
+  });
+
+  const live = q.data?.live;
+  const local = q.data?.local;
+  const errMsg = q.error?.response?.data?.error?.message;
+
+  return (
+    <Modal open={!!formId} onClose={onClose} title="Lead Form Details" size="lg">
+      {q.isLoading ? (
+        <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>
+      ) : q.isError && !local ? (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <div className="font-medium">Could not load form</div>
+          <div className="mt-1 text-xs">{errMsg || 'Unknown error'}</div>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {/* Header — page + form name */}
+          <div className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            {live?.page?.picture?.data?.url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={live.page.picture.data.url} alt="" className="h-10 w-10 rounded-full border border-slate-200" />
+            ) : <div className="grid h-10 w-10 place-items-center rounded-full bg-violet-100 text-violet-600"><Facebook className="h-5 w-5" /></div>}
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-slate-900 truncate">{live?.name || local?.form_name || 'Unknown form'}</div>
+              <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500">
+                <span>Page: <strong className="text-slate-700">{live?.page?.name || local?.page_name || '—'}</strong></span>
+                {live?.locale && <span>· Locale: <span className="font-mono">{live.locale}</span></span>}
+                {live?.status && <span className={clsx('chip', live.status === 'ACTIVE' ? 'chip-emerald' : 'chip-slate')}>{live.status}</span>}
+                {local?.campaign_label && <span className="chip-blue">{local.campaign_label}</span>}
+                {local?.product_tag && <span className="chip-slate">{local.product_tag}</span>}
+              </div>
+              <div className="mt-0.5 text-[10px] text-slate-400 font-mono">{local?.form_id} · page {local?.page_id || '—'}</div>
+            </div>
+          </div>
+
+          {/* Live error banner — still show local data + fallback link */}
+          {q.isError && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <div className="font-medium">Live data unavailable</div>
+              <div>{errMsg || 'Graph API call failed. Check META_PAGE_ACCESS_TOKEN.'}</div>
+            </div>
+          )}
+
+          {/* Counts */}
+          {live && (
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-lg bg-white border border-slate-200 px-3 py-2 text-center">
+                <div className="text-base font-bold tabular-nums text-slate-900">{(live.leads_count ?? 0).toLocaleString()}</div>
+                <div className="text-[10px] uppercase tracking-wide text-slate-500">Total Leads</div>
+              </div>
+              <div className="rounded-lg bg-white border border-slate-200 px-3 py-2 text-center">
+                <div className="text-base font-bold tabular-nums text-emerald-700">{(live.organic_leads_count ?? 0).toLocaleString()}</div>
+                <div className="text-[10px] uppercase tracking-wide text-slate-500">Organic</div>
+              </div>
+              <div className="rounded-lg bg-white border border-slate-200 px-3 py-2 text-center">
+                <div className="text-base font-bold tabular-nums text-amber-700">{(live.expired_leads_count ?? 0).toLocaleString()}</div>
+                <div className="text-[10px] uppercase tracking-wide text-slate-500">Expired</div>
+              </div>
+            </div>
+          )}
+
+          {/* Questions */}
+          {live?.questions && live.questions.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold text-slate-700 mb-2">Questions ({live.questions.length})</h4>
+              <div className="space-y-2 max-h-64 overflow-y-auto rounded-lg border border-slate-200 divide-y divide-slate-100">
+                {live.questions.map((qn, i) => (
+                  <div key={i} className="px-3 py-2 text-sm">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium text-slate-900">{qn.label || qn.key || `Question ${i + 1}`}</span>
+                      <span className="text-[10px] uppercase font-mono text-slate-400">{qn.type || 'text'}</span>
+                    </div>
+                    {qn.options && qn.options.length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {qn.options.map((o, j) => <span key={j} className="chip-slate text-[10px]">{o.value}</span>)}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Context card */}
+          {live?.context_card && (live.context_card.title || (live.context_card.content && live.context_card.content.length)) && (
+            <div className="rounded-lg border border-slate-200 bg-white p-3">
+              <div className="text-xs font-semibold text-slate-700 mb-1">Intro Screen</div>
+              {live.context_card.title && <div className="text-sm font-medium text-slate-900">{live.context_card.title}</div>}
+              {live.context_card.content?.map((c, i) => <div key={i} className="text-xs text-slate-600 mt-1">{c}</div>)}
+            </div>
+          )}
+
+          {/* Thank-you screen */}
+          {live?.thank_you_page && (live.thank_you_page.title || live.thank_you_page.body) && (
+            <div className="rounded-lg border border-slate-200 bg-white p-3">
+              <div className="text-xs font-semibold text-slate-700 mb-1">Thank-You Screen</div>
+              {live.thank_you_page.title && <div className="text-sm font-medium text-slate-900">{live.thank_you_page.title}</div>}
+              {live.thank_you_page.body && <div className="text-xs text-slate-600 mt-1">{live.thank_you_page.body}</div>}
+              {live.thank_you_page.button_text && <div className="mt-1 text-[10px] text-slate-500">Button: <span className="font-mono">{live.thank_you_page.button_text}</span></div>}
+            </div>
+          )}
+
+          {/* External links — open in Meta Business Suite */}
+          <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-3">
+            {live?.privacy_policy_url && (
+              <a href={live.privacy_policy_url} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50">
+                <Shield className="h-3 w-3" /> Privacy Policy <ExternalLink className="h-2.5 w-2.5" />
+              </a>
+            )}
+            {live?.page?.link && (
+              <a href={live.page.link} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-[11px] font-medium text-blue-700 hover:bg-blue-100">
+                <Facebook className="h-3 w-3" /> Facebook Page <ExternalLink className="h-2.5 w-2.5" />
+              </a>
+            )}
+            {local?.page_id && (
+              <a href={`https://business.facebook.com/latest/instant_forms?asset_id=${local.page_id}&selected_form_id=${local.form_id}`} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[11px] font-medium text-violet-700 hover:bg-violet-100">
+                <Database className="h-3 w-3" /> Edit in Business Suite <ExternalLink className="h-2.5 w-2.5" />
+              </a>
+            )}
+          </div>
+        </div>
+      )}
+    </Modal>
   );
 }
 
@@ -648,6 +1041,9 @@ function SheetsTab() {
         <h1 className="text-lg font-semibold text-slate-900">Google Sheets Integration</h1>
       </div>
 
+      {/* Dynamic credentials management — admin can upload JSON, switch sheets, no SSH/.env needed */}
+      <SheetCredentialsManager />
+
       {isLoading ? <Skeleton className="h-64" /> : (
         <>
           {/* Connection card */}
@@ -740,6 +1136,460 @@ function SheetsTab() {
         </>
       )}
     </div>
+  );
+}
+
+/* ═══════════════════ SHEET CREDENTIALS MANAGER (dynamic, admin-only) ═══════════════════
+ * Admin uploads / pastes Google Service-Account JSON directly, switches active sheet,
+ * tests / syncs / previews — everything without SSH or .env editing.
+ */
+function SheetCredentialsManager() {
+  const list = useSheetConfigs();
+  const conn = useSheetsConnectivity();
+  const activate = useActivateSheetConfig();
+  const testOne = useTestSheetConfig();
+  const syncOne = useSyncSheetConfig();
+  const del = useDeleteSheetConfig();
+  const preview = useSheetPreview(8);
+  const importNow = useSheetImport();
+  const toggleAuto = useToggleAutoImport();
+
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<SheetConfigPublic | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [logsTarget, setLogsTarget] = useState<SheetConfigPublic | null>(null);
+
+  const active = (list.data || []).find(c => c.is_active) || null;
+
+  return (
+    <div className="rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50/60 to-white p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <Sheet className="h-4 w-4 text-emerald-600" />
+        <h2 className="text-sm font-semibold text-slate-900">Credentials & Sheets</h2>
+        <span className={clsx('chip text-[10px]', conn.data?.api_connected ? 'chip-emerald' : 'chip-amber')}>
+          {conn.data?.api_connected ? `Live · source: ${conn.data?.source || '—'}` : conn.isLoading ? 'Checking…' : 'Not connected'}
+        </span>
+        <div className="ml-auto flex items-center gap-2">
+          <Button size="sm" variant="outline" leftIcon={<TableIcon className="h-3.5 w-3.5" />}
+            disabled={!active || !active.is_active}
+            onClick={() => { preview.refetch(); setPreviewOpen(true); }}>
+            Preview Rows
+          </Button>
+          <Button size="sm" leftIcon={<Upload className="h-3.5 w-3.5" />} onClick={() => setUploadOpen(true)}>
+            Upload Credentials
+          </Button>
+        </div>
+      </div>
+
+      {list.isLoading ? <Skeleton className="h-32" /> : !(list.data || []).length ? (
+        <div className="rounded-lg border border-dashed border-emerald-200 bg-white px-4 py-6 text-center">
+          <Upload className="h-6 w-6 mx-auto text-emerald-400 mb-2" />
+          <div className="text-sm font-medium text-slate-900">No credentials uploaded yet</div>
+          <p className="mt-1 text-xs text-slate-500 max-w-md mx-auto">
+            Click <strong>Upload Credentials</strong> and pick the Google Service Account <code>.json</code> file
+            (or paste it). The sheet must be shared with the service-account email as <em>Editor</em>.
+            {conn.data?.source === 'env' && conn.data?.api_connected && (
+              <span className="block mt-2 text-amber-700">Currently running on legacy <code>.env</code> credentials — uploading here replaces them dynamically.</span>
+            )}
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {(list.data || []).map(c => (
+            <div key={c.id}
+              className={clsx(
+                'rounded-lg border bg-white p-3 transition',
+                c.is_active ? 'border-emerald-300 ring-1 ring-emerald-200' : 'border-slate-200',
+              )}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <div className={clsx('h-2 w-2 rounded-full shrink-0', c.is_active ? 'bg-emerald-500' : 'bg-slate-300')} />
+                    <span className="text-sm font-semibold text-slate-900">{c.label}</span>
+                    {c.is_active && <span className="chip-emerald text-[10px]">Active</span>}
+                    {c.has_credentials ? (
+                      <span className="chip-slate text-[10px]">JSON stored</span>
+                    ) : (
+                      <span className="chip-amber text-[10px]">No JSON</span>
+                    )}
+                    {c.last_test_ok === true && <span className="chip-emerald text-[10px]">Test OK</span>}
+                    {c.last_test_ok === false && <span className="chip-rose text-[10px]" title={c.last_test_error || ''}>Test failed</span>}
+                  </div>
+                  <div className="mt-1 grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-0.5 text-[11px] text-slate-500">
+                    <div><span className="text-slate-400">Sheet ID:</span> <span className="font-mono text-slate-700 truncate inline-block max-w-[260px] align-middle">{c.sheet_id || '—'}</span></div>
+                    <div><span className="text-slate-400">Tab:</span> <span className="text-slate-700">{c.sheet_name}</span></div>
+                    <div className="sm:col-span-2"><span className="text-slate-400">Service account:</span> <span className="font-mono text-slate-700 truncate inline-block max-w-[420px] align-middle">{c.service_account_email || '—'}</span></div>
+                    {c.last_synced_at && <div className="sm:col-span-2"><span className="text-slate-400">Last synced:</span> <span className="text-slate-700">{fmtRelative(c.last_synced_at)} · {c.last_sync_count ?? 0} rows</span></div>}
+                    {c.last_test_ok === false && c.last_test_error && (
+                      <div className="sm:col-span-2 text-rose-600 truncate" title={c.last_test_error}>⚠ {c.last_test_error}</div>
+                    )}
+                    {c.last_import_at && c.last_import_stats && (
+                      <div className="sm:col-span-2 text-emerald-700">
+                        <ArrowDownToLine className="h-3 w-3 inline mr-1" />
+                        Last import {fmtRelative(c.last_import_at)}:
+                        <strong className="ml-1">{c.last_import_stats.imported}</strong> imported ·
+                        <span className="ml-1">{c.last_import_stats.duplicates} dup</span> ·
+                        <span className="ml-1 text-rose-600">{c.last_import_stats.failed} failed</span>
+                        <span className="ml-1 text-slate-400">/ {c.last_import_stats.total}</span>
+                      </div>
+                    )}
+                    {c.is_active && c.has_credentials && (
+                      <div className="sm:col-span-2 flex items-center gap-2 mt-1">
+                        <label className="inline-flex items-center gap-1.5 text-slate-600">
+                          <input
+                            type="checkbox"
+                            checked={c.auto_import_enabled}
+                            onChange={(e) => toggleAuto.mutate(
+                              { id: c.id, enabled: e.target.checked },
+                              {
+                                onSuccess: () => toast.success(e.target.checked ? 'Auto-import enabled' : 'Auto-import disabled'),
+                                onError: () => toast.error('Failed'),
+                              },
+                            )}
+                            className="rounded border-slate-300"
+                          />
+                          <Timer className="h-3 w-3" />
+                          Auto-import every
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={60}
+                          value={c.auto_import_minutes}
+                          onChange={(e) => {
+                            const m = Math.max(1, Math.min(60, Number(e.target.value) || 5));
+                            toggleAuto.mutate({ id: c.id, minutes: m });
+                          }}
+                          className="input h-6 w-14 text-[11px] py-0 px-1"
+                          disabled={!c.auto_import_enabled}
+                        />
+                        <span className="text-slate-500">minutes</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                  <button
+                    onClick={() => testOne.mutate(c.id, {
+                      onSuccess: (r) => toast.success(r.ok ? `OK — ${r.sheet_title || 'sheet reached'}` : `Failed — ${r.error || 'unknown'}`),
+                      onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Test failed'),
+                    })}
+                    disabled={!c.has_credentials || testOne.isPending}
+                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                    <FlaskConical className="h-3 w-3" /> Test
+                  </button>
+                  {!c.is_active && (
+                    <button
+                      onClick={() => activate.mutate(c.id, {
+                        onSuccess: () => toast.success(`${c.label} is now active`),
+                        onError: () => toast.error('Activation failed'),
+                      })}
+                      disabled={activate.isPending}
+                      className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">
+                      <Power className="h-3 w-3" /> Activate
+                    </button>
+                  )}
+                  {c.is_active && (
+                    <button
+                      onClick={() => syncOne.mutate(c.id, {
+                        onSuccess: (r) => toast.success(`Pushed ${r.synced} leads → Sheet`),
+                        onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Sync failed'),
+                      })}
+                      disabled={syncOne.isPending}
+                      className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+                      title="CRM → Sheet (push all leads from DB to the sheet)">
+                      <PlayCircle className="h-3 w-3" /> Push to Sheet
+                    </button>
+                  )}
+                  {c.is_active && c.has_credentials && (
+                    <button
+                      onClick={() => importNow.mutate({ id: c.id, max_rows: 5000, assign: true }, {
+                        onSuccess: (r) => toast.success(`Imported ${r.imported} · ${r.duplicates} duplicates · ${r.failed} failed (of ${r.total})`),
+                        onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Import failed'),
+                      })}
+                      disabled={importNow.isPending}
+                      className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                      title="Sheet → CRM (read all rows and create leads)">
+                      {importNow.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArrowDownToLine className="h-3 w-3" />}
+                      Import Leads From Sheet
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setLogsTarget(c)}
+                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                    title="View import history">
+                    <ScrollText className="h-3 w-3" /> Logs
+                  </button>
+                  <button
+                    onClick={() => setEditTarget(c)}
+                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50">
+                    <Pencil className="h-3 w-3" /> Edit
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!confirm(`Delete "${c.label}"? This will remove the credentials too.`)) return;
+                      del.mutate(c.id, {
+                        onSuccess: () => toast.success('Deleted'),
+                        onError: () => toast.error('Delete failed'),
+                      });
+                    }}
+                    disabled={del.isPending}
+                    className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50">
+                    <Trash className="h-3 w-3" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <SheetCredentialsModal
+        open={uploadOpen}
+        onClose={() => setUploadOpen(false)}
+        target={null}
+      />
+      <SheetCredentialsModal
+        open={!!editTarget}
+        onClose={() => setEditTarget(null)}
+        target={editTarget}
+      />
+      <SheetPreviewModal
+        open={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        data={preview.data ?? null}
+        isLoading={preview.isFetching}
+        error={preview.error as { response?: { data?: { error?: { message?: string } } } } | null}
+      />
+      <SheetImportLogsModal
+        open={!!logsTarget}
+        onClose={() => setLogsTarget(null)}
+        config={logsTarget}
+      />
+    </div>
+  );
+}
+
+function SheetImportLogsModal({ open, onClose, config }: { open: boolean; onClose: () => void; config: SheetConfigPublic | null }) {
+  const logs = useSheetImportLogs(open && config ? config.id : null, 25);
+  return (
+    <Modal open={open} onClose={onClose} title={config ? `Import history — ${config.label}` : 'Import history'} size="xl">
+      {logs.isLoading ? (
+        <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>
+      ) : !(logs.data || []).length ? (
+        <div className="py-8 text-center text-sm text-slate-500">No imports yet.</div>
+      ) : (
+        <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+          {(logs.data || []).map(l => (
+            <div key={l.id} className={clsx(
+              'rounded-lg border bg-white p-3',
+              l.error_message ? 'border-rose-200' : l.failed > 0 ? 'border-amber-200' : 'border-slate-200',
+            )}>
+              <div className="flex items-center gap-2 flex-wrap text-xs">
+                <span className={clsx('chip text-[10px]', l.triggered_by === 'auto' ? 'chip-blue' : 'chip-slate')}>
+                  {l.triggered_by === 'auto' ? '⏱ Auto' : '👤 Manual'}
+                </span>
+                <span className="text-slate-700 font-medium">{fmtRelative(l.started_at)}</span>
+                {l.triggered_by_name && <span className="text-slate-500">by {l.triggered_by_name}</span>}
+                <span className="ml-auto text-slate-500">{l.finished_at ? `(${Math.max(0, Math.round((new Date(l.finished_at).getTime() - new Date(l.started_at).getTime()) / 100) / 10)}s)` : 'running…'}</span>
+              </div>
+              <div className="mt-1.5 grid grid-cols-4 gap-2 text-xs">
+                <div className="rounded-md bg-emerald-50 px-2 py-1 text-center">
+                  <div className="font-bold text-emerald-700">{l.imported}</div>
+                  <div className="text-[9px] uppercase tracking-wide text-slate-500">Imported</div>
+                </div>
+                <div className="rounded-md bg-slate-50 px-2 py-1 text-center">
+                  <div className="font-bold text-slate-700">{l.duplicates}</div>
+                  <div className="text-[9px] uppercase tracking-wide text-slate-500">Duplicates</div>
+                </div>
+                <div className="rounded-md bg-rose-50 px-2 py-1 text-center">
+                  <div className="font-bold text-rose-700">{l.failed}</div>
+                  <div className="text-[9px] uppercase tracking-wide text-slate-500">Failed</div>
+                </div>
+                <div className="rounded-md bg-white border border-slate-200 px-2 py-1 text-center">
+                  <div className="font-bold text-slate-900">{l.total_rows}</div>
+                  <div className="text-[9px] uppercase tracking-wide text-slate-500">Total rows</div>
+                </div>
+              </div>
+              {l.error_message && (
+                <div className="mt-2 rounded-md bg-rose-50 border border-rose-200 px-2 py-1.5 text-xs text-rose-700">
+                  {l.error_message}
+                </div>
+              )}
+              {l.failed_samples && l.failed_samples.length > 0 && (
+                <details className="mt-2">
+                  <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-700">Failure samples ({l.failed_samples.length})</summary>
+                  <ul className="mt-1 space-y-0.5">
+                    {l.failed_samples.map((s, i) => (
+                      <li key={i} className="text-[11px] text-slate-600">Row {s.row_index}: <span className="text-rose-600">{s.error}</span></li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function SheetCredentialsModal({ open, onClose, target }: { open: boolean; onClose: () => void; target: SheetConfigPublic | null }) {
+  const create = useCreateSheetConfig();
+  const update = useUpdateSheetConfig();
+  const [label, setLabel] = useState('');
+  const [sheetId, setSheetId] = useState('');
+  const [sheetName, setSheetName] = useState('Leads');
+  const [pasted, setPasted] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [makeActive, setMakeActive] = useState(true);
+
+  // Hydrate on open
+  React.useEffect(() => {
+    if (!open) return;
+    setLabel(target?.label || '');
+    setSheetId(target?.sheet_id || '');
+    setSheetName(target?.sheet_name || 'Leads');
+    setPasted('');
+    setFile(null);
+    setMakeActive(target ? false : true);
+  }, [open, target]);
+
+  function pickFile(f: File | null) {
+    setFile(f);
+    if (f) setPasted(''); // mutually exclusive
+  }
+
+  function handleSave() {
+    if (!sheetId.trim()) { toast.error('Sheet ID is required'); return; }
+    if (!target) {
+      // Create
+      create.mutate(
+        { sheet_id: sheetId.trim(), label: label.trim() || `Sheet ${sheetId.slice(0, 8)}`, sheet_name: sheetName.trim() || 'Leads', make_active: makeActive, file, credentials_json: pasted || undefined },
+        {
+          onSuccess: () => { toast.success(makeActive ? 'Saved & activated' : 'Saved'); onClose(); },
+          onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Upload failed'),
+        }
+      );
+    } else {
+      // Update — only send changed fields
+      const patch: { id: string; sheet_id?: string; sheet_name?: string; label?: string; credentials_json?: string; file?: File | null } = { id: target.id };
+      if (sheetId.trim() !== (target.sheet_id || '')) patch.sheet_id = sheetId.trim();
+      if (sheetName.trim() !== target.sheet_name) patch.sheet_name = sheetName.trim();
+      if (label.trim() !== target.label) patch.label = label.trim();
+      if (file) patch.file = file;
+      else if (pasted) patch.credentials_json = pasted;
+      update.mutate(patch, {
+        onSuccess: () => { toast.success('Updated'); onClose(); },
+        onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Update failed'),
+      });
+    }
+  }
+
+  const busy = create.isPending || update.isPending;
+
+  return (
+    <Modal open={open} onClose={onClose} title={target ? `Edit "${target.label}"` : 'Upload Google Sheets Credentials'} size="lg"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleSave} loading={busy}>{target ? 'Save changes' : 'Upload & save'}</Button>
+        </>
+      }>
+      <div className="space-y-3">
+        <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-xs text-emerald-800">
+          <AlertCircle className="h-3.5 w-3.5 inline mr-1" />
+          Share the target sheet with the <strong>service-account email</strong> from inside the JSON (Editor access).
+          File never leaves the server — encrypted at rest with the JWT secret.
+        </div>
+
+        <Input label="Label (internal name)" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Production Sheet 2026" />
+        <Input label="Google Sheet ID *" value={sheetId} onChange={(e) => setSheetId(e.target.value)} placeholder="1kRY_XL7hTJfZng8…" />
+        <Input label="Tab name" value={sheetName} onChange={(e) => setSheetName(e.target.value)} placeholder="Sheet1 / Leads" />
+
+        <div>
+          <label className="label">Service Account JSON {target ? '(leave blank to keep current)' : '*'}</label>
+          <div className="flex gap-2 items-center">
+            <label className={clsx(
+              'flex-1 cursor-pointer rounded-lg border-2 border-dashed px-3 py-3 text-center text-xs transition',
+              file ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-600',
+            )}>
+              <input type="file" accept=".json,application/json" className="hidden"
+                onChange={(e) => pickFile(e.target.files?.[0] || null)} />
+              {file ? (
+                <span className="inline-flex items-center gap-1"><Upload className="h-3 w-3" /> {file.name}</span>
+              ) : (
+                <span className="inline-flex items-center gap-1"><Upload className="h-3 w-3" /> Pick .json file…</span>
+              )}
+            </label>
+            {file && (
+              <button onClick={() => setFile(null)} className="text-[11px] text-slate-500 underline">Clear</button>
+            )}
+          </div>
+          <div className="text-[10px] text-slate-500 mt-1 mb-1">…or paste the JSON below:</div>
+          <textarea
+            className="input min-h-[110px] font-mono text-[11px]"
+            placeholder='{ "type": "service_account", "client_email": "…", "private_key": "-----BEGIN PRIVATE KEY-----…" }'
+            value={pasted}
+            onChange={(e) => { setPasted(e.target.value); if (e.target.value) setFile(null); }}
+          />
+        </div>
+
+        {!target && (
+          <label className="flex items-center gap-2 text-xs text-slate-700">
+            <input type="checkbox" checked={makeActive} onChange={(e) => setMakeActive(e.target.checked)} />
+            Activate immediately (replaces the current active config — backend auto-reloads, no PM2 restart)
+          </label>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+function SheetPreviewModal({ open, onClose, data, isLoading, error }: {
+  open: boolean;
+  onClose: () => void;
+  data: { sheet_id: string; sheet_name: string; header: string[]; rows: string[][] } | null;
+  isLoading: boolean;
+  error: { response?: { data?: { error?: { message?: string } } } } | null;
+}) {
+  return (
+    <Modal open={open} onClose={onClose} title="Live Sheet Preview" size="xl">
+      {isLoading ? (
+        <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>
+      ) : error ? (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error?.response?.data?.error?.message || 'Failed to read sheet'}
+        </div>
+      ) : !data ? (
+        <div className="py-8 text-center text-sm text-slate-500">No preview yet — click Preview Rows again.</div>
+      ) : (
+        <div className="space-y-3">
+          <div className="text-xs text-slate-500 font-mono">{data.sheet_id} · {data.sheet_name}</div>
+          <div className="overflow-x-auto rounded-lg border border-slate-200">
+            <table className="w-full text-xs">
+              <thead className="bg-slate-50">
+                <tr>
+                  {data.header.map((h, i) => (
+                    <th key={i} className="px-3 py-2 text-left font-semibold text-slate-700 whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {data.rows.map((row, i) => (
+                  <tr key={i} className="hover:bg-slate-50">
+                    {row.map((cell, j) => (
+                      <td key={j} className="px-3 py-1.5 text-slate-700 max-w-[260px] truncate" title={cell}>{cell}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="text-[10px] text-slate-500">Showing first {data.rows.length} data row(s).</div>
+        </div>
+      )}
+    </Modal>
   );
 }
 

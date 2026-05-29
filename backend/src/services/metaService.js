@@ -18,6 +18,7 @@ const logger = require('../utils/logger');
 const { assignLead } = require('./leadDistributionService');
 const { isDistributionActive } = require('./distributionScheduler');
 const { appendLead: sheetAppend } = require('./googleSheetsService');
+const { onLeadCreated, findExistingByContact } = require('./leadEventService');
 
 /** Constant-time HMAC compare of Meta webhook payloads. */
 function verifySignature(rawBody, signatureHeader) {
@@ -78,9 +79,9 @@ function parseFieldData(fieldData = []) {
  * Ingest a single leadgen event. Idempotent on meta_lead_id (unique constraint).
  */
 async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }) {
-  // skip duplicates fast
+  // Fast path: same leadgen_id already in DB
   const dup = await query(`SELECT id FROM leads WHERE meta_lead_id = $1`, [leadgen_id]);
-  if (dup.rowCount > 0) return { status: 'duplicate', leadId: dup.rows[0].id };
+  if (dup.rowCount > 0) return { status: 'duplicate', leadId: dup.rows[0].id, reason: 'meta_lead_id' };
 
   const token = await getPageAccessToken(page_id);
   if (!token) {
@@ -90,6 +91,14 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
 
   const detail   = await fetchLeadFromGraph(leadgen_id, token);
   const fields   = parseFieldData(detail.field_data);
+
+  // Phone / email cross-dedup — same person submitting multiple Meta forms
+  // creates separate meta_lead_id values but should not create separate leads.
+  const dupContact = await findExistingByContact({ phone: fields.phone, email: fields.email });
+  if (dupContact) {
+    logger.info({ leadId: dupContact.id, reason: dupContact.reason, leadgen_id }, 'Meta lead skipped — phone/email already in DB');
+    return { status: 'duplicate', leadId: dupContact.id, reason: dupContact.reason };
+  }
 
   const { rows: [formRow] } = await query(
     `SELECT campaign_label, product_tag FROM meta_forms WHERE form_id = $1`,
@@ -165,16 +174,40 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
     logger.info({ leadId: inserted }, 'Meta lead queued — distribution inactive (outside 08:00-22:00 IST)');
   }
 
-  // Append to Google Sheet asynchronously (non-blocking)
-  sheetAppend(inserted).catch(err => logger.error({ err, leadId: inserted }, '[Sheets] Append failed'));
+  // Fan out: broadcast to Socket.IO + append to Google Sheet (both non-blocking)
+  onLeadCreated(inserted, { source: 'meta_webhook' });
 
   logger.info({ leadId: inserted, leadgen_id, assigned }, 'Meta lead ingested');
   return { status: 'ingested', leadId: inserted, assigned };
 }
 
+/**
+ * Fetch a Lead Form's metadata (questions, status, page, etc.) from Graph API.
+ * Requires a Page Access Token for the page that owns the form.
+ *
+ * Returns: { id, name, status, locale, questions: [...], leads_count, created_time,
+ *           privacy_policy_url, follow_up_action_url, page, page_id }
+ */
+async function fetchFormFromGraph(formId, pageAccessToken) {
+  const url = `https://graph.facebook.com/${config.meta.graphVersion}/${formId}`;
+  const fields = [
+    'id', 'name', 'status', 'locale', 'created_time', 'leads_count',
+    'questions', 'privacy_policy_url', 'follow_up_action_url',
+    'thank_you_page', 'context_card', 'expired_leads_count', 'organic_leads_count',
+    'page{id,name,username,link,picture}',
+  ].join(',');
+  const resp = await axios.get(url, {
+    params: { access_token: pageAccessToken, fields },
+    timeout: 15000,
+  });
+  return resp.data;
+}
+
 module.exports = {
   verifySignature,
   fetchLeadFromGraph,
+  fetchFormFromGraph,
+  getPageAccessToken,
   parseFieldData,
   ingestLeadgenEvent,
 };

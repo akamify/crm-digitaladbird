@@ -63,23 +63,157 @@ router.get('/meta/pages',  authenticate, requireRole('super_admin'), asyncHandle
   res.json({ success: true, data: rows });
 }));
 router.post('/meta/pages', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
-  const { page_id, page_name, page_access_token } = req.body;
+  const { page_id, page_name, page_access_token, skip_validation } = req.body;
   if (!page_id || !page_access_token) throw new AppError(400, 'INVALID', 'page_id and page_access_token required');
+
+  // Validate the token against Meta Graph API before saving so the user
+  // gets a clear error (expired / wrong page) instead of silent webhook failures.
+  let resolvedName = page_name || null;
+  if (!skip_validation) {
+    try {
+      const axios = require('axios');
+      const cfg = require('../config/env');
+      const verify = await axios.get(`https://graph.facebook.com/${cfg.meta.graphVersion}/${page_id}`, {
+        params: { access_token: page_access_token, fields: 'id,name,username,category' },
+        timeout: 10000,
+      });
+      if (String(verify.data.id) !== String(page_id)) {
+        throw new AppError(400, 'TOKEN_PAGE_MISMATCH', `Token belongs to page ${verify.data.id} (${verify.data.name}), not ${page_id}`);
+      }
+      resolvedName = resolvedName || verify.data.name;
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      const fb = err.response?.data?.error;
+      throw new AppError(400, 'TOKEN_INVALID', fb?.message || err.message || 'Token validation failed against Meta Graph API', { meta_code: fb?.code, type: fb?.type });
+    }
+  }
+
   const { rows: [r] } = await query(
     `INSERT INTO meta_pages(page_id, page_name, page_access_token)
        VALUES ($1, $2, $3)
        ON CONFLICT (page_id) DO UPDATE SET page_access_token = EXCLUDED.page_access_token,
-                                            page_name        = EXCLUDED.page_name,
+                                            page_name        = COALESCE(EXCLUDED.page_name, meta_pages.page_name),
                                             is_active        = TRUE
        RETURNING id, page_id, page_name`,
-    [page_id, page_name || null, page_access_token]
+    [page_id, resolvedName, page_access_token]
   );
   res.json({ success: true, data: r });
+}));
+
+// Token-only update for a single page (POST body: { page_access_token })
+router.patch('/meta/pages/:pageId/token', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { pageId } = req.params;
+  const { page_access_token } = req.body;
+  if (!page_access_token) throw new AppError(400, 'INVALID', 'page_access_token required');
+
+  // Validate against Graph API first
+  try {
+    const axios = require('axios');
+    const cfg = require('../config/env');
+    const verify = await axios.get(`https://graph.facebook.com/${cfg.meta.graphVersion}/${pageId}`, {
+      params: { access_token: page_access_token, fields: 'id,name' },
+      timeout: 10000,
+    });
+    if (String(verify.data.id) !== String(pageId)) {
+      throw new AppError(400, 'TOKEN_PAGE_MISMATCH', `Token belongs to ${verify.data.id} (${verify.data.name}), not page ${pageId}`);
+    }
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    const fb = err.response?.data?.error;
+    throw new AppError(400, 'TOKEN_INVALID', fb?.message || err.message || 'Token validation failed', { meta_code: fb?.code, type: fb?.type });
+  }
+
+  const { rowCount, rows } = await query(
+    `UPDATE meta_pages
+        SET page_access_token = $1, is_active = TRUE, updated_at = NOW()
+      WHERE page_id = $2
+      RETURNING id, page_id, page_name`,
+    [page_access_token, pageId]
+  );
+  if (!rowCount) throw new AppError(404, 'NOT_FOUND', 'Page not registered in CRM — use POST /meta/pages first');
+  res.json({ success: true, data: rows[0] });
+}));
+
+// Test an existing page's stored token against Graph API
+router.get('/meta/pages/:pageId/token-test', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { pageId } = req.params;
+  const { rows: [page] } = await query(
+    `SELECT page_access_token, page_name FROM meta_pages WHERE page_id = $1`,
+    [pageId]
+  );
+  if (!page) throw new AppError(404, 'NOT_FOUND', 'Page not registered');
+  if (!page.page_access_token) {
+    return res.json({ success: true, data: { ok: false, reason: 'No token stored' } });
+  }
+  try {
+    const axios = require('axios');
+    const cfg = require('../config/env');
+    const verify = await axios.get(`https://graph.facebook.com/${cfg.meta.graphVersion}/${pageId}`, {
+      params: { access_token: page.page_access_token, fields: 'id,name,access_token,category' },
+      timeout: 10000,
+    });
+    res.json({ success: true, data: { ok: true, page_id: verify.data.id, name: verify.data.name, category: verify.data.category } });
+  } catch (err) {
+    const fb = err.response?.data?.error;
+    res.json({
+      success: true,
+      data: {
+        ok: false,
+        reason: fb?.message || err.message,
+        meta_code: fb?.code,
+        type: fb?.type,
+        is_expired: /expired|invalid|session/i.test(fb?.message || ''),
+      },
+    });
+  }
 }));
 
 router.get('/meta/forms',  authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (_req, res) => {
   const { rows } = await query(`SELECT * FROM meta_forms ORDER BY form_name`);
   res.json({ success: true, data: rows });
+}));
+
+// Live form details from Meta Graph API (used by "View Form" button)
+router.get('/meta/forms/:formId/details', authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (req, res) => {
+  const { formId } = req.params;
+  const metaSvc = require('../services/metaService');
+
+  // Resolve the page that owns this form
+  const { rows: [formRow] } = await query(
+    `SELECT f.form_id, f.form_name, f.page_id, f.campaign_label, f.product_tag, f.is_active, f.created_at,
+            p.page_name, p.page_access_token
+       FROM meta_forms f
+       LEFT JOIN meta_pages p ON p.page_id = f.page_id
+      WHERE f.form_id = $1`,
+    [formId]
+  );
+  if (!formRow) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Form not registered in CRM' } });
+
+  const token = formRow.page_access_token || config.meta.pageAccessToken || config.meta.userAccessToken;
+  if (!token) {
+    return res.status(409).json({
+      success: false,
+      error: { code: 'NO_TOKEN', message: 'No Meta page access token configured. Add one in Settings → Meta Pages.' },
+      data: { local: formRow, live: null },
+    });
+  }
+
+  try {
+    const live = await metaSvc.fetchFormFromGraph(formId, token);
+    res.json({ success: true, data: { local: formRow, live } });
+  } catch (err) {
+    const fbErr = err.response?.data?.error;
+    return res.status(502).json({
+      success: false,
+      error: {
+        code: 'META_GRAPH_ERROR',
+        message: fbErr?.message || err.message || 'Failed to fetch form from Meta',
+        type: fbErr?.type || null,
+        meta_code: fbErr?.code || null,
+      },
+      data: { local: formRow, live: null },
+    });
+  }
 }));
 router.post('/meta/forms', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
   const { form_id, form_name, page_id, campaign_label, product_tag } = req.body;
@@ -1357,22 +1491,46 @@ router.post('/meta/update-token', authenticate, requireRole('super_admin'), asyn
 
 // Force campaign sync now (uses current token)
 router.post('/meta/sync-campaigns-now', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
-  const results = await metaSync.syncAllCampaigns();
-  res.json({ success: true, data: results });
+  try {
+    const results = await metaSync.syncAllCampaigns();
+    res.json({ success: true, data: results });
+  } catch (err) {
+    res.status(502).json({ success: false, error: metaGraphError(err, 'Campaign sync failed'), data: null });
+  }
 }));
 
 // ---- Meta Sync & Campaign Management (Super Admin) -------------------
 
+// Small helper for routes that call Meta Graph API — converts upstream failures
+// into a clean 502 with the actual Meta error message instead of a generic 500.
+function metaGraphError(err, fallbackMessage) {
+  const fb = err?.response?.data?.error;
+  return {
+    code: 'META_GRAPH_ERROR',
+    message: fb?.message || err?.message || fallbackMessage,
+    type: fb?.type || null,
+    meta_code: fb?.code || null,
+  };
+}
+
 // Check Meta connectivity (live Graph API test)
 router.get('/meta/connectivity', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
-  const result = await metaSync.checkConnectivity();
-  res.json({ success: true, data: result });
+  try {
+    const result = await metaSync.checkConnectivity();
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(502).json({ success: false, error: metaGraphError(err, 'Connectivity check failed'), data: null });
+  }
 }));
 
 // Debug/validate access token
 router.get('/meta/debug-token', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
-  const data = await metaSync.debugToken();
-  res.json({ success: true, data });
+  try {
+    const data = await metaSync.debugToken();
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(502).json({ success: false, error: metaGraphError(err, 'Token debug failed'), data: null });
+  }
 }));
 
 // List campaigns from DB
@@ -1403,20 +1561,28 @@ router.patch('/meta/campaigns/:campaignId', authenticate, requireRole('super_adm
 
 // Sync campaigns from Meta ad accounts
 router.post('/meta/sync-campaigns', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
-  const results = await metaSync.syncAllCampaigns();
-  res.json({ success: true, data: results });
+  try {
+    const results = await metaSync.syncAllCampaigns();
+    res.json({ success: true, data: results });
+  } catch (err) {
+    res.status(502).json({ success: false, error: metaGraphError(err, 'Campaign sync failed'), data: null });
+  }
 }));
 
 // Sync leads from all active forms
 router.post('/meta/sync-leads', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
   const { form_id, since } = req.body || {};
-  let results;
-  if (form_id) {
-    results = await metaSync.syncFormLeads(form_id, { since });
-  } else {
-    results = await metaSync.syncAllFormLeads({ since });
+  try {
+    let results;
+    if (form_id) {
+      results = await metaSync.syncFormLeads(form_id, { since });
+    } else {
+      results = await metaSync.syncAllFormLeads({ since });
+    }
+    res.json({ success: true, data: results });
+  } catch (err) {
+    res.status(502).json({ success: false, error: metaGraphError(err, 'Lead sync failed'), data: null });
   }
-  res.json({ success: true, data: results });
 }));
 
 // Get campaign stats (leads grouped by campaign)
@@ -1433,15 +1599,23 @@ router.get('/meta/ad-accounts', authenticate, requireRole('super_admin'), asyncH
 
 // Fetch ad accounts from Meta API
 router.get('/meta/ad-accounts/discover', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
-  const accounts = await metaSync.listAdAccounts();
-  res.json({ success: true, data: accounts });
+  try {
+    const accounts = await metaSync.listAdAccounts();
+    res.json({ success: true, data: accounts });
+  } catch (err) {
+    res.status(502).json({ success: false, error: metaGraphError(err, 'Failed to list ad accounts'), data: [] });
+  }
 }));
 
 // List forms for a page from Meta API
 router.get('/meta/forms/discover', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
   const pageId = req.query.page_id || null;
-  const forms = await metaSync.listPageForms(pageId);
-  res.json({ success: true, data: forms });
+  try {
+    const forms = await metaSync.listPageForms(pageId);
+    res.json({ success: true, data: forms });
+  } catch (err) {
+    res.status(502).json({ success: false, error: metaGraphError(err, 'Failed to discover forms'), data: [] });
+  }
 }));
 
 // Sync log history
@@ -1454,17 +1628,36 @@ router.get('/meta/sync-log', authenticate, requireRole('super_admin'), asyncHand
   res.json({ success: true, data: rows });
 }));
 
-// Page subscriptions (webhook prep)
+// Page subscriptions (webhook prep) — gracefully degrades if Meta token is expired
 router.get('/meta/subscriptions', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
   const pageId = req.query.page_id || null;
-  const data = await metaSync.getPageSubscriptions(pageId);
-  res.json({ success: true, data });
+  try {
+    const data = await metaSync.getPageSubscriptions(pageId);
+    res.json({ success: true, data });
+  } catch (err) {
+    const fb = err.response?.data?.error;
+    const msg = fb?.message || err.message || 'Failed to fetch subscriptions';
+    res.status(502).json({
+      success: false,
+      error: { code: 'META_GRAPH_ERROR', message: msg, type: fb?.type || null, meta_code: fb?.code || null },
+      data: [],
+    });
+  }
 }));
 
 router.post('/meta/subscriptions', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
   const { page_id } = req.body || {};
-  const data = await metaSync.subscribePageToLeadgen(page_id);
-  res.json({ success: true, data });
+  try {
+    const data = await metaSync.subscribePageToLeadgen(page_id);
+    res.json({ success: true, data });
+  } catch (err) {
+    const fb = err.response?.data?.error;
+    const msg = fb?.message || err.message || 'Failed to subscribe page';
+    res.status(502).json({
+      success: false,
+      error: { code: 'META_GRAPH_ERROR', message: msg, type: fb?.type || null, meta_code: fb?.code || null },
+    });
+  }
 }));
 
 // ══════════════════════════════════════════════════════════════════════
@@ -2465,17 +2658,275 @@ router.post('/admin/sheets/trigger-sync', authenticate, requireRole('super_admin
   await query(`INSERT INTO activity_logs(user_id, user_name, user_role, entity, entity_id, action, metadata, ip_address)
     VALUES($1,$2,$3,'sheets','manual','sync_triggered',$4,$5)`,
     [req.user.id, req.user.full_name, req.user.role, '{}', req.ip]);
-  let result = { message: 'Sync triggered', synced: 0 };
   try {
-    const sheetSync = require('../services/googleSheets');
-    if (sheetSync && typeof sheetSync.syncNow === 'function') {
-      const r = await sheetSync.syncNow();
-      result = { message: 'Sync completed', synced: r?.count || 0 };
-    }
+    const sheetSync = require('../services/googleSheetsService');
+    const r = await sheetSync.syncAllLeads();
+    res.json({ success: true, data: { message: 'Sync completed', synced: r.synced || 0 } });
   } catch (err) {
-    result = { message: 'Sync service not available', error: err.message };
+    res.status(502).json({ success: false, error: { code: 'SHEETS_SYNC_FAILED', message: err.message } });
   }
+}));
+
+// ══════════════════════════════════════════════════════════════════════
+// DYNAMIC SHEETS INTEGRATION — admin-managed credentials + sheet configs
+// ══════════════════════════════════════════════════════════════════════
+const multer = require('multer');
+const sheetsSvc = require('../services/googleSheetsService');
+const secretsCrypto = require('../utils/secretsCrypto');
+
+// Memory storage — the JSON never touches disk. Max 64KB (service-account JSONs are ~2KB).
+const credsUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 64 * 1024, files: 1 },
+  fileFilter: (_req, file, cb) => {
+    // Accept .json by mimetype or by extension (some browsers send application/octet-stream)
+    const ok = /json/i.test(file.mimetype) || /\.json$/i.test(file.originalname);
+    cb(ok ? null : new AppError(400, 'BAD_FILE', 'Only .json files allowed'), ok);
+  },
+});
+
+function parseCreds(input) {
+  if (!input) throw new AppError(400, 'INVALID', 'credentials_json is required');
+  let creds;
+  try {
+    creds = typeof input === 'string' ? JSON.parse(input) : input;
+  } catch {
+    throw new AppError(400, 'INVALID_JSON', 'credentials_json is not valid JSON');
+  }
+  if (!secretsCrypto.isGoogleServiceAccount(creds)) {
+    throw new AppError(400, 'INVALID_CREDS', 'Not a valid Google service-account JSON (missing type / client_email / private_key)');
+  }
+  return creds;
+}
+
+function publicConfigRow(row) {
+  return {
+    id: row.id,
+    kind: row.kind,
+    label: row.label,
+    is_active: row.is_active,
+    sheet_id: row.config?.sheet_id || null,
+    sheet_name: row.config?.sheet_name || 'Leads',
+    service_account_email: row.config?.service_account_email || null,
+    has_credentials: !!row.secrets_encrypted,
+    last_tested_at: row.last_tested_at,
+    last_test_ok: row.last_test_ok,
+    last_test_error: row.last_test_error,
+    last_synced_at: row.last_synced_at,
+    last_sync_count: row.last_sync_count,
+    auto_import_enabled: !!row.auto_import_enabled,
+    auto_import_minutes: row.auto_import_minutes || 5,
+    last_import_at: row.last_import_at || null,
+    last_import_stats: row.last_import_stats || null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+// List all stored sheet configs
+router.get('/admin/sheets/configs', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const { rows } = await query(`SELECT * FROM integration_configs WHERE kind = 'google_sheets' ORDER BY is_active DESC, updated_at DESC`);
+  res.json({ success: true, data: rows.map(publicConfigRow) });
+}));
+
+// Create a new sheet config — accepts either:
+//   multipart/form-data with `credentials_file` (.json) + form fields, OR
+//   application/json body with credentials_json (object or string) + fields
+router.post('/admin/sheets/configs', authenticate, requireRole('super_admin'),
+  credsUpload.single('credentials_file'),
+  asyncHandler(async (req, res) => {
+    const body = req.body || {};
+    const rawJson = req.file ? req.file.buffer.toString('utf8') : (body.credentials_json || null);
+    const creds = parseCreds(rawJson);
+    const sheetId = (body.sheet_id || '').trim();
+    if (!sheetId) throw new AppError(400, 'INVALID', 'sheet_id is required');
+    const label = (body.label || `Sheet ${sheetId.slice(0, 8)}`).trim();
+    const sheetName = (body.sheet_name || 'Leads').trim();
+    const makeActive = body.make_active === 'true' || body.make_active === true;
+
+    const config = {
+      sheet_id: sheetId,
+      sheet_name: sheetName,
+      service_account_email: creds.client_email,
+      project_id: creds.project_id || null,
+    };
+    const secretsEnc = secretsCrypto.encrypt(creds);
+
+    const { rows: [r] } = await query(
+      `INSERT INTO integration_configs(kind, label, config, secrets_encrypted, is_active, created_by_user_id)
+         VALUES ('google_sheets', $1, $2, $3, FALSE, $4)
+         RETURNING *`,
+      [label, JSON.stringify(config), secretsEnc, req.user.id],
+    );
+
+    if (makeActive) {
+      await query(`UPDATE integration_configs SET is_active = FALSE WHERE kind = 'google_sheets' AND id <> $1`, [r.id]);
+      await query(`UPDATE integration_configs SET is_active = TRUE WHERE id = $1`, [r.id]);
+      sheetsSvc.reloadActiveConfig();
+    }
+
+    const { rows: [final] } = await query(`SELECT * FROM integration_configs WHERE id = $1`, [r.id]);
+    res.json({ success: true, data: publicConfigRow(final) });
+  }),
+);
+
+// Update sheet_id / sheet_name / label (and optionally replace the credentials)
+router.patch('/admin/sheets/configs/:id', authenticate, requireRole('super_admin'),
+  credsUpload.single('credentials_file'),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const { rows: [existing] } = await query(`SELECT * FROM integration_configs WHERE id = $1 AND kind = 'google_sheets'`, [id]);
+    if (!existing) throw new AppError(404, 'NOT_FOUND', 'Config not found');
+
+    const body = req.body || {};
+    const newConfig = { ...(existing.config || {}) };
+    if (body.sheet_id   !== undefined) newConfig.sheet_id   = String(body.sheet_id).trim();
+    if (body.sheet_name !== undefined) newConfig.sheet_name = String(body.sheet_name).trim() || 'Leads';
+
+    let secretsEnc = existing.secrets_encrypted;
+    const rawJson = req.file ? req.file.buffer.toString('utf8') : body.credentials_json;
+    if (rawJson) {
+      const creds = parseCreds(rawJson);
+      secretsEnc = secretsCrypto.encrypt(creds);
+      newConfig.service_account_email = creds.client_email;
+      newConfig.project_id = creds.project_id || null;
+    }
+
+    const label = body.label !== undefined ? String(body.label).trim() : existing.label;
+
+    await query(
+      `UPDATE integration_configs
+          SET label = $1, config = $2, secrets_encrypted = $3, updated_at = NOW()
+        WHERE id = $4`,
+      [label, JSON.stringify(newConfig), secretsEnc, id],
+    );
+    if (existing.is_active) sheetsSvc.reloadActiveConfig();
+    const { rows: [final] } = await query(`SELECT * FROM integration_configs WHERE id = $1`, [id]);
+    res.json({ success: true, data: publicConfigRow(final) });
+  }),
+);
+
+// Activate a config (deactivates all others of the same kind)
+router.post('/admin/sheets/configs/:id/activate', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { rows: [existing] } = await query(`SELECT id FROM integration_configs WHERE id = $1 AND kind = 'google_sheets'`, [id]);
+  if (!existing) throw new AppError(404, 'NOT_FOUND', 'Config not found');
+
+  await query(`UPDATE integration_configs SET is_active = FALSE WHERE kind = 'google_sheets' AND id <> $1`, [id]);
+  await query(`UPDATE integration_configs SET is_active = TRUE WHERE id = $1`, [id]);
+  sheetsSvc.reloadActiveConfig();
+
+  const { rows: [final] } = await query(`SELECT * FROM integration_configs WHERE id = $1`, [id]);
+  res.json({ success: true, data: publicConfigRow(final) });
+}));
+
+// Test a config (live Google API call, persists last_test_* on the row)
+router.post('/admin/sheets/configs/:id/test', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { rows: [row] } = await query(`SELECT * FROM integration_configs WHERE id = $1 AND kind = 'google_sheets'`, [id]);
+  if (!row) throw new AppError(404, 'NOT_FOUND', 'Config not found');
+  if (!row.secrets_encrypted) throw new AppError(400, 'NO_CREDS', 'No credentials stored on this config');
+
+  const creds = secretsCrypto.decrypt(row.secrets_encrypted);
+  const result = await sheetsSvc.testCredentials({
+    creds,
+    sheetId:   row.config?.sheet_id,
+    sheetName: row.config?.sheet_name || 'Leads',
+  });
+
+  await query(
+    `UPDATE integration_configs SET last_tested_at = NOW(), last_test_ok = $1, last_test_error = $2 WHERE id = $3`,
+    [!!result.ok, result.ok ? null : (result.error || 'unknown error'), id],
+  );
+
+  res.json({ success: result.ok, data: result, error: result.ok ? null : { code: 'TEST_FAILED', message: result.error } });
+}));
+
+// Manual sync from a specific config (must be the active one for now)
+router.post('/admin/sheets/configs/:id/sync-now', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { rows: [row] } = await query(`SELECT id, is_active FROM integration_configs WHERE id = $1 AND kind = 'google_sheets'`, [id]);
+  if (!row) throw new AppError(404, 'NOT_FOUND', 'Config not found');
+  if (!row.is_active) throw new AppError(409, 'NOT_ACTIVE', 'Activate this config first, then sync.');
+  try {
+    const r = await sheetsSvc.syncAllLeads();
+    res.json({ success: true, data: { synced: r.synced || 0 } });
+  } catch (err) {
+    res.status(502).json({ success: false, error: { code: 'SHEETS_SYNC_FAILED', message: err.message } });
+  }
+}));
+
+// Preview last N rows of the currently-active sheet
+router.get('/admin/sheets/preview', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 10));
+  try {
+    const data = await sheetsSvc.previewRows(limit);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(502).json({ success: false, error: { code: 'SHEETS_PREVIEW_FAILED', message: err.message } });
+  }
+}));
+
+// Delete a config
+router.delete('/admin/sheets/configs/:id', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { rows: [existing] } = await query(`SELECT is_active FROM integration_configs WHERE id = $1 AND kind = 'google_sheets'`, [id]);
+  if (!existing) throw new AppError(404, 'NOT_FOUND', 'Config not found');
+  await query(`DELETE FROM integration_configs WHERE id = $1`, [id]);
+  if (existing.is_active) sheetsSvc.reloadActiveConfig();
+  res.json({ success: true, data: { deleted: id } });
+}));
+
+// Live connectivity status of whatever is active (DB-row or env fallback)
+router.get('/admin/sheets/connectivity', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const result = await sheetsSvc.checkConnectivity();
   res.json({ success: true, data: result });
+}));
+
+// ── Sheet → CRM import ────────────────────────────────────────────────
+const sheetImport = require('../services/sheetImportService');
+
+// Trigger an import from a specific config (must have credentials).
+router.post('/admin/sheets/configs/:id/import', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  try {
+    const stats = await sheetImport.importFromConfig({
+      configId:    id,
+      triggeredBy: 'manual',
+      userId:      req.user.id,
+      assign:      req.body?.assign !== false,
+      maxRows:     Math.min(50000, parseInt(req.body?.max_rows) || 5000),
+    });
+    res.json({ success: true, data: stats });
+  } catch (err) {
+    res.status(502).json({ success: false, error: { code: 'IMPORT_FAILED', message: err.message } });
+  }
+}));
+
+// List recent imports for a config
+router.get('/admin/sheets/configs/:id/import-logs', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const limit = parseInt(req.query.limit) || 20;
+  const logs = await sheetImport.getRecentLogs(id, limit);
+  res.json({ success: true, data: logs });
+}));
+
+// Toggle auto-import (every N minutes)
+router.patch('/admin/sheets/configs/:id/auto-import', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { enabled, minutes } = req.body || {};
+  const m = Math.max(1, Math.min(60, Number(minutes) || 5));
+  const { rowCount, rows } = await query(
+    `UPDATE integration_configs
+        SET auto_import_enabled = COALESCE($1, auto_import_enabled),
+            auto_import_minutes = COALESCE($2, auto_import_minutes),
+            updated_at = NOW()
+      WHERE id = $3 AND kind = 'google_sheets'
+      RETURNING id, auto_import_enabled, auto_import_minutes`,
+    [enabled === undefined ? null : !!enabled, minutes === undefined ? null : m, id],
+  );
+  if (!rowCount) throw new AppError(404, 'NOT_FOUND', 'Config not found');
+  res.json({ success: true, data: rows[0] });
 }));
 
 // ── Distribution Rules Management ────────────────────────────────

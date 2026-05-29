@@ -66,14 +66,21 @@ echo "[6/7] Installing frontend deps + building..."
 cd $APP_DIR/frontend
 npm install 2>&1 | tail -3
 NODE_ENV=production npx next build 2>&1 | tail -10
+# Standalone build needs static + public copied in for assets to resolve.
+cp -r .next/static .next/standalone/.next/static
+[ -d public ] && cp -r public .next/standalone/public || true
 echo "  Frontend built"
 
 # ── 7. Restart PM2 ──
 echo "[7/7] Restarting PM2..."
 cd $APP_DIR
-pm2 start ecosystem.config.js
+# Hard-replace so script/env changes (e.g. next start → standalone) are picked up.
+# `pm2 reload` keeps the old saved process definition; only delete+start fully refreshes it.
+pm2 delete crm-backend  2>/dev/null || true
+pm2 delete crm-frontend 2>/dev/null || true
+pm2 start ecosystem.config.js --update-env
 pm2 save
-echo "  PM2 restarted"
+echo "  PM2 restarted (clean re-create)"
 
 # ── VERIFY ──
 echo ""

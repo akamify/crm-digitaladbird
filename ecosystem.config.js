@@ -38,15 +38,19 @@ module.exports = {
       watch: false,
     },
     {
+      // Next.js standalone server — much smaller, faster cold-start than `next start`.
+      // Requires `output: 'standalone'` in next.config.js (already set).
+      // After `npm run build`, the deploy script copies .next/static and public into
+      // .next/standalone/ so assets resolve.
       name: 'crm-frontend',
       cwd: './frontend',
-      script: 'node_modules/.bin/next',
-      args: 'start -p 3000',
+      script: '.next/standalone/server.js',
       instances: 1,
       exec_mode: 'fork',
       env: {
         NODE_ENV: 'production',
         PORT: 3000,
+        HOSTNAME: '0.0.0.0',
       },
       node_args: '--max-old-space-size=512',
       max_memory_restart: '500M',

@@ -2,8 +2,18 @@
 import { ReactNode, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuth, dashboardPath } from '@/lib/auth';
-import { PageLoader } from '@/components/ui/Modal';
 import type { Role } from '@/types';
+
+function FullScreenLoader() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-50">
+      <div className="flex flex-col items-center gap-3">
+        <div className="h-8 w-8 rounded-full border-[3px] border-blue-200 border-t-blue-600 animate-spin" />
+        <p className="text-sm text-slate-500">Loading…</p>
+      </div>
+    </div>
+  );
+}
 
 interface AuthGateProps {
   children: ReactNode;
@@ -32,7 +42,7 @@ export function AuthGate({ children, roles }: AuthGateProps) {
   }, [initialized, user, pathname, roles, router]);
 
   if (!initialized || !user || (roles?.length && !roles.includes(user.role))) {
-    return <PageLoader />;
+    return <FullScreenLoader />;
   }
   return <>{children}</>;
 }
