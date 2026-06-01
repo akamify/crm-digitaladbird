@@ -27,7 +27,7 @@ import {
   // Dynamic Google Sheets credential management
   useSheetConfigs, useSheetsConnectivity, useCreateSheetConfig, useUpdateSheetConfig,
   useActivateSheetConfig, useTestSheetConfig, useSyncSheetConfig, useDeleteSheetConfig,
-  useSheetPreview,
+  useSheetPreview, useSheetStats,
   // Sheet → CRM import
   useSheetImport, useSheetImportLogs, useToggleAutoImport,
   type SheetConfigPublic,
@@ -1146,20 +1146,31 @@ function SheetsTab() {
 function SheetCredentialsManager() {
   const list = useSheetConfigs();
   const conn = useSheetsConnectivity();
+  const stats = useSheetStats();
   const activate = useActivateSheetConfig();
   const testOne = useTestSheetConfig();
   const syncOne = useSyncSheetConfig();
   const del = useDeleteSheetConfig();
-  const preview = useSheetPreview(8);
   const importNow = useSheetImport();
   const toggleAuto = useToggleAutoImport();
 
+  // Tab: which purpose are we viewing? Defaults to traders.
+  const [tab, setTab] = useState<'traders' | 'partners'>('traders');
+  // Preview is purpose-aware so each tab previews its OWN active sheet
+  const preview = useSheetPreview(8, tab);
+
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadDefaultPurpose, setUploadDefaultPurpose] = useState<'traders' | 'partners'>('traders');
   const [editTarget, setEditTarget] = useState<SheetConfigPublic | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [logsTarget, setLogsTarget] = useState<SheetConfigPublic | null>(null);
 
-  const active = (list.data || []).find(c => c.is_active) || null;
+  // Configs scoped to the current tab (only show this purpose's sheets)
+  const allConfigs = list.data || [];
+  const tabConfigs = allConfigs.filter(c => c.purpose === tab || (!c.purpose && tab === 'traders'));
+  const activeForTab = tabConfigs.find(c => c.is_active) || null;
+
+  const tabStats = stats.data?.[tab];
 
   return (
     <div className="rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50/60 to-white p-4">
@@ -1171,31 +1182,74 @@ function SheetCredentialsManager() {
         </span>
         <div className="ml-auto flex items-center gap-2">
           <Button size="sm" variant="outline" leftIcon={<TableIcon className="h-3.5 w-3.5" />}
-            disabled={!active || !active.is_active}
+            disabled={!activeForTab || !activeForTab.is_active}
             onClick={() => { preview.refetch(); setPreviewOpen(true); }}>
             Preview Rows
           </Button>
-          <Button size="sm" leftIcon={<Upload className="h-3.5 w-3.5" />} onClick={() => setUploadOpen(true)}>
-            Upload Credentials
+          <Button size="sm" leftIcon={<Upload className="h-3.5 w-3.5" />}
+            onClick={() => { setUploadDefaultPurpose(tab); setUploadOpen(true); }}>
+            Upload {tab === 'traders' ? 'Traders' : 'Partners'} Credentials
           </Button>
         </div>
       </div>
 
-      {list.isLoading ? <Skeleton className="h-32" /> : !(list.data || []).length ? (
+      {/* Purpose tabs — Traders | Partners — each runs an independent sheet */}
+      <div className="mb-3 flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-0.5 w-fit">
+        {(['traders', 'partners'] as const).map(t => {
+          const count = allConfigs.filter(c => c.purpose === t || (!c.purpose && t === 'traders')).length;
+          const hasActive = !!allConfigs.find(c => c.is_active && (c.purpose === t || (!c.purpose && t === 'traders')));
+          return (
+            <button key={t} onClick={() => setTab(t)}
+              className={clsx(
+                'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition',
+                tab === t ? 'bg-emerald-600 text-white' : 'text-slate-700 hover:bg-slate-50',
+              )}>
+              {t === 'traders' ? '📊 Traders Sheet' : '🤝 Partners Sheet'}
+              <span className={clsx('rounded-full px-1.5 py-0.5 text-[10px] font-bold', tab === t ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600')}>{count}</span>
+              {hasActive && <span className={clsx('h-1.5 w-1.5 rounded-full', tab === t ? 'bg-white' : 'bg-emerald-500')} />}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Per-purpose stats bar — drives "Trader Sheet Stats" / "Partner Sheet Stats" */}
+      {tabStats && (
+        <div className="mb-3 grid grid-cols-2 sm:grid-cols-5 gap-2">
+          <div className="rounded-lg bg-white border border-slate-200 px-3 py-2">
+            <div className="text-lg font-bold tabular-nums text-slate-900">{tabStats.total.toLocaleString()}</div>
+            <div className="text-[10px] uppercase tracking-wide text-slate-500">Total {tab === 'traders' ? 'Trader' : 'Partner'} Leads</div>
+          </div>
+          <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
+            <div className="text-lg font-bold tabular-nums text-amber-700">{tabStats.unassigned.toLocaleString()}</div>
+            <div className="text-[10px] uppercase tracking-wide text-slate-500">Pending (unassigned)</div>
+          </div>
+          <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2">
+            <div className="text-lg font-bold tabular-nums text-blue-700">{tabStats.assigned.toLocaleString()}</div>
+            <div className="text-[10px] uppercase tracking-wide text-slate-500">Synced (assigned)</div>
+          </div>
+          <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2">
+            <div className="text-lg font-bold tabular-nums text-emerald-700">{tabStats.converted.toLocaleString()}</div>
+            <div className="text-[10px] uppercase tracking-wide text-slate-500">Converted</div>
+          </div>
+          <div className="rounded-lg bg-violet-50 border border-violet-200 px-3 py-2">
+            <div className="text-lg font-bold tabular-nums text-violet-700">{tabStats.today.toLocaleString()}</div>
+            <div className="text-[10px] uppercase tracking-wide text-slate-500">Today</div>
+          </div>
+        </div>
+      )}
+
+      {list.isLoading ? <Skeleton className="h-32" /> : !tabConfigs.length ? (
         <div className="rounded-lg border border-dashed border-emerald-200 bg-white px-4 py-6 text-center">
           <Upload className="h-6 w-6 mx-auto text-emerald-400 mb-2" />
-          <div className="text-sm font-medium text-slate-900">No credentials uploaded yet</div>
+          <div className="text-sm font-medium text-slate-900">No {tab === 'traders' ? 'Traders' : 'Partners'} sheet uploaded yet</div>
           <p className="mt-1 text-xs text-slate-500 max-w-md mx-auto">
-            Click <strong>Upload Credentials</strong> and pick the Google Service Account <code>.json</code> file
-            (or paste it). The sheet must be shared with the service-account email as <em>Editor</em>.
-            {conn.data?.source === 'env' && conn.data?.api_connected && (
-              <span className="block mt-2 text-amber-700">Currently running on legacy <code>.env</code> credentials — uploading here replaces them dynamically.</span>
-            )}
+            Click <strong>Upload {tab === 'traders' ? 'Traders' : 'Partners'} Credentials</strong> and pick the Google Service Account <code>.json</code> file.
+            Each imported lead will be tagged <code>category = {tab === 'traders' ? 'trader' : 'partner'}</code> so {tab === 'traders' ? 'trader' : 'partner'} lead-requests pull from this pool only.
           </p>
         </div>
       ) : (
         <div className="space-y-2">
-          {(list.data || []).map(c => (
+          {tabConfigs.map(c => (
             <div key={c.id}
               className={clsx(
                 'rounded-lg border bg-white p-3 transition',
@@ -1348,11 +1402,13 @@ function SheetCredentialsManager() {
         open={uploadOpen}
         onClose={() => setUploadOpen(false)}
         target={null}
+        defaultPurpose={uploadDefaultPurpose}
       />
       <SheetCredentialsModal
         open={!!editTarget}
         onClose={() => setEditTarget(null)}
         target={editTarget}
+        defaultPurpose={editTarget?.purpose || uploadDefaultPurpose}
       />
       <SheetPreviewModal
         open={previewOpen}
@@ -1434,7 +1490,7 @@ function SheetImportLogsModal({ open, onClose, config }: { open: boolean; onClos
   );
 }
 
-function SheetCredentialsModal({ open, onClose, target }: { open: boolean; onClose: () => void; target: SheetConfigPublic | null }) {
+function SheetCredentialsModal({ open, onClose, target, defaultPurpose = 'traders' }: { open: boolean; onClose: () => void; target: SheetConfigPublic | null; defaultPurpose?: 'traders' | 'partners' }) {
   const create = useCreateSheetConfig();
   const update = useUpdateSheetConfig();
   const [label, setLabel] = useState('');
@@ -1443,6 +1499,7 @@ function SheetCredentialsModal({ open, onClose, target }: { open: boolean; onClo
   const [pasted, setPasted] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [makeActive, setMakeActive] = useState(true);
+  const [purpose, setPurpose] = useState<'traders' | 'partners'>(defaultPurpose);
 
   // Hydrate on open
   React.useEffect(() => {
@@ -1453,7 +1510,8 @@ function SheetCredentialsModal({ open, onClose, target }: { open: boolean; onClo
     setPasted('');
     setFile(null);
     setMakeActive(target ? false : true);
-  }, [open, target]);
+    setPurpose((target?.purpose === 'partners' ? 'partners' : (target?.purpose === 'traders' ? 'traders' : defaultPurpose)));
+  }, [open, target, defaultPurpose]);
 
   function pickFile(f: File | null) {
     setFile(f);
@@ -1463,20 +1521,19 @@ function SheetCredentialsModal({ open, onClose, target }: { open: boolean; onClo
   function handleSave() {
     if (!sheetId.trim()) { toast.error('Sheet ID is required'); return; }
     if (!target) {
-      // Create
       create.mutate(
-        { sheet_id: sheetId.trim(), label: label.trim() || `Sheet ${sheetId.slice(0, 8)}`, sheet_name: sheetName.trim() || 'Leads', make_active: makeActive, file, credentials_json: pasted || undefined },
+        { sheet_id: sheetId.trim(), label: label.trim() || `Sheet ${sheetId.slice(0, 8)}`, sheet_name: sheetName.trim() || 'Leads', purpose, make_active: makeActive, file, credentials_json: pasted || undefined },
         {
           onSuccess: () => { toast.success(makeActive ? 'Saved & activated' : 'Saved'); onClose(); },
           onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Upload failed'),
         }
       );
     } else {
-      // Update — only send changed fields
-      const patch: { id: string; sheet_id?: string; sheet_name?: string; label?: string; credentials_json?: string; file?: File | null } = { id: target.id };
+      const patch: { id: string; sheet_id?: string; sheet_name?: string; label?: string; purpose?: 'traders' | 'partners'; credentials_json?: string; file?: File | null } = { id: target.id };
       if (sheetId.trim() !== (target.sheet_id || '')) patch.sheet_id = sheetId.trim();
       if (sheetName.trim() !== target.sheet_name) patch.sheet_name = sheetName.trim();
       if (label.trim() !== target.label) patch.label = label.trim();
+      if (purpose !== target.purpose) patch.purpose = purpose;
       if (file) patch.file = file;
       else if (pasted) patch.credentials_json = pasted;
       update.mutate(patch, {
@@ -1501,6 +1558,26 @@ function SheetCredentialsModal({ open, onClose, target }: { open: boolean; onClo
           <AlertCircle className="h-3.5 w-3.5 inline mr-1" />
           Share the target sheet with the <strong>service-account email</strong> from inside the JSON (Editor access).
           File never leaves the server — encrypted at rest with the JWT secret.
+        </div>
+
+        <div>
+          <label className="label">Sheet purpose *</label>
+          <div className="flex gap-2">
+            {(['traders', 'partners'] as const).map(p => (
+              <button key={p} type="button" onClick={() => setPurpose(p)}
+                className={clsx(
+                  'flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition',
+                  purpose === p
+                    ? (p === 'traders' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-violet-300 bg-violet-50 text-violet-700')
+                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+                )}>
+                {p === 'traders' ? '📊 Traders sheet (leads.category = trader)' : '🤝 Partners sheet (leads.category = partner)'}
+              </button>
+            ))}
+          </div>
+          <div className="mt-1 text-[10px] text-slate-500">
+            Every row imported from this sheet is tagged with the chosen category. Partner lead-requests will only see rows from a <em>partners</em> sheet, and trader requests only see <em>traders</em> sheet rows.
+          </div>
         </div>
 
         <Input label="Label (internal name)" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Production Sheet 2026" />

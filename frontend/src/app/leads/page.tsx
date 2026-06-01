@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { ChevronLeft, ChevronRight, Inbox, Phone, Mail, Lock } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { LeadFilters } from '@/components/leads/LeadFilters';
+import { LeadActions } from '@/components/leads/LeadActions';
 import { Skeleton, EmptyState, StatusChip } from '@/components/ui/Modal';
 import { useLeadList } from '@/hooks/useLeads';
 import { fmtDate, fmtRelative, fmtPhone, humanize, stageChip, isOverdue, isDueToday, clsx } from '@/lib/format';
@@ -81,6 +82,7 @@ function LeadsInner() {
                   <th className="px-4 py-2.5 font-medium">Assigned</th>
                   <th className="px-4 py-2.5 font-medium">Followup</th>
                   <th className="px-4 py-2.5 font-medium">Received</th>
+                  <th className="px-4 py-2.5 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -141,6 +143,9 @@ function LeadsInner() {
                       </td>
                       <td className="px-4 py-3 text-xs text-slate-500" title={fmtDate(l.created_at)}>
                         {fmtRelative(l.created_at)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <LeadActions phone={l.phone} email={l.email} name={l.full_name} compact />
                       </td>
                     </tr>
                   );

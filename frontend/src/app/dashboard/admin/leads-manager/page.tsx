@@ -8,6 +8,7 @@ import {
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { Modal, Skeleton, EmptyState } from '@/components/ui/Modal';
+import { LeadActions } from '@/components/leads/LeadActions';
 import { useLeadList } from '@/hooks/useLeads';
 import { useBulkLeadAction, useForceAssign, useActiveMembers, exportLeadsCsv } from '@/hooks/useAdmin';
 import { fmtDate, fmtRelative, clsx, humanize, isOverdue } from '@/lib/format';
@@ -149,7 +150,8 @@ function LeadsInner() {
                 <th className="py-2 pr-3 font-medium">Status</th>
                 <th className="py-2 pr-3 font-medium">Assigned To</th>
                 <th className="py-2 pr-3 font-medium">Follow-up</th>
-                <th className="py-2 font-medium">Created</th>
+                <th className="py-2 pr-3 font-medium">Created</th>
+                <th className="py-2 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
@@ -167,7 +169,8 @@ function LeadsInner() {
                   <td className="py-3 pr-3"><span className={clsx('chip', l.call_status === 'converted' ? 'chip-green' : l.call_status === 'not_called' ? 'chip-amber' : l.call_status === 'interested' ? 'chip-blue' : 'chip-slate')}>{humanize(l.call_status)}</span></td>
                   <td className="py-3 pr-3 text-xs text-slate-600">{l.assigned_to_name || <span className="text-amber-600">Unassigned</span>}</td>
                   <td className="py-3 pr-3 text-xs">{l.next_followup_at ? <span className={isOverdue(l.next_followup_at) ? 'text-rose-600 font-medium' : 'text-slate-500'}>{fmtRelative(l.next_followup_at)}</span> : '—'}</td>
-                  <td className="py-3 text-xs text-slate-500">{fmtDate(l.created_at, 'dd MMM')}</td>
+                  <td className="py-3 pr-3 text-xs text-slate-500">{fmtDate(l.created_at, 'dd MMM')}</td>
+                  <td className="py-3"><LeadActions phone={l.phone} email={l.email} name={l.full_name} compact /></td>
                 </tr>
               ))}
             </tbody>

@@ -178,6 +178,63 @@ export function useWorkflowHistory(leadId: string | null | undefined) {
   });
 }
 
+// ─── Step 4 Payment / Receipt / UTR attachments ────────────────────
+export interface ConversionAttachment {
+  id: string;
+  kind: 'payment_screenshot' | 'receipt' | 'utr' | 'other';
+  file_name: string;
+  file_path: string;
+  url: string;                 // server-relative, e.g. /uploads/payments/<id>/<file>
+  mime_type: string | null;
+  size_bytes: number | null;
+  note: string | null;
+  uploaded_at: string;
+  uploaded_by_name: string | null;
+}
+
+export function useConversionAttachments(leadId: string | null | undefined) {
+  return useQuery({
+    queryKey: ['conversion-attachments', leadId],
+    queryFn: () => apiGet<ConversionAttachment[]>(`/leads/${leadId}/workflow/conversion/attachments`),
+    enabled: !!leadId,
+    staleTime: 15_000,
+  });
+}
+
+export function useUploadConversionAttachments() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ leadId, files, kind = 'payment_screenshot', note }: { leadId: string; files: File[]; kind?: ConversionAttachment['kind']; note?: string }) => {
+      const fd = new FormData();
+      files.forEach(f => fd.append('files', f));
+      fd.append('kind', kind);
+      if (note) fd.append('note', note);
+      const { api } = await import('@/lib/api');
+      const { data } = await api.post(`/leads/${leadId}/workflow/conversion/attachments`, fd);
+      return data.data as ConversionAttachment[];
+    },
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ['conversion-attachments', vars.leadId] });
+      qc.invalidateQueries({ queryKey: ['workflow', vars.leadId] });
+      qc.invalidateQueries({ queryKey: ['workflow-history', vars.leadId] });
+    },
+  });
+}
+
+export function useDeleteConversionAttachment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ leadId, attId }: { leadId: string; attId: string }) => {
+      const { api } = await import('@/lib/api');
+      const { data } = await api.delete(`/leads/${leadId}/workflow/conversion/attachments/${attId}`);
+      return data.data;
+    },
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ['conversion-attachments', vars.leadId] });
+    },
+  });
+}
+
 // ─── Admin/RM Monitoring Hooks ──────────────────────────────────────
 
 export function useWorkflowStats() {

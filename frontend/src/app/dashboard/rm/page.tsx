@@ -159,12 +159,14 @@ function MonitoringCounters({ data, loading }: { data: RmLiveCounters | null; lo
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <CounterCard label="Requests Today" value={data.requests_today} sub={`${data.requests_pending} pending`} icon={<Send className="h-4 w-4" />} color="blue" />
-        <CounterCard label="Leads Distributed" value={data.leads_distributed_today} sub="today" icon={<Briefcase className="h-4 w-4" />} color="emerald" />
-        <CounterCard label="Conversions" value={data.conversions_today} sub="today" icon={<CheckCircle2 className="h-4 w-4" />} color="green" />
-        <CounterCard label="Active Members" value={data.active_today} sub={`of ${data.team_size}`} icon={<UserCheck className="h-4 w-4" />} color="brand" />
-        <CounterCard label="Pending Work" value={data.pending_work_users} sub="members" icon={<Clock className="h-4 w-4" />} color="amber" />
-        <CounterCard label="Waiting for Leads" value={data.members_waiting} sub="members" icon={<Users className="h-4 w-4" />} color="rose" />
+        {/* Each tile drills into the matching filtered view on /leads or /rm-teams.
+            Filters use the same query-string contract the /leads page already supports. */}
+        <CounterCard label="Requests Today" value={data.requests_today} sub={`${data.requests_pending} pending`} icon={<Send className="h-4 w-4" />} color="blue"   href="/partner-requests?status=pending" />
+        <CounterCard label="Leads Distributed" value={data.leads_distributed_today} sub="today"        icon={<Briefcase className="h-4 w-4" />}  color="emerald" href="/leads?assigned=today" />
+        <CounterCard label="Conversions"      value={data.conversions_today}        sub="today"        icon={<CheckCircle2 className="h-4 w-4" />} color="green"  href="/leads?call_status=converted" />
+        <CounterCard label="Active Members"   value={data.active_today}             sub={`of ${data.team_size}`} icon={<UserCheck className="h-4 w-4" />} color="brand" href="/rm-teams?filter=active" />
+        <CounterCard label="Pending Work"     value={data.pending_work_users}       sub="members"      icon={<Clock className="h-4 w-4" />}        color="amber"  href="/leads?pending=true" />
+        <CounterCard label="Waiting for Leads" value={data.members_waiting}         sub="members"      icon={<Users className="h-4 w-4" />}        color="rose"   href="/partner-requests?status=pending" />
       </div>
 
       {/* Top highlights */}
@@ -202,9 +204,10 @@ function MonitoringCounters({ data, loading }: { data: RmLiveCounters | null; lo
   );
 }
 
-function CounterCard({ label, value, sub, icon, color }: {
+function CounterCard({ label, value, sub, icon, color, href }: {
   label: string; value: number; sub: string;
   icon: React.ReactNode; color: string;
+  href?: string;
 }) {
   const colorMap: Record<string, string> = {
     blue: 'bg-blue-50 text-blue-600 border-blue-200',
@@ -216,13 +219,23 @@ function CounterCard({ label, value, sub, icon, color }: {
   };
   const cls = colorMap[color] || colorMap.blue;
 
-  return (
-    <div className={clsx('rounded-xl border p-3.5 transition hover:shadow-sm', cls)}>
-      <div className="flex items-center gap-2 mb-2 opacity-80">{icon}<span className="text-[10px] font-semibold uppercase tracking-wider">{label}</span></div>
+  const inner = (
+    <div className={clsx(
+      'rounded-xl border p-3.5 transition',
+      href ? 'hover:shadow-md hover:scale-[1.02] cursor-pointer active:scale-[0.98]' : 'hover:shadow-sm',
+      cls,
+    )}>
+      <div className="flex items-center gap-2 mb-2 opacity-80">
+        {icon}
+        <span className="text-[10px] font-semibold uppercase tracking-wider">{label}</span>
+        {href && <ArrowRight className="ml-auto h-3 w-3 opacity-60" />}
+      </div>
       <div className="text-2xl font-bold tabular-nums">{value}</div>
       <div className="text-[10px] opacity-70">{sub}</div>
     </div>
   );
+
+  return href ? <Link href={href} className="block">{inner}</Link> : inner;
 }
 
 /* ─── Team Lead Requests Monitor (Enhanced) ────────────────────── */

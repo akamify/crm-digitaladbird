@@ -157,14 +157,40 @@ function emitToRole(role, event, data) {
 function broadcastNewLead(payload) {
   if (!io || !payload || !payload.id) return;
   const event = 'lead:new';
-  // Admins see everything
   io.to('role:super_admin').emit(event, payload);
-  // RMs see the team feed (they'll filter by assigned RM client-side)
   io.to('role:rm').emit(event, payload);
-  // Members only see their own
   if (payload.assigned_to_user_id) {
     io.to(`user:${payload.assigned_to_user_id}`).emit(event, payload);
   }
 }
 
-module.exports = { initSocket, getIO, emitToUser, emitToConversation, emitToRole, broadcastNewLead };
+/**
+ * Broadcast a lead-request lifecycle event so admin + RM dashboards refresh
+ * instantly when a partner/member submits, gets approved, or rejected.
+ *
+ * @param {string} kind       'created' | 'approved' | 'rejected' | 'fulfilled'
+ * @param {object} payload    { id, user_id, user_name, user_role,
+ *                              report_to_id, quantity, category, status,
+ *                              leads_assigned, created_at }
+ *   report_to_id = the RM the requester reports to (so only that RM gets it,
+ *   not every RM). Admins always get it.
+ */
+function broadcastLeadRequest(kind, payload) {
+  if (!io || !payload || !payload.id) return;
+  const event = 'lead-request:' + kind;
+  io.to('role:super_admin').emit(event, payload);
+  // Only the RM who owns this requester sees it
+  if (payload.report_to_id) {
+    io.to(`user:${payload.report_to_id}`).emit(event, payload);
+  }
+  // The requester gets their own status updates
+  if (payload.user_id) {
+    io.to(`user:${payload.user_id}`).emit(event, payload);
+  }
+}
+
+module.exports = {
+  initSocket, getIO,
+  emitToUser, emitToConversation, emitToRole,
+  broadcastNewLead, broadcastLeadRequest,
+};

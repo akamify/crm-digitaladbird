@@ -1,9 +1,18 @@
 /**
  * Singleton axios instance for the CRM API.
  *
- * - Reads access token from localStorage on each request
- * - On 401, automatically attempts a refresh-token rotation and replays
- * - On refresh failure, clears tokens and redirects to /login
+ * Token storage — strict per-tab isolation:
+ *   Tokens and the cached user live ONLY in sessionStorage (scoped to one
+ *   browser tab). Three browser windows can each log in as a different role
+ *   (admin / RM / partner) and refreshing any one of them keeps that tab's
+ *   role intact. A brand-new tab starts empty and must log in.
+ *
+ *   We deliberately do NOT mirror to localStorage. Any localStorage fallback
+ *   leaks the most recent login into other tabs and corrupts refresh state.
+ *   On boot we sweep any legacy localStorage tokens from earlier builds.
+ *
+ * On 401: automatically attempts a refresh-token rotation and replays.
+ * On refresh failure: clears tokens and redirects to /login.
  */
 import axios, { AxiosError, AxiosRequestConfig } from 'axios';
 
@@ -20,27 +29,46 @@ const ACCESS_KEY  = 'dab.access';
 const REFRESH_KEY = 'dab.refresh';
 const USER_KEY    = 'dab.user';
 
+// One-time sweep: prior builds wrote tokens to localStorage under these keys.
+// They poison new tabs (each tab would pick up the last login regardless of
+// role). Clear any leftovers on module load so the bug can't resurface.
+if (typeof window !== 'undefined') {
+  try {
+    localStorage.removeItem('dab.access');
+    localStorage.removeItem('dab.refresh');
+    localStorage.removeItem('dab.user');
+    localStorage.removeItem('dab.last.access');
+    localStorage.removeItem('dab.last.refresh');
+    localStorage.removeItem('dab.last.user');
+  } catch { /* private mode */ }
+}
+
 export const tokens = {
-  get access()  { return typeof window !== 'undefined' ? localStorage.getItem(ACCESS_KEY)  : null; },
-  get refresh() { return typeof window !== 'undefined' ? localStorage.getItem(REFRESH_KEY) : null; },
+  get access()  { return typeof window === 'undefined' ? null : sessionStorage.getItem(ACCESS_KEY);  },
+  get refresh() { return typeof window === 'undefined' ? null : sessionStorage.getItem(REFRESH_KEY); },
   set({ accessToken, refreshToken }: { accessToken: string; refreshToken: string }) {
-    localStorage.setItem(ACCESS_KEY,  accessToken);
-    localStorage.setItem(REFRESH_KEY, refreshToken);
+    if (typeof window === 'undefined') return;
+    sessionStorage.setItem(ACCESS_KEY,  accessToken);
+    sessionStorage.setItem(REFRESH_KEY, refreshToken);
   },
   clear() {
-    localStorage.removeItem(ACCESS_KEY);
-    localStorage.removeItem(REFRESH_KEY);
-    localStorage.removeItem(USER_KEY);
+    if (typeof window === 'undefined') return;
+    sessionStorage.removeItem(ACCESS_KEY);
+    sessionStorage.removeItem(REFRESH_KEY);
+    sessionStorage.removeItem(USER_KEY);
   },
 };
 
 export const userStorage = {
   get(): any | null {
     if (typeof window === 'undefined') return null;
-    const raw = localStorage.getItem(USER_KEY);
+    const raw = sessionStorage.getItem(USER_KEY);
     return raw ? JSON.parse(raw) : null;
   },
-  set(u: any) { localStorage.setItem(USER_KEY, JSON.stringify(u)); },
+  set(u: any) {
+    if (typeof window === 'undefined') return;
+    sessionStorage.setItem(USER_KEY, JSON.stringify(u));
+  },
 };
 
 api.interceptors.request.use((config) => {

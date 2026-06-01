@@ -33,22 +33,39 @@ const SCOPES = [
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1500;
 
-// Cached per-config-id. When admin switches the active row, the cache is
-// invalidated by `reloadActiveConfig()` (called from the route handlers).
-let _clientCache = null; // { configId, sheetId, sheetName, sheets, drive, clientEmail }
-let _initError   = null;
+// Cached per-purpose. Multiple sheets can coexist (Traders + Partners), each
+// with its own Google client. `null` purpose = legacy/un-tagged sheet.
+const _clientCache = new Map(); // purpose → { configId, sheetId, sheetName, purpose, ... }
+const _initErrors  = new Map(); // purpose → Error
 
 // ─── Load active config (DB → env fallback) ─────────────────────────
 
-async function loadActiveConfig() {
-  // 1. Active DB row
+/**
+ * @param {'traders'|'partners'|null} purpose
+ *   - 'traders'  → loads the active Traders sheet
+ *   - 'partners' → loads the active Partners sheet
+ *   - null       → backward-compat: any active row, then any active without purpose, then env
+ */
+async function loadActiveConfig(purpose = null) {
+  // 1. Active DB row scoped to the requested purpose
   try {
-    const { rows: [row] } = await query(
-      `SELECT id, config, secrets_encrypted
-         FROM integration_configs
-        WHERE kind = 'google_sheets' AND is_active = TRUE
-        LIMIT 1`,
-    );
+    let sql, params;
+    if (purpose) {
+      sql = `SELECT id, config, secrets_encrypted, purpose
+               FROM integration_configs
+              WHERE kind = 'google_sheets' AND is_active = TRUE AND purpose = $1
+              LIMIT 1`;
+      params = [purpose];
+    } else {
+      // Backward-compat for legacy callers: prefer un-tagged sheet, else any.
+      sql = `SELECT id, config, secrets_encrypted, purpose
+               FROM integration_configs
+              WHERE kind = 'google_sheets' AND is_active = TRUE
+              ORDER BY (purpose IS NULL) DESC, updated_at DESC
+              LIMIT 1`;
+      params = [];
+    }
+    const { rows: [row] } = await query(sql, params);
     if (row && row.secrets_encrypted) {
       const secrets = decrypt(row.secrets_encrypted);
       if (!secrets || !secrets.client_email) throw new Error('Stored credentials missing client_email');
@@ -57,20 +74,22 @@ async function loadActiveConfig() {
         configId:   row.id,
         sheetId:    cfg.sheet_id || '',
         sheetName:  cfg.sheet_name || 'Leads',
+        purpose:    row.purpose || null,
         creds:      secrets,
         source:     'db',
       };
     }
   } catch (err) {
-    // Don't fall back silently if the DB row exists but decryption failed —
-    // that's a real misconfiguration the admin needs to see.
     if (err.message && /malformed|bad iv|tag|auth/i.test(err.message)) {
       throw new Error('Active Google Sheets credentials in DB cannot be decrypted — re-upload the service-account JSON.');
     }
-    // Otherwise (DB not migrated yet, etc.) fall through to env.
+    // Otherwise (table doesn't exist yet, etc.) fall through to env.
   }
 
-  // 2. Env fallback (legacy)
+  // 2. Env fallback (legacy) — only when no purpose was asked for
+  if (purpose) {
+    throw new Error(`No active "${purpose}" sheet configured. Upload one in Settings → Google Sheets → ${purpose === 'traders' ? 'Traders' : 'Partners'} tab.`);
+  }
   const sheetId = process.env.GOOGLE_SHEET_ID || '';
   const keyPath = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH || '';
   const keyJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY || '';
@@ -89,46 +108,50 @@ async function loadActiveConfig() {
     configId:  null,
     sheetId,
     sheetName: process.env.GOOGLE_SHEET_NAME || 'Leads',
+    purpose:   null,
     creds,
     source:    'env',
   };
 }
 
-async function initClients() {
-  if (_clientCache) return _clientCache;
-  if (_initError) throw _initError;
+async function initClients(purpose = null) {
+  const cached = _clientCache.get(purpose);
+  if (cached) return cached;
+  if (_initErrors.has(purpose)) throw _initErrors.get(purpose);
 
   try {
-    const cfg = await loadActiveConfig();
+    const cfg = await loadActiveConfig(purpose);
     const auth = new google.auth.GoogleAuth({ credentials: cfg.creds, scopes: SCOPES });
     const client = await auth.getClient();
-    _clientCache = {
+    const entry = {
       configId:    cfg.configId,
       sheetId:     cfg.sheetId,
       sheetName:   cfg.sheetName,
+      purpose:     cfg.purpose,
       clientEmail: cfg.creds.client_email,
       sheets:      google.sheets({ version: 'v4', auth: client }),
       drive:       google.drive({ version: 'v3', auth: client }),
     };
-    logger.info({ source: cfg.source, sheetId: cfg.sheetId.slice(0, 8) + '…' }, '[Sheets] Google APIs initialized');
-    return _clientCache;
+    _clientCache.set(purpose, entry);
+    logger.info({ purpose, source: cfg.source, sheetId: cfg.sheetId.slice(0, 8) + '…' }, '[Sheets] Google APIs initialized');
+    return entry;
   } catch (err) {
-    _initError = err;
-    logger.error({ err: err.message }, '[Sheets] Failed to initialize Google APIs');
+    _initErrors.set(purpose, err);
+    logger.error({ purpose, err: err.message }, '[Sheets] Failed to initialize Google APIs');
     throw err;
   }
 }
 
-/** Lazy init. Returns null if disabled / misconfigured. */
-async function getSheets() {
-  try { return (await initClients()).sheets; }
+/** Lazy init for legacy callers — uses the un-purposed/env fallback. */
+async function getSheets(purpose = null) {
+  try { return (await initClients(purpose)).sheets; }
   catch { return null; }
 }
 
-/** Reset cached clients (called after admin updates / activates a new config). */
+/** Wipe cached clients across ALL purposes. Called after admin updates a config. */
 function resetClients() {
-  _clientCache = null;
-  _initError   = null;
+  _clientCache.clear();
+  _initErrors.clear();
 }
 
 /** Public alias used by the admin route after a config change. */
@@ -448,8 +471,8 @@ async function testCredentials({ creds, sheetId, sheetName = 'Leads' }) {
 
 // ─── Preview last N rows of the active sheet (admin Preview button) ────
 
-async function previewRows(limit = 10) {
-  const c = await initClients();
+async function previewRows(limit = 10, purpose = null) {
+  const c = await initClients(purpose);
   const res = await c.sheets.spreadsheets.values.get({
     spreadsheetId: c.sheetId,
     range: `${c.sheetName}!A1:R${Math.max(2, limit + 1)}`,
@@ -459,6 +482,7 @@ async function previewRows(limit = 10) {
   return {
     sheet_id:   c.sheetId,
     sheet_name: c.sheetName,
+    purpose:    c.purpose,
     header,
     rows: values.slice(1),
   };

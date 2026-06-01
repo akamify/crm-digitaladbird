@@ -55,6 +55,7 @@ interface DistStats {
 }
 
 const ADMIN_MODULES = [
+  { href: '/dashboard/admin/fresh',         label: 'Fresh Leads',     Icon: Star,            color: 'text-amber-600',   bg: 'bg-amber-50',    border: 'border-amber-200',    desc: 'Today / Trader / Partner' },
   { href: '/dashboard/admin/campaigns',     label: 'Campaigns',      Icon: Megaphone,       color: 'text-rose-600',    bg: 'bg-rose-50',    border: 'border-rose-200',    desc: 'Create, edit, pause' },
   { href: '/dashboard/admin/users',         label: 'User Management', Icon: Users,           color: 'text-violet-600',  bg: 'bg-violet-50',  border: 'border-violet-200',  desc: 'Block, edit, caps' },
   { href: '/dashboard/admin/leads-manager', label: 'Lead Management', Icon: Briefcase,       color: 'text-brand-600',   bg: 'bg-brand-50',   border: 'border-brand-200',   desc: 'Bulk actions, assign' },
@@ -124,23 +125,22 @@ function AdminDashboardInner() {
         </div>
       </div>
 
-      {/* Distribution Status Banner */}
+      {/* Distribution Status Banner — each tile drills into its own filtered view */}
       {ds && (
-        <Link href="/dashboard/admin/distribution" className="block">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            <MiniStat icon={<Inbox className="h-4 w-4" />} label="Queued" value={ds.queued_leads} color="amber" />
-            <MiniStat icon={<Clock className="h-4 w-4" />} label="Pending Work" value={ds.total_pending} color="rose" />
-            <MiniStat icon={<ArrowRight className="h-4 w-4" />} label="Today Distributed" value={ds.today_distributed} color="green" />
-            <MiniStat icon={<Briefcase className="h-4 w-4" />} label="Today Received" value={ds.today_received} color="blue" />
-            <MiniStat icon={<UserX className="h-4 w-4" />} label="Blocked Members" value={ds.blocked_members} color={Number(ds.blocked_members) > 0 ? 'red' : 'slate'} />
-            <MiniStat
-              icon={ds.distribution_enabled === 'true' ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
-              label="Distribution"
-              value={ds.distribution_enabled === 'true' ? 'Active' : 'Paused'}
-              color={ds.distribution_enabled === 'true' ? 'green' : 'amber'}
-            />
-          </div>
-        </Link>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <MiniStat icon={<Inbox className="h-4 w-4" />} label="Queued"            value={ds.queued_leads}      color="amber" href="/dashboard/admin/leads-manager?assigned=false" />
+          <MiniStat icon={<Clock className="h-4 w-4" />} label="Pending Work"      value={ds.total_pending}     color="rose"  href="/dashboard/admin/leads-manager?pending=true" />
+          <MiniStat icon={<ArrowRight className="h-4 w-4" />} label="Today Distributed" value={ds.today_distributed} color="green" href="/dashboard/admin/fresh?scope=today" />
+          <MiniStat icon={<Briefcase className="h-4 w-4" />} label="Today Received"     value={ds.today_received}    color="blue"  href="/dashboard/admin/fresh?scope=today" />
+          <MiniStat icon={<UserX className="h-4 w-4" />} label="Blocked Members"   value={ds.blocked_members}   color={Number(ds.blocked_members) > 0 ? 'red' : 'slate'} href="/dashboard/admin/users?status=blocked" />
+          <MiniStat
+            icon={ds.distribution_enabled === 'true' ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+            label="Distribution"
+            value={ds.distribution_enabled === 'true' ? 'Active' : 'Paused'}
+            color={ds.distribution_enabled === 'true' ? 'green' : 'amber'}
+            href="/dashboard/admin/distribution"
+          />
+        </div>
       )}
 
       {/* Pending approvals alert */}
@@ -373,17 +373,22 @@ const COLOR_MAP: Record<string, string> = {
   slate: 'bg-slate-50 text-slate-600 border-slate-200',
 };
 
-const MiniStat = memo(function MiniStat({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: string; color: string }) {
+const MiniStat = memo(function MiniStat({ icon, label, value, color, href }: { icon: React.ReactNode; label: string; value: string; color: string; href?: string }) {
   const cls = COLOR_MAP[color] || COLOR_MAP.slate;
-  return (
-    <div className={`flex items-center gap-2.5 rounded-lg border px-3 py-2.5 ${cls}`}>
+  const inner = (
+    <div className={clsx(
+      `flex items-center gap-2.5 rounded-lg border px-3 py-2.5 ${cls}`,
+      href && 'cursor-pointer hover:shadow-md hover:scale-[1.02] active:scale-[0.98] transition',
+    )}>
       {icon}
       <div>
         <div className="text-lg font-bold leading-none tabular-nums">{value}</div>
         <div className="mt-0.5 text-[10px] uppercase tracking-wide opacity-80">{label}</div>
       </div>
+      {href && <ArrowRight className="ml-auto h-3 w-3 opacity-60" />}
     </div>
   );
+  return href ? <Link href={href} className="block">{inner}</Link> : inner;
 });
 
 function AdminLeaderboardWidget() {

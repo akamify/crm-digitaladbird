@@ -173,6 +173,38 @@ export function useSocketConnection() {
           toast.success(`New lead${lead.full_name ? `: ${lead.full_name}` : ''} ${tag}`, { id: `lead-${lead.id}`, duration: 4000 });
         }
       },
+
+      // Partner/member lead-request lifecycle. Admin sees ALL events; the RM
+      // who owns the requester sees the events for their team only (backend
+      // already scopes the emit). Requester sees their own status changes.
+      'lead-request:created': (rq: { id: string; user_name?: string; user_role?: string; quantity?: number; category?: string | null }) => {
+        enqueue('lead-requests', 'admin');
+        if (user.role === 'super_admin' || user.role === 'rm') {
+          const who = rq.user_name || (rq.user_role === 'partner' ? 'A partner' : 'A member');
+          const cat = rq.category ? ` (${rq.category})` : '';
+          toast(`📬 ${who} requested ${rq.quantity || '?'} lead${(rq.quantity || 0) > 1 ? 's' : ''}${cat}`, { id: `lr-${rq.id}`, duration: 5000 });
+        }
+      },
+      'lead-request:fulfilled': (rq: { id: string; leads_assigned?: number; user_id?: string }) => {
+        enqueue('lead-requests', 'admin', 'leads');
+        if (rq.user_id === user.id) {
+          toast.success(`✅ Your request was fulfilled — ${rq.leads_assigned || 0} lead(s) assigned`, { id: `lr-${rq.id}`, duration: 5000 });
+        }
+      },
+      'lead-request:approved': (rq: { id: string; leads_assigned?: number; user_id?: string; user_name?: string }) => {
+        enqueue('lead-requests', 'admin', 'leads');
+        if (rq.user_id === user.id) {
+          toast.success(`✅ Your request approved — ${rq.leads_assigned || 0} lead(s) assigned`, { id: `lr-${rq.id}`, duration: 5000 });
+        } else if (user.role === 'super_admin' || user.role === 'rm') {
+          toast(`✓ Approved request from ${rq.user_name || 'user'}`, { id: `lr-${rq.id}`, duration: 3000 });
+        }
+      },
+      'lead-request:rejected': (rq: { id: string; user_id?: string }) => {
+        enqueue('lead-requests', 'admin');
+        if (rq.user_id === user.id) {
+          toast.error(`Your lead request was rejected.`, { id: `lr-${rq.id}`, duration: 5000 });
+        }
+      },
     } as const;
 
     let socketRef: ReturnType<typeof getSocket> = null;

@@ -1,6 +1,7 @@
 'use client';
 
 import type { Socket } from 'socket.io-client';
+import { tokens } from './api';
 
 let socket: Socket | null = null;
 let ioModule: typeof import('socket.io-client') | null = null;
@@ -51,7 +52,7 @@ export async function connectSocket(): Promise<Socket> {
   setStatus('connecting');
 
   connectPromise = (async () => {
-    const tokenStr = typeof window !== 'undefined' ? localStorage.getItem('dab.access') : null;
+    const tokenStr = tokens.access;
     if (!tokenStr) {
       setStatus('disconnected');
       throw new Error('No auth token');
@@ -98,7 +99,7 @@ export async function connectSocket(): Promise<Socket> {
 
     s.on('connect_error', (err) => {
       if (err.message === 'AUTH_FAILED' || err.message === 'AUTH_REQUIRED') {
-        const freshToken = localStorage.getItem('dab.access');
+        const freshToken = tokens.access;
         if (freshToken && s) {
           (s as any).auth = { token: freshToken };
         }

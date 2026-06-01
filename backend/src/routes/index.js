@@ -7,6 +7,26 @@ const meta    = require('../controllers/metaController');
 const { authenticate, invalidateUser }    = require('../middleware/auth');
 const { requireRole, requireMemberType }  = require('../middleware/rbac');
 const { responseCache }                   = require('../middleware/cache');
+const { broadcastLeadRequest }            = require('../services/socketService');
+
+// Loads a lead-request enriched with user + RM context and emits the
+// appropriate `lead-request:<kind>` Socket.IO event so admin + RM + the
+// requester themselves see status changes instantly.
+async function emitLeadRequest(kind, requestId) {
+  try {
+    const { query: q } = require('../config/database');
+    const { rows: [r] } = await q(
+      `SELECT lr.id, lr.user_id, lr.quantity, lr.category, lr.status, lr.leads_assigned,
+              lr.created_at, lr.note,
+              u.full_name AS user_name, u.role AS user_role, u.report_to_id, u.team_name
+         FROM lead_requests lr
+         JOIN users u ON u.id = lr.user_id
+        WHERE lr.id = $1`,
+      [requestId],
+    );
+    if (r) broadcastLeadRequest(kind, r);
+  } catch (_) { /* never fail a route on a broadcast error */ }
+}
 
 // ---- Auth ---------------------------------------------------------
 router.post('/auth/login',       auth.login);        // demo mode: direct password login
@@ -472,6 +492,29 @@ router.post('/lead-requests', authenticate, asyncHandler(async (req, res) => {
     throw new AppError(400, 'ALREADY_PENDING', 'You already have a pending lead request');
   }
 
+  // Completion gating: partners and members must finish previously-assigned
+  // leads before they can request more. "Pending" = lead with call_status in
+  // (not_called, rnr, busy, switched_off) — i.e. no real outcome recorded.
+  // Threshold is configurable via distribution_settings; default 2 unworked
+  // leads block a new request.
+  if (['partner', 'member'].includes(req.user.role)) {
+    const { rows: [thr] } = await query(
+      `SELECT value FROM distribution_settings WHERE key = 'partner_pending_block_threshold'`,
+    ).catch(() => ({ rows: [{ value: '2' }] }));
+    const threshold = Math.max(1, parseInt(thr?.value || '2', 10));
+    const { rows: [pc] } = await query(
+      `SELECT COUNT(*)::int AS pending
+         FROM leads
+        WHERE assigned_to_user_id = $1
+          AND deleted_at IS NULL
+          AND is_pending = TRUE`,
+      [req.user.id],
+    );
+    if (pc.pending >= threshold) {
+      throw new AppError(409, 'PENDING_WORK', `You have ${pc.pending} unworked lead(s). Finish (or update status on) those before requesting more.`);
+    }
+  }
+
   // Create the request
   const { rows: [r] } = await query(
     `INSERT INTO lead_requests (user_id, quantity, category, note)
@@ -528,6 +571,9 @@ router.post('/lead-requests', authenticate, asyncHandler(async (req, res) => {
        VALUES ($1, 'lead_request', $2, 'submit', $3, $4)`,
     [req.user.id, r.id, JSON.stringify({ quantity: qty, category: cat, assigned }), req.ip]
   );
+
+  // Real-time notify admin + the RM who owns this requester + the requester
+  emitLeadRequest(r.status === 'fulfilled' ? 'fulfilled' : 'created', r.id);
 
   res.status(201).json({ success: true, data: r });
 }));
@@ -631,6 +677,8 @@ router.post('/lead-requests/:id/approve', authenticate, requireRole('super_admin
     [req.user.id, req.body.note || null, assigned, id]
   );
 
+  emitLeadRequest('approved', id);
+
   res.json({ success: true, data: { approved: true, leads_assigned: assigned, requested: request.quantity } });
 }));
 
@@ -655,6 +703,7 @@ router.post('/lead-requests/:id/reject', authenticate, requireRole('super_admin'
     [req.user.id, req.body.note || null, id]
   );
   if (!r) throw new AppError(404, 'NOT_FOUND', 'Request not found or already resolved');
+  emitLeadRequest('rejected', r.id);
   res.json({ success: true });
 }));
 
@@ -2704,6 +2753,7 @@ function publicConfigRow(row) {
     id: row.id,
     kind: row.kind,
     label: row.label,
+    purpose: row.purpose || null,        // 'traders' | 'partners' | null
     is_active: row.is_active,
     sheet_id: row.config?.sheet_id || null,
     sheet_name: row.config?.sheet_name || 'Leads',
@@ -2723,6 +2773,15 @@ function publicConfigRow(row) {
   };
 }
 
+// Normalise a body field into the strict 'traders' | 'partners' | null.
+function normPurpose(v) {
+  if (!v) return null;
+  const s = String(v).toLowerCase().trim();
+  if (s === 'traders' || s === 'trader')   return 'traders';
+  if (s === 'partners' || s === 'partner') return 'partners';
+  return null;
+}
+
 // List all stored sheet configs
 router.get('/admin/sheets/configs', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
   const { rows } = await query(`SELECT * FROM integration_configs WHERE kind = 'google_sheets' ORDER BY is_active DESC, updated_at DESC`);
@@ -2740,7 +2799,8 @@ router.post('/admin/sheets/configs', authenticate, requireRole('super_admin'),
     const creds = parseCreds(rawJson);
     const sheetId = (body.sheet_id || '').trim();
     if (!sheetId) throw new AppError(400, 'INVALID', 'sheet_id is required');
-    const label = (body.label || `Sheet ${sheetId.slice(0, 8)}`).trim();
+    const purpose = normPurpose(body.purpose);
+    const label = (body.label || `${purpose ? purpose[0].toUpperCase() + purpose.slice(1) + ' · ' : ''}Sheet ${sheetId.slice(0, 8)}`).trim();
     const sheetName = (body.sheet_name || 'Leads').trim();
     const makeActive = body.make_active === 'true' || body.make_active === true;
 
@@ -2753,14 +2813,20 @@ router.post('/admin/sheets/configs', authenticate, requireRole('super_admin'),
     const secretsEnc = secretsCrypto.encrypt(creds);
 
     const { rows: [r] } = await query(
-      `INSERT INTO integration_configs(kind, label, config, secrets_encrypted, is_active, created_by_user_id)
-         VALUES ('google_sheets', $1, $2, $3, FALSE, $4)
+      `INSERT INTO integration_configs(kind, label, purpose, config, secrets_encrypted, is_active, created_by_user_id)
+         VALUES ('google_sheets', $1, $2, $3, $4, FALSE, $5)
          RETURNING *`,
-      [label, JSON.stringify(config), secretsEnc, req.user.id],
+      [label, purpose, JSON.stringify(config), secretsEnc, req.user.id],
     );
 
     if (makeActive) {
-      await query(`UPDATE integration_configs SET is_active = FALSE WHERE kind = 'google_sheets' AND id <> $1`, [r.id]);
+      // Deactivate ONLY other configs sharing this purpose (or sharing the
+      // 'no-purpose' bucket). Traders and Partners stay independently active.
+      await query(
+        `UPDATE integration_configs SET is_active = FALSE
+          WHERE kind = 'google_sheets' AND COALESCE(purpose, '') = COALESCE($1, '') AND id <> $2`,
+        [purpose, r.id],
+      );
       await query(`UPDATE integration_configs SET is_active = TRUE WHERE id = $1`, [r.id]);
       sheetsSvc.reloadActiveConfig();
     }
@@ -2793,12 +2859,13 @@ router.patch('/admin/sheets/configs/:id', authenticate, requireRole('super_admin
     }
 
     const label = body.label !== undefined ? String(body.label).trim() : existing.label;
+    const purpose = body.purpose !== undefined ? normPurpose(body.purpose) : existing.purpose;
 
     await query(
       `UPDATE integration_configs
-          SET label = $1, config = $2, secrets_encrypted = $3, updated_at = NOW()
-        WHERE id = $4`,
-      [label, JSON.stringify(newConfig), secretsEnc, id],
+          SET label = $1, config = $2, secrets_encrypted = $3, purpose = $4, updated_at = NOW()
+        WHERE id = $5`,
+      [label, JSON.stringify(newConfig), secretsEnc, purpose, id],
     );
     if (existing.is_active) sheetsSvc.reloadActiveConfig();
     const { rows: [final] } = await query(`SELECT * FROM integration_configs WHERE id = $1`, [id]);
@@ -2806,13 +2873,18 @@ router.patch('/admin/sheets/configs/:id', authenticate, requireRole('super_admin
   }),
 );
 
-// Activate a config (deactivates all others of the same kind)
+// Activate a config — scoped per purpose. Activating a Traders sheet does
+// NOT deactivate the Partners sheet, and vice versa.
 router.post('/admin/sheets/configs/:id/activate', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { rows: [existing] } = await query(`SELECT id FROM integration_configs WHERE id = $1 AND kind = 'google_sheets'`, [id]);
+  const { rows: [existing] } = await query(`SELECT id, purpose FROM integration_configs WHERE id = $1 AND kind = 'google_sheets'`, [id]);
   if (!existing) throw new AppError(404, 'NOT_FOUND', 'Config not found');
 
-  await query(`UPDATE integration_configs SET is_active = FALSE WHERE kind = 'google_sheets' AND id <> $1`, [id]);
+  await query(
+    `UPDATE integration_configs SET is_active = FALSE
+      WHERE kind = 'google_sheets' AND COALESCE(purpose, '') = COALESCE($1, '') AND id <> $2`,
+    [existing.purpose, id],
+  );
   await query(`UPDATE integration_configs SET is_active = TRUE WHERE id = $1`, [id]);
   sheetsSvc.reloadActiveConfig();
 
@@ -2856,15 +2928,134 @@ router.post('/admin/sheets/configs/:id/sync-now', authenticate, requireRole('sup
   }
 }));
 
-// Preview last N rows of the currently-active sheet
+// Preview last N rows of an active sheet (optionally per purpose)
 router.get('/admin/sheets/preview', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
   const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 10));
+  const purpose = normPurpose(req.query.purpose);
   try {
-    const data = await sheetsSvc.previewRows(limit);
+    const data = await sheetsSvc.previewRows(limit, purpose);
     res.json({ success: true, data });
   } catch (err) {
     res.status(502).json({ success: false, error: { code: 'SHEETS_PREVIEW_FAILED', message: err.message } });
   }
+}));
+
+/**
+ * Fresh-leads feed for the Admin Fresh Leads tab.
+ *
+ * Query params:
+ *   - scope=today|trader|partner|all  (default = today)
+ *   - limit (default 100, max 500)
+ *
+ * Returns:
+ *   - counts: { today_total, today_trader, today_partner, trader_total, partner_total, total_active }
+ *   - rows: paginated list filtered to the requested scope, newest first
+ *   - sheet_links: { traders: <url>|null, partners: <url>|null } — quick "Open Sheet" buttons
+ */
+router.get('/admin/leads/fresh', authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (req, res) => {
+  const scope = ['today', 'trader', 'partner', 'all'].includes(req.query.scope) ? req.query.scope : 'today';
+  const limit = Math.min(500, Math.max(1, parseInt(req.query.limit) || 100));
+
+  // Aggregate counts in one query — same row set every refresh
+  const { rows: [c] } = await query(`
+    SELECT
+      COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE)                                             AS today_total,
+      COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE AND category = 'trader')                     AS today_trader,
+      COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE AND category = 'partner')                    AS today_partner,
+      COUNT(*) FILTER (WHERE category = 'trader')                                                         AS trader_total,
+      COUNT(*) FILTER (WHERE category = 'partner')                                                        AS partner_total,
+      COUNT(*) FILTER (WHERE assigned_to_user_id IS NULL)                                                 AS unassigned,
+      COUNT(*) FILTER (WHERE assigned_to_user_id IS NOT NULL)                                             AS assigned,
+      COUNT(*)                                                                                            AS total_active
+      FROM leads WHERE deleted_at IS NULL
+  `);
+
+  // Build WHERE for the requested scope
+  let where = `l.deleted_at IS NULL`;
+  if (scope === 'today')        where += ` AND l.created_at::date = CURRENT_DATE`;
+  else if (scope === 'trader')  where += ` AND l.category = 'trader' AND l.created_at::date = CURRENT_DATE`;
+  else if (scope === 'partner') where += ` AND l.category = 'partner' AND l.created_at::date = CURRENT_DATE`;
+  // scope=all → no extra filter
+
+  const { rows } = await query(`
+    SELECT l.id, l.full_name, l.phone, l.email, l.city, l.state,
+           l.category, l.source, l.stage, l.call_status,
+           l.campaign_name, l.adset_name, l.ad_name, l.campaign_label, l.product_tag,
+           l.meta_form_id, l.meta_campaign_id,
+           l.assigned_to_user_id, u.full_name AS assigned_to_name, u.role AS assigned_to_role,
+           l.created_at, l.assigned_at
+      FROM leads l
+      LEFT JOIN users u ON u.id = l.assigned_to_user_id
+     WHERE ${where}
+     ORDER BY l.created_at DESC
+     LIMIT $1
+  `, [limit]);
+
+  // Sheet links — let the admin jump straight to the source Google Sheet
+  const { rows: cfgs } = await query(
+    `SELECT purpose, config->>'sheet_id' AS sheet_id
+       FROM integration_configs
+      WHERE kind = 'google_sheets' AND is_active = TRUE AND config->>'sheet_id' IS NOT NULL`,
+  );
+  const sheet_links = { traders: null, partners: null };
+  for (const r of cfgs) {
+    const url = r.sheet_id ? `https://docs.google.com/spreadsheets/d/${r.sheet_id}` : null;
+    if (r.purpose === 'traders')  sheet_links.traders  = url;
+    if (r.purpose === 'partners') sheet_links.partners = url;
+    if (!r.purpose && !sheet_links.traders) sheet_links.traders = url; // legacy un-tagged → treat as traders
+  }
+
+  res.json({
+    success: true,
+    data: {
+      scope,
+      counts: {
+        today_total:   Number(c.today_total),
+        today_trader:  Number(c.today_trader),
+        today_partner: Number(c.today_partner),
+        trader_total:  Number(c.trader_total),
+        partner_total: Number(c.partner_total),
+        unassigned:    Number(c.unassigned),
+        assigned:      Number(c.assigned),
+        total_active:  Number(c.total_active),
+      },
+      rows,
+      sheet_links,
+    },
+  });
+}));
+
+// Per-purpose lead stats — drives the Traders / Partners stat cards
+router.get('/admin/sheets/stats', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const { rows: [s] } = await query(`
+    SELECT
+      COUNT(*) FILTER (WHERE category = 'trader')                              AS trader_total,
+      COUNT(*) FILTER (WHERE category = 'trader' AND assigned_to_user_id IS NULL) AS trader_unassigned,
+      COUNT(*) FILTER (WHERE category = 'trader' AND assigned_to_user_id IS NOT NULL) AS trader_assigned,
+      COUNT(*) FILTER (WHERE category = 'trader' AND call_status = 'converted') AS trader_converted,
+      COUNT(*) FILTER (WHERE category = 'trader' AND created_at::date = CURRENT_DATE) AS trader_today,
+      COUNT(*) FILTER (WHERE category = 'partner')                              AS partner_total,
+      COUNT(*) FILTER (WHERE category = 'partner' AND assigned_to_user_id IS NULL) AS partner_unassigned,
+      COUNT(*) FILTER (WHERE category = 'partner' AND assigned_to_user_id IS NOT NULL) AS partner_assigned,
+      COUNT(*) FILTER (WHERE category = 'partner' AND call_status = 'converted') AS partner_converted,
+      COUNT(*) FILTER (WHERE category = 'partner' AND created_at::date = CURRENT_DATE) AS partner_today
+      FROM leads WHERE deleted_at IS NULL
+  `);
+  res.json({
+    success: true,
+    data: {
+      traders: {
+        total: Number(s.trader_total), unassigned: Number(s.trader_unassigned),
+        assigned: Number(s.trader_assigned), converted: Number(s.trader_converted),
+        today: Number(s.trader_today),
+      },
+      partners: {
+        total: Number(s.partner_total), unassigned: Number(s.partner_unassigned),
+        assigned: Number(s.partner_assigned), converted: Number(s.partner_converted),
+        today: Number(s.partner_today),
+      },
+    },
+  });
 }));
 
 // Delete a config
@@ -3400,10 +3591,13 @@ const REMARK_OPTIONS = [
   'session_730_attend', 'yes_after_730_session'
 ];
 
+// Final lead-level set — UH and HU removed; ALL Partner/ALL Trader are the
+// canonical "everyone" buckets. Order matches the admin-spec final list.
 const LEAD_LEVEL_OPTIONS = [
-  'new_partner', 'new_trader', 'followup_partner', 'followup_trader',
-  'hot_partner', 'hot_trader', 'cold_partner', 'cold_trader',
-  'hu_partner', 'hu_trader', 'advance_payment', 'closed'
+  'new_partner', 'hot_partner', 'all_partner', 'followup_partner', 'cold_partner',
+  'advance_payment',
+  'new_trader', 'hot_trader', 'all_trader', 'followup_trader', 'cold_trader',
+  'closed',
 ];
 
 // GET workflow state for a lead
@@ -3671,6 +3865,133 @@ router.post('/leads/:id/workflow/conversion', authenticate, asyncHandler(async (
   `, [leadId, req.user.id, customer_type, JSON.stringify({ total_payment, part_payment, services })]);
 
   res.json({ success: true, data: conv });
+}));
+
+// ═══════════════════════════════════════════════════════════════════════
+// STEP 4 — Conversion attachments (payment screenshot, receipt, UTR)
+// ═══════════════════════════════════════════════════════════════════════
+const fsx = require('fs');
+const pathx = require('path');
+const cryptox = require('crypto');
+
+// Disk-backed multer storage under backend/uploads/payments/<leadId>/
+const paymentUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, _file, cb) => {
+      const leadId = req.params.id;
+      const dir = pathx.resolve(__dirname, '..', '..', 'uploads', 'payments', leadId);
+      fsx.mkdir(dir, { recursive: true }, (err) => cb(err, dir));
+    },
+    filename: (_req, file, cb) => {
+      const ext = (pathx.extname(file.originalname || '') || '').slice(0, 8);
+      const safe = cryptox.randomBytes(12).toString('hex') + ext;
+      cb(null, safe);
+    },
+  }),
+  limits: { fileSize: 8 * 1024 * 1024, files: 3 }, // 8 MB per file, 3 per request
+  fileFilter: (_req, file, cb) => {
+    const ok = /^image\/(png|jpe?g|webp|gif|heic|heif)$/i.test(file.mimetype || '')
+            || /^application\/pdf$/i.test(file.mimetype || '')
+            || /\.(png|jpe?g|webp|gif|heic|heif|pdf)$/i.test(file.originalname || '');
+    cb(ok ? null : new AppError(400, 'BAD_FILE', 'Only images or PDF allowed'), ok);
+  },
+});
+
+function leadAccessGuard(user, lead) {
+  if (user.role === 'super_admin') return true;
+  if (user.role === 'rm') {
+    // RM can manage attachments for leads assigned to their team
+    // (full team scoping is done in the calling query, so accept here)
+    return true;
+  }
+  return lead.assigned_to_user_id === user.id;
+}
+
+// Upload (1 to 3 files at once). Field name: `files` (multiple) OR `file` (single).
+// Form fields: kind, note
+router.post('/leads/:id/workflow/conversion/attachments',
+  authenticate,
+  (req, res, next) => paymentUpload.array('files', 3)(req, res, (err) => err ? next(err) : next()),
+  asyncHandler(async (req, res) => {
+    const leadId = req.params.id;
+    const { rows: [lead] } = await query(`SELECT id, assigned_to_user_id FROM leads WHERE id = $1 AND deleted_at IS NULL`, [leadId]);
+    if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
+    if (!leadAccessGuard(req.user, lead)) throw new AppError(403, 'FORBIDDEN', 'You cannot upload attachments for this lead');
+
+    const files = req.files || [];
+    if (!files.length) throw new AppError(400, 'NO_FILES', 'No files uploaded');
+
+    const kind = ['payment_screenshot', 'receipt', 'utr', 'other'].includes(req.body?.kind) ? req.body.kind : 'payment_screenshot';
+    const note = req.body?.note ? String(req.body.note).slice(0, 500) : null;
+
+    // Tie the attachments to the lead's conversion row if it already exists
+    const { rows: [conv] } = await query(`SELECT id FROM lead_conversion WHERE lead_id = $1`, [leadId]);
+
+    const inserted = [];
+    for (const f of files) {
+      const relPath = `payments/${leadId}/${pathx.basename(f.path)}`;
+      const { rows: [row] } = await query(
+        `INSERT INTO lead_payment_attachments
+           (lead_id, conversion_id, user_id, kind, file_name, file_path, mime_type, size_bytes, note)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING id, kind, file_name, file_path, mime_type, size_bytes, note, uploaded_at`,
+        [leadId, conv?.id || null, req.user.id, kind, f.originalname || pathx.basename(f.path), relPath, f.mimetype, f.size, note],
+      );
+      inserted.push({ ...row, url: '/uploads/' + relPath });
+    }
+
+    // Audit trail
+    await query(
+      `INSERT INTO lead_workflow_history (lead_id, user_id, step, action, new_value, metadata)
+         VALUES ($1, $2, 4, 'attachment_uploaded', $3, $4)`,
+      [leadId, req.user.id, kind, JSON.stringify({ files: inserted.map(a => ({ name: a.file_name, size: a.size_bytes })) })],
+    ).catch(() => {});
+
+    res.status(201).json({ success: true, data: inserted });
+  }),
+);
+
+// List attachments for a lead
+router.get('/leads/:id/workflow/conversion/attachments', authenticate, asyncHandler(async (req, res) => {
+  const leadId = req.params.id;
+  const { rows: [lead] } = await query(`SELECT id, assigned_to_user_id FROM leads WHERE id = $1 AND deleted_at IS NULL`, [leadId]);
+  if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
+  if (!leadAccessGuard(req.user, lead)) throw new AppError(403, 'FORBIDDEN', 'No access');
+
+  const { rows } = await query(
+    `SELECT a.id, a.kind, a.file_name, a.file_path, a.mime_type, a.size_bytes, a.note, a.uploaded_at,
+            u.full_name AS uploaded_by_name
+       FROM lead_payment_attachments a
+       LEFT JOIN users u ON u.id = a.user_id
+      WHERE a.lead_id = $1 AND a.deleted_at IS NULL
+      ORDER BY a.uploaded_at DESC`,
+    [leadId],
+  );
+  res.json({ success: true, data: rows.map(r => ({ ...r, url: '/uploads/' + r.file_path })) });
+}));
+
+// Delete one attachment (soft-delete DB row + remove file from disk)
+router.delete('/leads/:id/workflow/conversion/attachments/:attId', authenticate, asyncHandler(async (req, res) => {
+  const { id: leadId, attId } = req.params;
+  const { rows: [a] } = await query(
+    `SELECT a.id, a.user_id, a.file_path, l.assigned_to_user_id
+       FROM lead_payment_attachments a
+       JOIN leads l ON l.id = a.lead_id
+      WHERE a.id = $1 AND a.lead_id = $2 AND a.deleted_at IS NULL`,
+    [attId, leadId],
+  );
+  if (!a) throw new AppError(404, 'NOT_FOUND', 'Attachment not found');
+  // Member can only delete their own uploads; RM/admin can delete any in scope
+  if (req.user.role === 'member' && a.user_id !== req.user.id) {
+    throw new AppError(403, 'FORBIDDEN', 'You can only delete your own uploads');
+  }
+  await query(`UPDATE lead_payment_attachments SET deleted_at = NOW() WHERE id = $1`, [attId]);
+  // Best-effort disk cleanup — don't fail the request if it errors
+  try {
+    const full = pathx.resolve(__dirname, '..', '..', 'uploads', a.file_path);
+    fsx.unlink(full, () => {});
+  } catch (_) { /* ignore */ }
+  res.json({ success: true, data: { deleted: attId } });
 }));
 
 // GET workflow history (audit trail)

@@ -215,7 +215,7 @@ async function importFromConfig(opts) {
   const { configId, triggeredBy = 'manual', userId = null, assign = true, maxRows = 5000 } = opts;
 
   const { rows: [cfg] } = await query(
-    `SELECT id, config, secrets_encrypted, label FROM integration_configs
+    `SELECT id, config, secrets_encrypted, label, purpose FROM integration_configs
        WHERE id = $1 AND kind = 'google_sheets'`,
     [configId],
   );
@@ -307,6 +307,14 @@ async function importFromConfig(opts) {
         ? lead.meta_form_id
         : null;
 
+      // Map sheet purpose → leads.category. Sheet "partners" tags every imported
+      // lead as category='partner' so partner lead-requests pull from this pool;
+      // "traders" → category='trader'. Default 'trader' matches the column's
+      // default in 002_roles_and_categories.sql.
+      const leadCategory = cfg.purpose === 'partners' ? 'partner'
+                         : cfg.purpose === 'traders'  ? 'trader'
+                         : 'trader';
+
       const newId = await withTransaction(async (client) => {
         const dup = await findExistingId(client, lead);
         if (dup) return null;
@@ -315,9 +323,9 @@ async function importFromConfig(opts) {
              full_name, phone, email, city, state,
              source, meta_lead_id, meta_form_id, meta_page_id,
              meta_campaign_id, meta_adset_id, meta_ad_id, meta_created_time,
-             product_tag, campaign_name, adset_name, ad_name, raw_payload
+             product_tag, campaign_name, adset_name, ad_name, raw_payload, category
            ) VALUES (
-             $1,$2,$3,$4,$5, $6,$7,$8,$9, $10,$11,$12,$13, $14,$15,$16,$17, $18
+             $1,$2,$3,$4,$5, $6,$7,$8,$9, $10,$11,$12,$13, $14,$15,$16,$17, $18, $19
            )
            ON CONFLICT (meta_lead_id) DO NOTHING
            RETURNING id`,
@@ -326,7 +334,8 @@ async function importFromConfig(opts) {
             lead.source, lead.meta_lead_id, safeFormId, lead.meta_page_id,
             lead.meta_campaign_id, lead.meta_adset_id, lead.meta_ad_id, lead.meta_created_time,
             lead.product_tag, lead.campaign_name, lead.adset_name, lead.ad_name,
-            JSON.stringify({ imported_from: 'google_sheet', config_id: configId, source_row: row, raw_form_id: lead.meta_form_id }),
+            JSON.stringify({ imported_from: 'google_sheet', config_id: configId, sheet_purpose: cfg.purpose, source_row: row, raw_form_id: lead.meta_form_id }),
+            leadCategory,
           ],
         );
         return ins.rows[0]?.id || null;

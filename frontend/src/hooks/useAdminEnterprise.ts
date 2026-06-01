@@ -85,10 +85,13 @@ export function useTriggerSheetSync() {
 }
 
 // ── Dynamic Google Sheets Configs (admin-uploaded credentials) ───
+export type SheetPurpose = 'traders' | 'partners' | null;
+
 export interface SheetConfigPublic {
   id: string;
   kind: 'google_sheets';
   label: string;
+  purpose: SheetPurpose;
   is_active: boolean;
   sheet_id: string | null;
   sheet_name: string;
@@ -146,6 +149,7 @@ export function useCreateSheetConfig() {
     mutationFn: async (body: {
       sheet_id: string;
       label: string;
+      purpose?: SheetPurpose;
       sheet_name?: string;
       make_active?: boolean;
       file?: File | null;
@@ -154,13 +158,12 @@ export function useCreateSheetConfig() {
       const fd = new FormData();
       fd.append('sheet_id', body.sheet_id);
       fd.append('label', body.label);
+      if (body.purpose) fd.append('purpose', body.purpose);
       if (body.sheet_name) fd.append('sheet_name', body.sheet_name);
       if (body.make_active) fd.append('make_active', 'true');
       if (body.file) fd.append('credentials_file', body.file);
       else if (body.credentials_json) fd.append('credentials_json', body.credentials_json);
       else throw new Error('Provide either a file or pasted JSON.');
-      // Use the underlying axios instance so multipart Content-Type is set
-      // automatically AND the auth header is attached by our interceptor.
       const { api } = await import('@/lib/api');
       const { data } = await api.post('/admin/sheets/configs', fd);
       return data.data as SheetConfigPublic;
@@ -169,6 +172,7 @@ export function useCreateSheetConfig() {
       qc.invalidateQueries({ queryKey: ['admin', 'sheet-configs'] });
       qc.invalidateQueries({ queryKey: ['admin', 'sheets-connectivity'] });
       qc.invalidateQueries({ queryKey: ['admin', 'sheets-enriched'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'sheets-stats'] });
     },
   });
 }
@@ -176,11 +180,12 @@ export function useCreateSheetConfig() {
 export function useUpdateSheetConfig() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, ...patch }: { id: string; sheet_id?: string; sheet_name?: string; label?: string; credentials_json?: string; file?: File | null }) => {
+    mutationFn: async ({ id, ...patch }: { id: string; sheet_id?: string; sheet_name?: string; label?: string; purpose?: SheetPurpose; credentials_json?: string; file?: File | null }) => {
       const fd = new FormData();
       if (patch.sheet_id   !== undefined) fd.append('sheet_id', patch.sheet_id);
       if (patch.sheet_name !== undefined) fd.append('sheet_name', patch.sheet_name);
       if (patch.label      !== undefined) fd.append('label', patch.label);
+      if (patch.purpose    !== undefined && patch.purpose !== null) fd.append('purpose', patch.purpose);
       if (patch.file) fd.append('credentials_file', patch.file);
       else if (patch.credentials_json) fd.append('credentials_json', patch.credentials_json);
       const { api } = await import('@/lib/api');
@@ -190,7 +195,22 @@ export function useUpdateSheetConfig() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin', 'sheet-configs'] });
       qc.invalidateQueries({ queryKey: ['admin', 'sheets-connectivity'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'sheets-stats'] });
     },
+  });
+}
+
+// Per-purpose lead stats — populates Traders vs Partners stat cards
+export interface SheetStats {
+  traders: { total: number; unassigned: number; assigned: number; converted: number; today: number };
+  partners: { total: number; unassigned: number; assigned: number; converted: number; today: number };
+}
+export function useSheetStats() {
+  return useQuery({
+    queryKey: ['admin', 'sheets-stats'],
+    queryFn: () => apiGet<SheetStats>('/admin/sheets/stats'),
+    staleTime: 15_000,
+    refetchInterval: 60_000,
   });
 }
 
@@ -234,10 +254,11 @@ export function useDeleteSheetConfig() {
   });
 }
 
-export function useSheetPreview(limit = 10) {
+export function useSheetPreview(limit = 10, purpose: SheetPurpose = null) {
+  const qs = `limit=${limit}` + (purpose ? `&purpose=${purpose}` : '');
   return useQuery({
-    queryKey: ['admin', 'sheet-preview', limit],
-    queryFn: () => apiGet<{ sheet_id: string; sheet_name: string; header: string[]; rows: string[][] }>(`/admin/sheets/preview?limit=${limit}`),
+    queryKey: ['admin', 'sheet-preview', limit, purpose || 'any'],
+    queryFn: () => apiGet<{ sheet_id: string; sheet_name: string; purpose: SheetPurpose; header: string[]; rows: string[][] }>(`/admin/sheets/preview?${qs}`),
     enabled: false, // user clicks "Preview" to trigger
     staleTime: 30_000,
     retry: false,
@@ -286,6 +307,38 @@ export function useSheetImportLogs(configId: string | null, limit = 10) {
     queryFn: () => apiGet<SheetImportLog[]>(`/admin/sheets/configs/${configId}/import-logs?limit=${limit}`),
     enabled: !!configId,
     staleTime: 10_000,
+  });
+}
+
+// Fresh-leads tab data — drives /dashboard/admin/fresh
+export type FreshLeadsScope = 'today' | 'trader' | 'partner' | 'all';
+export interface FreshLeadRow {
+  id: string; full_name: string | null; phone: string | null; email: string | null;
+  city: string | null; state: string | null;
+  category: 'partner' | 'trader' | null; source: string | null;
+  stage: string; call_status: string;
+  campaign_name: string | null; adset_name: string | null; ad_name: string | null;
+  campaign_label: string | null; product_tag: string | null;
+  meta_form_id: string | null; meta_campaign_id: string | null;
+  assigned_to_user_id: string | null; assigned_to_name: string | null; assigned_to_role: string | null;
+  created_at: string; assigned_at: string | null;
+}
+export interface FreshLeadsResponse {
+  scope: FreshLeadsScope;
+  counts: {
+    today_total: number; today_trader: number; today_partner: number;
+    trader_total: number; partner_total: number;
+    unassigned: number; assigned: number; total_active: number;
+  };
+  rows: FreshLeadRow[];
+  sheet_links: { traders: string | null; partners: string | null };
+}
+export function useFreshLeads(scope: FreshLeadsScope = 'today', limit = 100) {
+  return useQuery({
+    queryKey: ['admin', 'fresh-leads', scope, limit],
+    queryFn: () => apiGet<FreshLeadsResponse>(`/admin/leads/fresh?scope=${scope}&limit=${limit}`),
+    staleTime: 10_000,
+    refetchInterval: 30_000, // pulse every 30s — Socket.IO lead:new also forces invalidation
   });
 }
 
