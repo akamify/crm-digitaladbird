@@ -45,28 +45,53 @@ const red = (s) => `\x1b[31m${s}\x1b[0m`;
 const amber = (s) => `\x1b[33m${s}\x1b[0m`;
 
 async function listFormsWithTokens() {
+  // meta_forms doesn't have deleted_at — soft delete uses is_active.
   const sql = `
     SELECT f.form_id, f.form_name, f.page_id, p.page_access_token, p.page_name
       FROM meta_forms f
       LEFT JOIN meta_pages p ON p.page_id = f.page_id AND p.is_active = TRUE
-     WHERE f.deleted_at IS NULL OR f.deleted_at IS NULL  -- forms table may or may not have deleted_at
+     WHERE COALESCE(f.is_active, TRUE) = TRUE
      ${ONE_FORM ? 'AND f.form_id = $1' : ''}
   `;
   const params = ONE_FORM ? [ONE_FORM] : [];
-  try {
-    const { rows } = await query(sql, params);
-    return rows;
-  } catch (e) {
-    // fallback if form table doesn't have deleted_at
-    const fallback = `
-      SELECT f.form_id, f.form_name, f.page_id, p.page_access_token, p.page_name
-        FROM meta_forms f
-        LEFT JOIN meta_pages p ON p.page_id = f.page_id AND p.is_active = TRUE
-       ${ONE_FORM ? 'WHERE f.form_id = $1' : ''}
-    `;
-    const { rows } = await query(fallback, params);
-    return rows;
+  const { rows } = await query(sql, params);
+  return rows;
+}
+
+// If meta_forms is empty (or none for the requested PAGE_ID), discover them
+// from Graph directly using each active page's token. Populates meta_forms
+// as a side-effect so future recoveries don't need this step.
+async function discoverFormsForActivePages() {
+  const ONE_PAGE = process.env.PAGE_ID || null;
+  const sql = ONE_PAGE
+    ? `SELECT page_id, page_name, page_access_token FROM meta_pages WHERE is_active=TRUE AND page_id=$1`
+    : `SELECT page_id, page_name, page_access_token FROM meta_pages WHERE is_active=TRUE`;
+  const params = ONE_PAGE ? [ONE_PAGE] : [];
+  const { rows: pages } = await query(sql, params);
+  const out = [];
+  for (const p of pages) {
+    if (!p.page_access_token) continue;
+    try {
+      const r = await axios.get(`${GRAPH}/${p.page_id}/leadgen_forms`, {
+        params: { access_token: p.page_access_token, fields: 'id,name,status', limit: 50 },
+        timeout: 20000,
+      });
+      const forms = r.data?.data || [];
+      for (const f of forms) {
+        await query(
+          `INSERT INTO meta_forms(form_id, form_name, page_id) VALUES($1,$2,$3)
+             ON CONFLICT (form_id) DO UPDATE SET form_name=EXCLUDED.form_name, page_id=EXCLUDED.page_id`,
+          [f.id, f.name || null, p.page_id]
+        );
+        out.push({ form_id: f.id, form_name: f.name, page_id: p.page_id, page_access_token: p.page_access_token, page_name: p.page_name });
+      }
+      log(`  discovered ${forms.length} forms on page ${p.page_name || p.page_id}`);
+    } catch (err) {
+      const msg = err.response?.data?.error?.message || err.message;
+      log(red(`  page ${p.page_id} (${p.page_name || '?'}): Graph error — ${msg}`));
+    }
   }
+  return out;
 }
 
 async function fetchFormLeadsSince(formId, token) {
@@ -97,10 +122,18 @@ async function fetchFormLeadsSince(formId, token) {
   log(`HOURS_BACK: ${HOURS_BACK} (since unix ${SINCE} = ${new Date(SINCE * 1000).toISOString()})`);
   log(`FORM_ID:    ${ONE_FORM || '(all forms)'}`);
 
-  const forms = await listFormsWithTokens();
-  if (!forms.length) {
-    log(red('\nNo forms found in meta_forms. Connect a form first via the admin UI.'));
-    process.exit(1);
+  let forms = await listFormsWithTokens();
+
+  // If meta_forms hasn't been populated, or the user is targeting a specific
+  // PAGE_ID that has no forms in DB, walk Graph and discover them.
+  // Set DISCOVER=1 to force re-discovery even if DB has rows.
+  if (!forms.length || process.env.DISCOVER === '1') {
+    log(amber('\nNo forms in meta_forms (or DISCOVER=1) — discovering via Graph using active page tokens...'));
+    forms = await discoverFormsForActivePages();
+    if (!forms.length) {
+      log(red('\nNo forms discoverable. Either meta_pages has no active page with a working token, or none of those pages have leadgen forms.'));
+      process.exit(1);
+    }
   }
   log(`Forms to scan: ${forms.length}`);
 
