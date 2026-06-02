@@ -1,3 +1,9 @@
+// ── Force Node's process timezone to IST so new Date(), Date.now() formatting,
+//    pino timestamps, scheduler windows, and any naive Date math all interpret
+//    "now" as Asia/Kolkata. Has to be set BEFORE Date / Intl is used anywhere
+//    by required modules. Override via PROCESS_TZ if needed (rare).
+process.env.TZ = process.env.PROCESS_TZ || 'Asia/Kolkata';
+
 const http = require('http');
 const app = require('./app');
 const config = require('./config/env');

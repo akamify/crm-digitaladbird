@@ -20,6 +20,7 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: 4000,
+        TZ: 'Asia/Kolkata',  // pins libc + Node Date semantics to IST
       },
       // Reads from backend/.env (dotenv in env.js)
       node_args: '--max-old-space-size=512',
@@ -51,6 +52,7 @@ module.exports = {
         NODE_ENV: 'production',
         PORT: 3000,
         HOSTNAME: '0.0.0.0',
+        TZ: 'Asia/Kolkata',  // pins frontend SSR Date formatting to IST
       },
       node_args: '--max-old-space-size=512',
       max_memory_restart: '500M',

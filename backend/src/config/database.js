@@ -28,6 +28,17 @@ function createPgPool() {
     allowExitOnIdle: false,
   });
 
+  // Pin every checked-out connection to IST. This guarantees that NOW(),
+  // CURRENT_DATE, AGE(), and any timestamp formatting (e.g. JSON serialization
+  // of TIMESTAMPTZ) return India time regardless of the cluster's default tz.
+  // Runs once per new physical connection — the pool reuses connections so
+  // there's no per-query overhead. PROCESS_TZ env can override (default IST).
+  const SESSION_TZ = process.env.PROCESS_TZ || 'Asia/Kolkata';
+  p.on('connect', async (client) => {
+    try { await client.query(`SET TIME ZONE '${SESSION_TZ}'`); }
+    catch (err) { logger.warn({ err: err.message }, '[pg] failed to set session timezone'); }
+  });
+
   p.on('error', (err) => {
     logger.error({ err }, 'Unexpected error on idle pg client');
   });
