@@ -114,13 +114,20 @@ app.use('/api', generalLimiter);
 app.use('/api/auth', authLimiter);
 
 // Meta webhook MUST use the raw body so we can verify the HMAC signature.
-app.get ('/webhooks/meta', meta.verify);
-app.post(
-  '/webhooks/meta',
+//
+// Two URL paths are mounted to the same handlers so existing Meta App configs
+// keep working whichever you used:
+//   /webhooks/meta   — original, kept for backwards compatibility
+//   /webhook         — the path documented in the Meta admin UI today
+// Verify token is read from META_VERIFY_TOKEN in backend/.env.
+const META_RAW = [
   express.raw({ type: '*/*', limit: '2mb' }),
   (req, _res, next) => { req.rawBody = req.body; next(); },
-  meta.receive
-);
+];
+app.get ('/webhooks/meta', meta.verify);
+app.post('/webhooks/meta', ...META_RAW, meta.receive);
+app.get ('/webhook',       meta.verify);
+app.post('/webhook',       ...META_RAW, meta.receive);
 
 // Serve uploaded chat files
 const path = require('path');
