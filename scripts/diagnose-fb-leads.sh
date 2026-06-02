@@ -1,158 +1,175 @@
 #!/usr/bin/env bash
-# Run ON THE VPS to find where the missing Meta leads went.
+# Sharp diagnostic for "Meta leads not appearing in CRM dashboard".
+# Run ON THE VPS — reads DATABASE_URL from backend/.env, mints a real
+# admin JWT, hits both the DB directly and the API endpoints the
+# dashboard hits. Tells you, with no guessing, whether the leads are
+# missing from the DB or just hidden by a stale UI / wrong query.
 #
 # Usage:
 #   bash scripts/diagnose-fb-leads.sh
-#
-# Reads DATABASE_URL from backend/.env, queries Postgres, and prints a
-# verdict for each of the most-likely failure points.
+#   PUBLIC_URL=http://127.0.0.1:4000 bash scripts/diagnose-fb-leads.sh
 
-set -euo pipefail
+set -uo pipefail
 cd "$(dirname "$0")/.."
-[ -f backend/.env ] || { echo "backend/.env missing"; exit 1; }
 
-DBURL=$(grep -E '^DATABASE_URL=' backend/.env | head -1 | cut -d= -f2- | tr -d '"')
-[ -z "$DBURL" ] && { echo "DATABASE_URL not set in backend/.env"; exit 1; }
-
-# psql -A -t -F'|' = unaligned tuples-only, pipe-delimited
-PSQL="psql -A -t -F| $DBURL"
+PUBLIC_URL="${PUBLIC_URL:-https://crm.digitaladbird.com}"
 
 hdr() { printf "\n\033[1m== %s ==\033[0m\n" "$*"; }
 red() { printf "\033[31m%s\033[0m\n" "$*"; }
 grn() { printf "\033[32m%s\033[0m\n" "$*"; }
+amber() { printf "\033[33m%s\033[0m\n" "$*"; }
 
-hdr "0. DB timezone — this drives all 'today' filters"
+[ -f backend/.env ] || { red "backend/.env missing"; exit 1; }
+DBURL=$(grep -E '^DATABASE_URL=' backend/.env | head -1 | cut -d= -f2- | tr -d '"')
+PSQL="psql -A -t -F| $DBURL"
+
+hdr "0. Currently-deployed commit + migration state"
+git -C "$(pwd)" log -1 --oneline
 $PSQL <<SQL
-SELECT 'now()=' || now()::text,
-       'today_in_db=' || CURRENT_DATE::text,
-       'TZ=' || current_setting('TimeZone');
-SELECT 'IST equivalent of now: ' || (now() AT TIME ZONE 'Asia/Kolkata')::text;
+SELECT 'TZ session = ' || current_setting('TimeZone');
+SELECT 'now()       = ' || now()::text;
+SELECT 'now() IST   = ' || (now() AT TIME ZONE 'Asia/Kolkata')::text;
+SELECT 'today UTC   = ' || CURRENT_DATE::text;
+SELECT 'today IST   = ' || (now() AT TIME ZONE 'Asia/Kolkata')::date::text;
 SQL
 echo
-echo "→ If 'TZ' is UTC and you're checking late at night IST, leads arriving"
-echo "  between 18:30 UTC and 23:59 UTC will count as TOMORROW in IST, or"
-echo "  as YESTERDAY's date in UTC — the 'today' tile will under-report."
+echo "Latest 3 applied migrations:"
+$PSQL -c "SELECT filename || ' (' || applied_at::text || ')' FROM schema_migrations ORDER BY applied_at DESC LIMIT 3"
 
-hdr "1. Meta leads in the LAST 24 HOURS (absolute time, not date)"
+hdr "1. THE KEY QUESTION — are the 44 leads in the DB at all?"
+echo
+echo "Total Meta leads:"
+$PSQL -c "SELECT COUNT(*) FROM leads WHERE source='meta' AND deleted_at IS NULL"
+echo
+echo "Meta leads created in the LAST 24 HOURS (absolute time, tz-independent):"
+$PSQL -c "SELECT COUNT(*) FROM leads WHERE source='meta' AND created_at > NOW() - INTERVAL '24 hours' AND deleted_at IS NULL"
+echo
+echo "Meta leads with TODAY-IN-IST date (what the dashboard tile should show):"
+$PSQL -c "SELECT COUNT(*) FROM leads WHERE source='meta' AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date AND deleted_at IS NULL"
+echo
+echo "Meta leads using the OLD broken query (created_at::date = CURRENT_DATE):"
+$PSQL -c "SELECT COUNT(*) FROM leads WHERE source='meta' AND created_at::date = CURRENT_DATE AND deleted_at IS NULL"
+echo
+echo "Recent 10 Meta leads (ts shown in BOTH UTC and IST):"
 $PSQL <<SQL
-SELECT '  total last 24h:        ' || COUNT(*)::text FROM leads WHERE source='meta' AND created_at > NOW() - INTERVAL '24 hours' AND deleted_at IS NULL;
-SELECT '  total last 12h:        ' || COUNT(*)::text FROM leads WHERE source='meta' AND created_at > NOW() - INTERVAL '12 hours' AND deleted_at IS NULL;
-SELECT '  total last 6h:         ' || COUNT(*)::text FROM leads WHERE source='meta' AND created_at > NOW() - INTERVAL '6 hours' AND deleted_at IS NULL;
-SELECT '  total last 1h:         ' || COUNT(*)::text FROM leads WHERE source='meta' AND created_at > NOW() - INTERVAL '1 hour' AND deleted_at IS NULL;
+SELECT '  ' || created_at::text || '  IST=' || (created_at AT TIME ZONE 'Asia/Kolkata')::text || '  ' || COALESCE(full_name,'?') || ' / ' || COALESCE(campaign_name,'?')
+  FROM leads WHERE source='meta' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 10;
 SQL
 echo
-echo "→ If last-24h is close to 44 → leads ARE in DB. Problem is the 'today'"
-echo "  date filter or the dashboard cache (refresh hard / clear React Query)."
-echo "→ If last-24h is 0 → leads never reached the DB. Continue to step 2."
+echo "→ If LAST 24 HOURS = 0 → leads never made it to DB. Webhook problem (see sections 4-8)."
+echo "→ If LAST 24 HOURS > 0 but TODAY-IN-IST = 0 → DB has them under yesterday-IST. Check tz."
+echo "→ If TODAY-IN-IST = 44 but OLD-broken = 0 → confirms the SQL fix is needed (this commit fixes it)."
 
-hdr "2. Webhook receipt log — did Meta even hit our /webhooks/meta?"
-$PSQL <<SQL
-SELECT '  meta_sync_log rows last 24h: ' || COUNT(*)::text FROM meta_sync_log WHERE started_at > NOW() - INTERVAL '24 hours';
-SELECT '  audit_logs meta entries 24h: ' || COUNT(*)::text FROM audit_logs WHERE entity IN ('meta','webhook','lead_ingestion') AND created_at > NOW() - INTERVAL '24 hours';
-SQL
-echo "  Recent sync log entries:"
+hdr "2. Webhook ingestion log (meta_sync_log + audit)"
+echo "sync_log rows last 24h:"
+$PSQL -c "SELECT COUNT(*) FROM meta_sync_log WHERE started_at > NOW() - INTERVAL '24 hours'"
+echo
+echo "Last 10 sync_log entries:"
 $PSQL <<SQL
 SELECT '  ' || started_at::text || ' | ' || sync_type || ' | status=' || COALESCE(status,'?') || ' | created=' || COALESCE(leads_created::text,'?') || ' | dup=' || COALESCE(leads_duplicate::text,'?')
   FROM meta_sync_log ORDER BY started_at DESC LIMIT 10;
 SQL
 echo
-echo "→ If empty → Meta isn't reaching backend. Causes: subscription lapsed,"
-echo "  page token expired, wrong webhook URL, signature verify failing,"
-echo "  or nginx not forwarding /webhooks. Check next steps."
+echo "→ If empty after 24h → Meta isn't hitting /webhooks/meta at all."
 
-hdr "3. Page access tokens — webhook ingest needs an ACTIVE page token"
+hdr "3. Page access tokens — webhook needs an active token per page"
 $PSQL <<SQL
-SELECT '  page_id=' || page_id || ' | active=' || is_active::text || ' | name=' || COALESCE(page_name,'?') || ' | token_set=' || (page_access_token IS NOT NULL)::text
+SELECT '  page_id=' || page_id || '  active=' || is_active::text || '  name=' || COALESCE(page_name,'?') || '  token_present=' || (page_access_token IS NOT NULL)::text
   FROM meta_pages;
 SQL
-echo
-echo "→ Every connected page MUST have active=true and a token. If token=false"
-echo "  any webhook arriving for that page silently drops with 'no_token'."
 
-hdr "4. PM2 backend logs — last 100 webhook-related lines"
+hdr "4. PM2 backend log — webhook activity in the last 500 lines"
 if command -v pm2 >/dev/null; then
-  pm2 logs crm-backend --nostream --lines 500 2>/dev/null | grep -iE "webhook|leadgen|meta lead|BAD_SIGNATURE|no_token|phone/email already" | tail -40 || echo "  (no matching log lines)"
+  pm2 logs crm-backend --nostream --lines 500 2>/dev/null \
+    | grep -iE "webhook|leadgen|BAD_SIGNATURE|no_token|Meta lead|phone/email already|Failed to ingest" \
+    | tail -40 || echo "  (no matching lines — Meta hasn't called us recently)"
 else
-  echo "  (pm2 not installed — check backend.log manually)"
+  echo "  (pm2 not installed)"
 fi
-echo
-echo "→ Look for:"
-echo "    'BAD_SIGNATURE'        → META_APP_SECRET on VPS doesn't match Meta app secret"
-echo "    'no_token'             → page token expired/wrong"
-echo "    'phone/email already'  → being deduped against historical leads"
-echo "    'Failed to ingest'     → Graph API error or DB error"
 
-hdr "5. nginx access log — is Meta even hitting us?"
-NGINX_LOG="/var/log/nginx/access.log"
-if [ -r "$NGINX_LOG" ]; then
-  echo "  Hits to /webhooks/meta in last 200 lines of access.log:"
-  grep "/webhooks/meta" "$NGINX_LOG" | tail -10 || echo "  (none)"
+hdr "5. Nginx access log — has Meta hit /webhooks/meta at all?"
+for log in /var/log/nginx/access.log /var/log/nginx/access.log.1; do
+  [ -r "$log" ] && {
+    echo "  Hits in $log (last 10):"
+    grep "/webhooks/meta" "$log" | tail -10 || echo "    (none)"
+  }
+done
+
+hdr "6. Webhook verify endpoint — externally reachable + token matches?"
+META_TOKEN=$(grep -E '^META_VERIFY_TOKEN=' backend/.env | head -1 | cut -d= -f2- | tr -d '"')
+code=$(curl -s -o /tmp/v -w "%{http_code}" "$PUBLIC_URL/webhooks/meta?hub.mode=subscribe&hub.verify_token=$META_TOKEN&hub.challenge=PROBE_OK")
+body=$(cat /tmp/v)
+if [ "$code" = "200" ] && [ "$body" = "PROBE_OK" ]; then
+  grn "  ✔ verify endpoint reachable + token correct"
 else
-  echo "  (cannot read $NGINX_LOG — try: sudo grep /webhooks/meta /var/log/nginx/access.log | tail)"
+  red "  ✘ HTTP:$code body:$body — Meta CANNOT subscribe to this app"
 fi
-echo
-echo "→ If you see POST /webhooks/meta with 200 → reaching us. If 401 →"
-echo "  signature failing. If 404 → nginx not forwarding. If nothing →"
-echo "  Meta isn't sending."
 
-hdr "6. Dedup pressure — how many recent Meta leads share phone with existing"
+hdr "7. What the API endpoints actually return (with a real admin JWT)"
+# Mint a token using the running backend's JWT secret
+JWT=$(cd backend && node -e "
+require('dotenv').config();
+const jwt = require('jsonwebtoken');
+const { Client } = require('pg');
+(async () => {
+  const c = new Client({ connectionString: process.env.DATABASE_URL });
+  await c.connect();
+  const { rows: [u] } = await c.query(\"SELECT id, role, full_name FROM users WHERE role='super_admin' AND deleted_at IS NULL LIMIT 1\");
+  await c.end();
+  console.log(jwt.sign({ sub: u.id, role: u.role, name: u.full_name },
+                       process.env.JWT_ACCESS_SECRET,
+                       { expiresIn: '5m', issuer: 'digitaladbird-crm' }));
+})().catch(e => { console.error('JWT_MINT_ERR', e.message); process.exit(1); });
+" 2>&1)
+if [ -z "$JWT" ] || echo "$JWT" | grep -q ERR; then
+  red "  ✘ Could not mint admin JWT: $JWT"
+else
+  for ep in /api/reports/summary /api/admin/leads/fresh?scope=today /api/admin/live-stats /api/admin/meta/campaigns-enriched; do
+    code=$(curl -s -o /tmp/r -w "%{http_code}" -H "Authorization: Bearer $JWT" "$PUBLIC_URL$ep")
+    snippet=$(cat /tmp/r | head -c 200)
+    printf "  GET %-45s HTTP:%s  %s\n" "$ep" "$code" "$snippet"
+  done
+fi
+
+hdr "8. Dedup pressure — how many recent Meta leads were rejected for phone match"
+echo "Meta leads in last 24h whose phone exists in a DIFFERENT older lead:"
 $PSQL <<SQL
-SELECT '  meta leads in last 24h that have phone matching pre-existing lead: '
-       || COUNT(*)::text
+SELECT '  matching: ' || COUNT(*)::text
   FROM leads l1
  WHERE l1.source = 'meta'
    AND l1.created_at > NOW() - INTERVAL '24 hours'
    AND l1.deleted_at IS NULL
    AND EXISTS (
      SELECT 1 FROM leads l2
-      WHERE l2.id <> l1.id AND l2.phone = l1.phone AND l2.deleted_at IS NULL
+      WHERE l2.id <> l1.id AND l2.phone = l1.phone
+        AND l2.deleted_at IS NULL
+        AND l2.created_at < l1.created_at
    );
 SQL
-echo
-echo "→ findExistingByContact() has NO time window. Any phone in your 1346"
-echo "  historical leads will silently drop a new submission. If your 'tonight'"
-echo "  campaign is retargeting prior leads, every submission is deduped."
-
-hdr "7. The 10 most recent Meta leads — what did actually arrive"
-$PSQL <<SQL
-SELECT '  ' || created_at::text || ' | ' || COALESCE(full_name,'?') || ' | ' || COALESCE(phone,'?') || ' | ' || COALESCE(campaign_name,'?')
-  FROM leads WHERE source='meta' AND deleted_at IS NULL
-  ORDER BY created_at DESC LIMIT 10;
-SQL
-
-hdr "8. Test webhook verification from outside"
-PUBLIC_URL="${PUBLIC_URL:-https://crm.digitaladbird.com}"
-META_TOKEN=$(grep -E '^META_VERIFY_TOKEN=' backend/.env | head -1 | cut -d= -f2- | tr -d '"')
-code=$(curl -s -o /tmp/v.txt -w "%{http_code}" "$PUBLIC_URL/webhooks/meta?hub.mode=subscribe&hub.verify_token=$META_TOKEN&hub.challenge=PROBE_OK")
-body=$(cat /tmp/v.txt)
-echo "  GET $PUBLIC_URL/webhooks/meta  →  HTTP:$code  body:$body"
-[ "$code" = "200" ] && [ "$body" = "PROBE_OK" ] && grn "  ✔ Verification endpoint reachable + token matches" || red "  ✘ Verification failed — Meta cannot subscribe"
-
-hdr "9. Today filter vs absolute-day filter — direct comparison"
-$PSQL <<SQL
-SELECT
-  '  CURRENT_DATE (DB tz)  → ' || COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE)::text || ' leads' AS row
-  FROM leads WHERE source='meta' AND deleted_at IS NULL AND created_at > NOW() - INTERVAL '48 hours'
-UNION ALL
-SELECT
-  '  Last 24 hours (UTC)  → ' || COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::text || ' leads'
-  FROM leads WHERE source='meta' AND deleted_at IS NULL AND created_at > NOW() - INTERVAL '48 hours'
-UNION ALL
-SELECT
-  '  Today in IST          → ' || COUNT(*) FILTER (WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date)::text || ' leads'
-  FROM leads WHERE source='meta' AND deleted_at IS NULL AND created_at > NOW() - INTERVAL '48 hours';
-SQL
-echo
-echo "→ If 'CURRENT_DATE' < 'Today in IST' → TZ bug. Fix by setting"
-echo "    ALTER DATABASE digitaladbird SET timezone = 'Asia/Kolkata';"
-echo "  then restart the backend. New leads + counts will use IST."
+echo "→ findExistingByContact() has a 30-day window now (LEAD_DEDUP_WINDOW_DAYS)."
+echo "  If you suspect the window is dropping legitimate new leads, re-run"
+echo "  the recovery with the window disabled:"
+echo "    LEAD_DEDUP_WINDOW_DAYS=0 node backend/scripts/recover-meta-leads.js"
 
 hdr "VERDICT"
-echo "Read sections 1, 2, 6, 9 to identify which of these is the cause:"
-echo "  A. Leads ARE in DB but 'today' tile hides them → TZ bug (section 9)"
-echo "  B. Leads ARE in DB, today tile correct, but dashboard stale → React Query cache (hard refresh + check section 5)"
-echo "  C. Leads NOT in DB, sync_log shows BAD_SIGNATURE → META_APP_SECRET wrong"
-echo "  D. Leads NOT in DB, sync_log shows 'phone/email already' → dedup pressure (section 6)"
-echo "  E. Leads NOT in DB, sync_log empty, nginx shows no /webhooks hits → Meta subscription / page token problem"
+echo "Read the numbers above in order. The 4-state matrix:"
 echo ""
-echo "Paste the full output to Claude for next-step fix."
+echo "  A. Section 1 'last 24h' = 0  AND  section 2 sync_log empty"
+echo "     → Meta isn't sending. Check Meta App Dashboard subscription,"
+echo "       page subscription, app live mode, leadgen field, callback URL."
+echo ""
+echo "  B. Section 1 'last 24h' = 0  AND  section 2 sync_log has rows"
+echo "     → Meta sent, backend rejected. Check section 4 logs for"
+echo "       BAD_SIGNATURE (wrong META_APP_SECRET) or no_token (expired"
+echo "       page token in meta_pages)."
+echo ""
+echo "  C. Section 1 'last 24h' > 0  AND  Section 7 shows today=0"
+echo "     → Leads ARE in DB but the API is filtering them out."
+echo "       This is fixed by commit bb5cc02 (IST-explicit SQL). If you see"
+echo "       this, you haven't pulled and restarted yet:"
+echo "         git pull && pm2 delete crm-backend && \\"
+echo "         pm2 start ecosystem.config.js --update-env"
+echo ""
+echo "  D. Section 1 'today-IST' > 0  AND  Section 7 shows the same number"
+echo "     → Everything works. The dashboard is stale — hard refresh"
+echo "       (Ctrl+Shift+R) and clear React Query cache."
