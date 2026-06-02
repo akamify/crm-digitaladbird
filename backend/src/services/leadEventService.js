@@ -34,18 +34,28 @@ async function loadLeadSummary(leadId) {
  * Lookup an existing lead by phone or email so callers can skip duplicates
  * BEFORE running an INSERT. Returns { id, reason } or null. Phone-match is
  * exact; email-match is case-insensitive.
+ *
+ * The dedup window is controlled by LEAD_DEDUP_WINDOW_DAYS (default 30).
+ * Anyone who last submitted more than that many days ago is treated as a
+ * fresh lead — otherwise re-targeting campaigns silently lose every lead
+ * whose phone already exists somewhere in the historical pool.
+ * Set to 0 to disable the time window entirely (original behaviour).
  */
 async function findExistingByContact({ phone, email }) {
+  const windowDays = Number.parseInt(process.env.LEAD_DEDUP_WINDOW_DAYS || '30', 10);
+  const windowClause = windowDays > 0
+    ? ` AND created_at > NOW() - INTERVAL '${windowDays} days'`
+    : '';
   if (phone) {
     const { rows } = await query(
-      `SELECT id FROM leads WHERE phone = $1 AND deleted_at IS NULL LIMIT 1`,
+      `SELECT id FROM leads WHERE phone = $1 AND deleted_at IS NULL${windowClause} ORDER BY created_at DESC LIMIT 1`,
       [phone],
     );
     if (rows[0]) return { id: rows[0].id, reason: 'phone' };
   }
   if (email) {
     const { rows } = await query(
-      `SELECT id FROM leads WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL LIMIT 1`,
+      `SELECT id FROM leads WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL${windowClause} ORDER BY created_at DESC LIMIT 1`,
       [email],
     );
     if (rows[0]) return { id: rows[0].id, reason: 'email' };

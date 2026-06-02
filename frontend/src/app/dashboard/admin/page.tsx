@@ -1,5 +1,5 @@
 'use client';
-import { memo } from 'react';
+import { memo, useEffect } from 'react';
 import Link from 'next/link';
 import {
   Activity, CheckCircle2, Clock, TrendingDown,
@@ -13,7 +13,8 @@ import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip,
   CartesianGrid,
 } from 'recharts';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { connectSocket } from '@/lib/socket';
 import { format } from 'date-fns';
 import { AppShell } from '@/components/layout/AppShell';
 import { KpiCard } from '@/components/dashboard/KpiCard';
@@ -22,7 +23,7 @@ import { useSummary, useDaily, useByUser } from '@/hooks/useReports';
 import { useLeadList } from '@/hooks/useLeads';
 import { useLeadRequestStats, usePendingLeadRequests, useApproveLeadRequest, useRejectLeadRequest } from '@/hooks/useLeadRequests';
 import { useRankings, RANK_LABELS, type RankedEntry } from '@/hooks/useRankings';
-import { useCampaignsEnriched } from '@/hooks/useAdminEnterprise';
+import { useCampaignsEnriched, useFreshLeads } from '@/hooks/useAdminEnterprise';
 import { MovementIndicator } from '@/components/rankings/RankBadge';
 import { useAuth } from '@/lib/auth';
 import { apiGet } from '@/lib/api';
@@ -86,6 +87,43 @@ function AdminDashboardInner() {
   const pendingReqs = usePendingLeadRequests();
   const approveReq  = useApproveLeadRequest();
   const rejectReq   = useRejectLeadRequest();
+  const freshToday  = useFreshLeads('today', 1);  // we only need the .counts here, not rows
+  const qc          = useQueryClient();
+
+  // ── Live: whenever a new lead lands or a request lifecycle event fires,
+  //    invalidate the cached queries so the headline counters & lists
+  //    repaint immediately — no manual refresh needed.
+  useEffect(() => {
+    let cancelled = false;
+    let off: Array<() => void> = [];
+    connectSocket().then((s) => {
+      if (cancelled) return;
+      const refresh = () => {
+        qc.invalidateQueries({ queryKey: ['reports', 'summary'] });
+        qc.invalidateQueries({ queryKey: ['reports', 'daily'] });
+        qc.invalidateQueries({ queryKey: ['dist-stats'] });
+        qc.invalidateQueries({ queryKey: ['admin', 'fresh-leads'] });
+        qc.invalidateQueries({ queryKey: ['admin', 'campaigns-enriched'] });
+        qc.invalidateQueries({ queryKey: ['leads'] });
+      };
+      const onNewLead = () => refresh();
+      const onReqEvent = () => {
+        qc.invalidateQueries({ queryKey: ['lead-request-stats'] });
+        qc.invalidateQueries({ queryKey: ['lead-requests', 'pending'] });
+      };
+      s.on('lead:new', onNewLead);
+      s.on('lead-request:created', onReqEvent);
+      s.on('lead-request:approved', onReqEvent);
+      s.on('lead-request:rejected', onReqEvent);
+      s.on('lead-request:fulfilled', onReqEvent);
+      off.push(() => s.off('lead:new', onNewLead));
+      off.push(() => s.off('lead-request:created', onReqEvent));
+      off.push(() => s.off('lead-request:approved', onReqEvent));
+      off.push(() => s.off('lead-request:rejected', onReqEvent));
+      off.push(() => s.off('lead-request:fulfilled', onReqEvent));
+    }).catch(() => { /* socket not available — fall back to poll */ });
+    return () => { cancelled = true; off.forEach(fn => fn()); };
+  }, [qc]);
 
   if (!user) return <PageLoader />;
 
@@ -223,14 +261,36 @@ function AdminDashboardInner() {
       {/* Admin Tools Panel */}
       <AdminToolsPanel />
 
-      {/* KPIs — clickable drill-down */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      {/* KPIs — clickable drill-down. The "today" trio (Fresh / Partner / Trader)
+          links straight to the Fresh Leads page scoped to each tab. */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-7">
         {summary.isLoading ? (
-          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24" />)
+          Array.from({ length: 7 }).map((_, i) => <Skeleton key={i} className="h-24" />)
         ) : (
           <>
             <Link href="/dashboard/admin/leads-manager">
               <KpiCard label="Total leads" value={totalLeads.toLocaleString()} delta={`${k?.today_leads ?? 0} today`} accent="pink" icon={<Briefcase className="h-5 w-5" />} />
+            </Link>
+            <Link href="/dashboard/admin/fresh?scope=today">
+              <KpiCard
+                label="New Today"
+                value={Number(freshToday.data?.counts?.today_total ?? k?.today_leads ?? 0).toLocaleString()}
+                delta="Live · click to open" trend="up" accent="amber" icon={<Star className="h-5 w-5" />}
+              />
+            </Link>
+            <Link href="/dashboard/admin/fresh?scope=partner">
+              <KpiCard
+                label="Partner Today"
+                value={Number(freshToday.data?.counts?.today_partner ?? 0).toLocaleString()}
+                delta="Today's partner leads" accent="pink" icon={<HandMetal className="h-5 w-5" />}
+              />
+            </Link>
+            <Link href="/dashboard/admin/fresh?scope=trader">
+              <KpiCard
+                label="Trader Today"
+                value={Number(freshToday.data?.counts?.today_trader ?? 0).toLocaleString()}
+                delta="Today's trader leads" accent="blue" icon={<Briefcase className="h-5 w-5" />}
+              />
             </Link>
             <Link href="/dashboard/admin/leads-manager?pending=true">
               <KpiCard label="Pending" value={Number(k?.pending ?? 0).toLocaleString()} delta="Awaiting first call" accent="amber" icon={<Clock className="h-5 w-5" />} />

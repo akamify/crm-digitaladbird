@@ -157,10 +157,27 @@ function emitToRole(role, event, data) {
 function broadcastNewLead(payload) {
   if (!io || !payload || !payload.id) return;
   const event = 'lead:new';
+
+  // Admin always sees every new lead.
   io.to('role:super_admin').emit(event, payload);
-  io.to('role:rm').emit(event, payload);
+
+  // The assignee (member or partner) gets it.
   if (payload.assigned_to_user_id) {
     io.to(`user:${payload.assigned_to_user_id}`).emit(event, payload);
+  }
+
+  // Only the RM whose team owns the assignee gets it — we look that up rather
+  // than blasting the whole role:rm room. Unassigned leads (no owning RM yet)
+  // do NOT fan out to any RM; admin sees them via the role:super_admin room.
+  if (payload.assigned_to_user_id) {
+    query(`SELECT report_to_id FROM users WHERE id = $1 AND deleted_at IS NULL`,
+      [payload.assigned_to_user_id])
+      .then(({ rows }) => {
+        const rmId = rows[0]?.report_to_id;
+        if (rmId) io.to(`user:${rmId}`).emit(event, payload);
+      })
+      .catch((err) => logger.warn({ err: err.message, leadId: payload.id },
+        '[socket] failed to resolve owning RM for lead:new'));
   }
 }
 

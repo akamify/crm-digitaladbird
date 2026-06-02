@@ -1,6 +1,8 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useQueryClient } from '@tanstack/react-query';
+import { connectSocket } from '@/lib/socket';
 import {
   Activity, CheckCircle2, Clock, TrendingDown, TrendingUp,
   Briefcase, ArrowRight, Users, HandMetal, Inbox, Trophy, Star, AlertTriangle, Zap,
@@ -46,6 +48,38 @@ function RmDashboardInner() {
   const teamOverview = useTeamOverview();
   const [reqCategory, setReqCategory] = useState('');
   const memberRequests = useMemberRequests(reqCategory || undefined);
+  const qc = useQueryClient();
+
+  // Live: refresh team-scoped counters when a new lead lands for one of
+  // our members, or when any request lifecycle event fires.
+  useEffect(() => {
+    let cancelled = false;
+    const off: Array<() => void> = [];
+    connectSocket().then((s) => {
+      if (cancelled) return;
+      const refresh = () => {
+        qc.invalidateQueries({ queryKey: ['reports', 'summary'] });
+        qc.invalidateQueries({ queryKey: ['reports', 'daily'] });
+        qc.invalidateQueries({ queryKey: ['rm-monitoring'] });
+        qc.invalidateQueries({ queryKey: ['leads'] });
+      };
+      const reqRefresh = () => {
+        qc.invalidateQueries({ queryKey: ['rm-monitoring', 'member-requests'] });
+        qc.invalidateQueries({ queryKey: ['rm-monitoring', 'live-counters'] });
+      };
+      s.on('lead:new', refresh);
+      s.on('lead-request:created', reqRefresh);
+      s.on('lead-request:approved', reqRefresh);
+      s.on('lead-request:rejected', reqRefresh);
+      s.on('lead-request:fulfilled', reqRefresh);
+      off.push(() => s.off('lead:new', refresh));
+      off.push(() => s.off('lead-request:created', reqRefresh));
+      off.push(() => s.off('lead-request:approved', reqRefresh));
+      off.push(() => s.off('lead-request:rejected', reqRefresh));
+      off.push(() => s.off('lead-request:fulfilled', reqRefresh));
+    }).catch(() => { /* socket unavailable — fall back to poll */ });
+    return () => { cancelled = true; off.forEach(fn => fn()); };
+  }, [qc]);
 
   if (!user) return <PageLoader />;
 

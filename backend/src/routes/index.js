@@ -446,17 +446,34 @@ router.get('/integrations/status', authenticate, requireRole('super_admin'), res
 }));
 
 // ---- Distribution Live Stats (for dashboards, cached 10s) -----------
-router.get('/distribution/stats', authenticate, responseCache(10000), asyncHandler(async (req, res) => {
+// Distribution stats — admin + RM only. RM sees totals scoped to their team's
+// members; admin sees global. Partners/members never need this view.
+router.get('/distribution/stats', authenticate, requireRole('super_admin', 'rm'), responseCache(10000), asyncHandler(async (req, res) => {
+  const { getVisibleUserIds } = require('../middleware/rbac');
+  const visible = await getVisibleUserIds(req.user);
+
+  // visible === null → admin → no scope. Otherwise restrict lead counts to
+  // those assigned within the requester's visible-user set.
+  let scopeSql = '';
+  const params = [];
+  if (visible !== null) {
+    if (visible.length === 0) {
+      return res.json({ success: true, data: { queued_leads: 0, total_pending: 0, today_distributed: 0, today_received: 0, blocked_members: 0, pending_approvals: 0, distribution_enabled: 'false' } });
+    }
+    params.push(visible);
+    scopeSql = `AND assigned_to_user_id = ANY($1::uuid[])`;
+  }
+
   const { rows: [stats] } = await query(`
     SELECT
-      (SELECT COUNT(*) FROM leads WHERE assigned_to_user_id IS NULL AND deleted_at IS NULL) AS queued_leads,
-      (SELECT COUNT(*) FROM leads WHERE is_pending = TRUE AND deleted_at IS NULL) AS total_pending,
-      (SELECT COUNT(*) FROM leads WHERE assigned_at::date = CURRENT_DATE AND deleted_at IS NULL) AS today_distributed,
-      (SELECT COUNT(*) FROM leads WHERE created_at::date = CURRENT_DATE AND deleted_at IS NULL) AS today_received,
-      (SELECT COUNT(*) FROM users WHERE distribution_blocked = TRUE AND deleted_at IS NULL) AS blocked_members,
+      (SELECT COUNT(*) FROM leads WHERE assigned_to_user_id IS NULL AND deleted_at IS NULL ${visible === null ? '' : 'AND FALSE'}) AS queued_leads,
+      (SELECT COUNT(*) FROM leads WHERE is_pending = TRUE AND deleted_at IS NULL ${scopeSql}) AS total_pending,
+      (SELECT COUNT(*) FROM leads WHERE assigned_at::date = CURRENT_DATE AND deleted_at IS NULL ${scopeSql}) AS today_distributed,
+      (SELECT COUNT(*) FROM leads WHERE created_at::date = CURRENT_DATE AND deleted_at IS NULL ${scopeSql}) AS today_received,
+      (SELECT COUNT(*) FROM users WHERE distribution_blocked = TRUE AND deleted_at IS NULL ${visible === null ? '' : `AND (id = ANY($1::uuid[]))`}) AS blocked_members,
       (SELECT COUNT(*) FROM distribution_approvals WHERE status = 'pending') AS pending_approvals,
       (SELECT value FROM distribution_settings WHERE key = 'auto_distribution_enabled') AS distribution_enabled
-  `);
+  `, params);
   res.json({ success: true, data: stats });
 }));
 
@@ -743,11 +760,24 @@ router.get('/lead-requests/stats', authenticate, asyncHandler(async (req, res) =
   const userId = req.user.id;
   const role = req.user.role;
 
-  // Available leads in queue
-  const { rows: [q] } = await query(`
-    SELECT COUNT(*) AS available_leads FROM leads
-    WHERE assigned_to_user_id IS NULL AND deleted_at IS NULL
-  `);
+  // "Available leads in queue" — admin sees the global unassigned pool;
+  // RM sees only leads sitting in their own pool; everyone else (partner /
+  // member) does not need a global view and gets 0 so the dashboard tile
+  // doesn't expose CRM-wide counts.
+  let q = { available_leads: '0' };
+  if (role === 'super_admin') {
+    ({ rows: [q] } = await query(`SELECT COUNT(*) AS available_leads FROM leads WHERE assigned_to_user_id IS NULL AND deleted_at IS NULL`));
+  } else if (role === 'rm') {
+    // RM only sees leads explicitly placed in their pool. The global
+    // unassigned pool stays admin-only — RMs request from it rather than
+    // being shown its size.
+    ({ rows: [q] } = await query(
+      `SELECT COUNT(*) AS available_leads FROM leads
+        WHERE assigned_to_user_id IS NULL AND deleted_at IS NULL
+          AND pool_rm_id = $1`,
+      [userId]
+    ));
+  }
 
   // My assigned leads count
   const { rows: [my] } = await query(`
@@ -2956,7 +2986,23 @@ router.get('/admin/leads/fresh', authenticate, requireRole('super_admin', 'rm'),
   const scope = ['today', 'trader', 'partner', 'all'].includes(req.query.scope) ? req.query.scope : 'today';
   const limit = Math.min(500, Math.max(1, parseInt(req.query.limit) || 100));
 
-  // Aggregate counts in one query — same row set every refresh
+  // RM must only see their own team's leads; super_admin sees everything.
+  const { getVisibleUserIds } = require('../middleware/rbac');
+  const visible = await getVisibleUserIds(req.user);
+  let scopeSqlAgg = '';
+  let scopeSqlRow = '';
+  const aggParams = [];
+  const rowParams = [limit];
+  if (visible !== null) {
+    if (visible.length === 0) {
+      return res.json({ success: true, data: { scope, counts: { today_total: 0, today_trader: 0, today_partner: 0, trader_total: 0, partner_total: 0, unassigned: 0, assigned: 0, total_active: 0 }, rows: [], sheet_links: { traders: null, partners: null } } });
+    }
+    aggParams.push(visible);
+    scopeSqlAgg = ` AND assigned_to_user_id = ANY($${aggParams.length}::uuid[])`;
+    rowParams.push(visible);
+    scopeSqlRow = ` AND l.assigned_to_user_id = ANY($${rowParams.length}::uuid[])`;
+  }
+
   const { rows: [c] } = await query(`
     SELECT
       COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE)                                             AS today_total,
@@ -2967,11 +3013,11 @@ router.get('/admin/leads/fresh', authenticate, requireRole('super_admin', 'rm'),
       COUNT(*) FILTER (WHERE assigned_to_user_id IS NULL)                                                 AS unassigned,
       COUNT(*) FILTER (WHERE assigned_to_user_id IS NOT NULL)                                             AS assigned,
       COUNT(*)                                                                                            AS total_active
-      FROM leads WHERE deleted_at IS NULL
-  `);
+      FROM leads WHERE deleted_at IS NULL${scopeSqlAgg}
+  `, aggParams);
 
   // Build WHERE for the requested scope
-  let where = `l.deleted_at IS NULL`;
+  let where = `l.deleted_at IS NULL${scopeSqlRow}`;
   if (scope === 'today')        where += ` AND l.created_at::date = CURRENT_DATE`;
   else if (scope === 'trader')  where += ` AND l.category = 'trader' AND l.created_at::date = CURRENT_DATE`;
   else if (scope === 'partner') where += ` AND l.category = 'partner' AND l.created_at::date = CURRENT_DATE`;
@@ -2989,7 +3035,7 @@ router.get('/admin/leads/fresh', authenticate, requireRole('super_admin', 'rm'),
      WHERE ${where}
      ORDER BY l.created_at DESC
      LIMIT $1
-  `, [limit]);
+  `, rowParams);
 
   // Sheet links — let the admin jump straight to the source Google Sheet
   const { rows: cfgs } = await query(
