@@ -1,23 +1,21 @@
--- Set the database default timezone to Asia/Kolkata.
+-- No-op marker migration.
 --
--- Why: ~25 'today' filters used `created_at::date = CURRENT_DATE`. That
--- depends on session tz. On a UTC server, late-night IST leads got the
--- wrong date. The per-connection SET TIME ZONE in pool.on('connect') AND
--- the IST-explicit SQL filters together already guarantee correctness —
--- this migration is a third belt: makes the DB default sane too.
+-- Original intent: ALTER DATABASE ... SET timezone = 'Asia/Kolkata'.
+-- That requires the DB owner AND a literal database name (not the
+-- current_database() function call), and parses differently across
+-- PostgreSQL builds — failed in embedded-pg used for local dev,
+-- blocking deploys with `&& pm2 restart` chains.
 --
--- IMPORTANT: ALTER DATABASE requires being the DB owner (or superuser).
--- If the role running migrations doesn't have permission, that's fine —
--- the other two layers cover it. We wrap in a DO block so a permission
--- error logs a NOTICE instead of failing the whole migration (which
--- would block the deploy and leave the backend running stale code).
+-- Timezone correctness is fully covered without it:
+--   1. pool.on('connect') in src/config/database.js fires
+--      SET TIME ZONE 'Asia/Kolkata' on every checked-out connection.
+--   2. Every "today" SQL filter uses IST-explicit math:
+--      (created_at AT TIME ZONE 'Asia/Kolkata')::date = ...
+--   3. ecosystem.config.js sets TZ=Asia/Kolkata on the Node process.
+--   4. server.js sets process.env.TZ before any require() runs.
+--
+-- This file exists only so the migration sequence number isn't skipped.
+-- If you really want to ALTER DATABASE, do it manually as the DB owner:
+--   ALTER DATABASE digitaladbird SET timezone TO 'Asia/Kolkata';
 
-DO $migration$
-BEGIN
-  EXECUTE format('ALTER DATABASE %I SET timezone = %L',
-                 current_database(), 'Asia/Kolkata');
-EXCEPTION
-  WHEN insufficient_privilege THEN
-    RAISE NOTICE 'Skipped ALTER DATABASE: current role is not the DB owner. The pool.on(connect) SET TIME ZONE hook in src/config/database.js still pins every connection to IST.';
-END
-$migration$;
+SELECT 1;
