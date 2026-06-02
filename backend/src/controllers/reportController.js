@@ -19,6 +19,11 @@ exports.summary = asyncHandler(async (req, res) => {
   if (from) { params.push(from); dateClause += ` AND l.created_at >= $${params.length}`; }
   if (to)   { params.push(to);   dateClause += ` AND l.created_at <= $${params.length}`; }
 
+  // "Today" is calendar-day-in-IST regardless of the DB session timezone —
+  // see /admin/leads/fresh for rationale.
+  const TODAY_IST_CREATED  = `(l.created_at  AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date`;
+  const TODAY_IST_ASSIGNED = `(l.assigned_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date`;
+
   const { rows: [k] } = await query(
     `SELECT
         COUNT(*)                                                              AS total_leads,
@@ -26,8 +31,8 @@ exports.summary = asyncHandler(async (req, res) => {
         COUNT(*) FILTER (WHERE l.call_status = 'converted')                   AS converted,
         COUNT(*) FILTER (WHERE l.call_status = 'follow_up' OR l.next_followup_at IS NOT NULL) AS followups,
         COUNT(*) FILTER (WHERE l.stage = 'lost' OR l.call_status = 'not_interested') AS lost,
-        COUNT(*) FILTER (WHERE l.created_at::date = CURRENT_DATE)             AS today_leads,
-        COUNT(*) FILTER (WHERE l.assigned_at::date = CURRENT_DATE)            AS today_assigned
+        COUNT(*) FILTER (WHERE ${TODAY_IST_CREATED})                          AS today_leads,
+        COUNT(*) FILTER (WHERE ${TODAY_IST_ASSIGNED})                         AS today_assigned
        FROM leads l WHERE l.deleted_at IS NULL ${scope.sql}${dateClause}`,
     params
   );
