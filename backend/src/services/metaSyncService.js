@@ -528,4 +528,5 @@ module.exports = {
   debugToken,
   checkConnectivity,
   deriveCampaignLabel,
+  ingestGraphLead, // exposed for recovery scripts that need per-page tokens
 };
