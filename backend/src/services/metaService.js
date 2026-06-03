@@ -79,26 +79,43 @@ function parseFieldData(fieldData = []) {
  * Ingest a single leadgen event. Idempotent on meta_lead_id (unique constraint).
  */
 async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }) {
+  const ctx = { leadgen_id, page_id, form_id };
+  logger.info({ ...ctx, step: 'A.enter' }, '[meta-ingest]');
+
   // Fast path: same leadgen_id already in DB
   const dup = await query(`SELECT id FROM leads WHERE meta_lead_id = $1`, [leadgen_id]);
-  if (dup.rowCount > 0) return { status: 'duplicate', leadId: dup.rows[0].id, reason: 'meta_lead_id' };
+  if (dup.rowCount > 0) {
+    logger.info({ ...ctx, step: 'B.dup_meta_lead_id', existing_lead: dup.rows[0].id }, '[meta-ingest] already ingested');
+    return { status: 'duplicate', leadId: dup.rows[0].id, reason: 'meta_lead_id' };
+  }
 
   const token = await getPageAccessToken(page_id);
   if (!token) {
-    logger.error({ page_id }, 'No active page access token; cannot fetch lead');
+    logger.error({ ...ctx, step: 'C.no_token' }, '[meta-ingest] No active page access token in meta_pages for this page_id. Add the page + a leads_retrieval token via POST /api/meta/pages.');
     return { status: 'no_token' };
   }
+  logger.info({ ...ctx, step: 'C.token_ok' }, '[meta-ingest]');
 
-  const detail   = await fetchLeadFromGraph(leadgen_id, token);
-  const fields   = parseFieldData(detail.field_data);
+  let detail;
+  try {
+    detail = await fetchLeadFromGraph(leadgen_id, token);
+    logger.info({ ...ctx, step: 'D.graph_ok', campaign_id: detail.campaign_id, ad_id: detail.ad_id, fields: detail.field_data?.length || 0 }, '[meta-ingest]');
+  } catch (err) {
+    logger.error({ ...ctx, step: 'D.graph_failed', err: err.message }, '[meta-ingest] Graph API rejected the lead lookup — token likely expired or missing leads_retrieval scope.');
+    throw err;
+  }
+
+  const fields = parseFieldData(detail.field_data);
+  logger.info({ ...ctx, step: 'E.parsed', has_name: !!fields.full_name, has_phone: !!fields.phone, has_email: !!fields.email }, '[meta-ingest]');
 
   // Phone / email cross-dedup — same person submitting multiple Meta forms
   // creates separate meta_lead_id values but should not create separate leads.
   const dupContact = await findExistingByContact({ phone: fields.phone, email: fields.email });
   if (dupContact) {
-    logger.info({ leadId: dupContact.id, reason: dupContact.reason, leadgen_id }, 'Meta lead skipped — phone/email already in DB');
+    logger.info({ ...ctx, step: 'F.dup_contact', reason: dupContact.reason, existing_lead: dupContact.id, dedup_window_days: process.env.LEAD_DEDUP_WINDOW_DAYS || '30' }, '[meta-ingest] skipped — same phone/email within dedup window. Set LEAD_DEDUP_WINDOW_DAYS=0 to disable.');
     return { status: 'duplicate', leadId: dupContact.id, reason: dupContact.reason };
   }
+  logger.info({ ...ctx, step: 'F.dedup_clear' }, '[meta-ingest]');
 
   const { rows: [formRow] } = await query(
     `SELECT campaign_label, product_tag FROM meta_forms WHERE form_id = $1`,
@@ -163,21 +180,26 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
     return ins.rows[0]?.id || null;
   });
 
-  if (!inserted) return { status: 'duplicate' };
+  if (!inserted) {
+    logger.info({ ...ctx, step: 'G.insert_skipped_conflict' }, '[meta-ingest] race condition — meta_lead_id ON CONFLICT triggered.');
+    return { status: 'duplicate' };
+  }
+  logger.info({ ...ctx, step: 'G.insert_ok', leadId: inserted, campaign_label: campaignLabel }, '[meta-ingest] row inserted');
 
   // Only distribute immediately if within active distribution hours (08:00–22:00 IST).
   // Outside those hours the lead stays in the queue and will be distributed at 8 AM.
   let assigned = { reason: 'QUEUED_OUTSIDE_HOURS' };
   if (await isDistributionActive()) {
     assigned = await assignLead(inserted);
+    logger.info({ ...ctx, step: 'H.assigned', leadId: inserted, assigned }, '[meta-ingest]');
   } else {
-    logger.info({ leadId: inserted }, 'Meta lead queued — distribution inactive (outside 08:00-22:00 IST)');
+    logger.info({ ...ctx, step: 'H.queued_off_hours', leadId: inserted }, '[meta-ingest] distribution paused — lead stays unassigned until 08:00 IST');
   }
 
   // Fan out: broadcast to Socket.IO + append to Google Sheet (both non-blocking)
   onLeadCreated(inserted, { source: 'meta_webhook' });
+  logger.info({ ...ctx, step: 'I.fanout_dispatched', leadId: inserted }, '[meta-ingest] Socket.IO + Sheet append fired (async)');
 
-  logger.info({ leadId: inserted, leadgen_id, assigned }, 'Meta lead ingested');
   return { status: 'ingested', leadId: inserted, assigned };
 }
 

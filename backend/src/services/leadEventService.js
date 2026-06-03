@@ -77,15 +77,22 @@ function onLeadCreated(leadId, { source = 'unknown' } = {}) {
   Promise.resolve()
     .then(async () => {
       const summary = await loadLeadSummary(leadId);
-      if (!summary) return;
+      if (!summary) {
+        logger.warn({ leadId, source }, '[lead-fanout] summary missing — broadcast skipped');
+        return;
+      }
 
-      try { broadcastNewLead({ ...summary, _source: source }); }
-      catch (err) { logger.warn({ err: err.message, leadId }, '[Lead] broadcast failed'); }
+      try {
+        broadcastNewLead({ ...summary, _source: source });
+        logger.info({ leadId, source, assigned_to: summary.assigned_to_user_id, campaign: summary.campaign_name }, '[lead-fanout] socket emit lead:new');
+      } catch (err) { logger.warn({ err: err.message, leadId }, '[lead-fanout] broadcast failed'); }
 
-      try { await sheetsSvc.appendLead(leadId); }
-      catch (err) { logger.warn({ err: err.message, leadId }, '[Lead] sheet append failed'); }
+      try {
+        await sheetsSvc.appendLead(leadId);
+        logger.info({ leadId, source }, '[lead-fanout] sheet append ok');
+      } catch (err) { logger.warn({ err: err.message, leadId }, '[lead-fanout] sheet append failed (non-fatal)'); }
     })
-    .catch(err => logger.error({ err: err.message, leadId }, '[Lead] onLeadCreated side-effects failed'));
+    .catch(err => logger.error({ err: err.message, leadId }, '[lead-fanout] side-effects failed'));
 }
 
 module.exports = { onLeadCreated, findExistingByContact, loadLeadSummary };

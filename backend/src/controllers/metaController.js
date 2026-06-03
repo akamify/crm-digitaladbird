@@ -24,30 +24,46 @@ exports.verify = (req, res) => {
 exports.receive = asyncHandler(async (req, res) => {
   const sig = req.headers['x-hub-signature-256'];
   const raw = req.rawBody;
+  const rawBytes = raw?.length || 0;
+  logger.info({ step: '1.received', bytes: rawBytes, sig_present: !!sig, ua: req.headers['user-agent'] }, '[meta-webhook]');
+
   if (!verifySignature(raw, sig)) {
-    logger.warn({ sig }, 'Meta webhook signature invalid');
+    logger.warn({ step: '2.signature.failed', sig }, '[meta-webhook] HMAC mismatch — check META_APP_SECRET matches the Meta app secret');
     throw new AppError(401, 'BAD_SIGNATURE', 'Invalid signature');
   }
+  logger.info({ step: '2.signature.ok' }, '[meta-webhook]');
 
   const body = JSON.parse(raw.toString('utf8'));
-  if (body.object !== 'page') return res.sendStatus(200); // ignore other objects
+  if (body.object !== 'page') {
+    logger.info({ step: '3.skip_non_page', object: body.object }, '[meta-webhook]');
+    return res.sendStatus(200);
+  }
+
+  const entries = body.entry || [];
+  const totalChanges = entries.reduce((n, e) => n + (e.changes?.length || 0), 0);
+  logger.info({ step: '3.parsed', entries: entries.length, total_changes: totalChanges }, '[meta-webhook]');
 
   // ack ASAP, process in background
   res.sendStatus(200);
 
-  for (const entry of body.entry || []) {
+  for (const entry of entries) {
     for (const change of entry.changes || []) {
-      if (change.field !== 'leadgen') continue;
+      if (change.field !== 'leadgen') {
+        logger.info({ step: '4.skip_non_leadgen', field: change.field }, '[meta-webhook]');
+        continue;
+      }
       const v = change.value || {};
+      logger.info({ step: '4.leadgen.dispatch', leadgen_id: v.leadgen_id, page_id: v.page_id, form_id: v.form_id, created_time: v.created_time }, '[meta-webhook]');
       try {
-        await ingestLeadgenEvent({
+        const result = await ingestLeadgenEvent({
           leadgen_id:   v.leadgen_id,
           page_id:      v.page_id,
           form_id:      v.form_id,
           created_time: v.created_time,
         });
+        logger.info({ step: '5.ingest.done', leadgen_id: v.leadgen_id, ...result }, '[meta-webhook]');
       } catch (err) {
-        logger.error({ err, v }, 'Failed to ingest leadgen event');
+        logger.error({ step: '5.ingest.failed', leadgen_id: v.leadgen_id, err: err.message, stack: err.stack, v }, '[meta-webhook] ingestLeadgenEvent threw');
       }
     }
   }
