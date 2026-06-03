@@ -117,10 +117,26 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
   }
   logger.info({ ...ctx, step: 'F.dedup_clear' }, '[meta-ingest]');
 
-  const { rows: [formRow] } = await query(
+  let { rows: [formRow] } = await query(
     `SELECT campaign_label, product_tag FROM meta_forms WHERE form_id = $1`,
     [form_id]
   );
+  // FK on leads.meta_form_id requires the form row to exist. If Meta is
+  // delivering a leadgen event for a form we haven't registered yet
+  // (new form added in Meta, never synced), insert a stub now so the
+  // leads INSERT below doesn't fail with 23503. Form metadata
+  // (form_name, campaign_label, product_tag) stays NULL until the next
+  // periodic Meta sync fills it in — losing the metadata is acceptable;
+  // losing the lead is not.
+  if (!formRow) {
+    logger.info({ ...ctx, step: 'F2.auto_register_form' }, '[meta-ingest] form not in DB — inserting stub to satisfy FK');
+    await query(
+      `INSERT INTO meta_forms(form_id, page_id, form_name, is_active) VALUES($1, $2, NULL, TRUE)
+         ON CONFLICT (form_id) DO NOTHING`,
+      [form_id, page_id]
+    );
+    formRow = { campaign_label: null, product_tag: null };
+  }
 
   // Resolve campaign label from meta_campaigns or derive from name
   let campaignLabel = formRow?.campaign_label || null;

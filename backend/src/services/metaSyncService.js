@@ -235,11 +235,21 @@ async function ingestGraphLead(lead, formId) {
   const dupContact = await findExistingByContact({ phone: fields.phone, email: fields.email });
   if (dupContact) return { status: 'duplicate', leadId: dupContact.id, reason: dupContact.reason };
 
-  // Get form metadata for campaign_label and product_tag
-  const { rows: [formRow] } = await query(
+  // Get form metadata for campaign_label and product_tag.
+  // Auto-register an unknown form so the leads.meta_form_id FK is satisfied —
+  // see metaService.ingestLeadgenEvent for the same pattern + rationale.
+  let { rows: [formRow] } = await query(
     `SELECT campaign_label, product_tag, page_id FROM meta_forms WHERE form_id = $1`,
     [formId]
   );
+  if (!formRow) {
+    await query(
+      `INSERT INTO meta_forms(form_id, page_id, form_name, is_active)
+         VALUES($1, NULL, NULL, TRUE) ON CONFLICT (form_id) DO NOTHING`,
+      [formId]
+    );
+    formRow = { campaign_label: null, product_tag: null, page_id: null };
+  }
 
   // Resolve campaign label from meta_campaigns table if available
   let campaignLabel = formRow?.campaign_label || null;

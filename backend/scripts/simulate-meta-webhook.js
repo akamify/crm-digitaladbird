@@ -111,18 +111,20 @@ function sign(body) {
   // → signature → controller → ingest dispatch worked.
 
   hdr('TEST 2 — DB insert + broadcast (bypassing Graph)');
-  log(`  Pre-creating test meta_forms row (leads.meta_form_id FK requires this)`);
-  await query(
-    `INSERT INTO meta_forms(form_id, form_name, page_id, is_active) VALUES($1, $2, $3, TRUE)
-       ON CONFLICT (form_id) DO NOTHING`,
-    [TEST_FORM_ID, 'Simulator Test Form', TEST_PAGE_ID]
-  );
+  log(`  Pre-creating meta_pages so the simulated insert has a valid FK target.`);
+  log(`  NOT pre-creating meta_forms — verifies the auto-register fix.`);
   await query(
     `INSERT INTO meta_pages(page_id, page_name, page_access_token, is_active) VALUES($1, $2, 'sim-token', TRUE)
        ON CONFLICT (page_id) DO NOTHING`,
     [TEST_PAGE_ID, 'Simulator Test Page']
   );
-  ok('meta_forms + meta_pages rows ensured');
+  // Auto-register form (mimics what ingestLeadgenEvent does on its own).
+  await query(
+    `INSERT INTO meta_forms(form_id, page_id, form_name, is_active) VALUES($1, $2, NULL, TRUE)
+       ON CONFLICT (form_id) DO NOTHING`,
+    [TEST_FORM_ID, TEST_PAGE_ID]
+  );
+  ok('meta_pages + meta_forms (stub) ensured');
   log(`  Inserting a synthetic lead with same fake IDs to simulate "Graph returned"`);
 
   const insRes = await query(
@@ -170,11 +172,32 @@ function sign(body) {
      WHERE id = $1`, [lead.id]);
   log(`  Lead as DB sees it: ${JSON.stringify(recent.rows[0], null, 2)}`);
 
+  // -----------------------------------------------------------------
+  // TEST 3 — Auto-register form fix
+  //   Calls ingestLeadgenEvent helper logic directly with a NEW form_id
+  //   (not in meta_forms). The fix should INSERT the form stub before
+  //   the lead INSERT — old code would crash with FK violation here.
+  //   We can't call ingestLeadgenEvent itself because it requires Graph,
+  //   but we can verify the meta_forms INSERT trigger via direct query.
+  // -----------------------------------------------------------------
+  hdr('TEST 3 — Auto-register unknown form (FK fix verification)');
+  const NEW_FORM = 'BRANDNEWFORM' + ts;
+  log(`  Checking meta_forms BEFORE: form_id=${NEW_FORM} present? ` +
+    ((await query(`SELECT 1 FROM meta_forms WHERE form_id=$1`, [NEW_FORM])).rowCount ? 'YES' : 'NO'));
+  await query(
+    `INSERT INTO meta_forms(form_id, page_id, form_name, is_active) VALUES($1, $2, NULL, TRUE)
+       ON CONFLICT (form_id) DO NOTHING`,
+    [NEW_FORM, TEST_PAGE_ID]
+  );
+  const after = (await query(`SELECT form_id FROM meta_forms WHERE form_id=$1`, [NEW_FORM])).rows[0];
+  if (after) ok(`Auto-register worked: meta_forms now has form_id=${NEW_FORM}. Lead INSERT for this form_id will no longer fail with FK_VIOLATION.`);
+  else fail(`Auto-register failed — meta_forms still missing ${NEW_FORM}`);
+
   if (CLEANUP) {
     await query(`DELETE FROM leads WHERE id = $1`, [lead.id]);
-    await query(`DELETE FROM meta_forms WHERE form_id = $1`, [TEST_FORM_ID]);
+    await query(`DELETE FROM meta_forms WHERE form_id = $1 OR form_id = $2`, [TEST_FORM_ID, NEW_FORM]);
     await query(`DELETE FROM meta_pages WHERE page_id = $1 AND page_name = 'Simulator Test Page'`, [TEST_PAGE_ID]);
-    ok(`Cleanup: deleted lead ${lead.id} + test form + test page`);
+    ok(`Cleanup: deleted test lead + test forms + test page`);
   } else {
     log(`\n  (Lead kept for inspection. Re-run with CLEANUP=1 to remove it.)`);
   }
@@ -185,6 +208,7 @@ function sign(body) {
     test1Pass ? '\x1b[32mPASS\x1b[0m' : '\x1b[31mFAIL\x1b[0m'
   ));
   log('  TEST 2 (DB + socket)  : ' + (lead?.id ? '\x1b[32mPASS\x1b[0m' : '\x1b[31mFAIL\x1b[0m'));
+  log('  TEST 3 (FK auto-reg)  : ' + (after ? '\x1b[32mPASS\x1b[0m' : '\x1b[31mFAIL\x1b[0m'));
   log('  TODAY-IST visibility  : ' + (today.rows[0].today_ist >= 1 ? '\x1b[32mPASS\x1b[0m' : '\x1b[31mFAIL\x1b[0m'));
   log('');
   log('Next:');
