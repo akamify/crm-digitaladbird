@@ -424,11 +424,10 @@ function Step3Followup({ leadId, tracker }: {
   const checkedCount = tracker ? FOLLOWUP_FIELDS.filter(f => tracker[f.key]).length : 0;
   const percentage = Math.round((checkedCount / FOLLOWUP_FIELDS.length) * 100);
 
-  const hasAttendance = !!tracker?.attendance_730;
-  const hasConfirmation = !!tracker?.yes_confirmation;
-  const dayFields = FOLLOWUP_FIELDS.filter(f => f.key.startsWith('day_'));
-  const hasAtLeastOneDay = tracker ? dayFields.some(f => tracker[f.key]) : false;
-  const canProceed = hasAttendance && hasConfirmation && hasAtLeastOneDay;
+  // Partner/member/RM/admin can move to Step 4 as soon as ANY one option is
+  // picked. The previous rule required attendance + confirmation + one day
+  // simultaneously, which blocked partial follow-up logging.
+  const canProceed = checkedCount >= 1;
 
   function toggle(field: string, currentVal: boolean) {
     update.mutate({ leadId, [field]: !currentVal }, {
@@ -499,16 +498,11 @@ function Step3Followup({ leadId, tracker }: {
         })}
       </div>
 
-      {/* Requirement checklist */}
+      {/* Status pill — pick any combination; Next unlocks at 1+ selection */}
       <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px]">
-        <span className={clsx('inline-flex items-center gap-1 font-semibold', hasAttendance ? 'text-emerald-600' : 'text-slate-400')}>
-          {hasAttendance ? <CheckCircle2 className="h-3 w-3" /> : <Lock className="h-3 w-3" />} Attendance
-        </span>
-        <span className={clsx('inline-flex items-center gap-1 font-semibold', hasConfirmation ? 'text-emerald-600' : 'text-slate-400')}>
-          {hasConfirmation ? <CheckCircle2 className="h-3 w-3" /> : <Lock className="h-3 w-3" />} Confirmation
-        </span>
-        <span className={clsx('inline-flex items-center gap-1 font-semibold', hasAtLeastOneDay ? 'text-emerald-600' : 'text-slate-400')}>
-          {hasAtLeastOneDay ? <CheckCircle2 className="h-3 w-3" /> : <Lock className="h-3 w-3" />} 1+ Day
+        <span className={clsx('inline-flex items-center gap-1 font-semibold', canProceed ? 'text-emerald-600' : 'text-slate-400')}>
+          {canProceed ? <CheckCircle2 className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+          {canProceed ? `${checkedCount} selected — ready to proceed` : 'Select any 1 option to continue'}
         </span>
       </div>
 
@@ -525,7 +519,7 @@ function Step3Followup({ leadId, tracker }: {
         )}
       >
         {update.isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : <ChevronRight className="h-5 w-5" />}
-        {update.isPending ? 'Saving...' : canProceed ? 'NEXT — Unlock Step 4' : 'Select Attendance + Confirmation + 1 Day'}
+        {update.isPending ? 'Saving...' : canProceed ? 'NEXT — Unlock Step 4' : 'Select at least 1 option'}
       </button>
     </div>
   );

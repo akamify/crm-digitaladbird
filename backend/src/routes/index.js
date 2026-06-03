@@ -3824,13 +3824,11 @@ router.patch('/leads/:id/workflow/followup', authenticate, asyncHandler(async (r
     ft = row;
   }
 
-  // Flexible completion: attendance + confirmation + at least 1 day selected
-  const dayKeys = allowed.filter(k => k.startsWith('day_'));
-  const hasAttendance = !!ft.attendance_730;
-  const hasConfirmation = !!ft.yes_confirmation;
-  const hasAtLeastOneDay = dayKeys.some(k => !!ft[k]);
-  const flexibleComplete = hasAttendance && hasConfirmation && hasAtLeastOneDay;
-  const shouldComplete = forceComplete && flexibleComplete;
+  // Step 3 unlocks Step 4 the moment ANY one follow-up option is selected
+  // (any single day, attendance, or yes-confirmation). The frontend mirrors
+  // this rule; admin/RM/partner/member all share the same loose gate.
+  const anySelection = allowed.some(k => !!ft[k]);
+  const shouldComplete = forceComplete && anySelection;
 
   if (shouldComplete) {
     await query(`
