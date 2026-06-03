@@ -146,6 +146,24 @@ app.get('/health/db',      async (_req, res) => {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
+// Stricter health probe — fails if backend has silently fallen back to the
+// in-memory pg-mem fallback. Used by deploy verification + tells dev that
+// every query is going to fail with "relation does not exist" before they
+// waste 20 minutes debugging it.
+app.get('/health/db-strict', async (_req, res) => {
+  try {
+    const { query } = require('./config/database');
+    const { rows } = await query(`SELECT count(*)::int AS n FROM users WHERE deleted_at IS NULL`);
+    res.json({ ok: true, real_pg: true, users: rows[0].n });
+  } catch (err) {
+    res.status(503).json({
+      ok: false,
+      real_pg: false,
+      error: err.message,
+      hint: 'Backend likely fell back to in-memory pg-mem. Start real Postgres (node backend/start-db.mjs) and restart backend.'
+    });
+  }
+});
 
 app.use('/api', apiRoutes);
 app.use('/api/chat', chatRoutes);
