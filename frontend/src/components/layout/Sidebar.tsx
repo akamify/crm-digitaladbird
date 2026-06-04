@@ -75,16 +75,19 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             <Link
               key={href} href={href} onClick={onNavigate}
               className={clsx(
-                'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition',
+                'group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-all duration-150',
                 active
-                  ? 'bg-brand-50 text-brand-700 font-medium'
-                  : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900',
+                  ? 'sidebar-active font-semibold'
+                  : 'text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900',
               )}
             >
-              <Icon className={clsx('h-4 w-4', active ? 'text-brand-600' : 'text-slate-400 group-hover:text-slate-600')} />
+              <Icon className={clsx('h-[18px] w-[18px] shrink-0', active ? 'text-white' : 'text-slate-400 group-hover:text-slate-700')} />
               <span className="flex-1">{label}</span>
               {showBadge && (
-                <span className="grid h-5 min-w-[20px] place-items-center rounded-full bg-brand-600 px-1.5 text-[10px] font-bold text-white">
+                <span className={clsx(
+                  'grid h-5 min-w-[20px] place-items-center rounded-full px-1.5 text-[10px] font-bold',
+                  active ? 'bg-white/25 text-white' : 'bg-brand-600 text-white',
+                )}>
                   {unreadCount > 99 ? '99+' : unreadCount}
                 </span>
               )}
@@ -95,13 +98,16 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         {/* Admin Control Center sub-nav */}
         {isAdmin && (
           <>
-            <div className="pt-3 pb-1">
+            <div className="pt-4 pb-1">
               <button
                 onClick={() => setAdminOpen(v => !v)}
-                className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-400 hover:text-slate-600 transition"
+                className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-700 hover:text-violet-700 transition"
               >
-                <span>Admin Control</span>
-                {adminOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-1.5 w-1.5 rounded-full bg-violet-500" />
+                  Admin Control
+                </span>
+                {adminOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
               </button>
             </div>
             {adminOpen && ADMIN_NAV.map(({ href, label, Icon }) => {
@@ -110,13 +116,13 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                 <Link
                   key={href} href={href} onClick={onNavigate}
                   className={clsx(
-                    'group flex items-center gap-3 rounded-lg px-3 py-1.5 text-[13px] transition ml-1',
+                    'group flex items-center gap-3 rounded-xl px-3 py-2 text-[13px] transition-all duration-150 ml-1',
                     active
-                      ? 'bg-violet-50 text-violet-700 font-medium'
-                      : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800',
+                      ? 'sidebar-active-sub font-semibold'
+                      : 'text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900',
                   )}
                 >
-                  <Icon className={clsx('h-3.5 w-3.5', active ? 'text-violet-600' : 'text-slate-400 group-hover:text-slate-500')} />
+                  <Icon className={clsx('h-[16px] w-[16px] shrink-0', active ? 'text-white' : 'text-slate-400 group-hover:text-violet-600')} />
                   {label}
                 </Link>
               );

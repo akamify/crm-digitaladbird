@@ -11,28 +11,28 @@ interface KpiCardProps {
   accent?: 'pink' | 'blue' | 'green' | 'amber' | 'slate';
 }
 
-const accentBg: Record<NonNullable<KpiCardProps['accent']>, string> = {
-  pink:  'bg-blue-50   text-blue-700',
-  blue:  'bg-sky-50    text-sky-700',
-  green: 'bg-emerald-50 text-emerald-700',
-  amber: 'bg-amber-50   text-amber-700',
-  slate: 'bg-slate-100  text-slate-700',
+const accentClass: Record<NonNullable<KpiCardProps['accent']>, string> = {
+  pink:  'kpi-accent-pink',
+  blue:  'kpi-accent-blue',
+  green: 'kpi-accent-green',
+  amber: 'kpi-accent-amber',
+  slate: 'kpi-accent-slate',
 };
 
 export function KpiCard({ label, value, delta, trend, icon, accent = 'pink' }: KpiCardProps) {
   return (
-    <div className="card flex items-center gap-4 p-5">
+    <div className="card card-hover flex items-center gap-4 p-5 cursor-pointer">
       {icon && (
-        <div className={clsx('grid h-11 w-11 place-items-center rounded-lg', accentBg[accent])}>
+        <div className={clsx('grid h-12 w-12 place-items-center rounded-xl shadow-md shrink-0', accentClass[accent])}>
           {icon}
         </div>
       )}
       <div className="min-w-0 flex-1">
-        <div className="text-xs font-medium uppercase tracking-wider text-slate-500">{label}</div>
-        <div className="mt-1 font-display text-2xl font-semibold text-slate-900">{value}</div>
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{label}</div>
+        <div className="mt-1 font-display text-3xl font-bold tabular-nums text-slate-900 leading-tight">{value}</div>
         {delta && (
           <div className={clsx(
-            'mt-0.5 text-xs',
+            'mt-1 text-xs font-medium',
             trend === 'up' && 'text-emerald-600',
             trend === 'down' && 'text-rose-600',
             (!trend || trend === 'flat') && 'text-slate-500',

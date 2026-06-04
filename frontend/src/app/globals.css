@@ -13,6 +13,7 @@
 @layer components {
   .card        { @apply rounded-xl border border-slate-200 bg-white shadow-card; }
   .card-padded { @apply card p-5 sm:p-6; }
+  .card-hover  { @apply transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:border-slate-300; }
 
   .btn-primary {
     @apply bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-700
@@ -48,6 +49,30 @@
   .table-row {
     @apply border-b border-slate-100 hover:bg-slate-50/70 transition;
   }
+
+  /* Tables: sticky header + zebra rows + colored status chips already covered above */
+  .table-modern         { @apply w-full text-sm; }
+  .table-modern thead   { @apply sticky top-0 z-10 bg-slate-50/95 backdrop-blur; }
+  .table-modern thead th{ @apply px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500 border-b border-slate-200; }
+  .table-modern tbody tr        { @apply border-b border-slate-100 transition-colors; }
+  .table-modern tbody tr:nth-child(even) { @apply bg-slate-50/40; }
+  .table-modern tbody tr:hover  { @apply bg-brand-50/40; }
+  .table-modern tbody td        { @apply px-3 py-2.5 text-sm text-slate-700; }
+
+  /* Sidebar active state — blue gradient + white text */
+  .sidebar-active {
+    @apply bg-gradient-to-r from-brand-600 to-brand-700 text-white shadow-sm;
+  }
+  .sidebar-active-sub {
+    @apply bg-gradient-to-r from-violet-600 to-violet-700 text-white shadow-sm;
+  }
+
+  /* KPI tile gradient accents — paired with KpiCard `accent` prop */
+  .kpi-accent-pink   { @apply bg-gradient-to-br from-blue-500    to-blue-600    text-white; }
+  .kpi-accent-blue   { @apply bg-gradient-to-br from-sky-500     to-sky-600     text-white; }
+  .kpi-accent-green  { @apply bg-gradient-to-br from-emerald-500 to-emerald-600 text-white; }
+  .kpi-accent-amber  { @apply bg-gradient-to-br from-amber-500   to-amber-600   text-white; }
+  .kpi-accent-slate  { @apply bg-gradient-to-br from-slate-500   to-slate-600   text-white; }
 }
 
 @layer utilities {

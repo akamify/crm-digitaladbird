@@ -449,18 +449,25 @@ function MetaPagesTab() {
       ) : (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {pages.map(p => (
-            <div key={p.id} className="rounded-xl border border-slate-200 bg-white p-4 hover:shadow-md transition">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <div className={clsx('h-2.5 w-2.5 rounded-full', p.is_active ? 'bg-emerald-500' : 'bg-slate-300')} />
-                  <span className="font-semibold text-slate-900">{p.page_name || p.page_id}</span>
+            <div key={p.id} className="card card-hover p-5">
+              <div className="flex items-start justify-between mb-3 gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={clsx('inline-flex h-2.5 w-2.5 rounded-full ring-2 shrink-0', p.is_active ? 'bg-emerald-500 ring-emerald-100' : 'bg-slate-300 ring-slate-100')} />
+                    <h3 className="font-display text-base font-bold text-slate-900 truncate">{p.page_name || p.page_id}</h3>
+                  </div>
+                  <div className="mt-1 text-[11px] font-mono text-slate-500 truncate">{p.page_id}</div>
                 </div>
-                <div className="flex items-center gap-1">
+                <span className={clsx(
+                  'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ring-1 shrink-0',
+                  p.has_token
+                    ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+                    : 'bg-rose-50 text-rose-700 ring-rose-200'
+                )}>
                   <StatusDot ok={p.has_token} warn={!p.has_token} />
-                  <span className="text-[10px] text-slate-500">{p.has_token ? 'Token OK' : 'No token'}</span>
-                </div>
+                  {p.has_token ? 'Token OK' : 'No token'}
+                </span>
               </div>
-              <div className="text-xs font-mono text-slate-500 mb-3">{p.page_id}</div>
 
               {/* Stats */}
               <div className="grid grid-cols-4 gap-2 mb-3">
