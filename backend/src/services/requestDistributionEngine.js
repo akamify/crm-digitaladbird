@@ -316,4 +316,5 @@ module.exports = {
   runDistributionCycle,
   getRmPoolStats,
   getGlobalQueueStats,
+  isDistributionActive,
 };

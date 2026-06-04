@@ -91,6 +91,25 @@ function onLeadCreated(leadId, { source = 'unknown' } = {}) {
         await sheetsSvc.appendLead(leadId);
         logger.info({ leadId, source }, '[lead-fanout] sheet append ok');
       } catch (err) { logger.warn({ err: err.message, leadId }, '[lead-fanout] sheet append failed (non-fatal)'); }
+
+      // If this lead is still unassigned AND auto-distribution is ON,
+      // try to fulfill any pre-approved-but-pending lead requests immediately
+      // so the partner sees the lead within ~1s instead of waiting for the
+      // next scheduler tick. Non-fatal — distributor errors don't roll back
+      // the insert.
+      if (!summary.assigned_to_user_id) {
+        try {
+          const reqEngine = require('./requestDistributionEngine');
+          if (await reqEngine.isDistributionActive()) {
+            const r = await reqEngine.processAllMemberRequests();
+            if (r && r.totalFilled > 0) {
+              logger.info({ leadId, source, totalFilled: r.totalFilled, requestsProcessed: r.processed }, '[lead-fanout] pending requests topped up on new lead');
+            }
+          }
+        } catch (err) {
+          logger.warn({ err: err.message, leadId }, '[lead-fanout] request top-up failed (non-fatal)');
+        }
+      }
     })
     .catch(err => logger.error({ err: err.message, leadId }, '[lead-fanout] side-effects failed'));
 }

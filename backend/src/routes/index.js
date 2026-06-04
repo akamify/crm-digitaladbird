@@ -687,16 +687,35 @@ router.post('/lead-requests/:id/approve', authenticate, requireRole('super_admin
     } catch { /* skip on race condition */ }
   }
 
+  // Status rules — never mark "fulfilled" with assigned < quantity.
+  //   assigned >= quantity → fully fulfilled
+  //   0 < assigned < quantity OR assigned === 0 → stay 'pending' but record
+  //     that admin pre-approved (resolved_by). The scheduler's
+  //     processAllMemberRequests + onLeadCreated hook will top this up as
+  //     new leads arrive. No more "Approved with Delivered=0" anomaly.
+  const fullyDone = assigned >= request.quantity;
+  const finalStatus = fullyDone ? 'fulfilled' : 'pending';
+  const resolvedAt = fullyDone ? new Date() : null;
+
   await query(
-    `UPDATE lead_requests SET status = 'fulfilled', resolved_by = $1, resolved_at = NOW(),
-            resolve_note = $2, leads_assigned = $3, updated_at = NOW()
-      WHERE id = $4`,
-    [req.user.id, req.body.note || null, assigned, id]
+    `UPDATE lead_requests SET status = $1, resolved_by = $2, resolved_at = $3,
+            resolve_note = $4, leads_assigned = $5, updated_at = NOW()
+      WHERE id = $6`,
+    [finalStatus, req.user.id, resolvedAt, req.body.note || null, assigned, id]
   );
 
-  emitLeadRequest('approved', id);
+  emitLeadRequest(fullyDone ? 'approved' : 'partially_approved', id);
 
-  res.json({ success: true, data: { approved: true, leads_assigned: assigned, requested: request.quantity } });
+  res.json({
+    success: true,
+    data: {
+      approved: true,
+      leads_assigned: assigned,
+      requested: request.quantity,
+      status: finalStatus,
+      partial: !fullyDone,
+    },
+  });
 }));
 
 // RM/Admin: reject a request
