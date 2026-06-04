@@ -27,23 +27,24 @@ export function Modal({ open, onClose, title, description, children, footer, siz
   if (!open) return null;
 
   return (
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 sm:p-6">
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-6">
       <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
       <div className={clsx(
-        'relative w-full rounded-2xl border border-slate-200 bg-white shadow-2xl',
+        'relative w-full rounded-t-2xl sm:rounded-2xl border border-slate-200 bg-white shadow-2xl',
+        'flex flex-col max-h-[92vh] sm:max-h-[88vh]',
         sizeClass[size],
       )}>
-        <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
-          <div>
-            {title && <h2 className="text-base font-semibold text-slate-900">{title}</h2>}
-            {description && <p className="mt-0.5 text-xs text-slate-500">{description}</p>}
+        <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-4 sm:px-5 py-3 sm:py-4 shrink-0">
+          <div className="min-w-0 flex-1">
+            {title && <h2 className="text-base font-semibold text-slate-900 truncate">{title}</h2>}
+            {description && <p className="mt-0.5 text-xs text-slate-500 line-clamp-2">{description}</p>}
           </div>
-          <button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close">
+          <button onClick={onClose} className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 shrink-0" aria-label="Close">
             <X className="h-4 w-4" />
           </button>
         </div>
-        <div className="px-5 py-4">{children}</div>
-        {footer && <div className="border-t border-slate-100 px-5 py-3 flex justify-end gap-2">{footer}</div>}
+        <div className="px-4 sm:px-5 py-4 overflow-y-auto flex-1">{children}</div>
+        {footer && <div className="border-t border-slate-100 px-4 sm:px-5 py-3 flex flex-col sm:flex-row justify-end gap-2 shrink-0">{footer}</div>}
       </div>
     </div>
   );

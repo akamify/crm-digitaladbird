@@ -6,8 +6,17 @@
 
 @layer base {
   html, body { @apply h-full; }
+  /* overflow-x lock at the viewport — last-resort defence against any
+     stray fixed-width element that would otherwise force horizontal
+     scroll on small phones (320–375px). Inner scrollable surfaces
+     like tables still scroll via their own overflow-x-auto wrappers. */
+  html, body { overflow-x: hidden; max-width: 100vw; }
   body { @apply text-slate-800 bg-slate-50; }
   * { @apply border-slate-200; }
+  /* Better touch behaviour on iOS: no rubber-band bounce inside scroll containers */
+  body { -webkit-overflow-scrolling: touch; }
+  /* Prevent text-size inflation on landscape iPhone */
+  html { -webkit-text-size-adjust: 100%; }
 }
 
 @layer components {
@@ -66,6 +75,16 @@
   .sidebar-active-sub {
     @apply bg-gradient-to-r from-violet-600 to-violet-700 text-white shadow-sm;
   }
+
+  /* Responsive helpers — wrap a wide table so it scrolls edge-to-edge
+     on mobile rather than bursting the page padding. Use:
+       <div className="responsive-table-wrap"> <table>… </table> </div>   */
+  .responsive-table-wrap {
+    @apply -mx-4 sm:mx-0 px-4 sm:px-0 overflow-x-auto scroll-thin;
+  }
+  /* iOS / Android tap target: anything < 40×40 is hard to hit accurately.
+     Add to icon-only buttons that currently use h-7 w-7 or similar.        */
+  .touch-target { @apply min-h-[40px] min-w-[40px]; }
 
   /* KPI tile gradient accents — paired with KpiCard `accent` prop */
   .kpi-accent-pink   { @apply bg-gradient-to-br from-blue-500    to-blue-600    text-white; }
