@@ -21,7 +21,9 @@ exports.summary = asyncHandler(async (req, res) => {
 
   // "Today" is calendar-day-in-IST regardless of the DB session timezone —
   // see /admin/leads/fresh for rationale.
-  const TODAY_IST_CREATED  = `(l.created_at  AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date`;
+  // Use Meta-side created_time when present (so backfilled historic leads
+  // don't pollute today_leads), DB created_at as fallback for manual/import.
+  const TODAY_IST_CREATED  = `(COALESCE(l.meta_created_time, l.created_at) AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date`;
   const TODAY_IST_ASSIGNED = `(l.assigned_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date`;
 
   const { rows: [k] } = await query(
