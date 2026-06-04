@@ -234,7 +234,25 @@ exports.reassign = asyncHandler(async (req, res) => {
   if (!['super_admin', 'rm'].includes(req.user.role)) throw new AppError(403, 'FORBIDDEN', 'Not allowed');
   const { to_user_id } = req.body;
   if (!to_user_id) throw new AppError(400, 'TO_USER_REQUIRED', 'to_user_id required');
+
+  // Capture old assignee + names for the audit row BEFORE the reassign happens.
+  const { rows: [prev] } = await query(
+    `SELECT l.assigned_to_user_id, u.full_name AS prev_name FROM leads l
+       LEFT JOIN users u ON u.id = l.assigned_to_user_id WHERE l.id = $1`,
+    [req.params.id]
+  );
+  const { rows: [target] } = await query(`SELECT full_name FROM users WHERE id = $1`, [to_user_id]);
+
   const out = await reassignLead(req.params.id, to_user_id, req.user.id, 'manual');
+
+  const { logActivity } = require('../utils/auditLog');
+  await logActivity(req, {
+    entity: 'lead', entity_id: req.params.id, action: 'reassigned',
+    old_value: prev?.prev_name || prev?.assigned_to_user_id || '(unassigned)',
+    new_value: target?.full_name || to_user_id,
+    metadata: { from_user_id: prev?.assigned_to_user_id || null, to_user_id, reason: 'manual' },
+  });
+
   res.json({ success: true, data: out });
 });
 
@@ -269,6 +287,13 @@ exports.create = asyncHandler(async (req, res) => {
 
   // Single chokepoint: Socket.IO broadcast + Google Sheet append (non-blocking)
   onLeadCreated(lead.id, { source: 'manual_create' });
+
+  const { logActivity } = require('../utils/auditLog');
+  await logActivity(req, {
+    entity: 'lead', entity_id: lead.id, action: 'created',
+    new_value: full_name || phone || email || '(unnamed)',
+    metadata: { source: source || 'manual', assigned_to_user_id: assigned_to_user_id || null, campaign_label, product_tag },
+  });
 
   res.status(201).json({ success: true, data: { id: lead.id, assignment } });
 });

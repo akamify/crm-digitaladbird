@@ -107,16 +107,21 @@ exports.login = asyncHandler(async (req, res) => {
   const accessToken = signAccessToken(user);
   const refresh     = signRefreshToken(user);
 
-  await query(
+  const { rows: [sess] } = await query(
     `INSERT INTO auth_sessions (user_id, refresh_token_hash, user_agent, ip_address, expires_at)
-       VALUES ($1, $2, $3, $4, $5)`,
+       VALUES ($1, $2, $3, $4, $5)
+     RETURNING id`,
     [user.id, refresh.hash, req.headers['user-agent'] || null, req.ip, refresh.expiresAt]
   );
   await query(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [user.id]);
-  await query(
-    `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata, ip_address)
-       VALUES ($1, 'user', $1, 'login', '{"method":"direct"}', $2)`,
-    [user.id, req.ip]
+
+  // Audit trail — rich row in activity_logs (UA + session linkage for
+  // session-duration computation in the Activity Logs page).
+  const { logActivity } = require('../utils/auditLog');
+  await logActivity(
+    { user: { id: user.id, name: user.full_name, role: user.role }, ip: req.ip, headers: req.headers },
+    { entity: 'session', entity_id: user.id, action: 'login', session_id: sess.id,
+      metadata: { method: 'direct', session_id: sess.id, email: user.email } }
   );
 
   res.json({
@@ -296,9 +301,31 @@ exports.refresh = asyncHandler(async (req, res) => {
 
 exports.logout = asyncHandler(async (req, res) => {
   const raw = req.body.refreshToken;
+  let sessionId = null;
+  let durationSecs = null;
   if (raw) {
-    await query(`UPDATE auth_sessions SET revoked_at = NOW() WHERE refresh_token_hash = $1`, [hashToken(raw)]);
+    // Capture the session row before revoking so we can compute duration
+    // and link the audit entry to the same session_id as the login row.
+    const { rows: [sess] } = await query(
+      `SELECT id, user_id, created_at FROM auth_sessions
+        WHERE refresh_token_hash = $1 AND revoked_at IS NULL LIMIT 1`,
+      [hashToken(raw)]
+    );
+    if (sess) {
+      sessionId = sess.id;
+      durationSecs = Math.max(0, Math.floor((Date.now() - new Date(sess.created_at).getTime()) / 1000));
+      await query(`UPDATE auth_sessions SET revoked_at = NOW() WHERE id = $1`, [sess.id]);
+    }
   }
+  // Audit trail. req.user may be null if token already expired; that's OK.
+  const { logActivity } = require('../utils/auditLog');
+  await logActivity(req, {
+    entity: 'session',
+    entity_id: req.user?.id || null,
+    action: 'logout',
+    session_id: sessionId,
+    metadata: { session_id: sessionId, duration_seconds: durationSecs },
+  });
   res.json({ success: true });
 });
 

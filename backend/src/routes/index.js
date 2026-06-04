@@ -117,6 +117,15 @@ router.post('/meta/pages', authenticate, requireRole('super_admin'), asyncHandle
        RETURNING id, page_id, page_name`,
     [page_id, resolvedName, page_access_token]
   );
+  {
+    const { logActivity } = require('../utils/auditLog');
+    await logActivity(req, {
+      entity: 'meta_page', entity_id: page_id, action: 'added_or_updated',
+      new_value: resolvedName || page_id,
+      // never log the token itself — just record that one was set
+      metadata: { page_name: resolvedName, token_present: !!page_access_token, skip_validation: !!skip_validation },
+    });
+  }
   res.json({ success: true, data: r });
 }));
 
@@ -151,6 +160,14 @@ router.patch('/meta/pages/:pageId/token', authenticate, requireRole('super_admin
     [page_access_token, pageId]
   );
   if (!rowCount) throw new AppError(404, 'NOT_FOUND', 'Page not registered in CRM — use POST /meta/pages first');
+  {
+    const { logActivity } = require('../utils/auditLog');
+    await logActivity(req, {
+      entity: 'meta_page', entity_id: pageId, action: 'token_updated',
+      new_value: rows[0].page_name || pageId,
+      metadata: { page_id: pageId, page_name: rows[0].page_name }, // never log the token bytes
+    });
+  }
   res.json({ success: true, data: rows[0] });
 }));
 
@@ -706,6 +723,15 @@ router.post('/lead-requests/:id/approve', authenticate, requireRole('super_admin
 
   emitLeadRequest(fullyDone ? 'approved' : 'partially_approved', id);
 
+  // Audit trail
+  const { logActivity } = require('../utils/auditLog');
+  await logActivity(req, {
+    entity: 'lead_request', entity_id: id,
+    action: fullyDone ? 'approved' : 'partially_approved',
+    old_value: 'pending', new_value: finalStatus,
+    metadata: { requester: request.full_name, requester_id: request.user_id, requested: request.quantity, delivered: assigned, note: req.body.note || null },
+  });
+
   res.json({
     success: true,
     data: {
@@ -740,6 +766,14 @@ router.post('/lead-requests/:id/reject', authenticate, requireRole('super_admin'
   );
   if (!r) throw new AppError(404, 'NOT_FOUND', 'Request not found or already resolved');
   emitLeadRequest('rejected', r.id);
+  {
+    const { logActivity } = require('../utils/auditLog');
+    await logActivity(req, {
+      entity: 'lead_request', entity_id: id, action: 'rejected',
+      old_value: 'pending', new_value: 'rejected',
+      metadata: { note: req.body.note || null },
+    });
+  }
   res.json({ success: true });
 }));
 
@@ -1016,26 +1050,51 @@ router.get('/admin/activity-logs', authenticate, requireRole('super_admin'), asy
   const pageSize = Math.min(100, Math.max(10, parseInt(req.query.page_size || '25', 10)));
   const offset = (page - 1) * pageSize;
 
+  // Filters get applied to a UNION view that covers BOTH the legacy
+  // audit_logs table (562+ historical rows) AND the canonical
+  // activity_logs table (where every new event is recorded going
+  // forward via utils/auditLog.js). Activity logs is the richer table;
+  // audit_logs entries are normalised so columns match.
   let where = 'WHERE 1=1';
   const params = [];
-
   if (req.query.user_id) { params.push(req.query.user_id); where += ` AND a.user_id = $${params.length}`; }
   if (req.query.entity)  { params.push(req.query.entity);  where += ` AND a.entity = $${params.length}`; }
   if (req.query.action)  { params.push(req.query.action);  where += ` AND a.action = $${params.length}`; }
   if (req.query.from)    { params.push(req.query.from);    where += ` AND a.created_at >= $${params.length}`; }
   if (req.query.to)      { params.push(req.query.to);      where += ` AND a.created_at <= $${params.length}`; }
 
+  const unionView = `
+    (
+      SELECT al.id::text AS id, al.user_id, al.user_name, al.user_role,
+             al.entity, al.entity_id, al.action, al.metadata, al.ip_address::text AS ip_address,
+             al.old_value, al.new_value, al.user_agent, al.session_id::text AS session_id,
+             al.created_at
+        FROM activity_logs al
+      UNION ALL
+      SELECT 'a' || aud.id::text AS id, aud.user_id,
+             u.full_name AS user_name, u.role::text AS user_role,
+             aud.entity, aud.entity_id::text AS entity_id, aud.action,
+             aud.metadata, aud.ip_address::text AS ip_address,
+             NULL::text AS old_value, NULL::text AS new_value,
+             NULL::text AS user_agent, NULL::text AS session_id,
+             aud.created_at
+        FROM audit_logs aud
+        LEFT JOIN users u ON u.id = aud.user_id
+    )
+  `;
+
   const countParams = [...params];
   const { rows: [{ total }] } = await query(
-    `SELECT COUNT(*) AS total FROM audit_logs a ${where}`, countParams
+    `SELECT COUNT(*) AS total FROM ${unionView} a ${where}`, countParams
   );
 
   params.push(pageSize, offset);
   const { rows } = await query(`
-    SELECT a.id, a.user_id, u.full_name AS user_name, u.role AS user_role,
-           a.entity, a.entity_id, a.action, a.metadata, a.ip_address, a.created_at
-      FROM audit_logs a
-      LEFT JOIN users u ON u.id = a.user_id
+    SELECT a.id, a.user_id, a.user_name, a.user_role,
+           a.entity, a.entity_id, a.action, a.metadata, a.ip_address,
+           a.old_value, a.new_value, a.user_agent, a.session_id,
+           a.created_at
+      FROM ${unionView} a
       ${where}
      ORDER BY a.created_at DESC
      LIMIT $${params.length - 1} OFFSET $${params.length}
@@ -3747,6 +3806,15 @@ router.post('/leads/:id/workflow/remark', authenticate, asyncHandler(async (req,
     INSERT INTO lead_workflow_history (lead_id, user_id, step, action, new_value)
     VALUES ($1, $2, 1, 'remark_saved', $3)
   `, [leadId, req.user.id, remark_status]);
+
+  {
+    const { logActivity } = require('../utils/auditLog');
+    await logActivity(req, {
+      entity: 'lead', entity_id: leadId, action: 'remark_saved',
+      new_value: remark_status,
+      metadata: { step: 1 },
+    });
+  }
 
   res.json({ success: true, data: wf });
 }));

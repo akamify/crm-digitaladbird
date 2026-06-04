@@ -7,6 +7,30 @@ import { Skeleton, EmptyState } from '@/components/ui/Modal';
 import { useActivityLogs } from '@/hooks/useAdmin';
 import { fmtDate, clsx, humanize } from '@/lib/format';
 
+/**
+ * Compact device label from a raw User-Agent header.
+ * Returns something like "Chrome / Windows" or "Safari / iPhone".
+ * Keeps the rendering cheap — full UA is still in `title=` for the column cell.
+ */
+function deviceFromUA(ua: string | null | undefined): string {
+  if (!ua) return '';
+  let browser = 'Browser';
+  if (/Edg\//.test(ua)) browser = 'Edge';
+  else if (/OPR\//.test(ua) || /Opera/i.test(ua)) browser = 'Opera';
+  else if (/Chrome\//.test(ua)) browser = 'Chrome';
+  else if (/Firefox\//.test(ua)) browser = 'Firefox';
+  else if (/Safari/.test(ua)) browser = 'Safari';
+  else if (/curl\//i.test(ua)) browser = 'curl';
+  else if (/Postman/i.test(ua)) browser = 'Postman';
+  let os = '';
+  if (/Windows NT/.test(ua)) os = 'Windows';
+  else if (/Android/.test(ua)) os = 'Android';
+  else if (/iPhone|iPad/.test(ua)) os = /iPad/.test(ua) ? 'iPad' : 'iPhone';
+  else if (/Mac OS X/.test(ua)) os = 'macOS';
+  else if (/Linux/.test(ua)) os = 'Linux';
+  return os ? `${browser} / ${os}` : browser;
+}
+
 export default function ActivityPage() {
   return (
     <AppShell title="Activity Logs" subtitle="Full audit trail of all system activity" roles={['super_admin']}>
@@ -45,23 +69,32 @@ function ActivityInner() {
         </div>
         <select className="input w-36" value={entity} onChange={e => { setEntity(e.target.value); setPage(1); }}>
           <option value="">All Entities</option>
+          <option value="session">Session</option>
           <option value="user">User</option>
           <option value="lead">Lead</option>
+          <option value="lead_request">Lead Request</option>
+          <option value="lead_ingestion">Lead Ingest</option>
+          <option value="meta_page">Meta Page</option>
           <option value="campaign">Campaign</option>
           <option value="broadcast">Broadcast</option>
-          <option value="auth">Auth</option>
           <option value="sheets">Sheets</option>
           <option value="distribution">Distribution</option>
         </select>
-        <select className="input w-36" value={action} onChange={e => { setAction(e.target.value); setPage(1); }}>
+        <select className="input w-40" value={action} onChange={e => { setAction(e.target.value); setPage(1); }}>
           <option value="">All Actions</option>
-          <option value="create">Create</option>
-          <option value="update">Update</option>
-          <option value="delete">Delete</option>
           <option value="login">Login</option>
+          <option value="logout">Logout</option>
+          <option value="created">Created</option>
+          <option value="reassigned">Reassigned</option>
+          <option value="approved">Approved</option>
+          <option value="partially_approved">Partially Approved</option>
+          <option value="rejected">Rejected</option>
+          <option value="remark_saved">Remark Saved</option>
+          <option value="added_or_updated">Page Added/Updated</option>
+          <option value="token_updated">Token Updated</option>
           <option value="block">Block</option>
           <option value="unblock">Unblock</option>
-          <option value="assign">Assign</option>
+          <option value="delete">Delete</option>
         </select>
       </div>
 
@@ -78,22 +111,42 @@ function ActivityInner() {
                 <th className="py-2 pr-3 font-medium">Role</th>
                 <th className="py-2 pr-3 font-medium">Action</th>
                 <th className="py-2 pr-3 font-medium">Entity</th>
-                <th className="py-2 pr-3 font-medium">IP</th>
+                <th className="py-2 pr-3 font-medium">Old → New</th>
+                <th className="py-2 pr-3 font-medium">IP / Device</th>
                 <th className="py-2 font-medium">Details</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
               {filtered.map(log => (
-                <tr key={log.id} className="hover:bg-slate-50">
+                <tr key={log.id} className="hover:bg-slate-50 align-top">
                   <td className="py-3 pr-3 text-xs text-slate-500 whitespace-nowrap">{fmtDate(log.created_at, 'dd MMM HH:mm:ss')}</td>
-                  <td className="py-3 pr-3 font-medium text-slate-900">{log.user_name || '—'}</td>
-                  <td className="py-3 pr-3"><span className="chip-slate">{humanize(log.user_role)}</span></td>
-                  <td className="py-3 pr-3"><span className={clsx('chip',
-                    log.action.includes('create') ? 'chip-green' : log.action.includes('delete') ? 'chip-red' : log.action.includes('block') ? 'chip-red' : 'chip-blue'
+                  <td className="py-3 pr-3 font-medium text-slate-900 whitespace-nowrap">{log.user_name || '—'}</td>
+                  <td className="py-3 pr-3"><span className="chip-slate">{humanize(log.user_role || '')}</span></td>
+                  <td className="py-3 pr-3 whitespace-nowrap"><span className={clsx('chip',
+                    /(create|approve|login)/.test(log.action) ? 'chip-green'
+                    : /(delete|reject|logout|block)/.test(log.action) ? 'chip-red'
+                    : /(reassign|update|partial)/.test(log.action) ? 'chip-amber'
+                    : 'chip-blue'
                   )}>{humanize(log.action)}</span></td>
-                  <td className="py-3 pr-3 text-slate-600">{log.entity}</td>
-                  <td className="py-3 pr-3 text-xs text-slate-400 tabular-nums">{log.ip_address || '—'}</td>
-                  <td className="py-3 text-xs text-slate-500 max-w-[200px] truncate">{log.metadata ? JSON.stringify(log.metadata).slice(0, 100) : '—'}</td>
+                  <td className="py-3 pr-3 text-slate-600">
+                    <div>{humanize(log.entity || '')}</div>
+                    {log.entity_id && <div className="text-[10px] text-slate-400 font-mono truncate max-w-[110px]" title={log.entity_id}>{log.entity_id.slice(0,8)}…</div>}
+                  </td>
+                  <td className="py-3 pr-3 text-xs text-slate-600 max-w-[180px]">
+                    {(log.old_value || log.new_value) ? (
+                      <div className="space-y-0.5">
+                        {log.old_value && <div className="truncate" title={log.old_value}><span className="text-slate-400">−</span> {log.old_value}</div>}
+                        {log.new_value && <div className="truncate font-medium text-slate-800" title={log.new_value}><span className="text-emerald-500">+</span> {log.new_value}</div>}
+                      </div>
+                    ) : '—'}
+                  </td>
+                  <td className="py-3 pr-3 text-xs whitespace-nowrap">
+                    <div className="text-slate-500 tabular-nums">{log.ip_address || '—'}</div>
+                    {log.user_agent && <div className="text-[10px] text-slate-400 truncate max-w-[160px]" title={log.user_agent}>{deviceFromUA(log.user_agent)}</div>}
+                  </td>
+                  <td className="py-3 text-xs text-slate-500 max-w-[260px] truncate" title={log.metadata ? JSON.stringify(log.metadata) : ''}>
+                    {log.metadata && Object.keys(log.metadata).length > 0 ? JSON.stringify(log.metadata).slice(0, 110) : '—'}
+                  </td>
                 </tr>
               ))}
             </tbody>

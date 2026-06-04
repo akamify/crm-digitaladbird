@@ -26,6 +26,13 @@ export interface ActivityLog {
   id: string; user_id: string; user_name: string; user_role: string;
   entity: string; entity_id: string; action: string;
   metadata: Record<string, unknown>; ip_address: string; created_at: string;
+  /** Set when the action mutated a known value — admin can see "remark: cnr → so" at-a-glance */
+  old_value?: string | null;
+  new_value?: string | null;
+  /** Raw User-Agent header — frontend can show "Chrome on Windows" via small parser if desired */
+  user_agent?: string | null;
+  /** Links a row to an auth_sessions entry; lets login/logout pairs be matched */
+  session_id?: string | null;
 }
 
 export function useActivityLogs(params: { page?: number; page_size?: number; entity?: string; action?: string; user_id?: string }) {
