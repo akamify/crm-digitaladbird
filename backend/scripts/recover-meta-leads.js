@@ -102,10 +102,13 @@ async function fetchFormLeadsSince(formId, token) {
     access_token: token,
     fields: 'id,created_time,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id,field_data,platform',
     limit: 100,
-    filtering: JSON.stringify([{ field: 'time_created', operator: 'GREATER_THAN', value: SINCE }]),
   };
+  // HOURS_BACK=0 means "fetch ALL historical leads, no time filter" — first-time full backfill.
+  if (HOURS_BACK > 0) {
+    params.filtering = JSON.stringify([{ field: 'time_created', operator: 'GREATER_THAN', value: SINCE }]);
+  }
   let pages = 0;
-  while (url && pages < 50) {
+  while (url && pages < 200) {
     const resp = await axios.get(url, { params, timeout: 30000 });
     out.push(...(resp.data?.data || []));
     url = resp.data?.paging?.next || null;
