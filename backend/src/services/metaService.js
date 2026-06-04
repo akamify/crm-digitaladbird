@@ -19,6 +19,7 @@ const { assignLead } = require('./leadDistributionService');
 const { isDistributionActive } = require('./distributionScheduler');
 const { appendLead: sheetAppend } = require('./googleSheetsService');
 const { onLeadCreated, findExistingByContact } = require('./leadEventService');
+const { validateLead } = require('./leadValidator');
 
 /** Constant-time HMAC compare of Meta webhook payloads. */
 function verifySignature(rawBody, signatureHeader) {
@@ -107,6 +108,22 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
 
   const fields = parseFieldData(detail.field_data);
   logger.info({ ...ctx, step: 'E.parsed', has_name: !!fields.full_name, has_phone: !!fields.phone, has_email: !!fields.email }, '[meta-ingest]');
+
+  // Gate: drop obviously-fake leads (test names, fake phones, no contact)
+  // BEFORE we burn dedup-check time + distribution slot on them.
+  const v = validateLead(fields);
+  if (!v.valid) {
+    logger.warn({ ...ctx, step: 'E2.validation_rejected', reason: v.reason, phone: fields.phone, email: fields.email, full_name: fields.full_name }, '[meta-ingest] LEAD REJECTED — looks fake/test/invalid');
+    // Audit row so admin can count rejections per day
+    try {
+      await query(
+        `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata)
+           VALUES(NULL, 'lead_ingestion', NULL, 'rejected', $1)`,
+        [JSON.stringify({ reason: v.reason, source: 'meta_webhook', leadgen_id, page_id, form_id, phone: fields.phone, email: fields.email })],
+      );
+    } catch { /* audit log table may not exist in dev; non-fatal */ }
+    return { status: 'rejected', reason: v.reason };
+  }
 
   // Phone / email cross-dedup — same person submitting multiple Meta forms
   // creates separate meta_lead_id values but should not create separate leads.

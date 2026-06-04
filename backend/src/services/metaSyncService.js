@@ -18,6 +18,7 @@ const logger = require('../utils/logger');
 const { assignLead } = require('./leadDistributionService');
 const { isDistributionActive } = require('./distributionScheduler');
 const { onLeadCreated, findExistingByContact } = require('./leadEventService');
+const { validateLead } = require('./leadValidator');
 
 const GRAPH_BASE = `https://graph.facebook.com/${config.meta.graphVersion}`;
 
@@ -229,6 +230,20 @@ async function ingestGraphLead(lead, formId) {
 
   // Parse field data
   const fields = parseFieldData(lead.field_data || []);
+
+  // Same fake/test/invalid filter the webhook path uses — see leadValidator.js.
+  const v = validateLead(fields);
+  if (!v.valid) {
+    logger.warn({ leadgen_id: leadgenId, formId, reason: v.reason, phone: fields.phone, email: fields.email }, '[sync] lead rejected — invalid/test pattern');
+    try {
+      await query(
+        `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata)
+           VALUES(NULL, 'lead_ingestion', NULL, 'rejected', $1)`,
+        [JSON.stringify({ reason: v.reason, source: 'meta_sync', leadgen_id: leadgenId, form_id: formId, phone: fields.phone, email: fields.email })],
+      );
+    } catch { /* non-fatal */ }
+    return { status: 'rejected', reason: v.reason };
+  }
 
   // Cross-dedup by phone/email so the same person submitting multiple Meta
   // forms doesn't generate a duplicate CRM lead.

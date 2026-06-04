@@ -1413,7 +1413,13 @@ router.get('/admin/live-stats', authenticate, requireRole('super_admin'), respon
       (SELECT COUNT(*) FROM lead_remarks WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS today_remarks,
       (SELECT COUNT(DISTINCT user_id) FROM audit_logs WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS today_active_users,
       (SELECT COUNT(*) FROM broadcast_messages WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS today_broadcasts,
-      (SELECT COUNT(*) FROM admin_notifications WHERE is_read = FALSE) AS unread_notifications
+      (SELECT COUNT(*) FROM admin_notifications WHERE is_read = FALSE) AS unread_notifications,
+      -- Ingestion gate: leads rejected today (fake phone / test pattern / no contact) — see services/leadValidator.js
+      (SELECT COUNT(*) FROM audit_logs
+         WHERE entity = 'lead_ingestion' AND action = 'rejected'
+           AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS today_rejected_leads,
+      -- Total dedup-rejected sync events from meta_sync_log (lifetime)
+      (SELECT COALESCE(SUM(leads_duplicate), 0)::int FROM meta_sync_log) AS lifetime_duplicate_skipped
   `);
   // Cast all to numbers
   const data = {};
