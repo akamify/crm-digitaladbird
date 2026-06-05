@@ -81,18 +81,36 @@ exports.login = asyncHandler(async (req, res) => {
     user = rows[0];
   }
 
+  // Audit failed-login attempts (no user found, inactive account, or bad
+  // password). Each failure writes an activity_logs row so super_admin can
+  // see brute-force attempts in the Activity Logs view.
+  const auditFailedLogin = async (reason, foundUserId = null) => {
+    const { logActivity } = require('../utils/auditLog');
+    await logActivity(req, {
+      entity: 'session', entity_id: foundUserId,
+      action: 'login_failed',
+      metadata: { reason, identifier: raw, role: selectedRole || null },
+    });
+  };
+
   if (!user) {
+    await auditFailedLogin('no_account');
     throw new AppError(401, 'INVALID_CREDENTIALS', 'No account found. Check your email, mobile, or CP ID.');
   }
   if (user.status !== 'active') {
+    await auditFailedLogin('user_inactive', user.id);
     throw new AppError(403, 'USER_INACTIVE', 'Your account is inactive. Contact your administrator.');
   }
   if (!user.password_hash) {
+    await auditFailedLogin('password_not_set', user.id);
     throw new AppError(400, 'PASSWORD_NOT_SET', 'No password configured for this account.');
   }
 
   const ok = await bcrypt.compare(password, user.password_hash);
-  if (!ok) throw new AppError(401, 'INVALID_CREDENTIALS', 'Incorrect password.');
+  if (!ok) {
+    await auditFailedLogin('bad_password', user.id);
+    throw new AppError(401, 'INVALID_CREDENTIALS', 'Incorrect password.');
+  }
 
   // Enforce role matching when the frontend sends a selected role
   if (selectedRole) {
@@ -107,21 +125,49 @@ exports.login = asyncHandler(async (req, res) => {
   const accessToken = signAccessToken(user);
   const refresh     = signRefreshToken(user);
 
+  // Security signal: is this UA new for this user? (no prior auth_sessions
+  // row with the same UA). And: are there other active sessions right now?
+  const currentUA = req.headers['user-agent'] || null;
+  let isNewDevice = false;
+  let otherActiveSessions = 0;
+  if (currentUA) {
+    const { rows: [seen] } = await query(
+      `SELECT COUNT(*)::int AS n FROM auth_sessions
+        WHERE user_id = $1 AND user_agent = $2`,
+      [user.id, currentUA]
+    );
+    isNewDevice = (seen.n === 0);
+  } else {
+    isNewDevice = true;
+  }
+  const { rows: [act] } = await query(
+    `SELECT COUNT(*)::int AS n FROM auth_sessions
+      WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > NOW()`,
+    [user.id]
+  );
+  otherActiveSessions = act.n;  // not yet incremented by the new INSERT
+
   const { rows: [sess] } = await query(
     `INSERT INTO auth_sessions (user_id, refresh_token_hash, user_agent, ip_address, expires_at)
        VALUES ($1, $2, $3, $4, $5)
      RETURNING id`,
-    [user.id, refresh.hash, req.headers['user-agent'] || null, req.ip, refresh.expiresAt]
+    [user.id, refresh.hash, currentUA, req.ip, refresh.expiresAt]
   );
   await query(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [user.id]);
 
-  // Audit trail — rich row in activity_logs (UA + session linkage for
-  // session-duration computation in the Activity Logs page).
+  // Audit trail — rich row in activity_logs. Includes security signals so
+  // super_admin can spot new-device logins + concurrent sessions.
   const { logActivity } = require('../utils/auditLog');
   await logActivity(
     { user: { id: user.id, name: user.full_name, role: user.role }, ip: req.ip, headers: req.headers },
     { entity: 'session', entity_id: user.id, action: 'login', session_id: sess.id,
-      metadata: { method: 'direct', session_id: sess.id, email: user.email } }
+      metadata: {
+        method: 'direct',
+        session_id: sess.id,
+        email: user.email,
+        new_device: isNewDevice,
+        other_active_sessions: otherActiveSessions,
+      } }
   );
 
   res.json({
