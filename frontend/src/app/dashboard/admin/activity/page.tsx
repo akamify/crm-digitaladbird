@@ -31,6 +31,15 @@ function deviceFromUA(ua: string | null | undefined): string {
   return os ? `${browser} / ${os}` : browser;
 }
 
+/** Compact "1h 23m" / "47m 12s" / "8s" style duration. */
+function formatDur(secs: number): string {
+  if (secs == null || !isFinite(secs)) return '';
+  if (secs < 60) return `${secs}s`;
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+  const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60);
+  return `${h}h ${m}m`;
+}
+
 export default function ActivityPage() {
   return (
     <AppShell title="Activity Logs" subtitle="Full audit trail of all system activity" roles={['super_admin']}>
@@ -111,6 +120,7 @@ function ActivityInner() {
                 <th className="py-2 pr-3 font-medium">Role</th>
                 <th className="py-2 pr-3 font-medium">Action</th>
                 <th className="py-2 pr-3 font-medium">Entity</th>
+                <th className="py-2 pr-3 font-medium">Session</th>
                 <th className="py-2 pr-3 font-medium">Old → New</th>
                 <th className="py-2 pr-3 font-medium">IP / Device</th>
                 <th className="py-2 font-medium">Details</th>
@@ -131,6 +141,22 @@ function ActivityInner() {
                   <td className="py-3 pr-3 text-slate-600">
                     <div>{humanize(log.entity || '')}</div>
                     {log.entity_id && <div className="text-[10px] text-slate-400 font-mono truncate max-w-[110px]" title={log.entity_id}>{log.entity_id.slice(0,8)}…</div>}
+                  </td>
+                  <td className="py-3 pr-3 text-xs text-slate-600 max-w-[200px] whitespace-nowrap">
+                    {log.session_id ? (
+                      <div className="space-y-0.5">
+                        {log.login_at  && <div><span className="text-slate-400">Login: </span>{fmtDate(log.login_at,  'dd MMM HH:mm:ss')}</div>}
+                        {log.logout_at && <div><span className="text-slate-400">Logout: </span>{fmtDate(log.logout_at, 'dd MMM HH:mm:ss')}</div>}
+                        {log.last_activity_at && !log.logout_at && (
+                          <div><span className="text-slate-400">Last act: </span>{fmtDate(log.last_activity_at, 'dd MMM HH:mm:ss')}</div>
+                        )}
+                        {typeof log.session_duration_secs === 'number' && (
+                          <div className={clsx('font-medium', log.logout_at ? 'text-slate-700' : 'text-emerald-600')}>
+                            {log.logout_at ? 'Duration: ' : 'Live: '}{formatDur(log.session_duration_secs)}
+                          </div>
+                        )}
+                      </div>
+                    ) : '—'}
                   </td>
                   <td className="py-3 pr-3 text-xs text-slate-600 max-w-[180px]">
                     {(log.old_value || log.new_value) ? (

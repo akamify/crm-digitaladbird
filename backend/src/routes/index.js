@@ -1093,8 +1093,22 @@ router.get('/admin/activity-logs', authenticate, requireRole('super_admin'), asy
     SELECT a.id, a.user_id, a.user_name, a.user_role,
            a.entity, a.entity_id, a.action, a.metadata, a.ip_address,
            a.old_value, a.new_value, a.user_agent, a.session_id,
-           a.created_at
+           a.created_at,
+           -- Session enrichment: when a row carries a session_id, expose
+           -- login_at / logout_at / last_activity_at / duration_secs so the
+           -- Activity Logs UI can show the full session lifecycle in one row.
+           s.created_at        AS login_at,
+           s.revoked_at        AS logout_at,
+           s.last_activity_at  AS last_activity_at,
+           s.last_activity_ip  AS last_activity_ip,
+           CASE
+             WHEN s.id IS NULL THEN NULL
+             WHEN s.revoked_at IS NOT NULL
+               THEN EXTRACT(EPOCH FROM (s.revoked_at - s.created_at))::int
+             ELSE EXTRACT(EPOCH FROM (NOW() - s.created_at))::int
+           END AS session_duration_secs
       FROM ${unionView} a
+      LEFT JOIN auth_sessions s ON a.session_id IS NOT NULL AND s.id::text = a.session_id
       ${where}
      ORDER BY a.created_at DESC
      LIMIT $${params.length - 1} OFFSET $${params.length}
@@ -1146,6 +1160,17 @@ router.get('/admin/export/leads', authenticate, requireRole('super_admin'), asyn
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', `attachment; filename=leads_export_${new Date().toISOString().slice(0,10)}.csv`);
   res.send(csvRows.join('\n'));
+
+  // Audit the download — record what filters were applied + how many rows
+  // left the system. Don't block response on this.
+  try {
+    const { logActivity } = require('../utils/auditLog');
+    await logActivity(req, {
+      entity: 'export', action: 'leads_csv_downloaded',
+      new_value: `${rows.length} rows`,
+      metadata: { filters: req.query, row_count: rows.length },
+    });
+  } catch { /* non-fatal */ }
 }));
 
 function esc(v) {
@@ -2728,15 +2753,22 @@ router.post('/admin/campaigns', authenticate, requireRole('super_admin'), asyncH
      VALUES ($1, $2, $3, $4, $5, true, NOW()) RETURNING *`,
     [campaignId, campaign_name, internal_label || null, category || null, ad_account_id || null]
   );
-  await query(`INSERT INTO activity_logs(user_id, user_name, user_role, entity, entity_id, action, metadata, ip_address)
-    VALUES($1,$2,$3,'campaign',$4,'create',$5,$6)`,
-    [req.user.id, req.user.full_name, req.user.role, c.id, JSON.stringify({ campaign_name }), req.ip]);
+  {
+    const { logActivity } = require('../utils/auditLog');
+    await logActivity(req, {
+      entity: 'campaign', entity_id: c.id, action: 'created',
+      new_value: campaign_name,
+      metadata: { campaign_id: campaignId, internal_label, category, ad_account_id },
+    });
+  }
   res.status(201).json({ success: true, data: c });
 }));
 
 router.patch('/admin/campaigns/:id', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { campaign_name, internal_label, is_active, category } = req.body;
+  // Capture before-state for the audit diff.
+  const { rows: [prev] } = await query(`SELECT campaign_name, is_active FROM meta_campaigns WHERE id = $1`, [id]);
   const sets = []; const vals = []; let idx = 0;
   if (campaign_name !== undefined) { sets.push(`campaign_name = $${++idx}`); vals.push(campaign_name); }
   if (internal_label !== undefined) { sets.push(`internal_label = $${++idx}`); vals.push(internal_label); }
@@ -2748,18 +2780,35 @@ router.patch('/admin/campaigns/:id', authenticate, requireRole('super_admin'), a
     `UPDATE meta_campaigns SET ${sets.join(', ')} WHERE id = $${vals.length} RETURNING *`, vals
   );
   if (!c) throw new AppError(404, 'NOT_FOUND', 'Campaign not found');
-  await query(`INSERT INTO activity_logs(user_id, user_name, user_role, entity, entity_id, action, metadata, ip_address)
-    VALUES($1,$2,$3,'campaign',$4,'update',$5,$6)`,
-    [req.user.id, req.user.full_name, req.user.role, id, JSON.stringify(req.body), req.ip]);
+  // Was this specifically a pause/resume? Surface as a distinct action.
+  let action = 'updated';
+  if (typeof is_active === 'boolean' && prev && prev.is_active !== is_active) {
+    action = is_active ? 'resumed' : 'paused';
+  }
+  {
+    const { logActivity } = require('../utils/auditLog');
+    await logActivity(req, {
+      entity: 'campaign', entity_id: id, action,
+      old_value: prev?.campaign_name || null,
+      new_value: c.campaign_name,
+      metadata: { changed: req.body },
+    });
+  }
   res.json({ success: true, data: c });
 }));
 
 router.delete('/admin/campaigns/:id', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { rows: [prev] } = await query(`SELECT campaign_name FROM meta_campaigns WHERE id = $1`, [req.params.id]);
   const { rowCount } = await query(`DELETE FROM meta_campaigns WHERE id = $1`, [req.params.id]);
   if (rowCount === 0) throw new AppError(404, 'NOT_FOUND', 'Campaign not found');
-  await query(`INSERT INTO activity_logs(user_id, user_name, user_role, entity, entity_id, action, metadata, ip_address)
-    VALUES($1,$2,$3,'campaign',$4,'delete',$5,$6)`,
-    [req.user.id, req.user.full_name, req.user.role, req.params.id, '{}', req.ip]);
+  {
+    const { logActivity } = require('../utils/auditLog');
+    await logActivity(req, {
+      entity: 'campaign', entity_id: req.params.id, action: 'deleted',
+      old_value: prev?.campaign_name || req.params.id,
+      metadata: {},
+    });
+  }
   res.json({ success: true, data: { message: 'Campaign deleted' } });
 }));
 
@@ -3031,13 +3080,23 @@ router.post('/admin/sheets/configs/:id/test', authenticate, requireRole('super_a
 // Manual sync from a specific config (must be the active one for now)
 router.post('/admin/sheets/configs/:id/sync-now', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { rows: [row] } = await query(`SELECT id, is_active FROM integration_configs WHERE id = $1 AND kind = 'google_sheets'`, [id]);
+  const { rows: [row] } = await query(`SELECT id, is_active, label FROM integration_configs WHERE id = $1 AND kind = 'google_sheets'`, [id]);
   if (!row) throw new AppError(404, 'NOT_FOUND', 'Config not found');
   if (!row.is_active) throw new AppError(409, 'NOT_ACTIVE', 'Activate this config first, then sync.');
+  const { logActivity } = require('../utils/auditLog');
   try {
     const r = await sheetsSvc.syncAllLeads();
+    await logActivity(req, {
+      entity: 'sheet_sync', entity_id: id, action: 'manual_sync_completed',
+      new_value: `${r.synced || 0} rows synced`,
+      metadata: { config_label: row.label, synced: r.synced || 0 },
+    });
     res.json({ success: true, data: { synced: r.synced || 0 } });
   } catch (err) {
+    await logActivity(req, {
+      entity: 'sheet_sync', entity_id: id, action: 'manual_sync_failed',
+      metadata: { config_label: row.label, error: err.message },
+    });
     res.status(502).json({ success: false, error: { code: 'SHEETS_SYNC_FAILED', message: err.message } });
   }
 }));
@@ -3850,6 +3909,16 @@ router.post('/leads/:id/workflow/level', authenticate, asyncHandler(async (req, 
     VALUES ($1, $2, 2, 'level_saved', $3)
   `, [leadId, req.user.id, lead_level]);
 
+  {
+    const { logActivity } = require('../utils/auditLog');
+    await logActivity(req, {
+      entity: 'lead', entity_id: leadId, action: 'level_saved',
+      old_value: existing?.remark_status || null,
+      new_value: lead_level,
+      metadata: { step: 2 },
+    });
+  }
+
   res.json({ success: true, data: wf });
 }));
 
@@ -4008,6 +4077,15 @@ router.post('/leads/:id/workflow/conversion', authenticate, asyncHandler(async (
     INSERT INTO lead_workflow_history (lead_id, user_id, step, action, new_value, metadata)
     VALUES ($1, $2, 4, 'conversion_submitted', $3, $4)
   `, [leadId, req.user.id, customer_type, JSON.stringify({ total_payment, part_payment, services })]);
+
+  {
+    const { logActivity } = require('../utils/auditLog');
+    await logActivity(req, {
+      entity: 'lead', entity_id: leadId, action: 'converted',
+      new_value: customer_type,
+      metadata: { step: 4, total_payment, part_payment, services, followup_status },
+    });
+  }
 
   res.json({ success: true, data: conv });
 }));

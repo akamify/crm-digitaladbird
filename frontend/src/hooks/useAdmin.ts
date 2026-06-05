@@ -33,6 +33,12 @@ export interface ActivityLog {
   user_agent?: string | null;
   /** Links a row to an auth_sessions entry; lets login/logout pairs be matched */
   session_id?: string | null;
+  /** Session enrichment (joined from auth_sessions when session_id is set) */
+  login_at?: string | null;
+  logout_at?: string | null;
+  last_activity_at?: string | null;
+  last_activity_ip?: string | null;
+  session_duration_secs?: number | null;
 }
 
 export function useActivityLogs(params: { page?: number; page_size?: number; entity?: string; action?: string; user_id?: string }) {

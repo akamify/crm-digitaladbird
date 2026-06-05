@@ -53,8 +53,46 @@ async function authenticate(req, _res, next) {
     if (user.status !== 'active') throw new AppError(403, 'USER_INACTIVE', 'Account is not active');
 
     req.user = user;
+
+    // Bump last_activity_at on the user's most recent active session so
+    // Activity Logs can show "Last Activity Time" without a per-route hook.
+    // Throttled via an in-memory map to avoid hammering the DB on every
+    // React Query poll: we only write once per user per ACTIVITY_BUMP_MS.
+    // Fire-and-forget — never blocks the request and never throws back.
+    bumpSessionActivity(user.id, req.ip).catch(() => {});
+
     next();
   } catch (e) { next(e); }
+}
+
+const ACTIVITY_BUMP_MS = 30_000;   // write at most once per 30s per user
+const LAST_BUMPED = new Map();
+
+async function bumpSessionActivity(userId, ip) {
+  const now = Date.now();
+  const last = LAST_BUMPED.get(userId) || 0;
+  if (now - last < ACTIVITY_BUMP_MS) return;
+  LAST_BUMPED.set(userId, now);
+  // Cap the map size so it can't grow unbounded.
+  if (LAST_BUMPED.size > 1000) {
+    const oldest = LAST_BUMPED.keys().next().value;
+    LAST_BUMPED.delete(oldest);
+  }
+  try {
+    await query(
+      `UPDATE auth_sessions
+          SET last_activity_at = NOW(),
+              last_activity_ip = $2
+        WHERE user_id = $1
+          AND revoked_at IS NULL
+          AND id = (
+            SELECT id FROM auth_sessions
+             WHERE user_id = $1 AND revoked_at IS NULL
+             ORDER BY created_at DESC LIMIT 1
+          )`,
+      [userId, ip || null]
+    );
+  } catch { /* never block request on activity bump */ }
 }
 
 module.exports = { authenticate, invalidateUser };

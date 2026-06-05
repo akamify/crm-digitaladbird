@@ -300,34 +300,62 @@ exports.refresh = asyncHandler(async (req, res) => {
 });
 
 exports.logout = asyncHandler(async (req, res) => {
+  // /auth/logout has NO authenticate middleware (we accept refreshToken
+  // even when the access token has expired) — so req.user is null. To get
+  // a non-blank User Name in the audit log, resolve the user by JOINing
+  // auth_sessions → users using the refresh token hash.
   const raw = req.body.refreshToken;
   let sessionId = null;
   let durationSecs = null;
+  let auditUser = null;  // { id, name, role } pulled from auth_sessions JOIN
+
   if (raw) {
-    // Capture the session row before revoking so we can compute duration
-    // and link the audit entry to the same session_id as the login row.
     const { rows: [sess] } = await query(
-      `SELECT id, user_id, created_at FROM auth_sessions
-        WHERE refresh_token_hash = $1 AND revoked_at IS NULL LIMIT 1`,
+      `SELECT s.id, s.user_id, s.created_at, s.last_activity_at,
+              u.full_name, u.role
+         FROM auth_sessions s
+         JOIN users u ON u.id = s.user_id
+        WHERE s.refresh_token_hash = $1 AND s.revoked_at IS NULL
+        LIMIT 1`,
       [hashToken(raw)]
     );
     if (sess) {
       sessionId = sess.id;
       durationSecs = Math.max(0, Math.floor((Date.now() - new Date(sess.created_at).getTime()) / 1000));
+      auditUser = { id: sess.user_id, name: sess.full_name, role: sess.role };
       await query(`UPDATE auth_sessions SET revoked_at = NOW() WHERE id = $1`, [sess.id]);
     }
   }
-  // Audit trail. req.user may be null if token already expired; that's OK.
+
+  // Audit trail — pass a synthetic req-like shape so logActivity gets a
+  // proper user_name and user_role even though /auth/logout has no
+  // authenticate middleware.
   const { logActivity } = require('../utils/auditLog');
-  await logActivity(req, {
+  const syntheticReq = {
+    user: auditUser,                                      // null if session not found
+    ip: req.ip,
+    headers: req.headers,                                 // for user_agent capture
+  };
+  await logActivity(syntheticReq, {
     entity: 'session',
-    entity_id: req.user?.id || null,
+    entity_id: auditUser?.id || null,
     action: 'logout',
     session_id: sessionId,
-    metadata: { session_id: sessionId, duration_seconds: durationSecs },
+    metadata: {
+      session_id: sessionId,
+      duration_seconds: durationSecs,
+      duration_human: durationSecs != null ? formatDuration(durationSecs) : null,
+    },
   });
   res.json({ success: true });
 });
+
+function formatDuration(secs) {
+  if (secs < 60) return `${secs}s`;
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+  const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60);
+  return `${h}h ${m}m`;
+}
 
 exports.me = asyncHandler(async (req, res) => {
   const u = req.user;
