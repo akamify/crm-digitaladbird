@@ -42,4 +42,49 @@ function invalidateCache(pattern) {
 
 function clearAllCache() { cache.clear(); }
 
-module.exports = { responseCache, invalidateCache, clearAllCache };
+/**
+ * Bust every cached response that contributes to a lead-count number
+ * on any dashboard tile. Called from leadEventService.onLeadCreated()
+ * the moment a lead lands in the DB, so the next API request that the
+ * frontend makes (triggered by the lead:new socket event invalidating
+ * React Query) hits a MISS and re-runs the SQL — instead of getting
+ * the old cached body back for another 10-15 seconds.
+ *
+ * The patterns cover all known lead-counter endpoints. Adding a new
+ * lead-counter endpoint? Make sure its URL substring is matched here.
+ */
+const LEAD_COUNT_CACHE_PATTERNS = [
+  'reports/summary',
+  'reports/daily',
+  'reports/by-user',
+  'reports/funnel',
+  'reports/sources',
+  'admin/live-stats',
+  'admin/leads/fresh',
+  'admin/lead-sources',
+  'admin/meta/overview',
+  'admin/meta/pages-enriched',
+  'admin/meta/forms-enriched',
+  'admin/meta/campaigns-enriched',
+  'admin/analytics/overview',
+  'admin/analytics/conversions',
+  'admin/sheets/stats',
+  'distribution/stats',
+  'integrations/status',
+];
+
+function bustLeadCountersCache() {
+  let dropped = 0;
+  for (const key of [...cache.keys()]) {
+    for (const pat of LEAD_COUNT_CACHE_PATTERNS) {
+      if (key.includes(pat)) {
+        cache.delete(key);
+        dropped++;
+        break;
+      }
+    }
+  }
+  return dropped;
+}
+
+module.exports = { responseCache, invalidateCache, clearAllCache, bustLeadCountersCache };

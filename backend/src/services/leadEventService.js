@@ -73,6 +73,22 @@ function onLeadCreated(leadId, { source = 'unknown' } = {}) {
   // Lazy require to avoid a circular dep with metaService (which requires
   // googleSheetsService which requires this file via socketService).
   const sheetsSvc = require('./googleSheetsService');
+  const { bustLeadCountersCache } = require('../middleware/cache');
+
+  // Server-side cache bust FIRST — before the socket emit. Reason: the
+  // frontend reacts to lead:new by invalidating React Query and refetching.
+  // If we emit socket → frontend refetches → backend serves stale cached
+  // body, the dashboard would lag by up to 10-15 seconds. Busting the
+  // cache synchronously here guarantees the next /admin/live-stats,
+  // /reports/summary, /admin/leads/fresh etc. all hit a MISS and re-run
+  // the SQL — so the new lead is reflected within the round-trip latency
+  // of one HTTP request (well under 1 second).
+  try {
+    const dropped = bustLeadCountersCache();
+    if (dropped > 0) {
+      logger.debug({ leadId, cache_entries_dropped: dropped }, '[lead-fanout] lead-counter cache busted');
+    }
+  } catch (err) { logger.warn({ err: err.message }, '[lead-fanout] cache bust failed (non-fatal)'); }
 
   Promise.resolve()
     .then(async () => {
