@@ -559,16 +559,41 @@ router.post('/lead-requests', authenticate, asyncHandler(async (req, res) => {
   // Auto-assign immediately from queue (no RM approval needed)
   let assigned = 0;
   const { isDistributionActive: isActive } = require('../services/distributionScheduler');
-  if (await isActive()) {
-    // Find available leads from global queue
+  const distActive = await isActive();
+  if (distActive) {
+    // PRIORITY ORDER (canonical across all distribution paths):
+    //   1. Today's leads in IST (FIFO within today)
+    //   2. Older leads (FIFO)
+    // Uses meta_created_time for Meta leads (with created_at fallback)
+    // so backfilled historic leads aren't treated as "today".
     let leadSql = `SELECT id FROM leads WHERE assigned_to_user_id IS NULL AND deleted_at IS NULL`;
     const leadParams = [];
     if (cat) {
       leadParams.push(cat);
       leadSql += ` AND category = $${leadParams.length}`;
     }
-    leadSql += ` ORDER BY created_at ASC LIMIT ${qty}`;
+    leadSql += `
+      ORDER BY
+        CASE WHEN (COALESCE(meta_created_time, created_at) AT TIME ZONE 'Asia/Kolkata')::date
+                = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+             THEN 0 ELSE 1 END,
+        COALESCE(meta_created_time, created_at) ASC
+      LIMIT ${qty}`;
     const { rows: availableLeads } = await query(leadSql, leadParams);
+
+    // Operational visibility — when an auto-fulfill picks 0 leads despite
+    // distribution being active, log the cause clearly so admins can debug.
+    if (availableLeads.length === 0) {
+      logger.warn({
+        requestId: r.id, requesterId: req.user.id, category: cat, requested_qty: qty,
+        reason: 'no_eligible_leads_in_queue',
+      }, '[auto-distribute] request stays pending — queue has no matching leads');
+    } else {
+      logger.info({
+        requestId: r.id, requesterId: req.user.id, category: cat, requested_qty: qty,
+        leads_found: availableLeads.length,
+      }, '[auto-distribute] auto-fulfilling new request from queue (today-first)');
+    }
 
     for (const lead of availableLeads) {
       try {
@@ -587,9 +612,13 @@ router.post('/lead-requests', authenticate, asyncHandler(async (req, res) => {
       } catch { /* skip race condition */ }
     }
 
-    // Update request status
-    const status = assigned >= qty ? 'fulfilled' : (assigned > 0 ? 'fulfilled' : 'pending');
-    const resolvedAt = status === 'fulfilled' ? new Date() : null;
+    // Status rule: never mark 'fulfilled' with delivered < requested.
+    // Partial assignments stay 'pending' so the scheduler + onLeadCreated
+    // hook can keep topping up as new leads arrive. (Same invariant as
+    // the approve handler — see commit 2ffba30.)
+    const fullyDone = assigned >= qty;
+    const status = fullyDone ? 'fulfilled' : 'pending';
+    const resolvedAt = fullyDone ? new Date() : null;
     await query(
       `UPDATE lead_requests SET status = $1, leads_assigned = $2, resolved_at = $3, updated_at = NOW()
         WHERE id = $4`,
@@ -597,6 +626,14 @@ router.post('/lead-requests', authenticate, asyncHandler(async (req, res) => {
     );
     r.status = status;
     r.leads_assigned = assigned;
+    logger.info({
+      requestId: r.id, requested_qty: qty, leads_assigned: assigned, final_status: status,
+    }, '[auto-distribute] new-request auto-fulfill result');
+  } else {
+    logger.info({
+      requestId: r.id, requested_qty: qty,
+      reason: 'auto_distribution_inactive_now',
+    }, '[auto-distribute] new request stays pending — outside active window or auto-dist disabled');
   }
 
   // Audit log
@@ -683,7 +720,16 @@ router.post('/lead-requests/:id/approve', authenticate, requireRole('super_admin
     leadParams.push(request.category);
     leadSql += ` AND category = $${leadParams.length}`;
   }
-  leadSql += ` ORDER BY created_at ASC LIMIT ${request.quantity}`;
+  // PRIORITY: today's IST leads first (FIFO within today), then older
+  // (FIFO). Canonical ordering shared with POST /lead-requests and
+  // fulfillMemberRequest — keep these three in sync.
+  leadSql += `
+    ORDER BY
+      CASE WHEN (COALESCE(meta_created_time, created_at) AT TIME ZONE 'Asia/Kolkata')::date
+              = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+           THEN 0 ELSE 1 END,
+      COALESCE(meta_created_time, created_at) ASC
+    LIMIT ${request.quantity}`;
 
   const { rows: availableLeads } = await query(leadSql, leadParams);
 

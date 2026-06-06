@@ -177,7 +177,16 @@ async function fulfillMemberRequest(requestId) {
       params.push(req.category);
       leadSql += ` AND category = $${params.length}`;
     }
-    leadSql += ` ORDER BY created_at ASC LIMIT ${needed}`;
+    // PRIORITY: today's IST leads first (FIFO within today), then older
+    // (FIFO). Mirrors the same canonical ordering used in
+    // POST /lead-requests and the approve handler — see those for rationale.
+    leadSql += `
+      ORDER BY
+        CASE WHEN (COALESCE(meta_created_time, created_at) AT TIME ZONE 'Asia/Kolkata')::date
+                = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+             THEN 0 ELSE 1 END,
+        COALESCE(meta_created_time, created_at) ASC
+      LIMIT ${needed}`;
 
     const { rows: leads } = await client.query(leadSql, params);
 
