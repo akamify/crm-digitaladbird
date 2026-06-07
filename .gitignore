@@ -37,6 +37,21 @@ coverage/
 backend/credentials/
 *.json.key
 
+# environment files (NEVER commit — contain secrets)
+.env
+.env.local
+.env.*.local
+backend/.env
+backend/.env.local
+backend/.env.production
+frontend/.env
+frontend/.env.local
+# templates with placeholders only ARE safe to commit:
+!.env.example
+!.env.*.template
+!backend/.env.example
+!backend/.env.vps.template
+
 # uploads / seed data (real production data)
 backend/src/db/seeds/users.csv
 backend/src/db/seeds/leads.csv
