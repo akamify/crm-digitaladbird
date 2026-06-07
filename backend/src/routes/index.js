@@ -8,6 +8,7 @@ const { authenticate, invalidateUser }    = require('../middleware/auth');
 const { requireRole, requireMemberType }  = require('../middleware/rbac');
 const { responseCache }                   = require('../middleware/cache');
 const { broadcastLeadRequest }            = require('../services/socketService');
+const logger                              = require('../utils/logger');
 
 // Loads a lead-request enriched with user + RM context and emits the
 // appropriate `lead-request:<kind>` Socket.IO event so admin + RM + the
