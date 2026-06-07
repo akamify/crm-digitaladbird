@@ -7,7 +7,7 @@ import {
   MessageSquare,
 } from 'lucide-react';
 import { useState } from 'react';
-import { BirdLogo } from '@/components/ui/BirdLogo';
+import { LogoLockup } from '@/components/ui/BirdLogo';
 import { useAuth } from '@/lib/auth';
 import { useChatUnread } from '@/hooks/useChat';
 import { clsx } from '@/lib/format';
@@ -57,14 +57,8 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col border-r border-slate-200 bg-white">
-      <div className="flex h-16 items-center gap-3 border-b border-slate-100 px-5">
-        <div className="grid h-9 w-9 place-items-center rounded-lg bg-gradient-to-br from-brand-500 to-brand-700 text-white shadow-glow">
-          <BirdLogo className="h-5 w-5" />
-        </div>
-        <div>
-          <div className="font-display text-base font-semibold leading-none text-slate-900">DigitalADbird</div>
-          <div className="mt-1 text-[10px] uppercase tracking-[0.18em] text-slate-500">CRM</div>
-        </div>
+      <div className="flex h-16 items-center border-b border-slate-100 px-4">
+        <LogoLockup tone="dark" />
       </div>
 
       <nav className="flex-1 overflow-y-auto space-y-1 px-3 py-4">

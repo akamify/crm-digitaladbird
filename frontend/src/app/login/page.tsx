@@ -5,7 +5,8 @@ import {
   Eye, EyeOff, LogIn, Shield, Users, Handshake,
   Mail, Phone, IdCard, User, Lock, ChevronRight,
 } from 'lucide-react';
-import { BirdLogo } from '@/components/ui/BirdLogo';
+import { BirdMark } from '@/components/ui/BirdLogo';
+import { RaccoonMascot } from '@/components/ui/RaccoonMascot';
 import toast from 'react-hot-toast';
 import { useAuth, dashboardPath } from '@/lib/auth';
 
@@ -90,13 +91,16 @@ function LoginInner() {
 
         {/* Logo */}
         <div className="flex items-center gap-3 relative z-10">
-          <div className="grid h-11 w-11 place-items-center rounded-xl bg-white/20 backdrop-blur-sm shadow-lg">
-            <BirdLogo className="h-6 w-6" />
-          </div>
+          <BirdMark className="h-11 w-11 drop-shadow-lg" />
           <div>
             <span className="text-xl font-bold tracking-tight">DigitalADbird</span>
             <span className="block text-[10px] uppercase tracking-[0.2em] text-blue-200">CRM Platform</span>
           </div>
+        </div>
+
+        {/* Raccoon mascot — friendly supporting illustration */}
+        <div className="hidden xl:block absolute bottom-6 right-6 z-0 opacity-95 pointer-events-none">
+          <RaccoonMascot className="h-56 w-56" />
         </div>
 
         {/* Hero */}
@@ -142,9 +146,7 @@ function LoginInner() {
 
           {/* Mobile logo */}
           <div className="flex lg:hidden items-center gap-2.5 mb-6">
-            <div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 shadow-md">
-              <BirdLogo className="h-5 w-5 text-white" />
-            </div>
+            <BirdMark className="h-10 w-10 shrink-0 shadow-md rounded-xl" />
             <div>
               <span className="text-lg font-bold text-slate-900">DigitalADbird</span>
               <span className="block text-[10px] uppercase tracking-widest text-slate-400">CRM Platform</span>
