@@ -553,7 +553,7 @@ function MetaPagesTab() {
             placeholder="EAAxxxx..."
           />
           <p className="text-[11px] text-slate-500">
-            Token will be validated against Meta Graph API (<code>GET /{updateTokenPage?.page_id}?fields=id,name</code>) before saving. If validation fails, you'll see the exact error from Meta.
+            Token will be validated against Meta Graph API (<code>GET /{updateTokenPage?.page_id}?fields=id,name</code>) before saving. If validation fails, you&apos;ll see the exact error from Meta.
           </p>
         </div>
       </Modal>

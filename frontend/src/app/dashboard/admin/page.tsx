@@ -95,7 +95,7 @@ function AdminDashboardInner() {
   //    repaint immediately — no manual refresh needed.
   useEffect(() => {
     let cancelled = false;
-    let off: Array<() => void> = [];
+    const off: Array<() => void> = [];
     connectSocket().then((s) => {
       if (cancelled) return;
       const refresh = () => {
