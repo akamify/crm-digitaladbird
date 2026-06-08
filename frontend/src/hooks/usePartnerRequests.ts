@@ -47,7 +47,7 @@ export interface PartnerRequestStats {
 
 export function usePartnerRequests(status?: string, page = 1) {
   const qs = new URLSearchParams();
-  if (status) qs.set('status', status);
+  if (status && status !== 'all') qs.set('status', status);
   qs.set('page', String(page));
   qs.set('page_size', '25');
   return useQuery({

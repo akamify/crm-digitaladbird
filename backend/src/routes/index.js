@@ -2597,33 +2597,116 @@ router.get('/rm-monitoring/live-counters', authenticate, requireRole('rm', 'supe
   if (!rmId) throw new AppError(400, 'INVALID', 'rm_id required for admin view');
 
   const { rows: [c] } = await query(`
+    WITH rm_people AS (
+      SELECT id
+      FROM users
+      WHERE deleted_at IS NULL
+        AND (
+          report_to_id = $1
+          OR id IN (
+            SELECT partner_id
+            FROM partner_lead_requests
+            WHERE assigned_rm_id = $1
+          )
+        )
+    )
     SELECT
-      (SELECT COUNT(*) FROM lead_requests lr
-         JOIN users u2 ON u2.id = lr.user_id AND u2.report_to_id = $1
-       WHERE (lr.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS requests_today,
-      (SELECT COUNT(*) FROM lead_requests lr
-         JOIN users u2 ON u2.id = lr.user_id AND u2.report_to_id = $1
-       WHERE lr.status = 'pending') AS requests_pending,
-      (SELECT COUNT(*) FROM leads l2
-         JOIN users u2 ON u2.id = l2.assigned_to_user_id AND u2.report_to_id = $1
-       WHERE l2.assigned_at::date = CURRENT_DATE AND l2.deleted_at IS NULL) AS leads_distributed_today,
-      (SELECT COUNT(*) FROM leads l2
-         JOIN users u2 ON u2.id = l2.assigned_to_user_id AND u2.report_to_id = $1
-       WHERE l2.deleted_at IS NULL) AS leads_total,
-      (SELECT COUNT(*) FROM users
-       WHERE report_to_id = $1 AND deleted_at IS NULL AND role IN ('member','partner')) AS team_size,
-      (SELECT COUNT(DISTINCT r2.user_id) FROM lead_remarks r2
-         JOIN users u2 ON u2.id = r2.user_id AND u2.report_to_id = $1
-       WHERE (r2.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS active_today,
-      (SELECT COUNT(DISTINCT l2.assigned_to_user_id) FROM leads l2
-         JOIN users u2 ON u2.id = l2.assigned_to_user_id AND u2.report_to_id = $1
-       WHERE l2.is_pending = TRUE AND l2.deleted_at IS NULL) AS pending_work_users,
-      (SELECT COUNT(DISTINCT lr.user_id) FROM lead_requests lr
-         JOIN users u2 ON u2.id = lr.user_id AND u2.report_to_id = $1
-       WHERE lr.status = 'pending') AS members_waiting,
-      (SELECT COUNT(*) FROM leads l2
-         JOIN users u2 ON u2.id = l2.assigned_to_user_id AND u2.report_to_id = $1
-       WHERE l2.call_status = 'converted' AND l2.updated_at::date = CURRENT_DATE AND l2.deleted_at IS NULL) AS conversions_today
+      (
+        SELECT COUNT(*)
+        FROM lead_requests lr
+        JOIN users u2 ON u2.id = lr.user_id AND u2.report_to_id = $1
+        WHERE (lr.created_at AT TIME ZONE 'Asia/Kolkata')::date =
+              (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+      )
+      +
+      (
+        SELECT COUNT(*)
+        FROM partner_lead_requests pr
+        WHERE pr.assigned_rm_id = $1
+          AND (pr.created_at AT TIME ZONE 'Asia/Kolkata')::date =
+              (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+      ) AS requests_today,
+
+      (
+        SELECT COUNT(*)
+        FROM lead_requests lr
+        JOIN users u2 ON u2.id = lr.user_id AND u2.report_to_id = $1
+        WHERE lr.status = 'pending'
+      )
+      +
+      (
+        SELECT COUNT(*)
+        FROM partner_lead_requests pr
+        WHERE pr.assigned_rm_id = $1
+          AND pr.status IN ('pending','approved','assigned')
+      ) AS requests_pending,
+
+      (
+        SELECT COUNT(*)
+        FROM leads l2
+        WHERE l2.assigned_to_user_id IN (SELECT id FROM rm_people)
+          AND (l2.assigned_at AT TIME ZONE 'Asia/Kolkata')::date =
+              (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+          AND l2.deleted_at IS NULL
+      ) AS leads_distributed_today,
+
+      (
+        SELECT COUNT(*)
+        FROM leads l2
+        WHERE l2.assigned_to_user_id IN (SELECT id FROM rm_people)
+          AND l2.deleted_at IS NULL
+      ) AS leads_total,
+
+      (
+        SELECT COUNT(*)
+        FROM users
+        WHERE report_to_id = $1
+          AND deleted_at IS NULL
+          AND role = 'member'
+      ) AS team_size,
+
+      (
+        SELECT COUNT(*)
+        FROM users
+        WHERE report_to_id = $1
+          AND deleted_at IS NULL
+          AND role = 'member'
+          AND status = 'active'
+          AND is_available = TRUE
+          AND COALESCE(distribution_blocked, FALSE) = FALSE
+      ) AS active_today,
+
+      (
+        SELECT COUNT(DISTINCT l2.assigned_to_user_id)
+        FROM leads l2
+        WHERE l2.assigned_to_user_id IN (SELECT id FROM rm_people)
+          AND l2.is_pending = TRUE
+          AND l2.deleted_at IS NULL
+      ) AS pending_work_users,
+
+      (
+        SELECT COUNT(DISTINCT lr.user_id)
+        FROM lead_requests lr
+        JOIN users u2 ON u2.id = lr.user_id AND u2.report_to_id = $1
+        WHERE lr.status = 'pending'
+      )
+      +
+      (
+        SELECT COUNT(DISTINCT pr.partner_id)
+        FROM partner_lead_requests pr
+        WHERE pr.assigned_rm_id = $1
+          AND pr.status IN ('pending','approved','assigned')
+      ) AS members_waiting,
+
+      (
+        SELECT COUNT(*)
+        FROM leads l2
+        WHERE l2.assigned_to_user_id IN (SELECT id FROM rm_people)
+          AND l2.call_status = 'converted'
+          AND (l2.updated_at AT TIME ZONE 'Asia/Kolkata')::date =
+              (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+          AND l2.deleted_at IS NULL
+      ) AS conversions_today
   `, [rmId]);
 
   const { rows: [topActive] } = await query(`

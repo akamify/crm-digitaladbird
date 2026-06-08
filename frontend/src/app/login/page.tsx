@@ -10,10 +10,10 @@ import { RaccoonMascot } from '@/components/ui/RaccoonMascot';
 import toast from 'react-hot-toast';
 import { useAuth, dashboardPath } from '@/lib/auth';
 
-type LoginRole = 'admin' | 'rm' | 'partner';
+type LoginRole = 'super_admin' | 'rm' | 'partner';
 
 const ROLES: { key: LoginRole; label: string; desc: string; icon: typeof Shield; color: string; bg: string; border: string; ring: string }[] = [
-  { key: 'admin',   label: 'Admin',   desc: 'Super Admin access',      icon: Shield,    color: 'text-rose-600',   bg: 'bg-rose-50',    border: 'border-rose-200', ring: 'ring-rose-500' },
+  { key: 'super_admin',   label: 'Super Admin',   desc: 'Super Admin access',      icon: Shield,    color: 'text-rose-600',   bg: 'bg-rose-50',    border: 'border-rose-200', ring: 'ring-rose-500' },
   { key: 'rm',      label: 'RM',      desc: 'Relationship Manager',    icon: Users,     color: 'text-blue-600',   bg: 'bg-blue-50',    border: 'border-blue-200', ring: 'ring-blue-500' },
   { key: 'partner', label: 'Partner', desc: 'Channel Partner access',  icon: Handshake, color: 'text-emerald-600',bg: 'bg-emerald-50', border: 'border-emerald-200', ring: 'ring-emerald-500' },
 ];
@@ -31,7 +31,7 @@ function LoginInner() {
   const params  = useSearchParams();
   const { user, initialized, init, login, loading } = useAuth();
 
-  const [role,     setRole]     = useState<LoginRole>('admin');
+  const [role,     setRole]     = useState<LoginRole>('super_admin');
   const [fullName, setFullName] = useState('');
   const [email,    setEmail]    = useState('');
   const [phone,    setPhone]    = useState('');
@@ -118,7 +118,7 @@ function LoginInner() {
           <div className="grid grid-cols-2 gap-2.5">
             {[
               { label: 'Lead Distribution', sub: 'Round-robin & weighted' },
-              { label: 'Role-Based Access', sub: 'Admin, RM, Partner' },
+              { label: 'Role-Based Access', sub: 'Super Admin, RM, Partner' },
               { label: 'Real-Time Reports', sub: 'Live dashboards' },
               { label: 'Meta Integration', sub: 'Facebook Ads sync' },
             ].map(f => (
@@ -183,7 +183,7 @@ function LoginInner() {
                     <span className="text-[9px] text-slate-400 leading-tight text-center">{r.desc}</span>
                     {active && (
                       <div className={`absolute -top-1 -right-1 h-4 w-4 rounded-full grid place-items-center text-white text-[8px]
-                        ${r.key === 'admin' ? 'bg-rose-500' : r.key === 'rm' ? 'bg-blue-500' : 'bg-emerald-500'}`}>
+                        ${r.key === 'super_admin' ? 'bg-rose-500' : r.key === 'rm' ? 'bg-blue-500' : 'bg-emerald-500'}`}>
                         <svg viewBox="0 0 12 12" fill="none" className="h-2.5 w-2.5"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
                       </div>
                     )}
@@ -253,7 +253,7 @@ function LoginInner() {
                 type="text"
                 value={cpId}
                 onChange={e => setCpId(e.target.value)}
-                placeholder={role === 'admin' ? 'Not required for Admin' : 'e.g. SBA28071544'}
+                placeholder={role === 'super_admin' ? 'Not required for Super Admin' : 'e.g. SBA28071544'}
                 className="w-full rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 outline-none transition focus:border-blue-400 focus:bg-white focus:ring-3 focus:ring-blue-100"
               />
             </div>
@@ -290,7 +290,7 @@ function LoginInner() {
               type="submit"
               disabled={loading}
               className={`relative w-full flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-lg transition-all duration-200 active:scale-[0.99] disabled:opacity-60 disabled:cursor-not-allowed
-                ${role === 'admin'
+                ${role === 'super_admin'
                   ? 'bg-gradient-to-r from-rose-500 to-rose-600 shadow-rose-200 hover:from-rose-600 hover:to-rose-700 hover:shadow-rose-300'
                   : role === 'rm'
                   ? 'bg-gradient-to-r from-blue-600 to-indigo-600 shadow-blue-200 hover:from-blue-700 hover:to-indigo-700 hover:shadow-blue-300'
@@ -312,10 +312,10 @@ function LoginInner() {
             <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-2">How to sign in</p>
             <div className="space-y-1.5 text-xs text-slate-500">
               <div className="flex items-start gap-2">
-                <span className={`mt-1.5 inline-block h-1.5 w-1.5 rounded-full shrink-0 ${role === 'admin' ? 'bg-rose-500' : role === 'rm' ? 'bg-blue-500' : 'bg-emerald-500'}`} />
+                <span className={`mt-1.5 inline-block h-1.5 w-1.5 rounded-full shrink-0 ${role === 'super_admin' ? 'bg-rose-500' : role === 'rm' ? 'bg-blue-500' : 'bg-emerald-500'}`} />
                 <span>
-                  {role === 'admin'
-                    ? 'Use your admin email address and password'
+                  {role === 'super_admin'
+                    ? 'Use your super admin email address and password'
                     : role === 'rm'
                     ? 'Use your CP ID or email with your assigned password'
                     : 'Use your CP ID or email with your assigned password'
@@ -323,7 +323,7 @@ function LoginInner() {
                 </span>
               </div>
               <div className="flex items-start gap-2">
-                <span className={`mt-1.5 inline-block h-1.5 w-1.5 rounded-full shrink-0 ${role === 'admin' ? 'bg-rose-500' : role === 'rm' ? 'bg-blue-500' : 'bg-emerald-500'}`} />
+                <span className={`mt-1.5 inline-block h-1.5 w-1.5 rounded-full shrink-0 ${role === 'super_admin' ? 'bg-rose-500' : role === 'rm' ? 'bg-blue-500' : 'bg-emerald-500'}`} />
                 <span>You can also sign in using your registered mobile number</span>
               </div>
             </div>
