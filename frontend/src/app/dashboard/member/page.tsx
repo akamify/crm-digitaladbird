@@ -168,8 +168,9 @@ function MemberDashboardInner() {
                   },
                 );
               }}
-              disabled={submitReq.isPending || (stats?.available_leads ?? 0) === 0}
+              disabled={submitReq.isPending}
               className="btn-primary inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Request leads. If your queue is empty, the request becomes pending and auto-fulfills when leads arrive."
             >
               {submitReq.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
