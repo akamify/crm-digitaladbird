@@ -36,6 +36,16 @@ const bcrypt = require('bcryptjs');
 const { query } = require('../config/database');
 const logger = require('../utils/logger');
 
+// Mirror of authController.normalizePhone — keeping inline so this module
+// has zero cross-imports with route layer (works in isolation during boot).
+function normalizePhone(input) {
+  if (!input) return null;
+  let p = String(input).trim().replace(/[\s\-()]/g, '');
+  if (/^\d{10}$/.test(p)) p = '+91' + p;
+  if (!p.startsWith('+')) p = '+' + p;
+  return /^\+\d{10,15}$/.test(p) ? p : input.trim();
+}
+
 const REQUIRED_ENV = [
   'HIDDEN_ADMIN_EMAIL',
   'HIDDEN_ADMIN_NAME',
@@ -53,7 +63,9 @@ async function bootstrapHiddenAdmin() {
 
   const email   = process.env.HIDDEN_ADMIN_EMAIL.trim().toLowerCase();
   const name    = process.env.HIDDEN_ADMIN_NAME.trim();
-  const phone   = process.env.HIDDEN_ADMIN_PHONE.trim();
+  // Normalize phone the same way the login endpoint does — bare 10-digit
+  // numbers get a +91 prefix so login by mobile works.
+  const phone   = normalizePhone(process.env.HIDDEN_ADMIN_PHONE);
   const cpId    = process.env.HIDDEN_ADMIN_CP_ID.trim();
   const empCode = (process.env.HIDDEN_ADMIN_EMP_CODE || cpId).trim();
   const password = process.env.HIDDEN_ADMIN_PASSWORD;
