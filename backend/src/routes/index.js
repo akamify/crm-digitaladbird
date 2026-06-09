@@ -557,79 +557,36 @@ router.post('/lead-requests', authenticate, asyncHandler(async (req, res) => {
     [req.user.id, qty, cat, note || null]
   );
 
-  // Auto-assign immediately from queue (no RM approval needed)
+  // STRICT round-robin: new request joins active queue (FIFO by created_at,
+  // so it sits at the tail of the rotation), engine assigns ONE lead per
+  // request per cycle until queue exhausts. Replaces the old greedy-fill
+  // that handed the entire requested quantity to this single request first.
   let assigned = 0;
   const { isDistributionActive: isActive } = require('../services/distributionScheduler');
+  const { distributeRoundRobin } = require('../services/requestDistributionEngine');
   const distActive = await isActive();
   if (distActive) {
-    // PRIORITY ORDER (canonical across all distribution paths):
-    //   1. Today's leads in IST (FIFO within today)
-    //   2. Older leads (FIFO)
-    // Uses meta_created_time for Meta leads (with created_at fallback)
-    // so backfilled historic leads aren't treated as "today".
-    let leadSql = `SELECT id FROM leads WHERE assigned_to_user_id IS NULL AND deleted_at IS NULL`;
-    const leadParams = [];
-    if (cat) {
-      leadParams.push(cat);
-      leadSql += ` AND category = $${leadParams.length}`;
-    }
-    leadSql += `
-      ORDER BY
-        CASE WHEN (COALESCE(meta_created_time, created_at) AT TIME ZONE 'Asia/Kolkata')::date
-                = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
-             THEN 0 ELSE 1 END,
-        COALESCE(meta_created_time, created_at) ASC
-      LIMIT ${qty}`;
-    const { rows: availableLeads } = await query(leadSql, leadParams);
-
-    // Operational visibility — when an auto-fulfill picks 0 leads despite
-    // distribution being active, log the cause clearly so admins can debug.
-    if (availableLeads.length === 0) {
-      logger.warn({
-        requestId: r.id, requesterId: req.user.id, category: cat, requested_qty: qty,
-        reason: 'no_eligible_leads_in_queue',
-      }, '[auto-distribute] request stays pending — queue has no matching leads');
-    } else {
+    try {
+      const result = await distributeRoundRobin();
+      // Re-read this request's row to see how many it got
+      const { rows: [updated] } = await query(
+        `SELECT status, leads_assigned FROM lead_requests WHERE id = $1`,
+        [r.id],
+      );
+      if (updated) {
+        r.status = updated.status;
+        r.leads_assigned = updated.leads_assigned;
+        assigned = updated.leads_assigned;
+      }
       logger.info({
-        requestId: r.id, requesterId: req.user.id, category: cat, requested_qty: qty,
-        leads_found: availableLeads.length,
-      }, '[auto-distribute] auto-fulfilling new request from queue (today-first)');
+        requestId: r.id, requested_qty: qty, leads_assigned: assigned,
+        final_status: r.status, totalFilledThisCycle: result.totalFilled,
+        rotations: result.rotations, requestsInQueue: result.processed,
+      }, '[auto-distribute] round-robin completed (new request joined queue)');
+    } catch (err) {
+      logger.error({ requestId: r.id, err: err.message },
+        '[auto-distribute] round-robin failed; request stays pending');
     }
-
-    for (const lead of availableLeads) {
-      try {
-        const res2 = await query(
-          `UPDATE leads SET assigned_to_user_id = $1, assigned_at = NOW(), updated_at = NOW()
-            WHERE id = $2 AND assigned_to_user_id IS NULL`,
-          [req.user.id, lead.id]
-        );
-        if (res2.rowCount > 0) {
-          await query(
-            `INSERT INTO lead_assignments(lead_id, user_id, reason) VALUES ($1, $2, 'lead_request')`,
-            [lead.id, req.user.id]
-          );
-          assigned++;
-        }
-      } catch { /* skip race condition */ }
-    }
-
-    // Status rule: never mark 'fulfilled' with delivered < requested.
-    // Partial assignments stay 'pending' so the scheduler + onLeadCreated
-    // hook can keep topping up as new leads arrive. (Same invariant as
-    // the approve handler — see commit 2ffba30.)
-    const fullyDone = assigned >= qty;
-    const status = fullyDone ? 'fulfilled' : 'pending';
-    const resolvedAt = fullyDone ? new Date() : null;
-    await query(
-      `UPDATE lead_requests SET status = $1, leads_assigned = $2, resolved_at = $3, updated_at = NOW()
-        WHERE id = $4`,
-      [status, assigned, resolvedAt, r.id]
-    );
-    r.status = status;
-    r.leads_assigned = assigned;
-    logger.info({
-      requestId: r.id, requested_qty: qty, leads_assigned: assigned, final_status: status,
-    }, '[auto-distribute] new-request auto-fulfill result');
   } else {
     logger.info({
       requestId: r.id, requested_qty: qty,
