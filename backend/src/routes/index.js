@@ -3763,6 +3763,59 @@ router.get('/admin/meta/webhook-logs', authenticate, requireRole('super_admin'),
   res.json({ success: true, data: { sync_logs: syncLogs, audit_logs: auditLogs, activity_logs: activityLogs } });
 }));
 
+// Permanent webhook event log — every webhook call (good or bad) lands here.
+// Use this when "Meta leads stopped" to see whether Meta is even reaching us
+// and what the signature/payload looked like.
+router.get('/admin/meta/webhook-events', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const limit = Math.min(200, parseInt(req.query.limit, 10) || 50);
+  const hours = Math.min(720, parseInt(req.query.hours, 10) || 24);
+  const onlyBad = req.query.bad_only === '1';
+  let where = `received_at > NOW() - INTERVAL '${hours} hours'`;
+  if (onlyBad) where += ' AND (signature_valid = FALSE OR leads_error > 0 OR status_code >= 400)';
+  const { rows } = await query(`
+    SELECT id, received_at, source, endpoint, method, remote_ip, user_agent,
+           signature_valid, body_size, page_id, form_id, event_type,
+           lead_count, leads_created, leads_dup, leads_error,
+           status_code, processing_ms, error_summary
+      FROM webhook_events
+     WHERE ${where}
+     ORDER BY received_at DESC
+     LIMIT $1`, [limit]);
+  const summary = await query(`
+    SELECT
+      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE signature_valid = TRUE)::int AS sig_ok,
+      COUNT(*) FILTER (WHERE signature_valid = FALSE)::int AS sig_bad,
+      COUNT(*) FILTER (WHERE leads_error > 0)::int AS had_errors,
+      SUM(leads_created)::int AS leads_created,
+      SUM(leads_dup)::int AS leads_dup
+      FROM webhook_events
+     WHERE received_at > NOW() - INTERVAL '${hours} hours'`);
+  res.json({ success: true, data: { window_hours: hours, summary: summary.rows[0], events: rows } });
+}));
+
+// Token health snapshot for the admin UI. Reads DB-stored truth refreshed
+// every 15 minutes by metaTokenHealthJob — not a cached UI test result.
+router.get('/admin/meta/token-health', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const { rows } = await query(`
+    SELECT page_id, page_name, is_active,
+           token_is_valid, token_last_checked, token_expires_at, token_last_error
+      FROM meta_pages
+     WHERE is_active = TRUE
+     ORDER BY page_name`);
+  const anyInvalid = rows.some(r => r.token_is_valid === false);
+  const anyUnknown = rows.some(r => r.token_is_valid === null);
+  res.json({
+    success: true,
+    data: {
+      pages: rows,
+      any_invalid: anyInvalid,
+      any_unknown: anyUnknown,
+      overall_status: anyInvalid ? 'critical' : (anyUnknown ? 'unknown' : 'healthy'),
+    },
+  });
+}));
+
 // Enriched Google Sheets status with detailed sync history
 router.get('/admin/sheets/enriched', authenticate, requireRole('super_admin'), responseCache(15000), asyncHandler(async (_req, res) => {
   const config = {
