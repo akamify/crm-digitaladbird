@@ -1,22 +1,11 @@
 'use client';
-import { useEffect, useState, FormEvent, Suspense } from 'react';
+
+import { FormEvent, Suspense, useEffect, useId, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import {
-  Eye, EyeOff, LogIn, Shield, Users, Handshake,
-  Mail, Phone, IdCard, User, Lock, ChevronRight,
-} from 'lucide-react';
-import { BirdMark } from '@/components/ui/BirdLogo';
-import { RaccoonMascot } from '@/components/ui/RaccoonMascot';
+import { AlertCircle, Eye, EyeOff, Lock, LogIn, UserRound } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useAuth, dashboardPath } from '@/lib/auth';
-
-type LoginRole = 'super_admin' | 'rm' | 'partner';
-
-const ROLES: { key: LoginRole; label: string; desc: string; icon: typeof Shield; color: string; bg: string; border: string; ring: string }[] = [
-  { key: 'super_admin',   label: 'Super Admin',   desc: 'Super Admin access',      icon: Shield,    color: 'text-rose-600',   bg: 'bg-rose-50',    border: 'border-rose-200', ring: 'ring-rose-500' },
-  { key: 'rm',      label: 'RM',      desc: 'Relationship Manager',    icon: Users,     color: 'text-blue-600',   bg: 'bg-blue-50',    border: 'border-blue-200', ring: 'ring-blue-500' },
-  { key: 'partner', label: 'Partner', desc: 'Channel Partner access',  icon: Handshake, color: 'text-emerald-600',bg: 'bg-emerald-50', border: 'border-emerald-200', ring: 'ring-emerald-500' },
-];
+import { BirdMark } from '@/components/ui/BirdLogo';
+import { dashboardPath, useAuth } from '@/lib/auth';
 
 export default function LoginPage() {
   return (
@@ -28,315 +17,190 @@ export default function LoginPage() {
 
 function LoginInner() {
   const router = useRouter();
-  const params  = useSearchParams();
+  const params = useSearchParams();
   const { user, initialized, init, login, loading } = useAuth();
+  const identifierId = useId();
+  const passwordId = useId();
 
-  const [role,     setRole]     = useState<LoginRole>('super_admin');
-  const [fullName, setFullName] = useState('');
-  const [email,    setEmail]    = useState('');
-  const [phone,    setPhone]    = useState('');
-  const [cpId,     setCpId]     = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
-  const [showPwd,  setShowPwd]  = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState('');
 
-  useEffect(() => { if (!initialized) init(); }, [initialized, init]);
   useEffect(() => {
-    if (user) {
-      const next = params.get('next') || dashboardPath(user.role);
-      router.replace(next);
-    }
-  }, [user, params, router]);
+    if (!initialized) init();
+  }, [initialized, init]);
+
+  useEffect(() => {
+    if (!initialized || !user) return;
+    router.replace(params.get('next') || dashboardPath(user.role));
+  }, [initialized, params, router, user]);
+
+  const canSubmit = useMemo(
+    () => identifier.trim().length > 0 && password.length > 0 && !loading,
+    [identifier, password, loading],
+  );
 
   if (!initialized) return <div className="min-h-screen bg-slate-50" />;
 
-  const activeRole = ROLES.find(r => r.key === role)!;
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const loginId = identifier.trim();
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-
-    const identifier = email.trim() || cpId.trim() || phone.trim();
-    if (!identifier) {
-      toast.error('Please enter your Email, CP ID, or Mobile Number');
+    if (!loginId) {
+      setError('Enter your email, CP ID, or phone number.');
       return;
     }
     if (!password) {
-      toast.error('Please enter your password');
+      setError('Enter your password.');
       return;
     }
 
+    setError('');
     try {
-      await login(identifier, password, role);
-      toast.success(`Welcome to DigitalADbird CRM!`);
+      const loggedInUser = await login(loginId, password);
+      toast.success('Signed in successfully');
+      router.replace(params.get('next') || dashboardPath(loggedInUser.role));
     } catch (err: unknown) {
-      const msg = (err as any)?.response?.data?.error?.message
-               || (err as any)?.response?.data?.error
-               || 'Login failed. Please check your credentials.';
-      toast.error(msg);
+      const message =
+        (err as { response?: { data?: { error?: { message?: string } | string } } })?.response?.data?.error;
+      const text = typeof message === 'string'
+        ? message
+        : message?.message || 'Invalid credentials. Please check your login details.';
+      setError(text);
+      toast.error(text);
     }
   }
 
-  function clearForm() {
-    setFullName(''); setEmail(''); setPhone(''); setCpId(''); setPassword(''); setShowPwd(false);
-  }
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50 flex">
-
-      {/* ── Left Branding Panel ── */}
-      <div className="hidden lg:flex lg:w-[45%] flex-col justify-between bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-800 p-10 xl:p-14 text-white relative overflow-hidden">
-        {/* Decorative circles */}
-        <div className="absolute -top-20 -right-20 h-64 w-64 rounded-full bg-white/5" />
-        <div className="absolute -bottom-32 -left-16 h-80 w-80 rounded-full bg-white/5" />
-        <div className="absolute top-1/2 right-10 h-40 w-40 rounded-full bg-white/5" />
-
-        {/* Logo */}
-        <div className="flex items-center gap-3 relative z-10">
-          <BirdMark className="h-11 w-11 drop-shadow-lg" />
-          <div>
-            <span className="text-xl font-bold tracking-tight">DigitalADbird</span>
-            <span className="block text-[10px] uppercase tracking-[0.2em] text-blue-200">CRM Platform</span>
-          </div>
-        </div>
-
-        {/* Raccoon mascot — friendly supporting illustration */}
-        <div className="hidden xl:block absolute bottom-6 right-6 z-0 opacity-95 pointer-events-none">
-          <RaccoonMascot className="h-56 w-56" />
-        </div>
-
-        {/* Hero */}
-        <div className="relative z-10">
-          <h1 className="text-4xl xl:text-5xl font-bold leading-tight mb-5">
-            Smart Lead<br />Management<br />
-            <span className="text-blue-200">Made Simple</span>
-          </h1>
-          <p className="text-blue-100 text-base leading-relaxed mb-8 max-w-md">
-            Distribute leads intelligently, track every interaction, and close more deals.
-            Built for high-performance teams.
-          </p>
-
-          {/* Feature grid */}
-          <div className="grid grid-cols-2 gap-2.5">
-            {[
-              { label: 'Lead Distribution', sub: 'Round-robin & weighted' },
-              { label: 'Role-Based Access', sub: 'Super Admin, RM, Partner' },
-              { label: 'Real-Time Reports', sub: 'Live dashboards' },
-              { label: 'Meta Integration', sub: 'Facebook Ads sync' },
-            ].map(f => (
-              <div key={f.label} className="rounded-xl bg-white/10 backdrop-blur-sm px-3.5 py-2.5">
-                <div className="text-xs font-semibold text-white">{f.label}</div>
-                <div className="text-[10px] text-blue-200">{f.sub}</div>
+    <main className="min-h-screen bg-slate-50 px-4 py-8 text-slate-900 sm:px-6">
+      <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-5xl items-center justify-center">
+        <section className="grid w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl shadow-slate-200/60 lg:grid-cols-[0.95fr_1.05fr]">
+          <div className="hidden bg-slate-950 px-10 py-12 text-white lg:flex lg:flex-col lg:justify-between">
+            <div className="flex items-center gap-3">
+              <BirdMark className="h-11 w-11 rounded-xl shadow-lg" />
+              <div>
+                <div className="text-xl font-semibold tracking-tight">DigitalADbird</div>
+                <div className="text-xs uppercase tracking-[0.24em] text-slate-400">CRM Platform</div>
               </div>
-            ))}
-          </div>
-        </div>
+            </div>
 
-        {/* Footer */}
-        <div className="relative z-10 flex items-center justify-between text-blue-200 text-xs">
-          <span>DigitalADbird &copy; {new Date().getFullYear()}</span>
-          <span className="flex items-center gap-1.5">
-            <Lock className="h-3 w-3" />
-            Secured by JWT
-          </span>
-        </div>
-      </div>
+            <div className="space-y-4">
+              <p className="text-4xl font-semibold leading-tight tracking-tight">
+                Lead operations, team performance, and customer follow-up in one place.
+              </p>
+              <p className="max-w-sm text-sm leading-6 text-slate-300">
+                Sign in with your registered email, CP ID, or phone number.
+              </p>
+            </div>
 
-      {/* ── Right Login Panel ── */}
-      <div className="flex flex-1 items-center justify-center px-5 py-8 sm:px-8">
-        <div className="w-full max-w-md">
-
-          {/* Mobile logo */}
-          <div className="flex lg:hidden items-center gap-2.5 mb-6">
-            <BirdMark className="h-10 w-10 shrink-0 shadow-md rounded-xl" />
-            <div>
-              <span className="text-lg font-bold text-slate-900">DigitalADbird</span>
-              <span className="block text-[10px] uppercase tracking-widest text-slate-400">CRM Platform</span>
+            <div className="text-xs text-slate-500">
+              DigitalADbird CRM · Secure session access
             </div>
           </div>
 
-          <h2 className="text-2xl font-bold text-slate-900 mb-1">Welcome back</h2>
-          <p className="text-sm text-slate-500 mb-6">Sign in to your CRM account</p>
+          <div className="px-5 py-8 sm:px-10 sm:py-12">
+            <div className="mb-8 flex items-center gap-3 lg:hidden">
+              <BirdMark className="h-10 w-10 rounded-xl shadow-md" />
+              <div>
+                <div className="text-lg font-semibold">DigitalADbird</div>
+                <div className="text-[10px] uppercase tracking-[0.22em] text-slate-400">CRM Platform</div>
+              </div>
+            </div>
 
-          {/* ── Role Selector ── */}
-          <div className="mb-6">
-            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2.5">
-              Select your role
-            </label>
-            <div className="grid grid-cols-3 gap-2.5">
-              {ROLES.map(r => {
-                const Icon = r.icon;
-                const active = role === r.key;
-                return (
+            <div className="mb-7">
+              <h1 className="text-2xl font-semibold tracking-tight text-slate-950">Sign in</h1>
+              <p className="mt-2 text-sm text-slate-500">
+                Use your registered email, CP ID, or phone number.
+              </p>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-5" noValidate>
+              <div>
+                <label htmlFor={identifierId} className="mb-1.5 block text-sm font-medium text-slate-700">
+                  Email / CP ID / Phone
+                </label>
+                <div className="relative">
+                  <UserRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    id={identifierId}
+                    name="username"
+                    type="text"
+                    value={identifier}
+                    onChange={(event) => {
+                      setIdentifier(event.target.value);
+                      if (error) setError('');
+                    }}
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    className="h-11 w-full rounded-lg border border-slate-300 bg-white pl-10 pr-3 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+                    placeholder="you@example.com"
+                    aria-invalid={!!error}
+                    aria-describedby={error ? 'login-error' : undefined}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor={passwordId} className="mb-1.5 block text-sm font-medium text-slate-700">
+                  Password
+                </label>
+                <div className="relative">
+                  <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    id={passwordId}
+                    name="password"
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(event) => {
+                      setPassword(event.target.value);
+                      if (error) setError('');
+                    }}
+                    autoComplete="current-password"
+                    className="h-11 w-full rounded-lg border border-slate-300 bg-white pl-10 pr-11 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+                    placeholder="Enter your password"
+                    aria-invalid={!!error}
+                    aria-describedby={error ? 'login-error' : undefined}
+                  />
                   <button
-                    key={r.key}
                     type="button"
-                    onClick={() => { setRole(r.key); clearForm(); }}
-                    className={`relative flex flex-col items-center gap-1.5 rounded-xl border-2 px-3 py-3.5 transition-all duration-200
-                      ${active
-                        ? `${r.border} ${r.bg} shadow-sm ring-2 ${r.ring} ring-offset-1`
-                        : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
-                      }`}
+                    onClick={() => setShowPassword((value) => !value)}
+                    className="absolute right-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
                   >
-                    <div className={`grid h-9 w-9 place-items-center rounded-lg transition-colors ${active ? r.bg : 'bg-slate-100'}`}>
-                      <Icon className={`h-4.5 w-4.5 ${active ? r.color : 'text-slate-400'}`} />
-                    </div>
-                    <span className={`text-xs font-semibold ${active ? r.color : 'text-slate-600'}`}>{r.label}</span>
-                    <span className="text-[9px] text-slate-400 leading-tight text-center">{r.desc}</span>
-                    {active && (
-                      <div className={`absolute -top-1 -right-1 h-4 w-4 rounded-full grid place-items-center text-white text-[8px]
-                        ${r.key === 'super_admin' ? 'bg-rose-500' : r.key === 'rm' ? 'bg-blue-500' : 'bg-emerald-500'}`}>
-                        <svg viewBox="0 0 12 12" fill="none" className="h-2.5 w-2.5"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                      </div>
-                    )}
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
-                );
-              })}
-            </div>
-          </div>
+                </div>
+              </div>
 
-          {/* ── Login Form ── */}
-          <form onSubmit={handleSubmit} className="space-y-4">
-
-            {/* Full Name */}
-            <div>
-              <label className="flex items-center gap-1.5 text-sm font-medium text-slate-700 mb-1.5">
-                <User className="h-3.5 w-3.5 text-slate-400" />
-                Full Name
-              </label>
-              <input
-                type="text"
-                value={fullName}
-                onChange={e => setFullName(e.target.value)}
-                placeholder="Enter your full name"
-                className="w-full rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 outline-none transition focus:border-blue-400 focus:bg-white focus:ring-3 focus:ring-blue-100"
-              />
-            </div>
-
-            {/* Email */}
-            <div>
-              <label className="flex items-center gap-1.5 text-sm font-medium text-slate-700 mb-1.5">
-                <Mail className="h-3.5 w-3.5 text-slate-400" />
-                Email Address
-              </label>
-              <input
-                type="email"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                autoComplete="username"
-                className="w-full rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 outline-none transition focus:border-blue-400 focus:bg-white focus:ring-3 focus:ring-blue-100"
-              />
-            </div>
-
-            {/* Mobile Number */}
-            <div>
-              <label className="flex items-center gap-1.5 text-sm font-medium text-slate-700 mb-1.5">
-                <Phone className="h-3.5 w-3.5 text-slate-400" />
-                Mobile Number
-              </label>
-              <input
-                type="tel"
-                value={phone}
-                onChange={e => setPhone(e.target.value)}
-                placeholder="+91 98XXXXXXXX"
-                className="w-full rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 outline-none transition focus:border-blue-400 focus:bg-white focus:ring-3 focus:ring-blue-100"
-              />
-            </div>
-
-            {/* CP ID */}
-            <div>
-              <label className="flex items-center gap-1.5 text-sm font-medium text-slate-700 mb-1.5">
-                <IdCard className="h-3.5 w-3.5 text-slate-400" />
-                CP ID
-                <span className="text-[10px] text-slate-400 font-normal">(Channel Partner ID)</span>
-              </label>
-              <input
-                type="text"
-                value={cpId}
-                onChange={e => setCpId(e.target.value)}
-                placeholder={role === 'super_admin' ? 'Not required for Super Admin' : 'e.g. SBA28071544'}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 outline-none transition focus:border-blue-400 focus:bg-white focus:ring-3 focus:ring-blue-100"
-              />
-            </div>
-
-            {/* Password */}
-            <div>
-              <label className="flex items-center gap-1.5 text-sm font-medium text-slate-700 mb-1.5">
-                <Lock className="h-3.5 w-3.5 text-slate-400" />
-                Password
-              </label>
-              <div className="relative">
-                <input
-                  type={showPwd ? 'text' : 'password'}
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  placeholder="Enter your password"
-                  autoComplete="current-password"
-                  required
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-2.5 pr-11 text-sm text-slate-900 placeholder-slate-400 outline-none transition focus:border-blue-400 focus:bg-white focus:ring-3 focus:ring-blue-100"
-                />
-                <button
-                  type="button"
-                  tabIndex={-1}
-                  onClick={() => setShowPwd(v => !v)}
-                  className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 transition-colors"
+              {error && (
+                <div
+                  id="login-error"
+                  role="alert"
+                  className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700"
                 >
-                  {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-            </div>
-
-            {/* Submit Button */}
-            <button
-              type="submit"
-              disabled={loading}
-              className={`relative w-full flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-lg transition-all duration-200 active:scale-[0.99] disabled:opacity-60 disabled:cursor-not-allowed
-                ${role === 'super_admin'
-                  ? 'bg-gradient-to-r from-rose-500 to-rose-600 shadow-rose-200 hover:from-rose-600 hover:to-rose-700 hover:shadow-rose-300'
-                  : role === 'rm'
-                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 shadow-blue-200 hover:from-blue-700 hover:to-indigo-700 hover:shadow-blue-300'
-                  : 'bg-gradient-to-r from-emerald-500 to-emerald-600 shadow-emerald-200 hover:from-emerald-600 hover:to-emerald-700 hover:shadow-emerald-300'
-                }`}
-            >
-              {loading ? (
-                <span className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
-              ) : (
-                <LogIn className="h-4 w-4" />
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{error}</span>
+                </div>
               )}
-              {loading ? 'Signing in...' : `Sign In as ${activeRole.label}`}
-              {!loading && <ChevronRight className="h-3.5 w-3.5 ml-1" />}
-            </button>
-          </form>
 
-          {/* Help box */}
-          <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
-            <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-2">How to sign in</p>
-            <div className="space-y-1.5 text-xs text-slate-500">
-              <div className="flex items-start gap-2">
-                <span className={`mt-1.5 inline-block h-1.5 w-1.5 rounded-full shrink-0 ${role === 'super_admin' ? 'bg-rose-500' : role === 'rm' ? 'bg-blue-500' : 'bg-emerald-500'}`} />
-                <span>
-                  {role === 'super_admin'
-                    ? 'Use your super admin email address and password'
-                    : role === 'rm'
-                    ? 'Use your CP ID or email with your assigned password'
-                    : 'Use your CP ID or email with your assigned password'
-                  }
-                </span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className={`mt-1.5 inline-block h-1.5 w-1.5 rounded-full shrink-0 ${role === 'super_admin' ? 'bg-rose-500' : role === 'rm' ? 'bg-blue-500' : 'bg-emerald-500'}`} />
-                <span>You can also sign in using your registered mobile number</span>
-              </div>
-            </div>
-            <p className="text-[10px] text-slate-400 mt-2.5">
-              Contact your administrator if you need access or forgot your password.
-            </p>
+              <button
+                type="submit"
+                disabled={!canSubmit}
+                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {loading ? (
+                  <span className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                ) : (
+                  <LogIn className="h-4 w-4" />
+                )}
+                {loading ? 'Signing in...' : 'Sign in'}
+              </button>
+            </form>
           </div>
-
-          <p className="mt-5 text-center text-[10px] uppercase tracking-[0.18em] text-slate-300">
-            DigitalADbird &middot; Enterprise CRM &middot; {new Date().getFullYear()}
-          </p>
-        </div>
+        </section>
       </div>
-    </div>
+    </main>
   );
 }
