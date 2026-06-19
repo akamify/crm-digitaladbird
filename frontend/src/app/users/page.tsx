@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Skeleton, EmptyState } from '@/components/ui/Modal';
 import { UserFormModal } from '@/components/users/UserFormModal';
+import { UserEmailActions } from '@/components/users/UserEmailActions';
 import { useUsers, useUpdateUser, useDeleteUser } from '@/hooks/useUsers';
 import { useAuth } from '@/lib/auth';
 import { fmtRelative, fmtDate, humanize, initials, clsx } from '@/lib/format';
@@ -38,12 +39,14 @@ function UsersInner() {
       u.full_name.toLowerCase().includes(needle) ||
       u.email.toLowerCase().includes(needle) ||
       (u.phone ?? '').includes(needle) ||
+      (u.cp_id ?? '').toLowerCase().includes(needle) ||
       (u.team_name ?? '').toLowerCase().includes(needle),
     );
   }, [users, q]);
 
   const rms = useMemo(() => (users ?? []).filter(u => u.role === 'rm' || u.role === 'super_admin'), [users]);
   const canManage = user?.role === 'super_admin';
+  const canEmailTeam = user?.role === 'rm';
 
   return (
     <div className="space-y-4">
@@ -81,7 +84,7 @@ function UsersInner() {
                   <th className="px-4 py-2.5 font-medium text-right">Cap</th>
                   <th className="px-4 py-2.5 font-medium text-right">Weight</th>
                   <th className="px-4 py-2.5 font-medium">Joined</th>
-                  {canManage && <th className="px-4 py-2.5 font-medium text-right">Actions</th>}
+                  {(canManage || canEmailTeam) && <th className="px-4 py-2.5 font-medium text-right">Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -98,6 +101,7 @@ function UsersInner() {
                         <div>
                           <div className="font-medium text-slate-900">{u.full_name}</div>
                           <div className="text-xs text-slate-500">{u.email}</div>
+                          <div className="font-mono text-[11px] text-slate-400">{u.cp_id}</div>
                         </div>
                       </div>
                     </td>
@@ -109,9 +113,11 @@ function UsersInner() {
                     <td className="px-4 py-3 text-right tabular-nums text-slate-700">{u.daily_lead_cap ?? '∞'}</td>
                     <td className="px-4 py-3 text-right tabular-nums text-slate-700">{u.distribution_weight ?? 1}</td>
                     <td className="px-4 py-3 text-xs text-slate-500" title={fmtDate(u.created_at)}>{fmtRelative(u.created_at)}</td>
-                    {canManage && (
+                    {(canManage || canEmailTeam) && (
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-1">
+                          {(canManage || u.report_to_id === user?.id) && <UserEmailActions userId={u.id} />}
+                          {canManage && <>
                           <button
                             onClick={() => update.mutate({ id: u.id, is_available: !u.is_available }, {
                               onSuccess: () => toast.success(`Marked ${!u.is_available ? 'available' : 'unavailable'}`),
@@ -145,6 +151,7 @@ function UsersInner() {
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
+                          </>}
                         </div>
                       </td>
                     )}

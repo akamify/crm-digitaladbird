@@ -10,6 +10,9 @@
     "seed": "node src/db/seed.js",
     "seed:prod": "node src/db/seeds/seed_production.js",
     "seed:demo": "node src/db/seeds/seed_demo.js",
+    "check:cp-ids": "node scripts/check-cp-id-duplicates.js",
+    "verify:password-reset": "node scripts/verify-password-reset.js",
+    "repair:meta-page-tokens": "node scripts/repair-meta-page-tokens.js",
     "lint": "eslint src/",
     "test": "jest"
   },

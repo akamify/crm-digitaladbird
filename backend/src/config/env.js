@@ -84,6 +84,19 @@ const config = {
   cors: {
     origins: (process.env.CORS_ORIGINS || 'http://localhost:3000').split(',').map(s => s.trim()),
   },
+
+  email: {
+    provider:          process.env.EMAIL_PROVIDER || 'brevo',
+    brevoApiKey:       process.env.BREVO_API_KEY || '',
+    senderEmail:       process.env.BREVO_SENDER_EMAIL || '',
+    senderName:        process.env.BREVO_SENDER_NAME || 'DigitalADbird CRM',
+    frontendUrl:       (process.env.APP_FRONTEND_URL || process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, ''),
+    resetTtlMinutes:   parseInt(process.env.PASSWORD_RESET_TOKEN_TTL_MINUTES || '30', 10),
+    resetMaxPerHour:   parseInt(process.env.PASSWORD_RESET_MAX_PER_HOUR || '5', 10),
+    resetTemplateId:   process.env.BREVO_RESET_TEMPLATE_ID || '',
+    onboardingTemplateId: process.env.BREVO_ONBOARDING_TEMPLATE_ID || '',
+    adminResetTemplateId: process.env.BREVO_ADMIN_RESET_TEMPLATE_ID || '',
+  },
 };
 
 module.exports = config;

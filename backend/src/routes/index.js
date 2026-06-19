@@ -94,16 +94,11 @@ router.post('/meta/pages', authenticate, requireRole('super_admin'), asyncHandle
   let resolvedName = page_name || null;
   if (!skip_validation) {
     try {
-      const axios = require('axios');
-      const cfg = require('../config/env');
-      const verify = await axios.get(`https://graph.facebook.com/${cfg.meta.graphVersion}/${page_id}`, {
-        params: { access_token: page_access_token, fields: 'id,name,username,category' },
-        timeout: 10000,
-      });
-      if (String(verify.data.id) !== String(page_id)) {
-        throw new AppError(400, 'TOKEN_PAGE_MISMATCH', `Token belongs to page ${verify.data.id} (${verify.data.name}), not ${page_id}`);
+      const verify = await require('../services/metaGraphClient').graphGet(page_id, { fields: 'id,name,username,category' }, page_access_token, { pageId: page_id, tokenSource: 'candidate_page_token' });
+      if (String(verify.id) !== String(page_id)) {
+        throw new AppError(400, 'TOKEN_PAGE_MISMATCH', `Token belongs to page ${verify.id} (${verify.name}), not ${page_id}`);
       }
-      resolvedName = resolvedName || verify.data.name;
+      resolvedName = resolvedName || verify.name;
     } catch (err) {
       if (err instanceof AppError) throw err;
       const fb = err.response?.data?.error;
@@ -112,11 +107,15 @@ router.post('/meta/pages', authenticate, requireRole('super_admin'), asyncHandle
   }
 
   const { rows: [r] } = await query(
-    `INSERT INTO meta_pages(page_id, page_name, page_access_token)
-       VALUES ($1, $2, $3)
+    `INSERT INTO meta_pages(page_id, page_name, page_access_token, token_is_valid, token_last_checked, token_last_error)
+       VALUES ($1, $2, $3, TRUE, NOW(), NULL)
        ON CONFLICT (page_id) DO UPDATE SET page_access_token = EXCLUDED.page_access_token,
                                             page_name        = COALESCE(EXCLUDED.page_name, meta_pages.page_name),
-                                            is_active        = TRUE
+                                            is_active        = TRUE,
+                                            token_is_valid   = TRUE,
+                                            token_last_checked = NOW(),
+                                            token_last_error = NULL,
+                                            updated_at       = NOW()
        RETURNING id, page_id, page_name`,
     [page_id, resolvedName, page_access_token]
   );
@@ -140,14 +139,9 @@ router.patch('/meta/pages/:pageId/token', authenticate, requireRole('super_admin
 
   // Validate against Graph API first
   try {
-    const axios = require('axios');
-    const cfg = require('../config/env');
-    const verify = await axios.get(`https://graph.facebook.com/${cfg.meta.graphVersion}/${pageId}`, {
-      params: { access_token: page_access_token, fields: 'id,name' },
-      timeout: 10000,
-    });
-    if (String(verify.data.id) !== String(pageId)) {
-      throw new AppError(400, 'TOKEN_PAGE_MISMATCH', `Token belongs to ${verify.data.id} (${verify.data.name}), not page ${pageId}`);
+    const verify = await require('../services/metaGraphClient').graphGet(pageId, { fields: 'id,name' }, page_access_token, { pageId, tokenSource: 'candidate_page_token' });
+    if (String(verify.id) !== String(pageId)) {
+      throw new AppError(400, 'TOKEN_PAGE_MISMATCH', `Token belongs to ${verify.id} (${verify.name}), not page ${pageId}`);
     }
   } catch (err) {
     if (err instanceof AppError) throw err;
@@ -157,7 +151,8 @@ router.patch('/meta/pages/:pageId/token', authenticate, requireRole('super_admin
 
   const { rowCount, rows } = await query(
     `UPDATE meta_pages
-        SET page_access_token = $1, is_active = TRUE, updated_at = NOW()
+        SET page_access_token = $1, is_active = TRUE, token_is_valid = TRUE,
+            token_last_checked = NOW(), token_last_error = NULL, updated_at = NOW()
       WHERE page_id = $2
       RETURNING id, page_id, page_name`,
     [page_access_token, pageId]
@@ -186,13 +181,9 @@ router.get('/meta/pages/:pageId/token-test', authenticate, requireRole('super_ad
     return res.json({ success: true, data: { ok: false, reason: 'No token stored' } });
   }
   try {
-    const axios = require('axios');
-    const cfg = require('../config/env');
-    const verify = await axios.get(`https://graph.facebook.com/${cfg.meta.graphVersion}/${pageId}`, {
-      params: { access_token: page.page_access_token, fields: 'id,name,access_token,category' },
-      timeout: 10000,
-    });
-    res.json({ success: true, data: { ok: true, page_id: verify.data.id, name: verify.data.name, category: verify.data.category } });
+    const verify = await require('../services/metaGraphClient').graphGet(pageId, { fields: 'id,name,category' }, page.page_access_token, { pageId, tokenSource: 'db_page_token' });
+    await require('../services/metaTokenResolver').updatePageHealth(pageId, { valid: true });
+    res.json({ success: true, data: { ok: true, page_id: verify.id, name: verify.name, category: verify.category } });
   } catch (err) {
     const fb = err.response?.data?.error;
     res.json({
@@ -229,8 +220,10 @@ router.get('/meta/forms/:formId/details', authenticate, requireRole('super_admin
   );
   if (!formRow) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Form not registered in CRM' } });
 
-  const token = formRow.page_access_token || config.meta.pageAccessToken || config.meta.userAccessToken;
-  if (!token) {
+  const pageToken = formRow.page_id
+    ? await require('../services/metaTokenResolver').getPageTokenByPageId(formRow.page_id)
+    : null;
+  if (!pageToken) {
     return res.status(409).json({
       success: false,
       error: { code: 'NO_TOKEN', message: 'No Meta page access token configured. Add one in Settings → Meta Pages.' },
@@ -239,7 +232,7 @@ router.get('/meta/forms/:formId/details', authenticate, requireRole('super_admin
   }
 
   try {
-    const live = await metaSvc.fetchFormFromGraph(formId, token);
+    const live = await metaSvc.fetchFormFromGraph(formId, pageToken.token);
     res.json({ success: true, data: { local: formRow, live } });
   } catch (err) {
     const fbErr = err.response?.data?.error;
@@ -422,13 +415,13 @@ router.get('/sheets/list', authenticate, requireRole('super_admin'), asyncHandle
 router.get('/integrations/status', authenticate, requireRole('super_admin'), responseCache(15000), asyncHandler(async (_req, res) => {
   // Meta status
   const metaPages = await query(`SELECT page_id, page_name, is_active, page_access_token FROM meta_pages WHERE is_active = TRUE`);
-  const metaConfigured = !!(process.env.META_PAGE_ACCESS_TOKEN || process.env.META_USER_ACCESS_TOKEN || process.env.META_APP_SECRET);
   const metaVerifyToken = process.env.META_VERIFY_TOKEN || '';
   const metaPages_ = metaPages.rows.map(p => ({
     page_id: p.page_id,
     page_name: p.page_name,
     has_token: !!(p.page_access_token && p.page_access_token !== 'PENDING_TOKEN'),
   }));
+  const metaConfigured = metaPages_.some(page => page.has_token);
 
   // Meta campaigns & ad accounts
   const { rows: metaCampaigns } = await query(`SELECT COUNT(*) AS cnt FROM meta_campaigns`);
@@ -1656,17 +1649,36 @@ const config = require('../config/env');
 
 // Update Meta access token at runtime (no restart needed)
 router.post('/meta/update-token', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
-  const { user_access_token, page_access_token } = req.body;
+  const { user_access_token, page_access_token, page_id } = req.body;
   if (!user_access_token && !page_access_token) {
     throw new AppError(400, 'INVALID', 'Provide user_access_token or page_access_token');
   }
+  const tokenResolver = require('../services/metaTokenResolver');
+  const updatedPages = [];
   if (user_access_token) {
+    await tokenResolver.validateUserTokenPermissions(user_access_token);
+    const derivedPages = await tokenResolver.deriveAndSavePageTokenFromUserToken({ userToken: user_access_token, pageId: page_id || null });
+    await tokenResolver.saveUserToken(user_access_token, req.user.id);
     process.env.META_USER_ACCESS_TOKEN = user_access_token;
     config.meta.userAccessToken = user_access_token;
+    updatedPages.push(...derivedPages);
   }
   if (page_access_token) {
-    process.env.META_PAGE_ACCESS_TOKEN = page_access_token;
-    config.meta.pageAccessToken = page_access_token;
+    if (!page_id) throw new AppError(400, 'META_PAGE_ID_REQUIRED', 'page_id is required when updating a Page Access Token directly');
+    updatedPages.push(await tokenResolver.validateAndSavePageToken({ pageId: page_id, token: page_access_token }));
+  }
+
+  const subscriptions = [];
+  for (const page of updatedPages) {
+    try {
+      await metaSync.subscribePageToLeadgen(page.page_id);
+      const status = await metaSync.getPageSubscriptions(page.page_id);
+      const apps = status.data || [];
+      const subscribed = apps.some(app => Array.isArray(app.subscribed_fields) && app.subscribed_fields.includes('leadgen'));
+      subscriptions.push({ page_id: page.page_id, subscribed, subscriptions: apps });
+    } catch (error) {
+      subscriptions.push({ page_id: page.page_id, subscribed: false, error: error.message });
+    }
   }
 
   // Immediately try to sync campaigns with the new token
@@ -1680,10 +1692,10 @@ router.post('/meta/update-token', authenticate, requireRole('super_admin'), asyn
   await query(
     `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata, ip_address)
        VALUES ($1, 'meta', 'token', 'update_token', $2, $3)`,
-    [req.user.id, JSON.stringify({ updated: Object.keys(req.body), sync: syncResult ? 'attempted' : 'skipped' }), req.ip]
+    [req.user.id, JSON.stringify({ updated: ['user_token', 'derived_page_tokens'], pages: updatedPages.map(page => page.page_id), sync: syncResult ? 'attempted' : 'skipped' }), req.ip]
   );
 
-  res.json({ success: true, data: { token_updated: true, campaign_sync: syncResult } });
+  res.json({ success: true, data: { token_updated: true, pages: updatedPages, subscriptions, campaign_sync: syncResult } });
 }));
 
 // Force campaign sync now (uses current token)
@@ -1832,6 +1844,7 @@ router.get('/meta/subscriptions', authenticate, requireRole('super_admin'), asyn
     const data = await metaSync.getPageSubscriptions(pageId);
     res.json({ success: true, data });
   } catch (err) {
+    if (err instanceof AppError) throw err;
     const fb = err.response?.data?.error;
     const msg = fb?.message || err.message || 'Failed to fetch subscriptions';
     res.status(502).json({
@@ -1848,6 +1861,7 @@ router.post('/meta/subscriptions', authenticate, requireRole('super_admin'), asy
     const data = await metaSync.subscribePageToLeadgen(page_id);
     res.json({ success: true, data });
   } catch (err) {
+    if (err instanceof AppError) throw err;
     const fb = err.response?.data?.error;
     const msg = fb?.message || err.message || 'Failed to subscribe page';
     res.status(502).json({
@@ -3849,31 +3863,73 @@ router.get('/admin/sheets/enriched', authenticate, requireRole('super_admin'), r
 
 // Meta token status check (wraps debug-token with friendly output)
 router.get('/admin/meta/token-status', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
-  let tokenInfo = null;
-  let connectivity = null;
-  let error = null;
-  try {
-    connectivity = await metaSync.checkConnectivity();
-  } catch (e) { error = e.message; }
-  try {
-    tokenInfo = await metaSync.debugToken();
-  } catch (e) { if (!error) error = e.message; }
-
-  const pageToken = !!(process.env.META_PAGE_ACCESS_TOKEN || config.meta?.pageAccessToken);
-  const userToken = !!(process.env.META_USER_ACCESS_TOKEN || config.meta?.userAccessToken);
+  const tokenResolver = require('../services/metaTokenResolver');
+  const { checkUserToken } = require('../jobs/metaTokenHealthJob');
+  const pages = await tokenResolver.findActivePages();
+  const pageChecks = [];
+  for (const page of pages) {
+    if (!page.page_access_token) {
+      pageChecks.push({ page_id: page.page_id, page_name: page.page_name, status: 'missing', forms_accessible: false, webhook_subscribed: false });
+      continue;
+    }
+    let status = 'valid';
+    let pageError = null;
+    try {
+      await require('../services/metaGraphClient').graphGet(page.page_id, { fields: 'id,name' }, page.page_access_token, { pageId: page.page_id, tokenSource: 'db_page_token' });
+      await tokenResolver.updatePageHealth(page.page_id, { valid: true });
+    } catch (error) {
+      status = 'invalid';
+      pageError = error.message;
+    }
+    let forms = [];
+    let formsError = null;
+    try { forms = await metaSync.listPageForms(page.page_id); } catch (error) { formsError = error.message; }
+    let apps = [];
+    let subscriptionError = null;
+    try {
+      const subscriptions = await metaSync.getPageSubscriptions(page.page_id);
+      apps = subscriptions.data || [];
+    } catch (error) { subscriptionError = error.message; }
+    pageChecks.push({
+      page_id: page.page_id,
+      page_name: page.page_name,
+      status,
+      forms_accessible: !formsError,
+      form_count: forms.length,
+      webhook_subscribed: apps.some(app => Array.isArray(app.subscribed_fields) && app.subscribed_fields.includes('leadgen')),
+      error: pageError,
+      forms_error: formsError,
+      subscription_error: subscriptionError,
+    });
+  }
+  const userToken = await checkUserToken();
+  const validPageCount = pageChecks.filter(page => page.status === 'valid').length;
+  const invalidPageCount = pageChecks.filter(page => page.status === 'invalid').length;
+  const webhookSubscribed = pageChecks.length > 0 && pageChecks.every(page => page.webhook_subscribed);
+  const connectivity = validPageCount > 0
+    ? { connected: true, token_source: 'db_page_token', pages: validPageCount }
+    : { connected: false, error: pageChecks[0]?.error || 'No valid DB Page Access Token' };
   const appSecret = !!process.env.META_APP_SECRET;
   const verifyToken = !!process.env.META_VERIFY_TOKEN;
 
   res.json({
     success: true,
     data: {
-      has_page_token: pageToken,
-      has_user_token: userToken,
+      has_page_token: pages.some(page => !!page.page_access_token),
+      has_user_token: userToken.status !== 'missing',
       has_app_secret: appSecret,
       has_verify_token: verifyToken,
       connectivity,
-      token_info: tokenInfo,
-      error,
+      token_info: userToken,
+      error: validPageCount === 0 ? connectivity.error : null,
+      pageTokens: { valid: validPageCount, invalid: invalidPageCount, missing: pageChecks.filter(page => page.status === 'missing').length, pages: pageChecks },
+      userToken: { ...userToken, requiredFor: ['refresh_pages', 'adaccounts', 'campaign_sync'] },
+      webhook: { subscribed: webhookSubscribed },
+      leadForms: { accessible: pageChecks.some(page => page.forms_accessible) },
+      campaignSync: { status: userToken.status === 'valid' ? 'available' : 'degraded' },
+      warning: userToken.status !== 'valid' && validPageCount > 0 && webhookSubscribed
+        ? 'User token is expired or missing, but page webhook subscription is active.'
+        : null,
     },
   });
 }));
@@ -3885,9 +3941,11 @@ router.get('/admin/meta/subscription-status', authenticate, requireRole('super_a
   for (const p of pages) {
     try {
       const subs = await metaSync.getPageSubscriptions(p.page_id);
-      results.push({ page_id: p.page_id, page_name: p.page_name, subscriptions: subs, status: 'ok' });
+      const apps = subs.data || [];
+      const subscribed = apps.some(app => Array.isArray(app.subscribed_fields) && app.subscribed_fields.includes('leadgen'));
+      results.push({ page_id: p.page_id, page_name: p.page_name, subscriptions: apps, subscribed, status: subscribed ? 'ok' : 'not_subscribed', token_source: 'db_page_token' });
     } catch (e) {
-      results.push({ page_id: p.page_id, page_name: p.page_name, subscriptions: null, status: 'error', error: e.message });
+      results.push({ page_id: p.page_id, page_name: p.page_name, subscriptions: null, subscribed: false, status: 'error', error: e.message, code: e.code || 'META_GRAPH_ERROR', token_source: 'db_page_token' });
     }
   }
   res.json({ success: true, data: results });

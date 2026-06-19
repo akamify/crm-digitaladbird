@@ -2,6 +2,7 @@
 
 import { FormEvent, Suspense, useEffect, useId, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { AlertCircle, Eye, EyeOff, Lock, LogIn, UserRound } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { BirdMark } from '@/components/ui/BirdLogo';
@@ -128,7 +129,7 @@ function LoginInner() {
             <form onSubmit={handleSubmit} className="space-y-5" noValidate>
               <div>
                 <label htmlFor={identifierId} className="mb-1.5 block text-sm font-medium text-slate-700">
-                  Email / CP ID / Phone
+                  Email, phone, or CP ID
                 </label>
                 <div className="relative">
                   <UserRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -145,7 +146,7 @@ function LoginInner() {
                     autoCapitalize="none"
                     spellCheck={false}
                     className="h-11 w-full rounded-lg border border-slate-300 bg-white pl-10 pr-3 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
-                    placeholder="you@example.com"
+                    placeholder="Email, phone, or CP ID"
                     aria-invalid={!!error}
                     aria-describedby={error ? 'login-error' : undefined}
                   />
@@ -182,6 +183,12 @@ function LoginInner() {
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
+              </div>
+
+              <div className="flex justify-end">
+                <Link href="/forgot-password" className="text-sm font-medium text-blue-600 hover:text-blue-700">
+                  Forgot password?
+                </Link>
               </div>
 
               {error && (

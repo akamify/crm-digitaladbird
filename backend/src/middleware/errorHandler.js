@@ -12,6 +12,15 @@ function errorHandler(err, req, res, _next) {
       err.code === 'INVALID_LEAD_ASSIGNEE_ROLE'
       || err.code === 'LEAD_COMMUNICATION_FORBIDDEN'
       || err.code === 'DIRECT_CHAT_DISABLED_FOR_ROLE'
+      || err.code === 'CP_ID_ALREADY_EXISTS'
+      || err.code === 'RESET_TOKEN_INVALID'
+      || err.code === 'EMAIL_PROVIDER_NOT_CONFIGURED'
+      || err.code === 'PASSWORD_WEAK'
+      || err.code === 'PASSWORD_MISMATCH'
+      || err.code === 'RESET_RATE_LIMITED'
+      || err.code === 'META_PAGE_TOKEN_MISSING'
+      || err.code === 'META_PAGE_TOKEN_INVALID'
+      || err.code === 'META_USER_TOKEN_PERMISSIONS_MISSING'
     ) {
       body.code = err.code;
       body.message = err.message;
@@ -21,6 +30,14 @@ function errorHandler(err, req, res, _next) {
 
   // Postgres unique-violation
   if (err.code === '23505') {
+    if (String(err.constraint || '').includes('cp_id') || String(err.detail || '').toLowerCase().includes('cp_id')) {
+      return res.status(409).json({
+        success: false,
+        code: 'CP_ID_ALREADY_EXISTS',
+        message: 'This CP ID is already assigned to another user.',
+        error: { code: 'CP_ID_ALREADY_EXISTS', message: 'This CP ID is already assigned to another user.' },
+      });
+    }
     return res.status(409).json({
       success: false,
       error: { code: 'CONFLICT', message: 'Duplicate value', details: err.detail },

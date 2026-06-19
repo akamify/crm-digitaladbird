@@ -3,13 +3,14 @@ import { useState } from 'react';
 import Link from 'next/link';
 import {
   Users, ArrowLeft, Search, Plus, Pencil, Trash2, ShieldBan, ShieldCheck,
-  KeyRound, Settings2, Loader2, Eye, ChevronDown, UserRound,
+  Settings2, Loader2, Eye, UserRound,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { Modal, Skeleton, EmptyState } from '@/components/ui/Modal';
 import { useUsers, useCreateUser, useUpdateUser, useDeleteUser } from '@/hooks/useUsers';
-import { useBlockUser, useUnblockUser, useResetPassword } from '@/hooks/useAdmin';
+import { useBlockUser, useUnblockUser } from '@/hooks/useAdmin';
+import { UserEmailActions } from '@/components/users/UserEmailActions';
 import { useUpdateUserSettings, useAdminUserDetail } from '@/hooks/useAdminEnterprise';
 import { fmtDate, clsx, humanize } from '@/lib/format';
 import type { Role, User } from '@/types';
@@ -30,18 +31,15 @@ function UsersInner() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editUser, setEditUser] = useState<User | null>(null);
   const [detailUserId, setDetailUserId] = useState<string | null>(null);
-  const [resetPwdUser, setResetPwdUser] = useState<User | null>(null);
-  const [newPwd, setNewPwd] = useState('');
   const [settingsUser, setSettingsUser] = useState<User | null>(null);
   const [settings, setSettings] = useState({ daily_lead_cap: '', distribution_weight: '', team_name: '' });
-  const [form, setForm] = useState({ full_name: '', email: '', phone: '', role: 'member' as Role, team_name: '', report_to_id: '' });
+  const [form, setForm] = useState({ full_name: '', email: '', phone: '', cp_id: '', role: 'member' as Role, team_name: '', report_to_id: '', sendWelcomeEmail: true });
 
   const createUser = useCreateUser();
   const updateUser = useUpdateUser();
   const deleteUser = useDeleteUser();
   const blockUser = useBlockUser();
   const unblockUser = useUnblockUser();
-  const resetPassword = useResetPassword();
   const updateSettings = useUpdateUserSettings();
   const userDetail = useAdminUserDetail(detailUserId);
 
@@ -62,11 +60,11 @@ function UsersInner() {
   };
 
   function openCreate() {
-    setForm({ full_name: '', email: '', phone: '', role: 'member', team_name: '', report_to_id: '' });
+    setForm({ full_name: '', email: '', phone: '', cp_id: '', role: 'member', team_name: '', report_to_id: '', sendWelcomeEmail: true });
     setCreateOpen(true);
   }
   function openEdit(u: User) {
-    setForm({ full_name: u.full_name, email: u.email, phone: u.phone, role: u.role, team_name: u.team_name || '', report_to_id: u.report_to_id || '' });
+    setForm({ full_name: u.full_name, email: u.email, phone: u.phone, cp_id: u.cp_id || '', role: u.role, team_name: u.team_name || '', report_to_id: u.report_to_id || '', sendWelcomeEmail: true });
     setEditUser(u);
   }
   function openSettings(u: User) {
@@ -75,8 +73,8 @@ function UsersInner() {
   }
 
   function handleSaveUser() {
-    if (!form.full_name || !form.email || !form.phone) { toast.error('Name, email, phone required'); return; }
-    const body: any = { full_name: form.full_name, email: form.email, phone: form.phone, role: form.role, report_to_id: form.report_to_id || null, team_name: form.team_name || null };
+    if (!form.full_name || !form.email || !form.phone || !form.cp_id) { toast.error('Name, email, phone and CP ID are required'); return; }
+    const body = { full_name: form.full_name.trim(), email: form.email.trim(), phone: form.phone.trim(), cp_id: form.cp_id.trim().toUpperCase(), role: form.role, report_to_id: form.report_to_id || null, team_name: form.team_name || null, sendWelcomeEmail: form.sendWelcomeEmail };
     if (editUser) {
       updateUser.mutate({ id: editUser.id, ...body }, {
         onSuccess: () => { toast.success('User updated'); setEditUser(null); },
@@ -84,7 +82,7 @@ function UsersInner() {
       });
     } else {
       createUser.mutate(body, {
-        onSuccess: () => { toast.success('User created'); setCreateOpen(false); },
+        onSuccess: (created) => { toast.success('User created'); if (created.emailWarning) toast.error(created.emailWarning); setCreateOpen(false); },
         onError: (e: any) => toast.error(e?.response?.data?.error?.message || 'Failed'),
       });
     }
@@ -141,6 +139,7 @@ function UsersInner() {
               <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wider text-slate-500">
                 <th className="py-2 pr-3 font-medium">User</th>
                 <th className="py-2 pr-3 font-medium">Role</th>
+                <th className="py-2 pr-3 font-medium">CP ID</th>
                 <th className="py-2 pr-3 font-medium">Team</th>
                 <th className="py-2 pr-3 font-medium">Status</th>
                 <th className="py-2 pr-3 font-medium">Lead Cap</th>
@@ -162,6 +161,7 @@ function UsersInner() {
                       {humanize(u.role)}
                     </span>
                   </td>
+                  <td className="py-3 pr-3 font-mono text-xs text-slate-600">{u.cp_id || 'â€”'}</td>
                   <td className="py-3 pr-3 text-slate-600">{u.team_name || '—'}</td>
                   <td className="py-3 pr-3">
                     <span className={clsx('text-[10px] rounded-full px-2 py-0.5 font-medium', u.status === 'blocked' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700')}>
@@ -178,7 +178,7 @@ function UsersInner() {
                       <button onClick={() => setDetailUserId(u.id)} className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-blue-600" title="View Details"><Eye className="h-3.5 w-3.5" /></button>
                       <button onClick={() => openEdit(u)} className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-blue-600" title="Edit"><Pencil className="h-3.5 w-3.5" /></button>
                       <button onClick={() => openSettings(u)} className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-violet-600" title="Settings"><Settings2 className="h-3.5 w-3.5" /></button>
-                      <button onClick={() => setResetPwdUser(u)} className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-orange-600" title="Reset Password"><KeyRound className="h-3.5 w-3.5" /></button>
+                      <UserEmailActions userId={u.id} />
                       {u.role !== 'super_admin' && (u.status === 'blocked' ? (
                         <button onClick={() => unblockUser.mutate(u.id, { onSuccess: () => toast.success('Unblocked') })}
                           className="rounded p-1.5 text-slate-400 hover:bg-emerald-50 hover:text-emerald-600" title="Unblock"><ShieldCheck className="h-3.5 w-3.5" /></button>
@@ -215,6 +215,7 @@ function UsersInner() {
             <div><label className="label">Email *</label><input className="input" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
             <div><label className="label">Phone *</label><input className="input" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} /></div>
           </div>
+          <div><label className="label">CP ID *</label><input className="input font-mono uppercase" value={form.cp_id} onChange={e => setForm(f => ({ ...f, cp_id: e.target.value.toUpperCase() }))} maxLength={40} /></div>
           <div className="grid grid-cols-2 gap-3">
             <div><label className="label">Reports To (RM)</label>
               <select className="input" value={form.report_to_id} onChange={e => setForm(f => ({ ...f, report_to_id: e.target.value }))}>
@@ -224,6 +225,7 @@ function UsersInner() {
             </div>
             <div><label className="label">Team Name</label><input className="input" value={form.team_name} onChange={e => setForm(f => ({ ...f, team_name: e.target.value }))} /></div>
           </div>
+          {!editUser && <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={form.sendWelcomeEmail} onChange={e => setForm(f => ({ ...f, sendWelcomeEmail: e.target.checked }))} className="h-4 w-4 rounded border-slate-300" />Send onboarding email with password setup link</label>}
         </div>
         <div className="mt-4 flex justify-end gap-2">
           <button onClick={() => { setCreateOpen(false); setEditUser(null); }} className="btn-ghost rounded-lg px-4 py-2 text-sm">Cancel</button>
@@ -294,21 +296,6 @@ function UsersInner() {
         </div>
       </Modal>
 
-      {/* Reset Password Modal */}
-      <Modal open={!!resetPwdUser} onClose={() => { setResetPwdUser(null); setNewPwd(''); }} title={`Reset Password — ${resetPwdUser?.full_name}`} size="sm">
-        <div><label className="label">New Password *</label><input className="input" value={newPwd} onChange={e => setNewPwd(e.target.value)} placeholder="Min 6 characters" /></div>
-        <div className="mt-4 flex justify-end gap-2">
-          <button onClick={() => { setResetPwdUser(null); setNewPwd(''); }} className="btn-ghost rounded-lg px-4 py-2 text-sm">Cancel</button>
-          <button disabled={resetPassword.isPending || newPwd.length < 6} onClick={() => {
-            resetPassword.mutate({ userId: resetPwdUser!.id, new_password: newPwd }, {
-              onSuccess: () => { toast.success('Password reset'); setResetPwdUser(null); setNewPwd(''); },
-              onError: () => toast.error('Failed'),
-            });
-          }} className="btn-primary rounded-lg px-4 py-2 text-sm inline-flex items-center gap-2">
-            {resetPassword.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Reset
-          </button>
-        </div>
-      </Modal>
     </div>
   );
 }

@@ -38,6 +38,7 @@ CREATE TYPE distribution_strategy AS ENUM ('round_robin', 'weighted', 'manual', 
 CREATE TABLE IF NOT EXISTS users (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   emp_code            VARCHAR(32)  UNIQUE,
+  cp_id               VARCHAR(40) UNIQUE,
   full_name           VARCHAR(160) NOT NULL,
   email               VARCHAR(190) UNIQUE NOT NULL,
   phone               VARCHAR(20)  UNIQUE NOT NULL,
@@ -46,6 +47,7 @@ CREATE TABLE IF NOT EXISTS users (
   report_to_id        UUID REFERENCES users(id) ON DELETE SET NULL,
   team_name           VARCHAR(80),
   password_hash       VARCHAR(255),
+  password_changed_at TIMESTAMPTZ,
   daily_lead_cap      INTEGER NOT NULL DEFAULT 50,
   distribution_weight INTEGER NOT NULL DEFAULT 1,
   is_available        BOOLEAN NOT NULL DEFAULT TRUE,
@@ -86,6 +88,39 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
+
+-- PASSWORD RESET TOKENS
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id              UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash           TEXT NOT NULL UNIQUE,
+  purpose              VARCHAR(30) NOT NULL DEFAULT 'password_reset',
+  requested_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  expires_at           TIMESTAMPTZ NOT NULL,
+  used_at              TIMESTAMPTZ,
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ip_address           TEXT,
+  user_agent           TEXT,
+  metadata             JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS idx_password_reset_user_created ON password_reset_tokens(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_password_reset_expires ON password_reset_tokens(expires_at);
+
+-- EMAIL DELIVERY LOGS
+CREATE TABLE IF NOT EXISTS email_delivery_logs (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id             UUID REFERENCES users(id) ON DELETE SET NULL,
+  email_to            TEXT NOT NULL,
+  email_type          VARCHAR(50) NOT NULL,
+  provider            VARCHAR(50) NOT NULL DEFAULT 'brevo',
+  provider_message_id TEXT,
+  status              VARCHAR(30) NOT NULL DEFAULT 'queued',
+  error_message       TEXT,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  sent_at             TIMESTAMPTZ,
+  metadata            JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS idx_email_delivery_user_created ON email_delivery_logs(user_id, created_at);
 
 -- META PAGES
 CREATE TABLE IF NOT EXISTS meta_pages (

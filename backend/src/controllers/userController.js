@@ -3,6 +3,8 @@ const bcrypt = require('bcryptjs');
 const { AppError, asyncHandler } = require('../utils/errors');
 const { invalidateUser } = require('../middleware/auth');
 const logger = require('../utils/logger');
+const { validateUniqueCpId } = require('../services/userIdentityService');
+const passwordResetService = require('../services/auth/passwordResetService');
 
 // ─── Hidden / protected account filter ─────────────────────────────
 // is_hidden = TRUE accounts MUST NOT appear in:
@@ -24,23 +26,23 @@ exports.list = asyncHandler(async (req, res) => {
   const u = req.user;
   let sql, params = [];
   if (u.role === 'super_admin') {
-    sql = `SELECT u.id, u.emp_code, u.full_name, u.email, u.phone, u.role, u.status,
+    sql = `SELECT u.id, u.emp_code, u.cp_id, u.full_name, u.email, u.phone, u.role, u.status,
                   u.report_to_id, m.full_name AS manager_name, u.team_name,
-                  u.daily_lead_cap, u.distribution_weight, u.is_available, u.last_login_at
+                  u.daily_lead_cap, u.distribution_weight, u.is_available, u.last_login_at, u.created_at
              FROM users u LEFT JOIN users m ON m.id = u.report_to_id
             WHERE u.deleted_at IS NULL AND ${HIDDEN_FILTER}
             ORDER BY u.role, u.full_name`;
   } else if (u.role === 'rm') {
     params = [u.id];
-    sql = `SELECT u.id, u.emp_code, u.full_name, u.email, u.phone, u.role, u.status,
-                  u.team_name, u.daily_lead_cap, u.distribution_weight, u.is_available, u.last_login_at
+    sql = `SELECT u.id, u.emp_code, u.cp_id, u.full_name, u.email, u.phone, u.role, u.status,
+                  u.team_name, u.daily_lead_cap, u.distribution_weight, u.is_available, u.last_login_at, u.created_at
              FROM users u
             WHERE u.deleted_at IS NULL AND ${HIDDEN_FILTER}
               AND (u.id = $1 OR u.report_to_id = $1)
             ORDER BY u.role, u.full_name`;
   } else {
     params = [u.id];
-    sql = `SELECT id, emp_code, full_name, email, phone, role, status, team_name
+    sql = `SELECT id, emp_code, cp_id, full_name, email, phone, role, status, team_name, created_at
              FROM users WHERE id = $1`;
   }
   const { rows } = await query(sql, params);
@@ -50,7 +52,7 @@ exports.list = asyncHandler(async (req, res) => {
 /** GET /api/users/hierarchy — tree of admins -> rms -> members */
 exports.hierarchy = asyncHandler(async (_req, res) => {
   const { rows } = await query(
-    `SELECT id, full_name, email, phone, role, report_to_id, team_name, status
+    `SELECT id, cp_id, full_name, email, phone, role, report_to_id, team_name, status
        FROM users u
       WHERE u.deleted_at IS NULL AND ${HIDDEN_FILTER}
       ORDER BY role, full_name`
@@ -68,24 +70,41 @@ exports.hierarchy = asyncHandler(async (_req, res) => {
 exports.create = asyncHandler(async (req, res) => {
   if (req.user.role !== 'super_admin') throw new AppError(403, 'FORBIDDEN', 'Admin only');
   const {
-    emp_code, full_name, email, phone, role, report_to_id, team_name,
-    daily_lead_cap, distribution_weight, password,
+    emp_code, cp_id, full_name, email, phone, role, report_to_id, team_name,
+    daily_lead_cap, distribution_weight, password, sendWelcomeEmail,
   } = req.body;
-  if (!full_name || !email || !phone || !role)
-    throw new AppError(400, 'INVALID_INPUT', 'full_name, email, phone, role required');
+  if (!full_name || !email || !phone || !role || !cp_id)
+    throw new AppError(400, 'INVALID_INPUT', 'full_name, email, phone, role, cp_id required');
+  const normalizedCpId = await validateUniqueCpId(cp_id);
   // Hidden flag cannot be set via API — only via env-driven bootstrap.
   // Silently strip if any tampering attempt arrives.
   const pwHash = password ? await bcrypt.hash(password, 10) : null;
 
   const { rows: [u] } = await query(
-    `INSERT INTO users (emp_code, full_name, email, phone, role, report_to_id, team_name,
+    `INSERT INTO users (emp_code, cp_id, full_name, email, phone, role, report_to_id, team_name,
                         daily_lead_cap, distribution_weight, password_hash)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 50), COALESCE($9, 1), $10)
-        RETURNING id, full_name, email, phone, role`,
-    [emp_code, full_name, email, phone, role, report_to_id || null, team_name || null,
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, 50), COALESCE($10, 1), $11)
+        RETURNING id, cp_id, full_name, email, phone, role, report_to_id, team_name`,
+    [emp_code || normalizedCpId, normalizedCpId, full_name.trim(), email.trim().toLowerCase(), phone.trim(), role, report_to_id || null, team_name || null,
      daily_lead_cap, distribution_weight, pwHash]
   );
-  res.status(201).json({ success: true, data: u });
+  let emailWarning = null;
+  if (sendWelcomeEmail !== false && u.email) {
+    try {
+      await passwordResetService.sendNewUserSetupLink({
+        userId: u.id,
+        createdByUser: req.user,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'] || null,
+      });
+    } catch (error) {
+      logger.warn({ userId: u.id, code: error.code || 'ONBOARDING_EMAIL_FAILED' }, 'User created but onboarding email failed');
+      emailWarning = error.code === 'EMAIL_PROVIDER_NOT_CONFIGURED'
+        ? 'User created, but the email provider is not configured.'
+        : 'User created, but onboarding email could not be sent.';
+    }
+  }
+  res.status(201).json({ success: true, data: { ...u, emailWarning } });
 });
 
 // Refuses modifications to is_protected users + logs every attempt.
@@ -138,19 +157,22 @@ exports.update = asyncHandler(async (req, res) => {
   // Even though refuseIfProtected blocks the request, allowed list also
   // excludes is_hidden / is_protected / is_system_account — these can
   // never be set via API regardless of target.
-  const allowed = ['full_name', 'email', 'phone', 'role', 'report_to_id', 'team_name',
+  const allowed = ['full_name', 'email', 'phone', 'cp_id', 'role', 'report_to_id', 'team_name',
                    'daily_lead_cap', 'distribution_weight', 'is_available', 'status'];
   const sets = [], params = [];
   for (const k of allowed) {
     if (k in req.body) {
-      params.push(req.body[k]);
+      let value = req.body[k];
+      if (k === 'cp_id') value = await validateUniqueCpId(value, req.params.id);
+      if (k === 'email' && value) value = String(value).trim().toLowerCase();
+      params.push(value);
       sets.push(`${k} = $${params.length}`);
     }
   }
   if (sets.length === 0) return res.json({ success: true });
   params.push(req.params.id);
   const { rows: [u] } = await query(
-    `UPDATE users SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING id, full_name, role, status`,
+    `UPDATE users SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $${params.length} RETURNING id, cp_id, full_name, role, status`,
     params
   );
   if (!u) throw new AppError(404, 'NOT_FOUND', 'User not found');

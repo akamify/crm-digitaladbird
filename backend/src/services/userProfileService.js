@@ -1,5 +1,6 @@
 const { query } = require('../config/database');
 const { AppError } = require('../utils/errors');
+const { validateUniqueCpId } = require('./userIdentityService');
 
 const ADMIN_ROLES = new Set(['super_admin', 'admin']);
 const CLOSED_CALL_STATUSES = ['converted', 'not_interested', 'wrong_number', 'invalid_number'];
@@ -320,7 +321,10 @@ async function updateProfile(actor, userId, body) {
   const params = [];
   for (const key of allowed) {
     if (Object.prototype.hasOwnProperty.call(body, key)) {
-      params.push(body[key] || null);
+      let value = body[key] || null;
+      if (key === 'cp_id') value = await validateUniqueCpId(value, userId);
+      if (key === 'email' && value) value = String(value).trim().toLowerCase();
+      params.push(value);
       sets.push(`${key} = $${params.length}`);
     }
   }

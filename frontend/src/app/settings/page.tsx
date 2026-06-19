@@ -238,7 +238,6 @@ function MetaAdminQuickActions({ onNavigate }: { onNavigate: (tab: SettingsTab) 
   const [tokenModal, setTokenModal] = useState(false);
   const [pageModal, setPageModal] = useState(false);
   const [userToken, setUserToken] = useState('');
-  const [pageToken, setPageToken] = useState('');
   const [newPageId, setNewPageId] = useState('');
   const [newPageName, setNewPageName] = useState('');
   const [newPageToken, setNewPageToken] = useState('');
@@ -255,13 +254,13 @@ function MetaAdminQuickActions({ onNavigate }: { onNavigate: (tab: SettingsTab) 
   });
 
   function handleUpdateToken() {
-    if (!userToken && !pageToken) { toast.error('Enter at least one token'); return; }
+    if (!userToken) { toast.error('Paste a fresh User Access Token'); return; }
     updateToken.mutate(
-      { user_access_token: userToken || undefined, page_access_token: pageToken || undefined },
+      { user_access_token: userToken },
       {
         onSuccess: () => {
-          toast.success('Token updated + campaigns syncing');
-          setTokenModal(false); setUserToken(''); setPageToken('');
+          toast.success('Page token saved and webhook subscribed successfully');
+          setTokenModal(false); setUserToken('');
           qc.invalidateQueries({ queryKey: ['integration-status'] });
         },
         onError: () => toast.error('Update failed — check token validity'),
@@ -270,7 +269,7 @@ function MetaAdminQuickActions({ onNavigate }: { onNavigate: (tab: SettingsTab) 
   }
 
   const ts = tokenStatus.data;
-  const tokenOk = ts?.has_page_token && ts?.has_user_token;
+  const tokenOk = !!ts && (ts.pageTokens?.valid || 0) > 0 && !!ts.webhook?.subscribed;
 
   return (
     <div className="rounded-xl border border-violet-200 bg-gradient-to-br from-violet-50 to-blue-50 p-4">
@@ -290,7 +289,7 @@ function MetaAdminQuickActions({ onNavigate }: { onNavigate: (tab: SettingsTab) 
           className="flex flex-col items-center gap-1.5 rounded-lg border border-amber-200 bg-white px-3 py-3 text-center transition hover:bg-amber-50 hover:shadow-sm">
           <Key className="h-5 w-5 text-amber-600" />
           <span className="text-xs font-semibold text-slate-800">Add / Update Token</span>
-          <span className="text-[10px] text-slate-500">User + Page access</span>
+          <span className="text-[10px] text-slate-500">Refresh page access</span>
         </button>
 
         <button onClick={() => setPageModal(true)}
@@ -330,11 +329,10 @@ function MetaAdminQuickActions({ onNavigate }: { onNavigate: (tab: SettingsTab) 
         <div className="space-y-3">
           <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
             <AlertCircle className="h-3.5 w-3.5 inline mr-1" />
-            Generate tokens from <a className="underline" href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener noreferrer">Graph API Explorer</a> with scopes: <code className="bg-amber-100 px-1 rounded">leads_retrieval, pages_show_list, pages_read_engagement, ads_read, business_management</code>.
+            Generate tokens from <a className="underline" href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener noreferrer">Graph API Explorer</a> with scopes: <code className="bg-amber-100 px-1 rounded">leads_retrieval, pages_show_list, pages_manage_metadata, pages_read_engagement, ads_read, business_management</code>.
           </div>
-          <Input label="User Access Token (long-lived)" type="password" value={userToken} onChange={(e) => setUserToken(e.target.value)} placeholder="EAAxxx..." />
-          <Input label="Page Access Token (long-lived)" type="password" value={pageToken} onChange={(e) => setPageToken(e.target.value)} placeholder="EAAxxx..." />
-          <p className="text-[11px] text-slate-500">Tokens are saved in-memory immediately; campaigns auto-sync after update. To persist across restarts, also update <code>backend/.env</code>.</p>
+          <Input label="Paste fresh User Access Token" type="password" value={userToken} onChange={(e) => setUserToken(e.target.value)} placeholder="EAAxxx..." />
+          <p className="text-[11px] text-slate-500">The CRM securely stores this token, derives fresh Page Access Tokens, and reconnects leadgen webhooks. Page-level operations continue using the saved page tokens.</p>
         </div>
       </Modal>
 
@@ -1661,17 +1659,15 @@ function AdminToolsTab() {
   const syncLeads = useSyncLeads();
   const updateToken = useUpdateMetaToken();
   const subscribePage = useSubscribePage();
-  const qc = useQueryClient();
 
   const [tokenModal, setTokenModal] = useState(false);
   const [userToken, setUserToken] = useState('');
-  const [pageToken, setPageToken] = useState('');
 
   function handleUpdateToken() {
-    if (!userToken && !pageToken) { toast.error('Enter at least one token'); return; }
+    if (!userToken) { toast.error('Paste a fresh User Access Token'); return; }
     updateToken.mutate(
-      { user_access_token: userToken || undefined, page_access_token: pageToken || undefined },
-      { onSuccess: () => { toast.success('Token updated + campaigns synced'); setTokenModal(false); setUserToken(''); setPageToken(''); }, onError: () => toast.error('Update failed') }
+      { user_access_token: userToken },
+      { onSuccess: () => { toast.success('Page token saved and webhook subscribed successfully'); setTokenModal(false); setUserToken(''); }, onError: () => toast.error('Update failed - check token permissions') }
     );
   }
 
@@ -1694,12 +1690,14 @@ function AdminToolsTab() {
         </div>
         {tokenStatus.isLoading ? <Skeleton className="h-32" /> : ts ? (
           <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <TokenBadge label="Page Token" ok={ts.has_page_token} />
-              <TokenBadge label="User Token" ok={ts.has_user_token} />
-              <TokenBadge label="App Secret" ok={ts.has_app_secret} />
-              <TokenBadge label="Verify Token" ok={ts.has_verify_token} />
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+              <TokenBadge label={`Page Token: ${ts.pageTokens?.valid ? 'Valid' : ts.pageTokens?.missing ? 'Missing' : 'Invalid'}`} ok={(ts.pageTokens?.valid || 0) > 0} />
+              <TokenBadge label={`User Token: ${ts.userToken?.status || 'unknown'}`} ok={ts.userToken?.status === 'valid'} />
+              <TokenBadge label={`Webhook: ${ts.webhook?.subscribed ? 'Subscribed' : 'Not subscribed'}`} ok={!!ts.webhook?.subscribed} />
+              <TokenBadge label={`Lead Forms: ${ts.leadForms?.accessible ? 'Accessible' : 'Error'}`} ok={!!ts.leadForms?.accessible} />
+              <TokenBadge label={`Campaign Sync: ${ts.campaignSync?.status || 'degraded'}`} ok={ts.campaignSync?.status === 'available'} />
             </div>
+            {ts.warning && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">Page webhook is active. User token is expired or missing, so page refresh and ad account sync may need a new token.</div>}
             {ts.connectivity && (
               <div className="rounded-lg bg-slate-50 p-3">
                 <div className="text-xs font-semibold text-slate-700 mb-1">Connectivity</div>
@@ -1742,7 +1740,7 @@ function AdminToolsTab() {
         <div className="card-padded">
           <h2 className="text-sm font-semibold text-slate-900 mb-3">Webhook Subscriptions</h2>
           <div className="space-y-2">
-            {subscriptions.data.map((s: any) => (
+            {subscriptions.data.map((s) => (
               <div key={s.page_id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
                 <div>
                   <div className="font-medium text-sm text-slate-900">{s.page_name}</div>
@@ -1750,7 +1748,15 @@ function AdminToolsTab() {
                 </div>
                 <div className="flex items-center gap-2">
                   <span className={s.status === 'ok' ? 'chip-green' : 'chip-red'}>{s.status === 'ok' ? 'Subscribed' : 'Error'}</span>
-                  <button onClick={() => subscribePage.mutate(s.page_id, { onSuccess: () => toast.success('Reconnected'), onError: () => toast.error('Failed') })}
+                  <button onClick={() => subscribePage.mutate(s.page_id, {
+                    onSuccess: () => toast.success('Webhook subscribed using the saved Page Access Token'),
+                    onError: (error: unknown) => {
+                      const apiError = error as { response?: { data?: { error?: { code?: string; message?: string } } } };
+                      const code = apiError.response?.data?.error?.code;
+                      toast.error(apiError.response?.data?.error?.message || 'Webhook reconnect failed');
+                      if (code === 'META_PAGE_TOKEN_MISSING' || code === 'META_PAGE_TOKEN_INVALID') setTokenModal(true);
+                    },
+                  })}
                     className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] font-medium text-blue-700 hover:bg-blue-100">
                     <Radio className="h-3 w-3" /> Reconnect
                   </button>
@@ -1765,9 +1771,8 @@ function AdminToolsTab() {
       <Modal open={tokenModal} onClose={() => setTokenModal(false)} title="Update Meta Access Token"
         footer={<><Button variant="ghost" onClick={() => setTokenModal(false)}>Cancel</Button><Button onClick={handleUpdateToken} loading={updateToken.isPending}>Update & Sync</Button></>}>
         <div className="space-y-3">
-          <p className="text-xs text-slate-600">Tokens are updated in-memory immediately. Campaigns auto-sync after update.</p>
-          <Input label="User Access Token" type="password" value={userToken} onChange={e => setUserToken(e.target.value)} placeholder="Long-lived user token" />
-          <Input label="Page Access Token" type="password" value={pageToken} onChange={e => setPageToken(e.target.value)} placeholder="Long-lived page token" />
+          <p className="text-xs text-slate-600">A fresh user token is used only to refresh pages, ad accounts, and campaigns. The backend derives and securely saves Page Access Tokens for webhook and lead operations.</p>
+          <Input label="Paste fresh User Access Token" type="password" value={userToken} onChange={e => setUserToken(e.target.value)} placeholder="Long-lived user token" />
         </div>
       </Modal>
     </div>

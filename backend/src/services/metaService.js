@@ -11,7 +11,6 @@
  * Docs: https://developers.facebook.com/docs/marketing-api/guides/lead-ads/retrieving
  */
 const crypto = require('crypto');
-const axios  = require('axios');
 const config = require('../config/env');
 const { query, withTransaction } = require('../config/database');
 const logger = require('../utils/logger');
@@ -20,6 +19,8 @@ const assignmentEngine = require('./leadAssignmentEngine');
 const { appendLead: sheetAppend } = require('./googleSheetsService');
 const { onLeadCreated, findExistingByContact } = require('./leadEventService');
 const { validateLead } = require('./leadValidator');
+const metaTokens = require('./metaTokenResolver');
+const { graphGet } = require('./metaGraphClient');
 
 /** Constant-time HMAC compare of Meta webhook payloads. */
 function verifySignature(rawBody, signatureHeader) {
@@ -38,24 +39,15 @@ function verifySignature(rawBody, signatureHeader) {
  * Returns the raw object: { id, created_time, ad_id, form_id, field_data: [...] }
  */
 async function fetchLeadFromGraph(leadgenId, pageAccessToken) {
-  const url = `https://graph.facebook.com/${config.meta.graphVersion}/${leadgenId}`;
-  const resp = await axios.get(url, {
-    params: {
-      access_token: pageAccessToken,
-      fields: 'id,created_time,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id,field_data,platform',
-    },
-    timeout: 15000,
-  });
-  return resp.data;
+  return graphGet(leadgenId, {
+    fields: 'id,created_time,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id,field_data,platform',
+  }, pageAccessToken, { tokenSource: 'db_page_token' });
 }
 
 /** Look up our stored page access token for a page_id (set via /api/meta/pages). */
 async function getPageAccessToken(pageId) {
-  const { rows } = await query(
-    `SELECT page_access_token FROM meta_pages WHERE page_id = $1 AND is_active = TRUE`,
-    [pageId]
-  );
-  return rows[0]?.page_access_token || null;
+  const resolved = await metaTokens.getPageTokenByPageId(pageId);
+  return resolved?.token || null;
 }
 
 /** Convert Meta field_data array to { full_name, email, phone, city, state, ... }. */
@@ -99,7 +91,9 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
 
   let detail;
   try {
-    detail = await fetchLeadFromGraph(leadgen_id, token);
+    detail = await graphGet(leadgen_id, {
+      fields: 'id,created_time,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id,field_data,platform',
+    }, token, { pageId: page_id, tokenSource: 'db_page_token' });
     logger.info({ ...ctx, step: 'D.graph_ok', campaign_id: detail.campaign_id, ad_id: detail.ad_id, fields: detail.field_data?.length || 0 }, '[meta-ingest]');
   } catch (err) {
     logger.error({ ...ctx, step: 'D.graph_failed', err: err.message }, '[meta-ingest] Graph API rejected the lead lookup — token likely expired or missing leads_retrieval scope.');
@@ -246,18 +240,13 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
  *           privacy_policy_url, follow_up_action_url, page, page_id }
  */
 async function fetchFormFromGraph(formId, pageAccessToken) {
-  const url = `https://graph.facebook.com/${config.meta.graphVersion}/${formId}`;
   const fields = [
     'id', 'name', 'status', 'locale', 'created_time', 'leads_count',
     'questions', 'privacy_policy_url', 'follow_up_action_url',
     'thank_you_page', 'context_card', 'expired_leads_count', 'organic_leads_count',
     'page{id,name,username,link,picture}',
   ].join(',');
-  const resp = await axios.get(url, {
-    params: { access_token: pageAccessToken, fields },
-    timeout: 15000,
-  });
-  return resp.data;
+  return graphGet(formId, { fields }, pageAccessToken, { tokenSource: 'db_page_token', formId });
 }
 
 module.exports = {

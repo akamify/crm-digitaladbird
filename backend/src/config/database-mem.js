@@ -70,8 +70,8 @@ async function seedAdminIfNeeded() {
       const bcrypt = require('bcryptjs');
       const passwordHash = await bcrypt.hash('admin123', 10);
       await query(
-        `INSERT INTO users (full_name, email, phone, role, status, password_hash)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+        `INSERT INTO users (emp_code, cp_id, full_name, email, phone, role, status, password_hash)
+         VALUES ('DEV-ADMIN', 'DEV-ADMIN', $1, $2, $3, $4, $5, $6)`,
         ['Admin User', 'admin@digitaladbird.com', '+919999999999', 'admin', 'active', passwordHash]
       );
       logger.info('Seeded default admin user: phone=+919999999999, OTP will be shown in console');

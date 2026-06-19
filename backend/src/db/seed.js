@@ -65,11 +65,11 @@ async function seedUsers() {
     const normalizedRole = role === 'admin' ? 'super_admin' : role;
     const memberType = (r.member_type || '').toLowerCase().trim() || null;
     await query(
-      `INSERT INTO users (emp_code, full_name, email, phone, role, member_type, team_name,
+      `INSERT INTO users (emp_code, cp_id, full_name, email, phone, role, member_type, team_name,
                           daily_lead_cap, distribution_weight)
-        VALUES ($1, $2, $3, $4, $5, $6, $7,
-                COALESCE(NULLIF($8,'')::int, 50),
-                COALESCE(NULLIF($9,'')::int, 1))
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+                COALESCE(NULLIF($9,'')::int, 50),
+                COALESCE(NULLIF($10,'')::int, 1))
         ON CONFLICT (email) DO UPDATE
           SET full_name = EXCLUDED.full_name,
               phone     = EXCLUDED.phone,
@@ -78,7 +78,7 @@ async function seedUsers() {
               team_name = EXCLUDED.team_name,
               daily_lead_cap = EXCLUDED.daily_lead_cap,
               distribution_weight = EXCLUDED.distribution_weight`,
-      [r.emp_code || null, r.full_name, r.email.toLowerCase(),
+      [r.emp_code || null, String(r.cp_id || r.emp_code || '').trim().toUpperCase(), r.full_name, r.email.toLowerCase(),
        normalizePhone(r.phone), normalizedRole, memberType, r.team_name || null,
        r.daily_lead_cap || '', r.distribution_weight || '']
     );

@@ -144,7 +144,7 @@ function ExportReportsTool() {
 // ─── 3. Add User (RM or Member) ─────────────────────────────────────
 function AddUserTool() {
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ full_name: '', email: '', phone: '', role: 'member' as Role, team_name: '', report_to_id: '' });
+  const [form, setForm] = useState({ full_name: '', email: '', phone: '', cp_id: '', role: 'member' as Role, team_name: '', report_to_id: '', sendWelcomeEmail: true });
   const create = useCreateUser();
   const { data: users } = useUsers();
   const rms = (users || []).filter(u => u.role === 'rm');
@@ -166,6 +166,10 @@ function AddUserTool() {
                 <option value="rm">RM</option>
               </select>
             </div>
+          </div>
+          <div>
+            <label className="label">CP ID *</label>
+            <input className="input font-mono uppercase" value={form.cp_id} onChange={e => setForm(f => ({ ...f, cp_id: e.target.value.toUpperCase() }))} maxLength={40} />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -192,16 +196,17 @@ function AddUserTool() {
               </div>
             </div>
           )}
+          <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={form.sendWelcomeEmail} onChange={e => setForm(f => ({ ...f, sendWelcomeEmail: e.target.checked }))} className="h-4 w-4 rounded border-slate-300" />Send onboarding email with password setup link</label>
         </div>
         <div className="mt-4 flex justify-end gap-2">
           <button onClick={() => setOpen(false)} className="btn-ghost rounded-lg px-4 py-2 text-sm">Cancel</button>
           <button
-            disabled={create.isPending || !form.full_name || !form.email || !form.phone}
+            disabled={create.isPending || !form.full_name || !form.email || !form.phone || !form.cp_id}
             onClick={() => {
               create.mutate(
-                { full_name: form.full_name, email: form.email, phone: form.phone, role: form.role, report_to_id: form.report_to_id || null, team_name: form.team_name || null },
+                { full_name: form.full_name.trim(), email: form.email.trim(), phone: form.phone.trim(), cp_id: form.cp_id.trim().toUpperCase(), role: form.role, report_to_id: form.report_to_id || null, team_name: form.team_name || null, sendWelcomeEmail: form.sendWelcomeEmail },
                 {
-                  onSuccess: () => { toast.success('User created'); setOpen(false); setForm({ full_name: '', email: '', phone: '', role: 'member', team_name: '', report_to_id: '' }); },
+                  onSuccess: (created) => { toast.success('User created'); if (created.emailWarning) toast.error(created.emailWarning); setOpen(false); setForm({ full_name: '', email: '', phone: '', cp_id: '', role: 'member', team_name: '', report_to_id: '', sendWelcomeEmail: true }); },
                   onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed'),
                 }
               );

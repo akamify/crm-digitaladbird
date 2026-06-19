@@ -611,10 +611,44 @@ export function useSheetsEnriched() {
 }
 
 // ── Meta Token Status ───────────────────────────────────────────
+export interface MetaPageTokenStatus {
+  page_id: string;
+  page_name: string | null;
+  status: 'valid' | 'invalid' | 'missing';
+  forms_accessible: boolean;
+  form_count?: number;
+  webhook_subscribed: boolean;
+  error?: string;
+}
+
+export interface MetaTokenStatus {
+  has_page_token: boolean;
+  has_user_token: boolean;
+  has_app_secret: boolean;
+  has_verify_token: boolean;
+  connectivity: { connected: boolean; token_source?: string; pages?: number; error?: string };
+  error: string | null;
+  warning: string | null;
+  pageTokens: { valid: number; invalid: number; missing: number; pages: MetaPageTokenStatus[] };
+  userToken: { status: 'valid' | 'expired' | 'missing' | 'error'; source: string | null; requiredFor: string[]; error?: string };
+  webhook: { subscribed: boolean };
+  leadForms: { accessible: boolean };
+  campaignSync: { status: 'available' | 'degraded' };
+}
+
+export interface MetaSubscriptionStatus {
+  page_id: string;
+  page_name: string | null;
+  status: 'ok' | 'not_subscribed' | 'error';
+  subscribed: boolean;
+  token_source: 'db_page_token';
+  error?: string;
+}
+
 export function useMetaTokenStatus() {
   return useQuery({
     queryKey: ['admin', 'meta-token-status'],
-    queryFn: () => apiGet<any>('/admin/meta/token-status'),
+    queryFn: () => apiGet<MetaTokenStatus>('/admin/meta/token-status'),
   });
 }
 
@@ -622,7 +656,7 @@ export function useMetaTokenStatus() {
 export function useMetaSubscriptionStatus() {
   return useQuery({
     queryKey: ['admin', 'meta-subscriptions'],
-    queryFn: () => apiGet<any[]>('/admin/meta/subscription-status'),
+    queryFn: () => apiGet<MetaSubscriptionStatus[]>('/admin/meta/subscription-status'),
   });
 }
 
@@ -664,7 +698,7 @@ export function useSyncLeads() {
 export function useUpdateMetaToken() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { user_access_token?: string; page_access_token?: string }) => apiPost('/meta/update-token', body),
+    mutationFn: (body: { user_access_token?: string; page_access_token?: string; page_id?: string }) => apiPost('/meta/update-token', body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['admin'] }); },
   });
 }

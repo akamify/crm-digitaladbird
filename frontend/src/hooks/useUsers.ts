@@ -21,11 +21,13 @@ export interface CreateUserInput {
   full_name: string;
   email: string;
   phone: string;
+  cp_id: string;
   role: Role;
   report_to_id?: string | null;
   team_name?: string | null;
   daily_lead_cap?: number | null;
   distribution_weight?: number | null;
+  sendWelcomeEmail?: boolean;
 }
 
 export function useCreateUser() {
@@ -50,5 +52,17 @@ export function useDeleteUser() {
   return useMutation({
     mutationFn: (id: string) => apiDelete(`/users/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  });
+}
+
+export function useSendPasswordResetLink() {
+  return useMutation({
+    mutationFn: (userId: string) => apiPost<{ message: string }>(`/admin/users/${userId}/send-password-reset`),
+  });
+}
+
+export function useSendOnboardingEmail() {
+  return useMutation({
+    mutationFn: (userId: string) => apiPost<{ message: string }>(`/admin/users/${userId}/send-onboarding-email`),
   });
 }

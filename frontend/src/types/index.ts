@@ -19,6 +19,7 @@ export type CallStatus =
 
 export interface User {
   id: string;
+  cp_id: string;
   full_name: string;
   email: string;
   phone: string;
@@ -32,6 +33,7 @@ export interface User {
   status?: 'active' | 'blocked' | 'inactive';
   is_active?: boolean;
   created_at?: string;
+  emailWarning?: string | null;
 }
 
 export interface Lead {

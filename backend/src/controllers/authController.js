@@ -15,6 +15,7 @@
  *   GET  /auth/me
  */
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const { query } = require('../config/database');
 const { issueOtp, verifyOtp: verifyOtpCode } = require('../services/otpService');
 const { signAccessToken, signRefreshToken, hashToken } = require('../utils/jwt');
@@ -50,6 +51,10 @@ function identifierType(value) {
   if (normalizePhone(raw)) return 'phone';
   if (/^[a-z]{1,4}[-_\d]/i.test(raw) || /^cp/i.test(raw)) return 'cp_id';
   return 'name_or_id';
+}
+
+function generateCpId() {
+  return `DAB-${crypto.randomBytes(8).toString('hex').toUpperCase()}`;
 }
 
 exports.login = asyncHandler(async (req, res) => {
@@ -256,10 +261,10 @@ exports.requestOtp = asyncHandler(async (req, res) => {
     const memberType  = role === 'member' ? 'fresher' : null;
 
     const { rows: [created] } = await query(
-      `INSERT INTO users (emp_code, full_name, email, phone, role, member_type, status, password_hash)
-         VALUES ($1, $2, $3, $4, $5, $6, 'active', $7)
+      `INSERT INTO users (emp_code, cp_id, full_name, email, phone, role, member_type, status, password_hash)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', $8)
          RETURNING id, role, member_type, status`,
-      [generateEmpCode(role), full_name.trim(), email, phone, role, memberType, passwordHash]
+      [generateEmpCode(role), generateCpId(), full_name.trim(), email, phone, role, memberType, passwordHash]
     );
     user = created;
   }
@@ -279,7 +284,7 @@ exports.verifyOtp = asyncHandler(async (req, res) => {
   await verifyOtpCode(email, otp);
 
   const { rows } = await query(
-    `SELECT id, full_name, email, phone, role, member_type, report_to_id, team_name
+    `SELECT id, full_name, email, phone, cp_id, role, member_type, report_to_id, team_name
        FROM users
       WHERE email = $1 AND deleted_at IS NULL AND status = 'active'`,
     [email]
@@ -317,6 +322,7 @@ exports.verifyOtp = asyncHandler(async (req, res) => {
         memberType: user.member_type,
         reportToId: user.report_to_id,
         team:       user.team_name,
+        cpId:       user.cp_id,
       },
     },
   });
@@ -431,6 +437,7 @@ exports.me = asyncHandler(async (req, res) => {
       role:       u.role,
       memberType: u.member_type,
       reportToId: u.report_to_id,
+      cpId:       u.cp_id,
     },
   });
 });

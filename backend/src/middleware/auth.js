@@ -40,7 +40,7 @@ async function authenticate(req, _res, next) {
     let user = getCachedUser(payload.sub);
     if (!user) {
       const { rows } = await query(
-        `SELECT id, role, member_type, full_name, email, phone, report_to_id, status
+        `SELECT id, role, member_type, full_name, email, phone, cp_id, report_to_id, status
            FROM users
           WHERE id = $1 AND deleted_at IS NULL`,
         [payload.sub]

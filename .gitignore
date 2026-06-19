@@ -46,6 +46,9 @@ backend/.env.local
 backend/.env.production
 frontend/.env
 frontend/.env.local
+frontend/.env.production
+frontend/.env.production.local
+backend/.env.production.local
 # templates with placeholders only ARE safe to commit:
 !.env.example
 !.env.*.template
@@ -58,6 +61,12 @@ backend/src/db/seeds/leads.csv
 
 # embedded postgres data (dev only)
 backend/data/
+backend/uploads/
+backend/exports/
+
+# temporary diagnostics and local patches
+**/.tmp*
+*.patch
 
 # standalone output (next.js production build)
 frontend/.next/standalone/

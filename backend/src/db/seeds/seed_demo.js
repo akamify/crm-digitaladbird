@@ -127,9 +127,9 @@ const SAMPLE_LEADS = [
 
 async function upsertUser(u, passwordHash) {
   await query(
-    `INSERT INTO users (emp_code, full_name, email, phone, role, member_type, team_name, password_hash, status,
+    `INSERT INTO users (emp_code, cp_id, full_name, email, phone, role, member_type, team_name, password_hash, status,
                         daily_lead_cap, distribution_weight, is_available)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', 50, 1, TRUE)
+       VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, 'active', 50, 1, TRUE)
        ON CONFLICT (email) DO UPDATE
          SET full_name    = EXCLUDED.full_name,
              phone        = EXCLUDED.phone,

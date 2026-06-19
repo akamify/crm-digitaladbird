@@ -11,7 +11,6 @@
  *   - Ad account campaign listing
  *   - Manual sync triggers
  */
-const axios = require('axios');
 const config = require('../config/env');
 const { query, withTransaction } = require('../config/database');
 const logger = require('../utils/logger');
@@ -19,66 +18,33 @@ const { isDistributionActive } = require('./distributionScheduler');
 const assignmentEngine = require('./leadAssignmentEngine');
 const { onLeadCreated, findExistingByContact } = require('./leadEventService');
 const { validateLead } = require('./leadValidator');
+const graphClient = require('./metaGraphClient');
+const metaTokens = require('./metaTokenResolver');
 
-const GRAPH_BASE = `https://graph.facebook.com/${config.meta.graphVersion}`;
+
 
 // ─── Helper: get access token (prefer page token for lead reads) ──────
-function getAccessToken() {
-  return config.meta.pageAccessToken || config.meta.userAccessToken || null;
-}
-
-function getUserAccessToken() {
-  return config.meta.userAccessToken || config.meta.pageAccessToken || null;
-}
 
 async function getActiveMetaPage() {
-  const { rows } = await query(`
-    SELECT page_id, page_name, page_access_token
-    FROM meta_pages
-    WHERE is_active = TRUE
-    ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
-    LIMIT 1
-  `);
-
-  if (rows.length) {
-    return {
-      pageId: rows[0].page_id,
-      pageName: rows[0].page_name,
-      pageAccessToken: rows[0].page_access_token,
-      source: 'database',
-    };
-  }
-
-  return {
-    pageId: config.meta.pageId || '',
-    pageName: config.meta.pageName || '',
-    pageAccessToken: config.meta.pageAccessToken || '',
-    source: 'env',
-  };
+  const pages = await metaTokens.findActivePages();
+  const page = pages[0];
+  if (!page) return null;
+  return { pageId: page.page_id, pageName: page.page_name, source: 'database' };
 }
 
 // ─── Graph API caller with error handling ─────────────────────────────
 async function graphGet(path, params = {}) {
   const explicitToken = params._accessToken || null;
+  const pageId = params._pageId || null;
   delete params._accessToken;
-
-  const token = explicitToken || (params._useUserToken ? getUserAccessToken() : getAccessToken());
+  delete params._pageId;
+  const userToken = params._useUserToken ? await metaTokens.getUserToken() : null;
+  const token = explicitToken || userToken?.token || null;
+  const tokenSource = explicitToken ? 'db_page_token' : userToken?.source;
   delete params._useUserToken;
 
-  if (!token) throw new Error('No Meta access token configured');
-
-  const url = path.startsWith('http') ? path : `${GRAPH_BASE}/${path}`;
-  try {
-    const resp = await axios.get(url, {
-      params: { access_token: token, ...params },
-      timeout: 30000,
-    });
-    return resp.data;
-  } catch (err) {
-    const msg = err.response?.data?.error?.message || err.message;
-    logger.error({ url, params: { ...params, access_token: '***' }, error: msg }, 'Graph API error');
-    throw new Error(`Graph API: ${msg}`);
-  }
+  if (!token) throw new Error('No required Meta token configured');
+  return graphClient.graphGet(path, params, token, { tokenSource, pageId });
 }
 
 // ─── Paginated Graph API fetch ────────────────────────────────────────
@@ -86,9 +52,19 @@ async function graphGetAll(path, params = {}, maxPages = 50) {
   const results = [];
   let url = path;
   let page = 0;
+  const requestParams = { ...params };
+  const explicitToken = requestParams._accessToken || null;
+  const pageId = requestParams._pageId || null;
+  const userToken = requestParams._useUserToken ? await metaTokens.getUserToken() : null;
+  const token = explicitToken || userToken?.token || null;
+  const tokenSource = explicitToken ? 'db_page_token' : userToken?.source;
+  delete requestParams._accessToken;
+  delete requestParams._pageId;
+  delete requestParams._useUserToken;
+  if (!token) throw new Error('No required Meta token configured');
 
   while (url && page < maxPages) {
-    const data = await graphGet(url, page === 0 ? params : {});
+    const data = await graphClient.graphGet(url, page === 0 ? requestParams : {}, token, { tokenSource, pageId });
     if (data.data) results.push(...data.data);
     url = data.paging?.next || null;
     page++;
@@ -192,9 +168,7 @@ async function syncAllCampaigns() {
  */
 async function syncFormLeads(formId, options = {}) {
   const { since, limit = 500 } = options;
-  const pageAccessToken = getAccessToken();
-
-  if (!pageAccessToken) throw new Error('No page access token configured');
+  const pageToken = await metaTokens.getPageTokenForForm(formId);
 
   logger.info({ formId, since }, 'Starting form lead sync');
 
@@ -213,6 +187,8 @@ async function syncFormLeads(formId, options = {}) {
     const params = {
       fields: 'id,created_time,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id,field_data,platform',
       limit: Math.min(limit, 500),
+      _accessToken: pageToken.token,
+      _pageId: pageToken.page.page_id,
     };
     if (since) params.filtering = JSON.stringify([{ field: 'time_created', operator: 'GREATER_THAN', value: Math.floor(new Date(since).getTime() / 1000) }]);
 
@@ -468,17 +444,16 @@ async function listAdAccounts() {
  * Fetch all lead gen forms for a page.
  */
 async function listPageForms(pageId) {
-  const activePage = pageId
-    ? { pageId, pageAccessToken: null, source: 'argument' }
-    : await getActiveMetaPage();
-
-  const resolvedPageId = activePage.pageId;
+  const activePage = pageId ? { pageId } : await getActiveMetaPage();
+  const resolvedPageId = activePage?.pageId;
   if (!resolvedPageId) throw new Error('No active Meta page connected');
+  const pageToken = await metaTokens.getRequiredPageToken(resolvedPageId);
 
   const data = await graphGet(`${resolvedPageId}/leadgen_forms`, {
     fields: 'id,name,status,leads_count,created_time',
     limit: 100,
-    _accessToken: activePage.pageAccessToken || undefined,
+    _accessToken: pageToken.token,
+    _pageId: resolvedPageId,
   });
   return data.data || [];
 }
@@ -490,42 +465,28 @@ async function listPageForms(pageId) {
  * Required for live webhook delivery.
  */
 async function subscribePageToLeadgen(pageId) {
-  const activePage = pageId
-    ? { pageId, pageAccessToken: null, source: 'argument' }
-    : await getActiveMetaPage();
-
-  const resolvedPageId = activePage.pageId;
-  const token = activePage.pageAccessToken || getAccessToken();
-
-  if (!token || !resolvedPageId) throw new Error('Missing page_id or access_token');
-
-  const resp = await axios.post(
-    `${GRAPH_BASE}/${resolvedPageId}/subscribed_apps`,
-    null,
-    {
-      params: {
-        subscribed_fields: 'leadgen',
-        access_token: token,
-      },
-      timeout: 15000,
-    }
-  );
-  return resp.data;
+  const activePage = pageId ? { pageId } : await getActiveMetaPage();
+  const resolvedPageId = activePage?.pageId;
+  if (!resolvedPageId) throw new Error('No active Meta page connected');
+  const pageToken = await metaTokens.getRequiredPageToken(resolvedPageId);
+  return graphClient.graphPost(`${resolvedPageId}/subscribed_apps`, {
+    subscribed_fields: 'leadgen',
+  }, pageToken.token, { pageId: resolvedPageId, tokenSource: 'db_page_token' });
 }
 
 /**
  * Check if page is subscribed to leadgen.
  */
 async function getPageSubscriptions(pageId) {
-  const activePage = pageId
-    ? { pageId, pageAccessToken: null, source: 'argument' }
-    : await getActiveMetaPage();
-
-  const resolvedPageId = activePage.pageId;
+  const activePage = pageId ? { pageId } : await getActiveMetaPage();
+  const resolvedPageId = activePage?.pageId;
   if (!resolvedPageId) throw new Error('No active Meta page connected');
+  const pageToken = await metaTokens.getRequiredPageToken(resolvedPageId);
 
   return graphGet(`${resolvedPageId}/subscribed_apps`, {
-    _accessToken: activePage.pageAccessToken || undefined,
+    fields: 'id,name,subscribed_fields',
+    _accessToken: pageToken.token,
+    _pageId: resolvedPageId,
   });
 }
 
@@ -535,14 +496,14 @@ async function getPageSubscriptions(pageId) {
  * Debug/validate access token via Graph API.
  */
 async function debugToken(tokenToCheck) {
-  const token = tokenToCheck || getAccessToken();
-  if (!token) return { error: 'No token available' };
+  const resolved = tokenToCheck ? { token: tokenToCheck } : await metaTokens.getUserToken();
+  if (!resolved?.token) return { error: 'No user token available' };
+  const appToken = config.meta.appId && config.meta.appSecret
+    ? `${config.meta.appId}|${config.meta.appSecret}`
+    : resolved.token;
 
   try {
-    const data = await graphGet('debug_token', {
-      input_token: token,
-      _useUserToken: true,
-    });
+    const data = await graphClient.graphDebugToken(resolved.token, appToken);
     return data.data || data;
   } catch (err) {
     return { error: err.message };
@@ -553,37 +514,15 @@ async function debugToken(tokenToCheck) {
  * Quick connectivity check — fetches page info.
  */
 async function checkConnectivity() {
+  const activePage = await getActiveMetaPage();
+  if (!activePage) return { connected: false, error: 'No active Meta page connected', graph_version: config.meta.graphVersion };
+  const pageId = activePage.pageId;
   try {
-    const activePage = await getActiveMetaPage();
-    const pageId = activePage.pageId;
-    const pageToken = activePage.pageAccessToken || null;
-    const userToken = getUserAccessToken();
-
-    if (!pageId) {
-      return {
-        connected: false,
-        error: 'No active Meta page connected',
-        source: activePage.source,
-        graph_version: config.meta.graphVersion,
-      };
-    }
-
-    const tokenToUse = pageToken || userToken;
-    if (!tokenToUse) {
-      return {
-        connected: false,
-        error: 'No Meta access token configured',
-        page_id: pageId,
-        page_name: activePage.pageName,
-        source: activePage.source,
-        graph_version: config.meta.graphVersion,
-      };
-    }
-
-    const pageInfo = await graphGet(pageId, {
+    const pageToken = await metaTokens.getRequiredPageToken(pageId);
+    const pageInfo = await graphClient.graphGet(pageId, {
       fields: 'id,name,category,fan_count',
-      _accessToken: tokenToUse,
-    });
+    }, pageToken.token, { pageId, tokenSource: 'db_page_token' });
+    await metaTokens.updatePageHealth(pageId, { valid: true });
 
     let formCount = 0;
     try {
@@ -599,8 +538,8 @@ async function checkConnectivity() {
 
     return {
       connected: true,
-      source: activePage.source,
-      token_source: pageToken ? 'page_access_token' : 'user_access_token',
+      source: 'database',
+      token_source: 'db_page_token',
       page_id: pageId,
       page_name: activePage.pageName || pageInfo.name,
       page: pageInfo,
@@ -609,7 +548,7 @@ async function checkConnectivity() {
       graph_version: config.meta.graphVersion,
     };
   } catch (err) {
-    return { connected: false, error: err.message };
+    return { connected: false, page_id: pageId, token_source: 'db_page_token', error: err.message };
   }
 }
 
