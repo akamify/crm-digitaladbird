@@ -43,6 +43,14 @@ function generateEmpCode(role) {
 // Map frontend role labels to database role values
 const ROLE_MAP = { admin: 'super_admin', rm: 'rm', partner: 'partner', member: 'member', super_admin: 'super_admin' };
 
+function identifierType(value) {
+  const raw = String(value || '').trim();
+  if (raw.includes('@')) return 'email';
+  if (normalizePhone(raw)) return 'phone';
+  if (/^[a-z]{1,4}[-_\d]/i.test(raw) || /^cp/i.test(raw)) return 'cp_id';
+  return 'name_or_id';
+}
+
 exports.login = asyncHandler(async (req, res) => {
   const { identifier, password, role: selectedRole } = req.body;
   if (!identifier || !identifier.toString().trim()) {
@@ -89,7 +97,7 @@ exports.login = asyncHandler(async (req, res) => {
     await logActivity(req, {
       entity: 'session', entity_id: foundUserId,
       action: 'login_failed',
-      metadata: { reason, identifier: raw, role: selectedRole || null },
+      metadata: { reason, identifier_type: identifierType(raw), role: selectedRole || null },
     });
   };
 
