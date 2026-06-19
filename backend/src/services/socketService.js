@@ -51,10 +51,41 @@ function initSocket(httpServer) {
     socket.on('join:conversation', async (conversationId) => {
       if (!conversationId || typeof conversationId !== 'string') return;
       try {
-        const { rows } = await query(
-          `SELECT 1 FROM chat_participants WHERE conversation_id = $1 AND user_id = $2 AND is_blocked = FALSE`,
-          [conversationId, socket.userId]
-        );
+        let accessSql = `
+          SELECT 1
+            FROM chat_conversations c
+           WHERE c.id = $1
+             AND c.is_deleted = FALSE
+             AND EXISTS (
+               SELECT 1 FROM chat_participants cp
+                WHERE cp.conversation_id = c.id
+                  AND cp.user_id = $2
+                  AND cp.is_blocked = FALSE
+             )`;
+        if (socket.userRole === 'member' || socket.userRole === 'partner') {
+          accessSql += `
+             AND c.type = 'lead'
+             AND EXISTS (
+               SELECT 1 FROM leads l
+                WHERE l.id = c.lead_id
+                  AND l.deleted_at IS NULL
+                  AND l.assigned_to_user_id = $2
+             )`;
+        } else if (socket.userRole === 'rm') {
+          accessSql += `
+             AND (
+               c.type != 'lead'
+               OR EXISTS (
+                 SELECT 1 FROM leads l
+                 JOIN users au ON au.id = l.assigned_to_user_id
+                  WHERE l.id = c.lead_id
+                    AND l.deleted_at IS NULL
+                    AND au.report_to_id = $2
+                    AND au.deleted_at IS NULL
+               )
+             )`;
+        }
+        const { rows } = await query(accessSql, [conversationId, socket.userId]);
         if (rows.length) {
           socket.join(`conv:${conversationId}`);
         }

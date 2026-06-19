@@ -1,7 +1,7 @@
 'use client';
 import { useState, useMemo } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { ChevronLeft, ChevronRight, Inbox, Phone, Mail, Lock } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { LeadFilters } from '@/components/leads/LeadFilters';
@@ -23,6 +23,7 @@ export default function LeadsPage() {
 }
 
 function LeadsInner() {
+  const router = useRouter();
   const sp = useSearchParams();
   const initial = useMemo<LeadFilterType>(() => ({
     q: sp.get('q') || '',
@@ -51,6 +52,10 @@ function LeadsInner() {
   const pages = Math.max(1, Math.ceil(total / size));
 
   function openCommunication(lead: Lead, tab: CommunicationTab) {
+    if (tab === 'chat') {
+      router.push(`/chat?leadId=${lead.id}`);
+      return;
+    }
     setCommunicationLead(lead);
     setCommunicationTab(tab);
   }

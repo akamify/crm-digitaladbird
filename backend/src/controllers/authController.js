@@ -20,6 +20,7 @@ const { issueOtp, verifyOtp: verifyOtpCode } = require('../services/otpService')
 const { signAccessToken, signRefreshToken, hashToken } = require('../utils/jwt');
 const { AppError, asyncHandler } = require('../utils/errors');
 const config = require('../config/env');
+const logger = require('../utils/logger');
 
 const VALID_ROLES = ['super_admin', 'rm', 'member', 'partner'];
 
@@ -93,11 +94,17 @@ exports.login = asyncHandler(async (req, res) => {
   // password). Each failure writes an activity_logs row so super_admin can
   // see brute-force attempts in the Activity Logs view.
   const auditFailedLogin = async (reason, foundUserId = null) => {
+    const type = identifierType(raw);
+    logger.warn({
+      identifierType: type,
+      failureCode: reason,
+      selectedRole: selectedRole || null,
+    }, 'Login failed');
     const { logActivity } = require('../utils/auditLog');
     await logActivity(req, {
       entity: 'session', entity_id: foundUserId,
       action: 'login_failed',
-      metadata: { reason, identifier_type: identifierType(raw), role: selectedRole || null },
+      metadata: { reason, identifier_type: type, role: selectedRole || null },
     });
   };
 
@@ -124,6 +131,7 @@ exports.login = asyncHandler(async (req, res) => {
   if (selectedRole) {
     const expectedDbRole = ROLE_MAP[selectedRole] || selectedRole;
     if (user.role !== expectedDbRole) {
+      await auditFailedLogin('role_mismatch', user.id);
       const labels = { super_admin: 'Admin', rm: 'RM', partner: 'Partner', member: 'Member' };
       throw new AppError(403, 'ROLE_MISMATCH',
         `This account is registered as ${labels[user.role] || user.role}. Please select the correct role.`);

@@ -7,6 +7,20 @@ import toast from 'react-hot-toast';
 import { BirdMark } from '@/components/ui/BirdLogo';
 import { dashboardPath, useAuth } from '@/lib/auth';
 
+function loginErrorMessage(error: unknown) {
+  const payload = (error as {
+    response?: { data?: { code?: string; message?: string; error?: { code?: string; message?: string } | string } };
+  })?.response?.data;
+  const nested = typeof payload?.error === 'string' ? null : payload?.error;
+  const code = payload?.code || nested?.code;
+  if (code === 'USER_INACTIVE') return 'Account inactive or blocked.';
+  if (code === 'ROLE_MISMATCH') return 'Role mismatch. Please use the correct account type.';
+  if (code === 'PASSWORD_NOT_SET') return 'Password is not configured for this account.';
+  return payload?.message
+    || (typeof payload?.error === 'string' ? payload.error : nested?.message)
+    || 'Invalid credentials. Please check your login details.';
+}
+
 export default function LoginPage() {
   return (
     <Suspense fallback={<div className="min-h-screen bg-slate-50" />}>
@@ -62,11 +76,7 @@ function LoginInner() {
       toast.success('Signed in successfully');
       router.replace(params.get('next') || dashboardPath(loggedInUser.role));
     } catch (err: unknown) {
-      const message =
-        (err as { response?: { data?: { error?: { message?: string } | string } } })?.response?.data?.error;
-      const text = typeof message === 'string'
-        ? message
-        : message?.message || 'Invalid credentials. Please check your login details.';
+      const text = loginErrorMessage(err);
       setError(text);
       toast.error(text);
     }

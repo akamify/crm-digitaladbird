@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   Sparkles, ExternalLink, Sheet as SheetIcon, ArrowLeft, RefreshCw,
   Users, Briefcase, HandMetal, Inbox, ArrowRight,
@@ -29,6 +30,7 @@ const TABS: { key: FreshLeadsScope; label: string; icon: React.ReactNode; color:
 type CommunicationTab = 'chat' | 'calls';
 
 function FreshLeadsInner() {
+  const router = useRouter();
   const [scope, setScope] = useState<FreshLeadsScope>('today');
   const [communicationLead, setCommunicationLead] = useState<FreshLeadRow | null>(null);
   const [communicationTab, setCommunicationTab] = useState<CommunicationTab>('chat');
@@ -37,6 +39,10 @@ function FreshLeadsInner() {
   const links = q.data?.sheet_links;
 
   function openCommunication(lead: FreshLeadRow, tab: CommunicationTab) {
+    if (tab === 'chat') {
+      router.push(`/chat?leadId=${lead.id}`);
+      return;
+    }
     setCommunicationLead(lead);
     setCommunicationTab(tab);
   }

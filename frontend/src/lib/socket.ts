@@ -30,14 +30,21 @@ async function loadIO() {
 }
 
 function getWSUrl() {
+  const normalize = (value: string) => value
+    .trim()
+    .replace(/^ws:\/\//, 'http://')
+    .replace(/^wss:\/\//, 'https://')
+    .replace(/\/api\/?$/, '')
+    .replace(/\/$/, '');
+
   const explicitWsUrl = process.env.NEXT_PUBLIC_WS_URL;
   if (explicitWsUrl && explicitWsUrl !== 'https' && explicitWsUrl !== 'http') {
-    return explicitWsUrl.replace(/\/api\/?$/, '').replace(/\/$/, '');
+    return normalize(explicitWsUrl);
   }
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL;
   if (apiUrl && apiUrl !== '/api' && apiUrl !== 'https' && apiUrl !== 'http') {
-    return apiUrl.replace(/\/api\/?$/, '').replace(/\/$/, '');
+    return normalize(apiUrl);
   }
 
   if (typeof window !== 'undefined') {
@@ -74,7 +81,8 @@ export async function connectSocket(): Promise<Socket> {
 
     const s = io(getWSUrl(), {
       auth: { token: tokenStr },
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
+      upgrade: true,
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 10000,
@@ -97,6 +105,8 @@ export async function connectSocket(): Promise<Socket> {
     });
 
     s.io.on('reconnect_attempt', () => {
+      const freshToken = tokens.access;
+      if (freshToken) (s as any).auth = { token: freshToken };
       setStatus('reconnecting');
     });
 
@@ -111,6 +121,7 @@ export async function connectSocket(): Promise<Socket> {
           (s as any).auth = { token: freshToken };
         }
       }
+      setStatus(err.message === 'AUTH_FAILED' || err.message === 'AUTH_REQUIRED' ? 'disconnected' : 'reconnecting');
     });
 
     socket = s;

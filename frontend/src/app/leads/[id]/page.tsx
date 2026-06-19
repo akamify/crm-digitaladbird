@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   ArrowLeft, Lock, Unlock, Phone, Mail, MapPin, Tag, Calendar,
-  MessageSquarePlus, UserCog, ClipboardList, Briefcase,
+  MessageSquarePlus, UserCog, ClipboardList, Briefcase, MessageCircle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
@@ -137,6 +137,10 @@ function LeadDetailInner() {
                 {lockedByOther ? 'Locked by other' : 'Lock for call'}
               </Button>
             )}
+            <Button
+              variant="outline" leftIcon={<MessageCircle className="h-4 w-4" />}
+              onClick={() => router.push(`/chat?leadId=${id}`)}
+            >Chat</Button>
             <Button
               variant="primary" leftIcon={<MessageSquarePlus className="h-4 w-4" />}
               onClick={() => setRemarkOpen(true)}

@@ -4438,7 +4438,7 @@ router.get('/workflow/summary', authenticate, requireRole('super_admin', 'rm'), 
 }));
 
 // Role-scoped workflow stats overview
-router.get('/workflow/stats', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), responseCache(10000), asyncHandler(async (req, res) => {
+router.get('/workflow/stats', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), asyncHandler(async (req, res) => {
   let scope = '';
   const params = [];
   let scopeName = 'all';

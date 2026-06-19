@@ -1,6 +1,7 @@
 'use client';
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   Briefcase, ArrowLeft, Search, Download, ArrowRightLeft,
   Loader2, ChevronLeft, ChevronRight,
@@ -53,6 +54,7 @@ export default function LeadsManagerPage() {
 }
 
 function LeadsInner() {
+  const router = useRouter();
   const [filters, setFilters] = useState<LeadFilters>({ page: 1, page_size: 25 });
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
@@ -130,6 +132,10 @@ function LeadsInner() {
   }
 
   function openCommunication(lead: Lead, tab: CommunicationTab) {
+    if (tab === 'chat') {
+      router.push(`/chat?leadId=${lead.id}`);
+      return;
+    }
     setCommunicationLead(lead);
     setCommunicationTab(tab);
   }

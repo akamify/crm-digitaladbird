@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
+import toast from 'react-hot-toast';
 import {
   MessageSquare, Send, Search, Plus, ArrowLeft, Megaphone, Loader2,
   MessageCircle, Hash, ChevronRight, Circle, Smile, Paperclip,
@@ -23,7 +25,7 @@ import {
   useTypingIndicator, usePinMessage, useDeleteForMe,
   useSendMessageWithMentions, usePinnedMessages,
   useUploadMultipleFiles, useAdminExportChat,
-  useConversationParticipants, useSocketConnection,
+  useConversationParticipants, useSocketConnection, useLeadThread,
   ChatConversation, ChatMessage, ChatContact, ChatAttachment,
 } from '@/hooks/useChat';
 import { onConnectionStatus } from '@/lib/socket';
@@ -152,6 +154,18 @@ function formatFileSize(bytes: number) {
 function getFileUrl(path: string) {
   const base = process.env.NEXT_PUBLIC_WS_URL || '';
   return base ? `${base}${path}` : path;
+}
+
+function chatErrorText(error: unknown) {
+  const data = (error as { response?: { status?: number; data?: { code?: string; message?: string; error?: { code?: string; message?: string } } } })?.response?.data;
+  const code = data?.code || data?.error?.code;
+  if (code === 'LEAD_COMMUNICATION_FORBIDDEN' || (error as { response?: { status?: number } })?.response?.status === 403) {
+    return 'You can communicate only with leads assigned to you.';
+  }
+  if (code === 'DIRECT_CHAT_DISABLED_FOR_ROLE') {
+    return 'Members and partners can start chat only from an assigned lead.';
+  }
+  return data?.message || data?.error?.message || 'Could not open lead conversation.';
 }
 
 function isImageFile(type: string) { return /image\/(jpeg|jpg|png|gif|webp)/i.test(type); }
@@ -714,12 +728,14 @@ function ConversationList({
 }) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'unread' | 'direct' | 'lead' | 'broadcast' | 'archived'>('all');
+  const leadOnly = user.role === 'member' || user.role === 'partner';
   const { data: unreadData } = useChatUnread();
   const totalUnread = unreadData?.unread || 0;
   const { data: searchResults } = useSearchMessages(search);
   const { data: archivedConvs = [] } = useChatConversations(undefined, filter === 'archived');
 
-  const displayConversations = filter === 'archived' ? archivedConvs : conversations;
+  const displayConversations = (filter === 'archived' ? archivedConvs : conversations)
+    .filter(c => !leadOnly || c.type === 'lead');
 
   const pinned = displayConversations.filter(c => c.is_pinned && (filter === 'all' || (filter === 'unread' && c.unread_count > 0)));
   const regular = displayConversations.filter(c => {
@@ -790,7 +806,9 @@ function ConversationList({
             {(user.role === 'super_admin' || user.role === 'rm') && (
               <button onClick={onBroadcast} className="grid h-8 w-8 place-items-center rounded-full text-white/80 hover:bg-white/10 transition" title="Broadcast"><Megaphone className="h-4 w-4" /></button>
             )}
-            <button onClick={onNewChat} className="grid h-8 w-8 place-items-center rounded-full text-white/80 hover:bg-white/10 transition" title="New Chat"><Plus className="h-4 w-4" /></button>
+            {!leadOnly && (
+              <button onClick={onNewChat} className="grid h-8 w-8 place-items-center rounded-full text-white/80 hover:bg-white/10 transition" title="New Chat"><Plus className="h-4 w-4" /></button>
+            )}
           </div>
         </div>
         <div className="relative mt-2">
@@ -801,7 +819,10 @@ function ConversationList({
       </div>
 
       <div className={clsx('shrink-0 flex gap-1 px-3 py-2 border-b overflow-x-auto', dark ? 'border-slate-700 bg-[#111b21]' : 'border-slate-100 bg-white')}>
-        {(['all', 'unread', 'direct', 'lead', 'broadcast', 'archived'] as const).map(f => (
+        {(leadOnly
+          ? (['all', 'unread', 'lead', 'archived'] as const)
+          : (['all', 'unread', 'direct', 'lead', 'broadcast', 'archived'] as const)
+        ).map(f => (
           <button key={f} onClick={() => setFilter(f)}
             className={clsx('rounded-full px-3 py-1 text-[11px] font-medium transition whitespace-nowrap',
               filter === f
@@ -834,8 +855,10 @@ function ConversationList({
         {!loading && !pinned.length && !regular.length && (
           <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
             <MessageCircle className={clsx('h-12 w-12 mb-3', dark ? 'text-slate-600' : 'text-slate-200')} />
-            <p className={clsx('text-sm', dark ? 'text-slate-400' : 'text-slate-500')}>{search ? 'No matches' : filter === 'archived' ? 'No archived chats' : 'No conversations yet'}</p>
-            {!search && filter !== 'archived' && <button onClick={onNewChat} className="mt-3 flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-700 transition"><Plus className="h-3.5 w-3.5" /> New Chat</button>}
+            <p className={clsx('text-sm', dark ? 'text-slate-400' : 'text-slate-500')}>
+              {search ? 'No matches' : leadOnly ? 'No lead conversations yet. Open a lead and click Chat.' : filter === 'archived' ? 'No archived chats' : 'No conversations yet'}
+            </p>
+            {!leadOnly && !search && filter !== 'archived' && <button onClick={onNewChat} className="mt-3 flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-700 transition"><Plus className="h-3.5 w-3.5" /> New Chat</button>}
           </div>
         )}
         {pinned.length > 0 && (
@@ -1640,10 +1663,13 @@ class ChatErrorBoundary extends React.Component<
 
 export default function ChatPage() {
   const { user } = useAuth();
+  const searchParams = useSearchParams();
   const { dark, toggle: toggleDark } = useDarkMode();
   useSocketConnection();
-  const { data: conversations = [], isLoading } = useChatConversations();
+  const { data: conversations = [], isLoading, refetch: refetchConversations } = useChatConversations();
   const createConv = useCreateConversation();
+  const leadId = searchParams.get('leadId');
+  const leadThread = useLeadThread(leadId);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [showBroadcast, setShowBroadcast] = useState(false);
@@ -1657,9 +1683,40 @@ export default function ChatPage() {
     }
   }, []);
 
-  const selectedConv = useMemo(() => conversations.find(c => c.id === selectedId), [conversations, selectedId]);
+  useEffect(() => {
+    if (!leadThread.data?.conversationId) return;
+    setSelectedId(leadThread.data.conversationId);
+    refetchConversations();
+  }, [leadThread.data?.conversationId, refetchConversations]);
+
+  const selectedConv = useMemo(() => {
+    const found = conversations.find(c => c.id === selectedId);
+    if (found || !leadThread.data || selectedId !== leadThread.data.conversationId) return found;
+    return {
+      id: leadThread.data.conversationId,
+      type: 'lead',
+      title: leadThread.data.lead?.full_name ? `Lead: ${leadThread.data.lead.full_name}` : 'Lead Discussion',
+      lead_id: leadId,
+      is_pinned: false,
+      is_archived: false,
+      is_muted: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      last_message: null,
+      last_message_type: null,
+      last_sender_id: null,
+      last_sender_name: null,
+      last_message_at: null,
+      unread_count: 0,
+      lead: leadThread.data.lead || null,
+    } as ChatConversation;
+  }, [conversations, leadId, leadThread.data, selectedId]);
 
   const handleNewChat = async (targetUserId: string) => {
+    if (user?.role === 'member' || user?.role === 'partner') {
+      toast.error('Members and partners can start chat only from an assigned lead.');
+      return;
+    }
     const result = await createConv.mutateAsync({ type: 'direct', target_user_id: targetUserId });
     setSelectedId(result.id);
   };
@@ -1676,13 +1733,21 @@ export default function ChatPage() {
           dark ? 'bg-[#111b21] border-slate-700' : 'bg-white border-slate-200',
           selectedId ? 'hidden sm:flex sm:flex-col' : 'flex flex-col')}>
           <ConversationList conversations={conversations} selected={selectedId} onSelect={setSelectedId}
-            onNewChat={() => setShowNew(true)} onBroadcast={() => setShowBroadcast(true)}
+            onNewChat={() => user.role === 'member' || user.role === 'partner' ? toast('Members and partners can start chat only from an assigned lead.') : setShowNew(true)} onBroadcast={() => setShowBroadcast(true)}
             user={{ id: user.id, role: user.role, name: user.name }} loading={isLoading} dark={dark} />
         </div>
 
         {/* Center - Messages */}
         <div className={clsx('flex-1 min-w-0 flex flex-col', !selectedId ? 'hidden sm:flex' : 'flex')}>
-          {selectedId ? (
+          {leadThread.isError && !selectedId ? (
+            <div className="flex flex-1 flex-col items-center justify-center px-6 text-center" style={{ backgroundColor: dark ? WA_DARK_CHAT : WA_CHAT_BG }}>
+              <MessageSquare className="mb-3 h-10 w-10 text-rose-400" />
+              <h3 className={clsx('text-lg font-bold', dark ? 'text-slate-200' : 'text-slate-700')}>Could not open lead conversation.</h3>
+              <p className={clsx('mt-2 max-w-sm text-sm', dark ? 'text-slate-400' : 'text-slate-500')}>
+                {chatErrorText(leadThread.error)}
+              </p>
+            </div>
+          ) : selectedId ? (
             <MessageThread key={selectedId} conversationId={selectedId} conversation={selectedConv}
               user={{ id: user.id, name: user.name, role: user.role }} dark={dark} onBack={() => setSelectedId(null)} onToggleDark={toggleDark} />
           ) : (
@@ -1693,9 +1758,9 @@ export default function ChatPage() {
               <h3 className={clsx('text-xl font-bold', dark ? 'text-slate-200' : 'text-slate-700')}>DigitalADbird Chat</h3>
               <p className={clsx('text-sm mt-2 max-w-sm', dark ? 'text-slate-400' : 'text-slate-400')}>Send and receive messages with your team in real-time. Select a conversation or start a new chat.</p>
               <div className="flex items-center gap-3 mt-4">
-                <button onClick={() => setShowNew(true)} className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white shadow-md hover:brightness-110 transition" style={{ backgroundColor: WA_GREEN_TEAL }}>
+                {user.role !== 'member' && user.role !== 'partner' && <button onClick={() => setShowNew(true)} className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white shadow-md hover:brightness-110 transition" style={{ backgroundColor: WA_GREEN_TEAL }}>
                   <Plus className="h-4 w-4" /> Start New Chat
-                </button>
+                </button>}
                 <button onClick={toggleDark} className={clsx('grid h-10 w-10 place-items-center rounded-xl border transition', dark ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50')} title="Toggle dark mode">
                   {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
                 </button>

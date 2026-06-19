@@ -10,6 +10,17 @@ const { assertLeadCommunicationAccess } = require('../services/leadCommunication
 const { getOrCreateLeadConversation } = require('../services/leadConversationService');
 const logger = require('../utils/logger');
 
+const DIRECT_CHAT_DISABLED_CODE = 'DIRECT_CHAT_DISABLED_FOR_ROLE';
+const DIRECT_CHAT_DISABLED_MESSAGE = 'Members and partners can chat only with their assigned leads.';
+
+function isLeadOnlyChatRole(user) {
+  return user?.role === 'member' || user?.role === 'partner';
+}
+
+function directChatDisabledError() {
+  return new AppError(403, DIRECT_CHAT_DISABLED_CODE, DIRECT_CHAT_DISABLED_MESSAGE);
+}
+
 // ─── File upload config ────────────────────────────────────────────
 const UPLOAD_DIR = path.join(__dirname, '../../uploads/chat');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -80,11 +91,13 @@ async function assertConversationAccess(user, conversationId) {
     );
     return conversation;
   }
+  if (isLeadOnlyChatRole(user)) throw directChatDisabledError();
   await assertParticipant(user.id, conversationId);
   return conversation;
 }
 
 async function canMessage(sender, targetUserId) {
+  if (isLeadOnlyChatRole(sender)) return false;
   if (sender.role === 'super_admin') return true;
   const { rows } = await query(
     `SELECT id, role, report_to_id FROM users WHERE id = $1 AND deleted_at IS NULL`,
@@ -111,11 +124,34 @@ router.get('/conversations', asyncHandler(async (req, res) => {
   let archiveFilter = archived === 'true' ? 'AND cp.is_archived = TRUE' : 'AND cp.is_archived = FALSE';
   const params = [userId, +limit, offset];
   let idx = 4;
+  let roleScopeFilter = '';
 
   if (type) {
     typeFilter = `AND c.type = $${idx}`;
     params.push(type);
     idx++;
+  }
+
+  if (isLeadOnlyChatRole(req.user)) {
+    roleScopeFilter = `AND c.type = 'lead'
+      AND EXISTS (
+        SELECT 1 FROM leads l
+         WHERE l.id = c.lead_id
+           AND l.deleted_at IS NULL
+           AND l.assigned_to_user_id = $1
+      )`;
+  } else if (req.user.role === 'rm') {
+    roleScopeFilter = `AND (
+      c.type != 'lead'
+      OR EXISTS (
+        SELECT 1 FROM leads l
+        JOIN users au ON au.id = l.assigned_to_user_id
+         WHERE l.id = c.lead_id
+           AND l.deleted_at IS NULL
+           AND au.report_to_id = $1
+           AND au.deleted_at IS NULL
+      )
+    )`;
   }
 
   const { rows } = await query(`
@@ -142,7 +178,7 @@ router.get('/conversations', asyncHandler(async (req, res) => {
       WHERE m.conversation_id = c.id AND m.is_deleted = FALSE
       ORDER BY m.created_at DESC LIMIT 1
     ) lm ON TRUE
-    WHERE c.is_deleted = FALSE ${typeFilter} ${archiveFilter}
+    WHERE c.is_deleted = FALSE ${typeFilter} ${archiveFilter} ${roleScopeFilter}
     ORDER BY c.is_pinned DESC, COALESCE(lm.created_at, c.created_at) DESC
     LIMIT $2 OFFSET $3
   `, params);
@@ -180,6 +216,8 @@ router.get('/conversations', asyncHandler(async (req, res) => {
 router.post('/conversations', asyncHandler(async (req, res) => {
   const sender = req.user;
   const { type = 'direct', target_user_id, lead_id, title } = req.body;
+
+  if (isLeadOnlyChatRole(sender) && type !== 'lead') throw directChatDisabledError();
 
   if (type === 'direct') {
     if (!target_user_id) throw new AppError(400, 'MISSING_TARGET', 'target_user_id is required');
@@ -425,6 +463,7 @@ router.put('/messages/:id', asyncHandler(async (req, res) => {
     [msgId]
   );
   if (!msgs.length) throw new AppError(404, 'NOT_FOUND', 'Message not found');
+  await assertConversationAccess(req.user, msgs[0].conversation_id);
   if (msgs[0].sender_id !== userId) throw new AppError(403, 'FORBIDDEN', 'Only sender can edit');
 
   const origBody = msgs[0].saved_original || msgs[0].original_body;
@@ -703,6 +742,7 @@ router.patch('/conversations/:id/pin', asyncHandler(async (req, res) => {
 router.patch('/conversations/:id/mute', asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const convId = req.params.id;
+  await assertConversationAccess(req.user, convId);
 
   const { rows } = await query(
     `SELECT is_muted FROM chat_participants WHERE conversation_id = $1 AND user_id = $2`,
@@ -722,6 +762,7 @@ router.patch('/conversations/:id/mute', asyncHandler(async (req, res) => {
 router.patch('/conversations/:id/archive', asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const convId = req.params.id;
+  await assertConversationAccess(req.user, convId);
 
   const { rows } = await query(
     `SELECT is_archived FROM chat_participants WHERE conversation_id = $1 AND user_id = $2`,
@@ -740,6 +781,15 @@ router.patch('/conversations/:id/archive', asyncHandler(async (req, res) => {
 // ─── GET /unread ───────────────────────────────────────────────────
 router.get('/unread', asyncHandler(async (req, res) => {
   const userId = req.user.id;
+  const roleScopeFilter = isLeadOnlyChatRole(req.user)
+    ? `AND c.type = 'lead'
+       AND EXISTS (
+         SELECT 1 FROM leads l
+          WHERE l.id = c.lead_id
+            AND l.deleted_at IS NULL
+            AND l.assigned_to_user_id = $1
+       )`
+    : '';
   const { rows: [{ count }] } = await query(`
     SELECT COALESCE(SUM(
       (SELECT COUNT(*) FROM chat_messages m
@@ -750,7 +800,7 @@ router.get('/unread', asyncHandler(async (req, res) => {
     ), 0)::int AS count
     FROM chat_participants cp
     JOIN chat_conversations c ON c.id = cp.conversation_id
-    WHERE cp.user_id = $1 AND c.is_deleted = FALSE AND cp.is_archived = FALSE
+    WHERE cp.user_id = $1 AND c.is_deleted = FALSE AND cp.is_archived = FALSE ${roleScopeFilter}
   `, [userId]);
 
   res.json({ success: true, data: { unread: count } });
@@ -762,7 +812,11 @@ router.get('/contacts', asyncHandler(async (req, res) => {
   let contactQuery;
   const params = [];
 
-  if (user.role === 'super_admin') {
+  if (isLeadOnlyChatRole(user)) {
+    return res.json({ success: true, data: [] });
+  }
+
+  if (user.role === 'super_admin' || user.role === 'admin') {
     contactQuery = `
       SELECT id, full_name, role, email, status, last_seen_at
       FROM users WHERE deleted_at IS NULL AND status = 'active' AND id != $1
@@ -983,10 +1037,20 @@ router.get('/search', asyncHandler(async (req, res) => {
   if (!q || q.length < 2) return res.json({ success: true, data: [] });
 
   let convFilter = '';
+  let roleScopeFilter = '';
   const params = [userId, `%${q}%`];
   if (conversation_id) {
     convFilter = `AND m.conversation_id = $3`;
     params.push(conversation_id);
+  }
+  if (isLeadOnlyChatRole(req.user)) {
+    roleScopeFilter = `AND c.type = 'lead'
+      AND EXISTS (
+        SELECT 1 FROM leads l
+         WHERE l.id = c.lead_id
+           AND l.deleted_at IS NULL
+           AND l.assigned_to_user_id = $1
+      )`;
   }
 
   const { rows } = await query(`
@@ -997,7 +1061,7 @@ router.get('/search', asyncHandler(async (req, res) => {
     JOIN chat_conversations c ON c.id = m.conversation_id
     JOIN chat_participants cp ON cp.conversation_id = m.conversation_id AND cp.user_id = $1
     WHERE m.body ILIKE $2 AND m.is_deleted = FALSE AND c.is_deleted = FALSE
-    ${convFilter}
+    ${convFilter} ${roleScopeFilter}
     ORDER BY m.created_at DESC
     LIMIT 30
   `, params);

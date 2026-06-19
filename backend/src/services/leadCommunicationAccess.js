@@ -19,6 +19,10 @@ async function loadLead(leadId, runner = { query }) {
   return lead || null;
 }
 
+async function getLeadByIdForCommunication(leadId, runner = { query }) {
+  return loadLead(leadId, runner);
+}
+
 function forbidden() {
   return new AppError(403, LEAD_COMMUNICATION_FORBIDDEN, LEAD_COMMUNICATION_FORBIDDEN_MESSAGE);
 }
@@ -31,7 +35,7 @@ async function canAccessLeadCommunication(user, leadId, runner = { query }) {
   const lead = await loadLead(leadId, runner);
   if (!lead) return { allowed: false, reason: 'lead_not_found', lead: null };
 
-  if (user.role === 'super_admin') {
+  if (user.role === 'super_admin' || user.role === 'admin') {
     return { allowed: true, reason: 'admin', lead };
   }
 
@@ -65,7 +69,7 @@ async function assertLeadCommunicationAccess(user, leadId, runner = { query }) {
 
 async function getLeadCommunicationScope(user) {
   if (!user) return { sql: 'FALSE', params: [] };
-  if (user.role === 'super_admin') return { sql: 'TRUE', params: [] };
+  if (user.role === 'super_admin' || user.role === 'admin') return { sql: 'TRUE', params: [] };
   if (user.role === 'member' || user.role === 'partner') {
     return { sql: 'l.assigned_to_user_id = $1', params: [user.id] };
   }
@@ -83,10 +87,14 @@ async function getLeadCommunicationScope(user) {
   return { sql: 'FALSE', params: [] };
 }
 
+const getLeadConversationScope = getLeadCommunicationScope;
+
 module.exports = {
   LEAD_COMMUNICATION_FORBIDDEN,
   LEAD_COMMUNICATION_FORBIDDEN_MESSAGE,
+  getLeadByIdForCommunication,
   canAccessLeadCommunication,
   assertLeadCommunicationAccess,
   getLeadCommunicationScope,
+  getLeadConversationScope,
 };
