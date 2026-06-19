@@ -7,6 +7,7 @@
 const { query, withTransaction } = require('../config/database');
 const { AppError } = require('../utils/errors');
 const logger = require('../utils/logger');
+const { assertLeadAssigneeUser, validateLeadAssignee } = require('./leadAssigneeValidator');
 
 const DEFAULT_RULE_NAME = '__assignment_engine_default__';
 const CLOSED_STAGES = new Set(['won', 'lost', 'dropped']);
@@ -84,7 +85,7 @@ async function getAvailableMembers(options = {}, client = null) {
   const runner = client || { query };
   const params = [];
   let where = `
-    u.role = 'member'
+    u.role IN ('member', 'partner')
     AND u.status = 'active'
     AND u.deleted_at IS NULL
     AND COALESCE(u.is_available, TRUE) = TRUE
@@ -101,7 +102,7 @@ async function getAvailableMembers(options = {}, client = null) {
   }
 
   const { rows } = await runner.query(`
-    SELECT u.id, u.full_name, u.report_to_id, u.team_name,
+    SELECT u.id, u.full_name, u.role, u.report_to_id, u.team_name,
            COALESCE(u.distribution_weight, 1) AS distribution_weight,
            COALESCE(u.daily_lead_cap, 50) AS daily_lead_cap,
            (SELECT COUNT(*)::int FROM leads l
@@ -169,19 +170,7 @@ async function pickRoundRobinMember(client, members) {
 }
 
 async function validateTargetMember(client, memberId, actor = null) {
-  const { rows: [member] } = await client.query(
-    `SELECT id, full_name, role, status, report_to_id
-       FROM users
-      WHERE id = $1 AND deleted_at IS NULL`,
-    [memberId],
-  );
-  if (!member) throw new AppError(404, 'MEMBER_NOT_FOUND', 'Target member not found');
-  if (member.role !== 'member') throw new AppError(400, 'INVALID_TARGET', 'Leads can only be assigned to members');
-  if (member.status !== 'active') throw new AppError(400, 'MEMBER_INACTIVE', 'Target member is not active');
-  if (actor?.role === 'rm' && member.report_to_id !== actor.id) {
-    throw new AppError(403, 'FORBIDDEN', 'RM can only assign to members in their team');
-  }
-  return member;
+  return validateLeadAssignee(client, memberId, { actor });
 }
 
 function leadAssignableSql(alias = 'l') {
@@ -411,7 +400,10 @@ async function markRequestAfterFulfillment(client, request, fulfilledNow) {
 async function runApprovedRequestFulfillment({ limit = 100, actor = null } = {}) {
   return withTransaction(async (client) => {
     const { rows: requests } = await client.query(`
-      SELECT lr.*, u.status AS user_status, u.is_available, u.deleted_at AS user_deleted_at
+      SELECT lr.*, u.role AS user_role, u.status AS user_status,
+             u.report_to_id AS user_report_to_id, u.is_available,
+             u.deleted_at AS user_deleted_at,
+             COALESCE(u.distribution_blocked, FALSE) AS user_distribution_blocked
         FROM lead_requests lr
         JOIN users u ON u.id = lr.user_id
        WHERE lr.status IN ('approved', 'partially_fulfilled')
@@ -425,8 +417,18 @@ async function runApprovedRequestFulfillment({ limit = 100, actor = null } = {})
     const requestResults = [];
     for (const req of requests) {
       if (assigned >= limit) break;
-      if (req.user_status !== 'active' || req.user_deleted_at || req.is_available === false) {
-        requestResults.push({ requestId: req.id, assigned: 0, skipped: 'requester_unavailable' });
+      try {
+        assertLeadAssigneeUser({
+          id: req.user_id,
+          role: req.user_role,
+          status: req.user_status,
+          report_to_id: req.user_report_to_id,
+          deleted_at: req.user_deleted_at,
+          is_available: req.is_available,
+          distribution_blocked: req.user_distribution_blocked,
+        }, { requireAvailable: true });
+      } catch (err) {
+        requestResults.push({ requestId: req.id, assigned: 0, skipped: err.code || 'invalid_assignee' });
         continue;
       }
       const approved = Number(req.approved_quantity ?? req.quantity ?? 0);

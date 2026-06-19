@@ -1116,7 +1116,7 @@ function MessageThread({
         </div>
         <div className="flex items-center gap-0.5">
           {conversation?.type === 'direct' && conversation.other_user?.email && (
-            <a href={`tel:${conversation.other_user.email}`} className="grid h-8 w-8 place-items-center rounded-full text-white/80 hover:bg-white/10 transition" title="Call"><Phone className="h-4 w-4" /></a>
+            <button type="button" disabled className="grid h-8 w-8 place-items-center rounded-full text-white/40" title="In-system calls are available from lead communication"><Phone className="h-4 w-4" /></button>
           )}
           <button onClick={() => setShowSearch(v => !v)} className="grid h-8 w-8 place-items-center rounded-full text-white/80 hover:bg-white/10 transition"><Search className="h-4 w-4" /></button>
           <button onClick={onToggleDark} className="grid h-8 w-8 place-items-center rounded-full text-white/80 hover:bg-white/10 transition" title="Toggle dark mode">

@@ -33,11 +33,16 @@ import {
 } from '@/hooks/useUserProfile';
 
 type TabKey = 'leads' | 'requests' | 'history' | 'activity';
-type ApiErrorLike = { response?: { data?: { error?: { message?: string } } } };
+type ApiErrorLike = { response?: { data?: { code?: string; message?: string; error?: { code?: string; message?: string } } } };
 type AssignResult = { assigned?: number };
 
 function apiErrorMessage(error: unknown, fallback: string) {
-  return (error as ApiErrorLike)?.response?.data?.error?.message || fallback;
+  const data = (error as ApiErrorLike)?.response?.data;
+  const code = data?.code || data?.error?.code;
+  if (code === 'INVALID_LEAD_ASSIGNEE_ROLE') {
+    return 'Lead assignment is allowed only for Members and Partners. RM users can manage teams but cannot receive direct leads.';
+  }
+  return data?.message || data?.error?.message || fallback;
 }
 
 export default function AdminUserProfilePage() {
@@ -357,6 +362,7 @@ function AssignedLeadsTab({ userId, canReassign }: { userId: string; canReassign
   const rows = leads.data?.rows || [];
   const total = leads.data?.total || 0;
   const totalPages = Math.max(1, Math.ceil(total / 20));
+  const assignableUsers = (members.data || []).filter(m => m.role === 'member' || m.role === 'partner');
 
   function toggle(id: string) {
     setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -468,9 +474,12 @@ function AssignedLeadsTab({ userId, canReassign }: { userId: string; canReassign
           <label className="space-y-1.5 text-sm">
             <span className="font-medium text-slate-700">New assignee</span>
             <select className="input" value={targetUser} onChange={e => setTargetUser(e.target.value)}>
-              <option value="">Select member</option>
-              {(members.data || []).map(m => <option key={m.id} value={m.id}>{m.full_name} - {m.team_name || 'No team'}</option>)}
+              <option value="">Select member or partner</option>
+              {assignableUsers.map(m => <option key={m.id} value={m.id}>{m.full_name} - {humanize(m.role)} - {m.team_name || 'No team'}</option>)}
             </select>
+            {!members.isLoading && assignableUsers.length === 0 && (
+              <span className="text-xs text-amber-600">No eligible active members or partners are available.</span>
+            )}
           </label>
           <label className="space-y-1.5 text-sm">
             <span className="font-medium text-slate-700">Reason</span>

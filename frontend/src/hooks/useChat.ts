@@ -153,6 +153,8 @@ export function useSocketConnection() {
       'message:pinned': () => enqueue('chat-messages', 'chat-pinned'),
       'message:read': () => enqueue('chat-conversations', 'chat-messages'),
       'message:delivered': () => enqueue('chat-messages'),
+      'lead:call:created': () => enqueue('lead-calls', 'lead-communication-thread', 'chat-messages'),
+      'lead:call:updated': () => enqueue('lead-calls', 'lead-communication-thread', 'chat-messages', 'leads'),
       'notification:new': () => enqueue('chat-unread', 'chat-notifications'),
       'unread:update': () => enqueue('chat-unread', 'chat-conversations'),
       'broadcast:new': () => enqueue('chat-conversations', 'chat-unread'),

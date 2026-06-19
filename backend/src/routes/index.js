@@ -63,6 +63,8 @@ router.get('/reports/sources', authenticate, responseCache(30000), reports.sourc
 // ---- Admin: Distribution rules + Meta management ------------------
 const { query } = require('../config/database');
 const { asyncHandler, AppError } = require('../utils/errors');
+const assignmentEngine = require('../services/leadAssignmentEngine');
+const { validateLeadAssignee } = require('../services/leadAssigneeValidator');
 
 router.get('/rules',  authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
   const { rows } = await query(`SELECT * FROM distribution_rules ORDER BY priority`);
@@ -648,10 +650,14 @@ router.get('/lead-requests', authenticate, requireRole('super_admin', 'rm'), asy
 router.post('/lead-requests/:id/approve', authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { rows: [request] } = await query(
-    `SELECT lr.*, u.full_name FROM lead_requests lr JOIN users u ON u.id = lr.user_id
+    `SELECT lr.*, u.full_name, u.role AS user_role, u.status AS user_status,
+            u.report_to_id AS user_report_to_id, u.deleted_at AS user_deleted_at,
+            COALESCE(u.is_available, TRUE) AS user_is_available
+       FROM lead_requests lr JOIN users u ON u.id = lr.user_id
       WHERE lr.id = $1 AND lr.status = 'pending'`, [id]
   );
   if (!request) throw new AppError(404, 'NOT_FOUND', 'Request not found or already resolved');
+  await validateLeadAssignee({ query }, request.user_id, { actor: req.user });
 
   // RM can only approve their own team members
   if (req.user.role === 'rm') {
@@ -1012,12 +1018,7 @@ router.post('/rm-pool/assign', authenticate, requireRole('rm', 'super_admin'), a
   );
   if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not in your pool or already assigned');
 
-  // Verify member belongs to this RM
-  const { rows: [member] } = await query(
-    `SELECT id FROM users WHERE id = $1 AND report_to_id = $2 AND role = 'member' AND status = 'active' AND deleted_at IS NULL`,
-    [member_id, rmId]
-  );
-  if (!member) throw new AppError(403, 'FORBIDDEN', 'Member not in your team');
+  await validateLeadAssignee({ query }, member_id, { actor: req.user });
 
   await query(
     `UPDATE leads SET assigned_to_user_id = $1, assigned_at = NOW(), updated_at = NOW() WHERE id = $2`,
@@ -1267,27 +1268,16 @@ router.post('/admin/force-assign', authenticate, requireRole('super_admin'), asy
   }
   if (!user_id) throw new AppError(400, 'INVALID', 'user_id required');
 
-  const { rows: [target] } = await query(
-    `SELECT id, full_name FROM users WHERE id = $1 AND deleted_at IS NULL AND status = 'active'`, [user_id]
-  );
-  if (!target) throw new AppError(404, 'NOT_FOUND', 'Target user not found or inactive');
-
-  let assigned = 0;
-  for (const leadId of lead_ids) {
-    const { rows: [lead] } = await query(
-      `UPDATE leads SET assigned_to_user_id = $1, assigned_at = NOW(), updated_at = NOW()
-         WHERE id = $2 AND deleted_at IS NULL RETURNING id, assigned_to_user_id AS prev_user`,
-      [user_id, leadId]
-    );
-    if (lead) {
-      await query(
-        `INSERT INTO lead_assignments(lead_id, user_id, assigned_by, reason)
-           VALUES ($1, $2, $3, $4)`,
-        [leadId, user_id, req.user.id, reason || 'admin_force_assign']
-      );
-      assigned++;
-    }
-  }
+  const target = await validateLeadAssignee({ query }, user_id, { actor: req.user });
+  const result = await assignmentEngine.assignLeadsBulk({
+    leadIds: lead_ids,
+    memberId: user_id,
+    assignedBy: req.user.id,
+    actor: req.user,
+    assignmentType: 'manual_reassign',
+    reason: reason || 'admin_force_assign',
+  });
+  const assigned = result.assigned_count ?? result.assigned ?? 0;
 
   await query(
     `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata, ip_address)
@@ -1467,19 +1457,15 @@ router.post('/admin/bulk-leads', authenticate, requireRole('super_admin'), async
     }
     case 'reassign': {
       if (!actionParams?.user_id) throw new AppError(400, 'INVALID', 'params.user_id required for reassign');
-      for (const leadId of lead_ids) {
-        const { rowCount } = await query(
-          `UPDATE leads SET assigned_to_user_id = $1, assigned_at = NOW(), updated_at = NOW()
-             WHERE id = $2 AND deleted_at IS NULL`, [actionParams.user_id, leadId]
-        );
-        if (rowCount > 0) {
-          await query(
-            `INSERT INTO lead_assignments(lead_id, user_id, assigned_by, reason)
-               VALUES ($1, $2, $3, 'bulk_reassign')`, [leadId, actionParams.user_id, req.user.id]
-          );
-          affected++;
-        }
-      }
+      const result = await assignmentEngine.assignLeadsBulk({
+        leadIds: lead_ids,
+        memberId: actionParams.user_id,
+        assignedBy: req.user.id,
+        actor: req.user,
+        assignmentType: 'manual_reassign',
+        reason: actionParams.reason || 'bulk_reassign',
+      });
+      affected = result.assigned_count ?? result.assigned ?? 0;
       break;
     }
     case 'update_stage': {
@@ -1584,7 +1570,7 @@ router.get('/admin/active-members', authenticate, requireRole('super_admin', 'ad
       FROM users u
       LEFT JOIN users r ON r.id = u.report_to_id
      WHERE u.deleted_at IS NULL
-       AND u.role = 'member'
+       AND u.role IN ('member', 'partner')
        AND u.status = 'active'
        AND COALESCE(u.is_available, TRUE) = TRUE
        AND COALESCE(u.distribution_blocked, FALSE) = FALSE
@@ -2061,6 +2047,7 @@ router.post('/partner-requests/:id/assign', authenticate, requireRole('super_adm
     [req.params.id]
   );
   if (!r) throw new AppError(404, 'NOT_FOUND', 'Request not found or not approved');
+  await validateLeadAssignee({ query }, r.partner_id, { actor: req.user });
 
   const remaining = r.quantity - r.leads_assigned;
   if (remaining <= 0) throw new AppError(400, 'ALREADY_FULFILLED', 'All leads already assigned');
@@ -2110,6 +2097,7 @@ router.post('/partner-requests/:id/manual-assign', authenticate, requireRole('su
     [req.params.id]
   );
   if (!r) throw new AppError(404, 'NOT_FOUND', 'Request not found or not approved');
+  await validateLeadAssignee({ query }, r.partner_id, { actor: req.user });
 
   let assigned = 0;
   for (const lid of lead_ids) {

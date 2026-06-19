@@ -9,12 +9,13 @@ import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { Modal, Skeleton, EmptyState } from '@/components/ui/Modal';
 import { LeadActions } from '@/components/leads/LeadActions';
+import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
 import { useLeadList, useMetaCampaigns } from '@/hooks/useLeads';
 import { useForceAssign, useBulkReassignLeads, useActiveMembers, exportLeadsCsv } from '@/hooks/useAdmin';
 import { fmtDate, fmtRelative, clsx, humanize, isOverdue } from '@/lib/format';
 import type { LeadFilters, Lead } from '@/types';
 
-type ApiErrorLike = { response?: { data?: { error?: { message?: string } } } };
+type ApiErrorLike = { response?: { data?: { code?: string; message?: string; error?: { code?: string; message?: string } } } };
 type BulkAssignResult = {
   requested_count?: number;
   assigned_count?: number;
@@ -25,9 +26,15 @@ type BulkAssignResult = {
   skipped?: Array<{ leadId: string; reason: string }>;
   results?: Array<{ leadId: string; assigned: boolean; reason?: string }>;
 };
+type CommunicationTab = 'chat' | 'calls';
 
 function apiErrorMessage(error: unknown, fallback: string) {
-  return (error as ApiErrorLike)?.response?.data?.error?.message || fallback;
+  const data = (error as ApiErrorLike)?.response?.data;
+  const code = data?.code || data?.error?.code;
+  if (code === 'INVALID_LEAD_ASSIGNEE_ROLE') {
+    return 'Lead assignment is allowed only for Members and Partners. RM users can manage teams but cannot receive direct leads.';
+  }
+  return data?.message || data?.error?.message || fallback;
 }
 
 function isLeadAssignable(lead: Lead) {
@@ -54,6 +61,8 @@ function LeadsInner() {
   const [targetUser, setTargetUser] = useState('');
   const [assignReason, setAssignReason] = useState('');
   const [exporting, setExporting] = useState(false);
+  const [communicationLead, setCommunicationLead] = useState<Lead | null>(null);
+  const [communicationTab, setCommunicationTab] = useState<CommunicationTab>('chat');
 
   const leads = useLeadList({ ...filters, q: search || undefined });
   const campaigns = useMetaCampaigns();
@@ -62,6 +71,10 @@ function LeadsInner() {
   const bulkReassign = useBulkReassignLeads();
 
   const rows = useMemo(() => leads.data?.rows ?? [], [leads.data?.rows]);
+  const assignableUsers = useMemo(
+    () => (members.data || []).filter(m => m.role === 'member' || m.role === 'partner'),
+    [members.data],
+  );
   const total = leads.data?.total ?? 0;
   const totalPages = Math.ceil(total / (filters.page_size || 25));
   const currentPage = filters.page || 1;
@@ -114,6 +127,11 @@ function LeadsInner() {
     setAssignMode(mode);
     setAssignReason('');
     setAssignOpen(true);
+  }
+
+  function openCommunication(lead: Lead, tab: CommunicationTab) {
+    setCommunicationLead(lead);
+    setCommunicationTab(tab);
   }
 
   async function handleExport() {
@@ -178,7 +196,7 @@ function LeadsInner() {
         <select className="input w-36" value={filters.assigned_to || ''} onChange={e => updateFilters({ assigned_to: e.target.value || undefined })}>
           <option value="">All assignees</option>
           <option value="__unassigned">Unassigned</option>
-          {(members.data || []).map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}
+          {assignableUsers.map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}
         </select>
         <select className="input w-32" value={filters.pending || ''} onChange={e => updateFilters({ pending: e.target.value as LeadFilters['pending'] })}>
           <option value="">All Work</option><option value="true">Pending Only</option><option value="false">Worked Only</option>
@@ -267,7 +285,16 @@ function LeadsInner() {
                   <td className="py-3 pr-3 text-xs text-slate-600">{l.assigned_to_name || <span className="text-amber-600">Unassigned</span>}</td>
                   <td className="py-3 pr-3 text-xs">{l.next_followup_at ? <span className={isOverdue(l.next_followup_at) ? 'text-rose-600 font-medium' : 'text-slate-500'}>{fmtRelative(l.next_followup_at)}</span> : '—'}</td>
                   <td className="py-3 pr-3 text-xs text-slate-500">{fmtDate(l.created_at, 'dd MMM')}</td>
-                  <td className="py-3"><LeadActions phone={l.phone} email={l.email} name={l.full_name} compact /></td>
+                  <td className="py-3">
+                    <LeadActions
+                      phone={l.phone}
+                      email={l.email}
+                      name={l.full_name}
+                      compact
+                      onChat={() => openCommunication(l, 'chat')}
+                      onCall={() => openCommunication(l, 'calls')}
+                    />
+                  </td>
                 </tr>
               );})}
             </tbody>
@@ -302,13 +329,13 @@ function LeadsInner() {
           <div>
           <label className="label">{assignMode === 'reassign' ? 'Reassign To' : 'Assign To'} *</label>
           <select className="input" value={targetUser} onChange={e => setTargetUser(e.target.value)} disabled={members.isLoading || members.isError}>
-            <option value="">— Select member —</option>
-            {members.data?.map(m => <option key={m.id} value={m.id}>{m.full_name} ({m.role}) — {m.lead_count} leads</option>)}
+            <option value="">Select member or partner</option>
+            {assignableUsers.map(m => <option key={m.id} value={m.id}>{m.full_name} - {humanize(m.role)} - {m.lead_count} leads</option>)}
           </select>
           {members.isLoading && <p className="mt-1 text-xs text-slate-500">Loading members...</p>}
           {members.isError && <p className="mt-1 text-xs text-red-600">Could not load eligible members.</p>}
-          {!members.isLoading && !members.isError && (members.data || []).length === 0 && (
-            <p className="mt-1 text-xs text-amber-600">No eligible active members are available.</p>
+          {!members.isLoading && !members.isError && assignableUsers.length === 0 && (
+            <p className="mt-1 text-xs text-amber-600">No eligible active members or partners are available.</p>
           )}
           </div>
           <div>
@@ -329,6 +356,21 @@ function LeadsInner() {
             {assignMode === 'reassign' ? 'Reassign' : 'Assign'}
           </button>
         </div>
+      </Modal>
+
+      <Modal
+        open={!!communicationLead}
+        onClose={() => setCommunicationLead(null)}
+        title="Lead Communication"
+        size="lg"
+      >
+        {communicationLead && (
+          <LeadCommunicationPanel
+            leadId={communicationLead.id}
+            lead={communicationLead}
+            defaultTab={communicationTab}
+          />
+        )}
       </Modal>
     </div>
   );

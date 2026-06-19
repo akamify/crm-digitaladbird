@@ -6,10 +6,13 @@ import { ChevronLeft, ChevronRight, Inbox, Phone, Mail, Lock } from 'lucide-reac
 import { AppShell } from '@/components/layout/AppShell';
 import { LeadFilters } from '@/components/leads/LeadFilters';
 import { LeadActions } from '@/components/leads/LeadActions';
-import { Skeleton, EmptyState, StatusChip } from '@/components/ui/Modal';
+import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
+import { Skeleton, EmptyState, StatusChip, Modal } from '@/components/ui/Modal';
 import { useLeadList } from '@/hooks/useLeads';
 import { fmtDate, fmtRelative, fmtPhone, humanize, stageChip, isOverdue, isDueToday, clsx } from '@/lib/format';
-import type { LeadFilters as LeadFilterType } from '@/types';
+import type { Lead, LeadFilters as LeadFilterType } from '@/types';
+
+type CommunicationTab = 'chat' | 'calls';
 
 export default function LeadsPage() {
   return (
@@ -37,6 +40,8 @@ function LeadsInner() {
   }), []);
 
   const [filters, setFilters] = useState<LeadFilterType>(initial);
+  const [communicationLead, setCommunicationLead] = useState<Lead | null>(null);
+  const [communicationTab, setCommunicationTab] = useState<CommunicationTab>('chat');
   const { data, isLoading, isFetching } = useLeadList(filters);
 
   const rows  = data?.rows ?? [];
@@ -44,6 +49,11 @@ function LeadsInner() {
   const page  = filters.page || 1;
   const size  = filters.page_size || 25;
   const pages = Math.max(1, Math.ceil(total / size));
+
+  function openCommunication(lead: Lead, tab: CommunicationTab) {
+    setCommunicationLead(lead);
+    setCommunicationTab(tab);
+  }
 
   return (
     <div className="space-y-4">
@@ -145,7 +155,14 @@ function LeadsInner() {
                         {fmtRelative(l.created_at)}
                       </td>
                       <td className="px-4 py-3">
-                        <LeadActions phone={l.phone} email={l.email} name={l.full_name} compact />
+                        <LeadActions
+                          phone={l.phone}
+                          email={l.email}
+                          name={l.full_name}
+                          compact
+                          onChat={() => openCommunication(l, 'chat')}
+                          onCall={() => openCommunication(l, 'calls')}
+                        />
                       </td>
                     </tr>
                   );
@@ -177,6 +194,21 @@ function LeadsInner() {
           </div>
         )}
       </div>
+
+      <Modal
+        open={!!communicationLead}
+        onClose={() => setCommunicationLead(null)}
+        title="Lead Communication"
+        size="lg"
+      >
+        {communicationLead && (
+          <LeadCommunicationPanel
+            leadId={communicationLead.id}
+            lead={communicationLead}
+            defaultTab={communicationTab}
+          />
+        )}
+      </Modal>
     </div>
   );
 }

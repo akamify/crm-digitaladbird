@@ -4,10 +4,15 @@ const logger = require('../utils/logger');
 // eslint-disable-next-line no-unused-vars
 function errorHandler(err, req, res, _next) {
   if (err instanceof AppError) {
-    return res.status(err.status).json({
+    const body = {
       success: false,
       error: { code: err.code, message: err.message, details: err.details },
-    });
+    };
+    if (err.code === 'INVALID_LEAD_ASSIGNEE_ROLE' || err.code === 'LEAD_COMMUNICATION_FORBIDDEN') {
+      body.code = err.code;
+      body.message = err.message;
+    }
+    return res.status(err.status).json(body);
   }
 
   // Postgres unique-violation

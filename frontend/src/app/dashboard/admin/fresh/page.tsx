@@ -6,9 +6,10 @@ import {
   Users, Briefcase, HandMetal, Inbox, ArrowRight,
 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
-import { Skeleton, EmptyState } from '@/components/ui/Modal';
+import { Modal, Skeleton, EmptyState } from '@/components/ui/Modal';
 import { LeadActions } from '@/components/leads/LeadActions';
-import { useFreshLeads, type FreshLeadsScope } from '@/hooks/useAdminEnterprise';
+import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
+import { useFreshLeads, type FreshLeadRow, type FreshLeadsScope } from '@/hooks/useAdminEnterprise';
 import { fmtRelative, fmtDate, humanize, clsx } from '@/lib/format';
 
 export default function AdminFreshLeadsPage() {
@@ -25,12 +26,20 @@ const TABS: { key: FreshLeadsScope; label: string; icon: React.ReactNode; color:
   { key: 'partner', label: 'Partner Fresh',   icon: <HandMetal className="h-3.5 w-3.5" />,   color: 'violet'  },
   { key: 'all',     label: 'All Active',      icon: <Inbox className="h-3.5 w-3.5" />,       color: 'slate'   },
 ];
+type CommunicationTab = 'chat' | 'calls';
 
 function FreshLeadsInner() {
   const [scope, setScope] = useState<FreshLeadsScope>('today');
+  const [communicationLead, setCommunicationLead] = useState<FreshLeadRow | null>(null);
+  const [communicationTab, setCommunicationTab] = useState<CommunicationTab>('chat');
   const q = useFreshLeads(scope, 100);
   const counts = q.data?.counts;
   const links = q.data?.sheet_links;
+
+  function openCommunication(lead: FreshLeadRow, tab: CommunicationTab) {
+    setCommunicationLead(lead);
+    setCommunicationTab(tab);
+  }
 
   return (
     <div className="space-y-5">
@@ -162,13 +171,37 @@ function FreshLeadsInner() {
                     ) : <span className="text-amber-600">Unassigned</span>}
                   </td>
                   <td className="py-2.5 pr-3 text-xs text-slate-500" title={fmtDate(l.created_at)}>{fmtRelative(l.created_at)}</td>
-                  <td className="py-2.5"><LeadActions phone={l.phone} email={l.email} name={l.full_name} compact /></td>
+                  <td className="py-2.5">
+                    <LeadActions
+                      phone={l.phone}
+                      email={l.email}
+                      name={l.full_name}
+                      compact
+                      onChat={() => openCommunication(l, 'chat')}
+                      onCall={() => openCommunication(l, 'calls')}
+                    />
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+
+      <Modal
+        open={!!communicationLead}
+        onClose={() => setCommunicationLead(null)}
+        title="Lead Communication"
+        size="lg"
+      >
+        {communicationLead && (
+          <LeadCommunicationPanel
+            leadId={communicationLead.id}
+            lead={communicationLead}
+            defaultTab={communicationTab}
+          />
+        )}
+      </Modal>
     </div>
   );
 }

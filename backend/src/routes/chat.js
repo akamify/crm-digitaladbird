@@ -6,6 +6,8 @@ const { authenticate } = require('../middleware/auth');
 const { query, withTransaction } = require('../config/database');
 const { AppError, asyncHandler } = require('../utils/errors');
 const { emitToUser, emitToConversation } = require('../services/socketService');
+const { assertLeadCommunicationAccess } = require('../services/leadCommunicationAccess');
+const { getOrCreateLeadConversation } = require('../services/leadConversationService');
 const logger = require('../utils/logger');
 
 // ─── File upload config ────────────────────────────────────────────
@@ -60,6 +62,26 @@ async function assertParticipant(userId, conversationId) {
   );
   if (!rows.length) throw new AppError(403, 'NOT_PARTICIPANT', 'You are not in this conversation');
   if (rows[0].is_blocked) throw new AppError(403, 'BLOCKED', 'You are blocked from this conversation');
+}
+
+async function assertConversationAccess(user, conversationId) {
+  const { rows: [conversation] } = await query(
+    `SELECT id, type, lead_id FROM chat_conversations WHERE id = $1 AND is_deleted = FALSE`,
+    [conversationId],
+  );
+  if (!conversation) throw new AppError(404, 'CONVERSATION_NOT_FOUND', 'Conversation not found');
+  if (conversation.type === 'lead' && conversation.lead_id) {
+    await assertLeadCommunicationAccess(user, conversation.lead_id);
+    await query(
+      `INSERT INTO chat_participants (conversation_id, user_id)
+       VALUES ($1, $2)
+       ON CONFLICT DO NOTHING`,
+      [conversationId, user.id],
+    );
+    return conversation;
+  }
+  await assertParticipant(user.id, conversationId);
+  return conversation;
 }
 
 async function canMessage(sender, targetUserId) {
@@ -191,41 +213,8 @@ router.post('/conversations', asyncHandler(async (req, res) => {
 
   if (type === 'lead') {
     if (!lead_id) throw new AppError(400, 'MISSING_LEAD', 'lead_id is required');
-    const { rows: existing } = await query(
-      `SELECT id FROM chat_conversations WHERE type = 'lead' AND lead_id = $1 AND is_deleted = FALSE`, [lead_id]
-    );
-    if (existing.length) {
-      await query(
-        `INSERT INTO chat_participants (conversation_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-        [existing[0].id, sender.id]
-      );
-      return res.json({ success: true, data: { id: existing[0].id, existing: true } });
-    }
-
-    const conv = await withTransaction(async (client) => {
-      const { rows: [c] } = await client.query(
-        `INSERT INTO chat_conversations (type, lead_id, title, created_by) VALUES ('lead', $1, $2, $3) RETURNING *`,
-        [lead_id, title || 'Lead Discussion', sender.id]
-      );
-      const participantIds = new Set([sender.id]);
-      const { rows: leadRows } = await client.query(
-        `SELECT assigned_to_user_id FROM leads WHERE id = $1`, [lead_id]
-      );
-      if (leadRows[0]?.assigned_to_user_id) participantIds.add(leadRows[0].assigned_to_user_id);
-      const { rows: admins } = await client.query(
-        `SELECT id FROM users WHERE role = 'super_admin' AND deleted_at IS NULL AND status = 'active'`
-      );
-      admins.forEach(a => participantIds.add(a.id));
-
-      for (const uid of participantIds) {
-        await client.query(
-          `INSERT INTO chat_participants (conversation_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-          [c.id, uid]
-        );
-      }
-      return c;
-    });
-    return res.status(201).json({ success: true, data: { id: conv.id, existing: false } });
+    const conv = await getOrCreateLeadConversation({ leadId: lead_id, user: sender });
+    return res.status(conv.existing ? 200 : 201).json({ success: true, data: { id: conv.conversationId, existing: conv.existing } });
   }
 
   if (type === 'broadcast') {
@@ -256,7 +245,7 @@ router.post('/conversations', asyncHandler(async (req, res) => {
 router.get('/conversations/:id/messages', asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const convId = req.params.id;
-  await assertParticipant(userId, convId);
+  await assertConversationAccess(req.user, convId);
 
   const { page = 1, limit = 50 } = req.query;
   const offset = (Math.max(1, +page) - 1) * +limit;
@@ -345,7 +334,7 @@ router.get('/conversations/:id/messages', asyncHandler(async (req, res) => {
 router.post('/conversations/:id/messages', asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const convId = req.params.id;
-  await assertParticipant(userId, convId);
+  await assertConversationAccess(req.user, convId);
 
   const { body, message_type = 'text', reply_to_id, forwarded_from_id } = req.body;
   if (!body || !body.trim()) throw new AppError(400, 'EMPTY_MESSAGE', 'Message body is required');
@@ -458,9 +447,10 @@ router.post('/messages/:id/forward', asyncHandler(async (req, res) => {
   const { conversation_id: targetConvId } = req.body;
   if (!targetConvId) throw new AppError(400, 'MISSING', 'conversation_id required');
 
-  const { rows: msgs } = await query(`SELECT body, message_type, metadata FROM chat_messages WHERE id = $1`, [msgId]);
+  const { rows: msgs } = await query(`SELECT body, message_type, metadata, conversation_id FROM chat_messages WHERE id = $1`, [msgId]);
   if (!msgs.length) throw new AppError(404, 'NOT_FOUND', 'Message not found');
-  await assertParticipant(userId, targetConvId);
+  await assertConversationAccess(req.user, msgs[0].conversation_id);
+  await assertConversationAccess(req.user, targetConvId);
 
   const { rows: [sender] } = await query(`SELECT full_name, role FROM users WHERE id = $1`, [userId]);
 
@@ -497,7 +487,7 @@ router.post('/messages/:id/forward', asyncHandler(async (req, res) => {
 router.post('/conversations/:id/upload', upload.single('file'), asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const convId = req.params.id;
-  await assertParticipant(userId, convId);
+  await assertConversationAccess(req.user, convId);
 
   if (!req.file) throw new AppError(400, 'NO_FILE', 'No file uploaded');
 
@@ -561,7 +551,7 @@ router.post('/conversations/:id/upload', upload.single('file'), asyncHandler(asy
 router.post('/conversations/:id/read', asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const convId = req.params.id;
-  await assertParticipant(userId, convId);
+  await assertConversationAccess(req.user, convId);
 
   await query(
     `UPDATE chat_participants SET last_read_at = NOW() WHERE conversation_id = $1 AND user_id = $2`,
@@ -587,7 +577,7 @@ router.post('/conversations/:id/read', asyncHandler(async (req, res) => {
 router.post('/conversations/:id/delivered', asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const convId = req.params.id;
-  await assertParticipant(userId, convId);
+  await assertConversationAccess(req.user, convId);
 
   await query(`
     UPDATE chat_message_status SET delivered_at = NOW()
@@ -608,7 +598,7 @@ router.post('/messages/:id/react', asyncHandler(async (req, res) => {
 
   const { rows: msgs } = await query(`SELECT conversation_id FROM chat_messages WHERE id = $1`, [msgId]);
   if (!msgs.length) throw new AppError(404, 'NOT_FOUND', 'Message not found');
-  await assertParticipant(userId, msgs[0].conversation_id);
+  await assertConversationAccess(req.user, msgs[0].conversation_id);
 
   const { rows: existing } = await query(
     `SELECT id FROM chat_reactions WHERE message_id = $1 AND user_id = $2 AND emoji = $3`,
@@ -638,6 +628,9 @@ router.post('/messages/:id/react', asyncHandler(async (req, res) => {
 router.post('/messages/:id/star', asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const msgId = req.params.id;
+  const { rows: msgs } = await query(`SELECT conversation_id FROM chat_messages WHERE id = $1`, [msgId]);
+  if (!msgs.length) throw new AppError(404, 'NOT_FOUND', 'Message not found');
+  await assertConversationAccess(req.user, msgs[0].conversation_id);
 
   const { rows: existing } = await query(
     `SELECT id FROM chat_starred_messages WHERE message_id = $1 AND user_id = $2`,
@@ -683,6 +676,7 @@ router.delete('/messages/:id', asyncHandler(async (req, res) => {
     `SELECT sender_id, conversation_id FROM chat_messages WHERE id = $1`, [msgId]
   );
   if (!msgs.length) throw new AppError(404, 'NOT_FOUND', 'Message not found');
+  await assertConversationAccess(req.user, msgs[0].conversation_id);
 
   if (msgs[0].sender_id !== userId && req.user.role !== 'super_admin') {
     throw new AppError(403, 'FORBIDDEN', 'Only sender or admin can delete');
@@ -697,7 +691,7 @@ router.delete('/messages/:id', asyncHandler(async (req, res) => {
 router.patch('/conversations/:id/pin', asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const convId = req.params.id;
-  await assertParticipant(userId, convId);
+  await assertConversationAccess(req.user, convId);
 
   const { rows } = await query(`SELECT is_pinned FROM chat_conversations WHERE id = $1`, [convId]);
   const newVal = !rows[0].is_pinned;
@@ -802,7 +796,7 @@ router.get('/contacts', asyncHandler(async (req, res) => {
 // ─── GET /conversations/:id/participants ───────────────────────────
 router.get('/conversations/:id/participants', asyncHandler(async (req, res) => {
   const convId = req.params.id;
-  await assertParticipant(req.user.id, convId);
+  await assertConversationAccess(req.user, convId);
 
   const { rows } = await query(`
     SELECT u.id, u.full_name, u.role, u.status, u.email, u.last_seen_at,
@@ -896,58 +890,18 @@ router.post('/notifications/read-all', asyncHandler(async (req, res) => {
 // ─── GET /lead/:leadId/thread ──────────────────────────────────────
 router.get('/lead/:leadId/thread', asyncHandler(async (req, res) => {
   const { leadId } = req.params;
-  const userId = req.user.id;
-
-  const { rows: leads } = await query(`SELECT id, full_name FROM leads WHERE id = $1`, [leadId]);
-  if (!leads.length) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
-
-  let { rows: convs } = await query(
-    `SELECT id FROM chat_conversations WHERE type = 'lead' AND lead_id = $1 AND is_deleted = FALSE`, [leadId]
-  );
-
-  let convId;
-  if (convs.length) {
-    convId = convs[0].id;
-    await query(
-      `INSERT INTO chat_participants (conversation_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-      [convId, userId]
-    );
-  } else {
-    const conv = await withTransaction(async (client) => {
-      const { rows: [c] } = await client.query(
-        `INSERT INTO chat_conversations (type, lead_id, title, created_by)
-         VALUES ('lead', $1, $2, $3) RETURNING *`,
-        [leadId, `Lead: ${leads[0].full_name || 'Unknown'}`, userId]
-      );
-      await client.query(
-        `INSERT INTO chat_participants (conversation_id, user_id) VALUES ($1, $2)`,
-        [c.id, userId]
-      );
-      const { rows: admins } = await client.query(
-        `SELECT id FROM users WHERE role = 'super_admin' AND deleted_at IS NULL AND status = 'active' AND id != $1`,
-        [userId]
-      );
-      for (const a of admins) {
-        await client.query(
-          `INSERT INTO chat_participants (conversation_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-          [c.id, a.id]
-        );
-      }
-      return c;
-    });
-    convId = conv.id;
-  }
+  const { conversationId: convId, lead } = await getOrCreateLeadConversation({ leadId, user: req.user });
 
   const { rows: messages } = await query(`
     SELECT m.id, m.sender_id, u.full_name AS sender_name, u.role AS sender_role,
-      m.body, m.message_type, m.created_at
+      m.body, m.message_type, m.metadata, m.created_at
     FROM chat_messages m JOIN users u ON u.id = m.sender_id
     WHERE m.conversation_id = $1 AND m.is_deleted = FALSE
     ORDER BY m.created_at ASC
     LIMIT 100
   `, [convId]);
 
-  res.json({ success: true, data: { conversationId: convId, lead: leads[0], messages } });
+  res.json({ success: true, data: { conversationId: convId, lead, messages } });
 }));
 
 // ─── ADMIN: GET /admin/conversations ─────────────────────────────
@@ -1059,7 +1013,7 @@ router.post('/messages/:id/pin', asyncHandler(async (req, res) => {
   const { rows: msgs } = await query(`SELECT conversation_id FROM chat_messages WHERE id = $1`, [msgId]);
   if (!msgs.length) throw new AppError(404, 'NOT_FOUND', 'Message not found');
   const convId = msgs[0].conversation_id;
-  await assertParticipant(userId, convId);
+  await assertConversationAccess(req.user, convId);
 
   const { rows: existing } = await query(
     `SELECT id FROM chat_pinned_messages WHERE message_id = $1 AND conversation_id = $2`,
@@ -1088,7 +1042,7 @@ router.post('/messages/:id/pin', asyncHandler(async (req, res) => {
 // ─── GET /conversations/:id/pinned ── get pinned messages ────────
 router.get('/conversations/:id/pinned', asyncHandler(async (req, res) => {
   const convId = req.params.id;
-  await assertParticipant(req.user.id, convId);
+  await assertConversationAccess(req.user, convId);
 
   const { rows } = await query(`
     SELECT m.id, m.body, m.message_type, m.created_at, u.full_name AS sender_name,
@@ -1111,7 +1065,7 @@ router.delete('/messages/:id/for-me', asyncHandler(async (req, res) => {
 
   const { rows: msgs } = await query(`SELECT conversation_id FROM chat_messages WHERE id = $1`, [msgId]);
   if (!msgs.length) throw new AppError(404, 'NOT_FOUND', 'Message not found');
-  await assertParticipant(userId, msgs[0].conversation_id);
+  await assertConversationAccess(req.user, msgs[0].conversation_id);
 
   await query(
     `INSERT INTO chat_deleted_for_user (message_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
@@ -1124,7 +1078,7 @@ router.delete('/messages/:id/for-me', asyncHandler(async (req, res) => {
 router.post('/conversations/:id/messages/with-mentions', asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const convId = req.params.id;
-  await assertParticipant(userId, convId);
+  await assertConversationAccess(req.user, convId);
 
   const { body, message_type = 'text', reply_to_id, mentions = [] } = req.body;
   if (!body || !body.trim()) throw new AppError(400, 'EMPTY_MESSAGE', 'Message body is required');
@@ -1324,7 +1278,7 @@ router.get('/admin/search', asyncHandler(async (req, res) => {
 router.post('/conversations/:id/upload-multi', upload.array('files', 10), asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const convId = req.params.id;
-  await assertParticipant(userId, convId);
+  await assertConversationAccess(req.user, convId);
 
   if (!req.files || !req.files.length) throw new AppError(400, 'NO_FILES', 'No files uploaded');
 

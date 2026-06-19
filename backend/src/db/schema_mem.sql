@@ -190,6 +190,27 @@ CREATE TABLE IF NOT EXISTS lead_remarks (
 CREATE INDEX IF NOT EXISTS idx_remarks_lead ON lead_remarks(lead_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_remarks_user ON lead_remarks(user_id);
 
+-- LEAD CALL LOGS
+CREATE TABLE IF NOT EXISTS lead_call_logs (
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  lead_id            UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  user_id            UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider           VARCHAR(50),
+  provider_call_id   VARCHAR(255),
+  direction          VARCHAR(20) NOT NULL DEFAULT 'outbound',
+  status             VARCHAR(30) NOT NULL DEFAULT 'initiated',
+  started_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ended_at           TIMESTAMPTZ,
+  duration_seconds   INTEGER,
+  recording_url      TEXT,
+  notes              TEXT,
+  failure_reason     TEXT,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_lead_call_logs_lead_created ON lead_call_logs(lead_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_lead_call_logs_user_created ON lead_call_logs(user_id, created_at);
+
 -- ROUND-ROBIN STATE
 CREATE TABLE IF NOT EXISTS rr_state (
   rule_id           UUID PRIMARY KEY REFERENCES distribution_rules(id) ON DELETE CASCADE,

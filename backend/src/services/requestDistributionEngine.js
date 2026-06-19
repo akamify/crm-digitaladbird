@@ -18,6 +18,7 @@
  */
 const { query, withTransaction } = require('../config/database');
 const logger = require('../utils/logger');
+const { assertLeadAssigneeUser } = require('./leadAssigneeValidator');
 
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
@@ -152,13 +153,32 @@ async function fulfillMemberRequest(requestId) {
   return withTransaction(async (client) => {
     // Lock the request
     const { rows: [req] } = await client.query(
-      `SELECT lr.*
+      `SELECT lr.*, u.role AS user_role, u.status AS user_status,
+              u.report_to_id AS user_report_to_id,
+              u.deleted_at AS user_deleted_at,
+              COALESCE(u.is_available, TRUE) AS user_is_available,
+              COALESCE(u.distribution_blocked, FALSE) AS user_distribution_blocked
          FROM lead_requests lr
+         JOIN users u ON u.id = lr.user_id
         WHERE lr.id = $1 AND lr.status = 'pending'
         FOR UPDATE OF lr`,
       [requestId]
     );
     if (!req) return { filled: 0, status: 'not_found' };
+    try {
+      assertLeadAssigneeUser({
+        id: req.user_id,
+        role: req.user_role,
+        status: req.user_status,
+        report_to_id: req.user_report_to_id,
+        deleted_at: req.user_deleted_at,
+        is_available: req.user_is_available,
+        distribution_blocked: req.user_distribution_blocked,
+      }, { requireAvailable: true });
+    } catch (err) {
+      logger.warn({ requestId, userId: req.user_id, code: err.code }, '[RequestEngine] Skipping request with invalid lead assignee');
+      return { filled: 0, status: 'invalid_assignee', code: err.code };
+    }
 
     const needed = req.quantity - (req.leads_assigned || 0);
     if (needed <= 0) {
@@ -262,7 +282,10 @@ async function distributeRoundRobin() {
         FROM lead_requests lr
         JOIN users u ON u.id = lr.user_id
        WHERE lr.status = 'pending'
+         AND u.role IN ('member', 'partner')
          AND u.status = 'active' AND u.deleted_at IS NULL
+         AND COALESCE(u.is_available, TRUE) = TRUE
+         AND COALESCE(u.distribution_blocked, FALSE) = FALSE
        ORDER BY lr.created_at ASC
        FOR UPDATE OF lr
     `);

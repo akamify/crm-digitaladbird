@@ -20,8 +20,17 @@ export function ReassignModal({ leadId, open, onClose }: Props) {
   const { mutate, isPending } = useReassignLead();
 
   const opts = (users ?? [])
-    .filter(u => u.role !== 'super_admin' && u.is_active !== false)
-    .map(u => ({ value: u.id, label: `${u.full_name} · ${u.role}` }));
+    .filter(u => (u.role === 'member' || u.role === 'partner') && u.is_active !== false)
+    .map(u => ({ value: u.id, label: `${u.full_name} - ${u.role === 'partner' ? 'Partner' : 'Member'}` }));
+
+  function errorMessage(err: unknown) {
+    const data = (err as { response?: { data?: { code?: string; message?: string; error?: { code?: string; message?: string } } } })?.response?.data;
+    const code = data?.code || data?.error?.code;
+    if (code === 'INVALID_LEAD_ASSIGNEE_ROLE') {
+      return 'Lead assignment is allowed only for Members and Partners. RM users can manage teams but cannot receive direct leads.';
+    }
+    return data?.message || data?.error?.message || 'Could not reassign';
+  }
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -29,8 +38,7 @@ export function ReassignModal({ leadId, open, onClose }: Props) {
     mutate({ id: leadId, userId, reason: reason || undefined }, {
       onSuccess: () => { toast.success('Lead reassigned'); setUserId(''); setReason(''); onClose(); },
       onError: (err: unknown) => {
-        const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
-        toast.error(msg || 'Could not reassign');
+        toast.error(errorMessage(err));
       },
     });
   }
@@ -49,7 +57,7 @@ export function ReassignModal({ leadId, open, onClose }: Props) {
     >
       <form onSubmit={handleSubmit} className="space-y-4">
         <Select
-          label="Assign to" value={userId} options={opts} placeholder="Choose user…"
+          label="Assign to" value={userId} options={opts} placeholder="Choose member or partner..."
           onChange={(e) => setUserId(e.target.value)} required
         />
         <Input

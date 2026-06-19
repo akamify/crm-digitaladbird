@@ -164,7 +164,7 @@ export function useUnassignedLeads(category?: string) {
 
 // --- Active Members (for dropdowns) ---
 export interface ActiveMember {
-  id: string; full_name: string; role: string; team_name: string | null;
+  id: string; full_name: string; role: 'member' | 'partner'; team_name: string | null;
   member_type: string | null; is_available: boolean; rm_name: string | null;
   lead_count: number; pending_count: number;
 }
