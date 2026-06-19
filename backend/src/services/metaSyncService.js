@@ -31,9 +31,38 @@ function getUserAccessToken() {
   return config.meta.userAccessToken || config.meta.pageAccessToken || null;
 }
 
+async function getActiveMetaPage() {
+  const { rows } = await query(`
+    SELECT page_id, page_name, page_access_token
+    FROM meta_pages
+    WHERE is_active = TRUE
+    ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+    LIMIT 1
+  `);
+
+  if (rows.length) {
+    return {
+      pageId: rows[0].page_id,
+      pageName: rows[0].page_name,
+      pageAccessToken: rows[0].page_access_token,
+      source: 'database',
+    };
+  }
+
+  return {
+    pageId: config.meta.pageId || '',
+    pageName: config.meta.pageName || '',
+    pageAccessToken: config.meta.pageAccessToken || '',
+    source: 'env',
+  };
+}
+
 // ─── Graph API caller with error handling ─────────────────────────────
 async function graphGet(path, params = {}) {
-  const token = params._useUserToken ? getUserAccessToken() : getAccessToken();
+  const explicitToken = params._accessToken || null;
+  delete params._accessToken;
+
+  const token = explicitToken || (params._useUserToken ? getUserAccessToken() : getAccessToken());
   delete params._useUserToken;
 
   if (!token) throw new Error('No Meta access token configured');
@@ -437,12 +466,17 @@ async function listAdAccounts() {
  * Fetch all lead gen forms for a page.
  */
 async function listPageForms(pageId) {
-  pageId = pageId || config.meta.pageId;
-  if (!pageId) throw new Error('No page_id configured');
+  const activePage = pageId
+    ? { pageId, pageAccessToken: null, source: 'argument' }
+    : await getActiveMetaPage();
 
-  const data = await graphGet(`${pageId}/leadgen_forms`, {
+  const resolvedPageId = activePage.pageId;
+  if (!resolvedPageId) throw new Error('No active Meta page connected');
+
+  const data = await graphGet(`${resolvedPageId}/leadgen_forms`, {
     fields: 'id,name,status,leads_count,created_time',
     limit: 100,
+    _accessToken: activePage.pageAccessToken || undefined,
   });
   return data.data || [];
 }
@@ -454,12 +488,17 @@ async function listPageForms(pageId) {
  * Required for live webhook delivery.
  */
 async function subscribePageToLeadgen(pageId) {
-  pageId = pageId || config.meta.pageId;
-  const token = getAccessToken();
-  if (!token || !pageId) throw new Error('Missing page_id or access_token');
+  const activePage = pageId
+    ? { pageId, pageAccessToken: null, source: 'argument' }
+    : await getActiveMetaPage();
+
+  const resolvedPageId = activePage.pageId;
+  const token = activePage.pageAccessToken || getAccessToken();
+
+  if (!token || !resolvedPageId) throw new Error('Missing page_id or access_token');
 
   const resp = await axios.post(
-    `${GRAPH_BASE}/${pageId}/subscribed_apps`,
+    `${GRAPH_BASE}/${resolvedPageId}/subscribed_apps`,
     null,
     {
       params: {
@@ -476,8 +515,16 @@ async function subscribePageToLeadgen(pageId) {
  * Check if page is subscribed to leadgen.
  */
 async function getPageSubscriptions(pageId) {
-  pageId = pageId || config.meta.pageId;
-  return graphGet(`${pageId}/subscribed_apps`);
+  const activePage = pageId
+    ? { pageId, pageAccessToken: null, source: 'argument' }
+    : await getActiveMetaPage();
+
+  const resolvedPageId = activePage.pageId;
+  if (!resolvedPageId) throw new Error('No active Meta page connected');
+
+  return graphGet(`${resolvedPageId}/subscribed_apps`, {
+    _accessToken: activePage.pageAccessToken || undefined,
+  });
 }
 
 // ─── Token Validation ─────────────────────────────────────────────────
@@ -504,23 +551,44 @@ async function debugToken(tokenToCheck) {
  * Quick connectivity check — fetches page info.
  */
 async function checkConnectivity() {
-  const token = getAccessToken();
-  if (!token) return { connected: false, error: 'No access token configured' };
-
   try {
-    const pageId = config.meta.pageId;
-    if (!pageId) return { connected: false, error: 'No page_id configured' };
+    const activePage = await getActiveMetaPage();
+    const pageId = activePage.pageId;
+    const pageToken = activePage.pageAccessToken || null;
+    const userToken = getUserAccessToken();
 
-    const pageInfo = await graphGet(pageId, { fields: 'id,name,category,fan_count' });
+    if (!pageId) {
+      return {
+        connected: false,
+        error: 'No active Meta page connected',
+        source: activePage.source,
+        graph_version: config.meta.graphVersion,
+      };
+    }
 
-    // Also check form count
+    const tokenToUse = pageToken || userToken;
+    if (!tokenToUse) {
+      return {
+        connected: false,
+        error: 'No Meta access token configured',
+        page_id: pageId,
+        page_name: activePage.pageName,
+        source: activePage.source,
+        graph_version: config.meta.graphVersion,
+      };
+    }
+
+    const pageInfo = await graphGet(pageId, {
+      fields: 'id,name,category,fan_count',
+      _accessToken: tokenToUse,
+    });
+
     let formCount = 0;
     try {
       const forms = await listPageForms(pageId);
       formCount = forms.length;
     } catch { /* ignore */ }
 
-    // Check ad accounts
     let adAccountCount = 0;
     try {
       const accounts = await listAdAccounts();
@@ -529,6 +597,10 @@ async function checkConnectivity() {
 
     return {
       connected: true,
+      source: activePage.source,
+      token_source: pageToken ? 'page_access_token' : 'user_access_token',
+      page_id: pageId,
+      page_name: activePage.pageName || pageInfo.name,
       page: pageInfo,
       forms: formCount,
       ad_accounts: adAccountCount,
