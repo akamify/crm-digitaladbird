@@ -2,6 +2,15 @@
 -- NOTE: The new enum values (cnr, cw, nc, etc.) are added by a pre-migration
 -- script because ALTER TYPE ADD VALUE cannot run inside a transaction.
 
+-- Add call_status enum values required by this migration.
+-- These statements must run outside a transaction in PostgreSQL.
+ALTER TYPE call_status ADD VALUE IF NOT EXISTS 'cnr';
+ALTER TYPE call_status ADD VALUE IF NOT EXISTS 'cw';
+ALTER TYPE call_status ADD VALUE IF NOT EXISTS 'nc';
+ALTER TYPE call_status ADD VALUE IF NOT EXISTS 'ccb';
+ALTER TYPE call_status ADD VALUE IF NOT EXISTS 'ni';
+ALTER TYPE call_status ADD VALUE IF NOT EXISTS 'so';
+ALTER TYPE call_status ADD VALUE IF NOT EXISTS 'nn';
 -- Drop views that depend on is_pending before modifying the column
 DROP VIEW IF EXISTS v_user_daily_stats;
 DROP VIEW IF EXISTS v_team_overview;
@@ -53,3 +62,4 @@ SELECT rm.id AS rm_id,
      LEFT JOIN leads l ON l.assigned_to_user_id = m.id AND l.deleted_at IS NULL
   WHERE rm.role = 'rm'::user_role AND rm.deleted_at IS NULL
   GROUP BY rm.id, rm.full_name;
+

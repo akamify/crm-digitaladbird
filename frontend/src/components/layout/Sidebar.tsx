@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { LogoLockup } from '@/components/ui/BirdLogo';
-import { useAuth } from '@/lib/auth';
+import { dashboardPath, useAuth } from '@/lib/auth';
 import { useChatUnread } from '@/hooks/useChat';
 import { clsx } from '@/lib/format';
 import type { Role } from '@/types';
@@ -26,7 +26,7 @@ const NAV: NavItem[] = [
   { href: '/leads',     label: 'Leads',     Icon: Briefcase },
   { href: '/chat',      label: 'Messages',  Icon: MessageSquare },
   { href: '/reports',   label: 'Reports',   Icon: BarChart3,  roles: ['super_admin', 'rm'] },
-  { href: '/partner-requests', label: 'Partner Requests', Icon: HandMetal },
+  { href: '/partner-requests', label: 'Partner Requests', Icon: HandMetal, roles: ['super_admin', 'rm', 'partner'] },
   { href: '/leaderboard', label: 'Leaderboard', Icon: Trophy },
   { href: '/users',     label: 'Team',      Icon: Users,      roles: ['super_admin', 'rm'] },
   { href: '/rm-teams',  label: 'RM Teams',  Icon: UsersRound, roles: ['super_admin'] },
@@ -52,7 +52,9 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const [adminOpen, setAdminOpen] = useState(() => pathname?.startsWith('/dashboard/admin/') ?? false);
   if (!user) return null;
 
-  const items = NAV.filter(n => !n.roles || n.roles.includes(user.role));
+  const items = NAV
+    .filter(n => !n.roles || n.roles.includes(user.role))
+    .map(n => n.href === '/dashboard' ? { ...n, href: dashboardPath(user.role) } : n);
   const isAdmin = user.role === 'super_admin';
 
   return (
@@ -63,7 +65,9 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
       <nav className="flex-1 overflow-y-auto space-y-1 px-3 py-4">
         {items.map(({ href, label, Icon }) => {
-          const active = pathname === href || (pathname?.startsWith(`${href}/`) && href !== '/dashboard');
+          const active = label === 'Dashboard'
+            ? pathname === href
+            : pathname === href || pathname?.startsWith(`${href}/`);
           const showBadge = href === '/chat' && unreadCount > 0;
           return (
             <Link

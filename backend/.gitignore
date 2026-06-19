@@ -1,0 +1,12 @@
+.env
+.env.local
+.env.production
+.env*.production
+!.env.example
+!.env*.example
+
+node_modules/
+.next/
+uploads/
+data/
+*.log
