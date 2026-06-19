@@ -1122,7 +1122,7 @@ router.get('/admin/activity-logs', authenticate, requireRole('super_admin'), asy
 }));
 
 // --- 2. Export Leads as CSV ---
-router.get('/admin/export/leads', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+router.get('/admin/export/leads', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
   let where = 'WHERE l.deleted_at IS NULL';
   const params = [];
   if (req.query.category) { params.push(req.query.category); where += ` AND l.category = $${params.length}`; }
@@ -1130,7 +1130,22 @@ router.get('/admin/export/leads', authenticate, requireRole('super_admin'), asyn
   if (req.query.call_status) { params.push(req.query.call_status); where += ` AND l.call_status = $${params.length}`; }
   if (req.query.from) { params.push(req.query.from); where += ` AND l.created_at >= $${params.length}`; }
   if (req.query.to)   { params.push(req.query.to);   where += ` AND l.created_at <= $${params.length}`; }
-  if (req.query.assigned_to) { params.push(req.query.assigned_to); where += ` AND l.assigned_to_user_id = $${params.length}`; }
+  if (req.query.assigned_to) {
+    if (req.query.assigned_to === '__unassigned') {
+      where += ` AND l.assigned_to_user_id IS NULL`;
+    } else {
+      params.push(req.query.assigned_to);
+      where += ` AND l.assigned_to_user_id = $${params.length}`;
+    }
+  }
+  if (req.query.campaign_id) {
+    params.push(req.query.campaign_id);
+    where += ` AND l.meta_campaign_id = $${params.length}`;
+  }
+  if (req.query.campaign) {
+    params.push(`%${String(req.query.campaign).trim()}%`);
+    where += ` AND (l.campaign_name ILIKE $${params.length} OR l.campaign_label ILIKE $${params.length} OR l.meta_campaign_id ILIKE $${params.length})`;
+  }
 
   const { rows } = await query(`
     SELECT l.id, l.full_name, l.phone, l.email, l.city, l.state,
@@ -1560,7 +1575,7 @@ router.get('/admin/unassigned-leads', authenticate, requireRole('super_admin'), 
 }));
 
 // --- 13. Active Members list (for assignment dropdowns) ---
-router.get('/admin/active-members', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+router.get('/admin/active-members', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (_req, res) => {
   const { rows } = await query(`
     SELECT u.id, u.full_name, u.role, u.team_name, u.member_type, u.is_available,
            r.full_name AS rm_name,
@@ -1568,7 +1583,11 @@ router.get('/admin/active-members', authenticate, requireRole('super_admin'), as
            (SELECT COUNT(*) FROM leads l2 WHERE l2.assigned_to_user_id = u.id AND l2.is_pending = TRUE AND l2.deleted_at IS NULL) AS pending_count
       FROM users u
       LEFT JOIN users r ON r.id = u.report_to_id
-     WHERE u.deleted_at IS NULL AND u.role IN ('rm', 'member')
+     WHERE u.deleted_at IS NULL
+       AND u.role = 'member'
+       AND u.status = 'active'
+       AND COALESCE(u.is_available, TRUE) = TRUE
+       AND COALESCE(u.distribution_blocked, FALSE) = FALSE
      ORDER BY u.role, u.full_name
   `);
   res.json({ success: true, data: rows });
@@ -1726,7 +1745,7 @@ router.get('/meta/debug-token', authenticate, requireRole('super_admin'), asyncH
 }));
 
 // List campaigns from DB
-router.get('/meta/campaigns', authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (_req, res) => {
+router.get('/meta/campaigns', authenticate, requireRole('super_admin', 'admin', 'rm'), asyncHandler(async (_req, res) => {
   const { rows } = await query(`SELECT * FROM meta_campaigns ORDER BY internal_label, campaign_name`);
   res.json({ success: true, data: rows });
 }));

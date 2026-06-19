@@ -98,6 +98,7 @@ export interface LeadFilters {
   call_status?: CallStatus | '';
   source?: string;
   form_id?: string;
+  campaign_id?: string;
   campaign?: string;
   adset?: string;
   from?: string;

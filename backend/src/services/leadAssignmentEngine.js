@@ -11,6 +11,7 @@ const logger = require('../utils/logger');
 const DEFAULT_RULE_NAME = '__assignment_engine_default__';
 const CLOSED_STAGES = new Set(['won', 'lost', 'dropped']);
 const CLOSED_CALL_STATUSES = new Set(['converted', 'not_interested', 'wrong_number', 'invalid_number']);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function asBool(value, fallback = false) {
   if (value === undefined || value === null || value === '') return fallback;
@@ -290,9 +291,15 @@ async function assignLeadToMember(input) {
 
 async function assignLeadsBulk({ leadIds, memberId, assignedBy = null, actor = null, assignmentType = 'manual', reason = null }) {
   if (!Array.isArray(leadIds) || leadIds.length === 0) throw new AppError(400, 'INVALID', 'leadIds array required');
+  const invalidIds = leadIds.filter(id => typeof id !== 'string' || !UUID_RE.test(id));
+  if (invalidIds.length) throw new AppError(400, 'INVALID_LEAD_IDS', 'All lead IDs must be valid UUIDs', { invalidIds });
+  if (typeof memberId !== 'string' || !UUID_RE.test(memberId)) {
+    throw new AppError(400, 'INVALID_MEMBER_ID', 'Target user ID must be a valid UUID');
+  }
   return withTransaction(async (client) => {
     await validateTargetMember(client, memberId, actor);
     const results = [];
+    const allowReassign = ['manual_reassign', 'auto_reassign'].includes(assignmentType);
     for (const leadId of leadIds) {
       const { rows: [lead] } = await client.query(
         `SELECT id, assigned_to_user_id
@@ -303,6 +310,10 @@ async function assignLeadsBulk({ leadIds, memberId, assignedBy = null, actor = n
       );
       if (!lead) {
         results.push({ leadId, assigned: false, reason: 'not_assignable' });
+        continue;
+      }
+      if (lead.assigned_to_user_id && !allowReassign) {
+        results.push({ leadId, assigned: false, reason: 'already_assigned', currentUserId: lead.assigned_to_user_id });
         continue;
       }
       if (actor?.role === 'rm' && lead.assigned_to_user_id) {
@@ -331,8 +342,18 @@ async function assignLeadsBulk({ leadIds, memberId, assignedBy = null, actor = n
       results.push({ leadId, assigned: true, previousUserId: lead.assigned_to_user_id || null });
     }
     const assigned = results.filter(r => r.assigned).length;
+    const skipped = results.filter(r => !r.assigned);
     if (assigned) await notifyAssigned(client, memberId, assigned, { assignment_type: assignmentType, count: assigned });
-    return { assigned, failed: results.length - assigned, results };
+    return {
+      requested_count: leadIds.length,
+      assigned_count: assigned,
+      skipped_count: skipped.length,
+      failed_count: 0,
+      assigned,
+      failed: skipped.length,
+      skipped,
+      results,
+    };
   });
 }
 

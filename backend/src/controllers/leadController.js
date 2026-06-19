@@ -38,8 +38,12 @@ exports.list = asyncHandler(async (req, res) => {
 
   // explicit assigned_to filter (admin/RM only — and RM can only narrow within visible set)
   if (req.query.assigned_to) {
-    params.push(req.query.assigned_to);
-    where.push(`l.assigned_to_user_id = $${params.length}`);
+    if (req.query.assigned_to === '__unassigned') {
+      where.push(`l.assigned_to_user_id IS NULL`);
+    } else {
+      params.push(req.query.assigned_to);
+      where.push(`l.assigned_to_user_id = $${params.length}`);
+    }
   }
 
   if (req.query.q) {
@@ -51,7 +55,32 @@ exports.list = asyncHandler(async (req, res) => {
   if (req.query.call_status) { params.push(req.query.call_status);  where.push(`l.call_status = $${params.length}`); }
   if (req.query.source)      { params.push(req.query.source);       where.push(`l.source = $${params.length}`); }
   if (req.query.form_id)     { params.push(req.query.form_id);      where.push(`l.meta_form_id = $${params.length}`); }
-  if (req.query.campaign)    { params.push(req.query.campaign);     where.push(`l.campaign_name = $${params.length}`); }
+  if (req.query.campaign_id) {
+    params.push(req.query.campaign_id);
+    const n = params.length;
+    where.push(`(
+      l.meta_campaign_id = $${n}
+      OR EXISTS (
+        SELECT 1 FROM meta_campaigns mc
+         WHERE mc.campaign_id = l.meta_campaign_id
+           AND mc.campaign_id = $${n}
+      )
+    )`);
+  }
+  if (req.query.campaign) {
+    params.push(`%${String(req.query.campaign).trim()}%`);
+    const n = params.length;
+    where.push(`(
+      l.campaign_name ILIKE $${n}
+      OR l.campaign_label ILIKE $${n}
+      OR l.meta_campaign_id ILIKE $${n}
+      OR EXISTS (
+        SELECT 1 FROM meta_campaigns mc
+         WHERE mc.campaign_id = l.meta_campaign_id
+           AND (mc.campaign_name ILIKE $${n} OR mc.internal_label ILIKE $${n})
+      )
+    )`);
+  }
   if (req.query.adset)       { params.push(req.query.adset);        where.push(`l.adset_name = $${params.length}`); }
   if (req.query.from)        { params.push(req.query.from);         where.push(`l.created_at >= $${params.length}`); }
   if (req.query.to)          { params.push(req.query.to);           where.push(`l.created_at <= $${params.length}`); }
