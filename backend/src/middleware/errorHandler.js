@@ -8,7 +8,11 @@ function errorHandler(err, req, res, _next) {
       success: false,
       error: { code: err.code, message: err.message, details: err.details },
     };
-    if (err.code === 'INVALID_LEAD_ASSIGNEE_ROLE' || err.code === 'LEAD_COMMUNICATION_FORBIDDEN') {
+    if (
+      err.code === 'INVALID_LEAD_ASSIGNEE_ROLE'
+      || err.code === 'LEAD_COMMUNICATION_FORBIDDEN'
+      || err.code === 'DIRECT_CHAT_DISABLED_FOR_ROLE'
+    ) {
       body.code = err.code;
       body.message = err.message;
     }

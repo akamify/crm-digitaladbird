@@ -4437,13 +4437,19 @@ router.get('/workflow/summary', authenticate, requireRole('super_admin', 'rm'), 
   res.json({ success: true, data: { rows, total: parseInt(total, 10), page } });
 }));
 
-// Admin/RM: Workflow stats overview
-router.get('/workflow/stats', authenticate, requireRole('super_admin', 'rm'), responseCache(10000), asyncHandler(async (req, res) => {
+// Role-scoped workflow stats overview
+router.get('/workflow/stats', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), responseCache(10000), asyncHandler(async (req, res) => {
   let scope = '';
   const params = [];
+  let scopeName = 'all';
   if (req.user.role === 'rm') {
     params.push(req.user.id);
+    scopeName = 'team';
     scope = `AND l.assigned_to_user_id IN (SELECT id FROM users WHERE report_to_id = $1)`;
+  } else if (req.user.role === 'member' || req.user.role === 'partner') {
+    params.push(req.user.id);
+    scopeName = 'own';
+    scope = `AND l.assigned_to_user_id = $1`;
   }
 
   const { rows: [s] } = await query(`
@@ -4471,7 +4477,7 @@ router.get('/workflow/stats', authenticate, requireRole('super_admin', 'rm'), re
 
   const data = {};
   for (const [k, v] of Object.entries(s)) data[k] = parseInt(v, 10) || 0;
-  res.json({ success: true, data });
+  res.json({ success: true, scope: scopeName, data });
 }));
 
 // Admin: Edit any workflow step (override)
