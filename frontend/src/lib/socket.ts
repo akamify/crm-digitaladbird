@@ -30,14 +30,21 @@ async function loadIO() {
 }
 
 function getWSUrl() {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || '';
-  if (apiUrl && apiUrl !== '/api') return apiUrl.replace('/api', '');
+  const explicitWsUrl = process.env.NEXT_PUBLIC_WS_URL;
+  if (explicitWsUrl && explicitWsUrl !== 'https' && explicitWsUrl !== 'http') {
+    return explicitWsUrl.replace(/\/api\/?$/, '').replace(/\/$/, '');
+  }
+
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (apiUrl && apiUrl !== '/api' && apiUrl !== 'https' && apiUrl !== 'http') {
+    return apiUrl.replace(/\/api\/?$/, '').replace(/\/$/, '');
+  }
+
   if (typeof window !== 'undefined') {
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL;
-    if (wsUrl) return wsUrl;
     return window.location.origin;
   }
-  return '';
+
+  return 'https://api.crm.digitaladbird.com';
 }
 
 export function getSocket(): Socket | null {
