@@ -15,8 +15,8 @@ const axios  = require('axios');
 const config = require('../config/env');
 const { query, withTransaction } = require('../config/database');
 const logger = require('../utils/logger');
-const { assignLead } = require('./leadDistributionService');
 const { isDistributionActive } = require('./distributionScheduler');
+const assignmentEngine = require('./leadAssignmentEngine');
 const { appendLead: sheetAppend } = require('./googleSheetsService');
 const { onLeadCreated, findExistingByContact } = require('./leadEventService');
 const { validateLead } = require('./leadValidator');
@@ -223,7 +223,9 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
   // Outside those hours the lead stays in the queue and will be distributed at 8 AM.
   let assigned = { reason: 'QUEUED_OUTSIDE_HOURS' };
   if (await isDistributionActive()) {
-    assigned = await assignLead(inserted);
+    const request = await assignmentEngine.runApprovedRequestFulfillment({ limit: 100 });
+    const auto = await assignmentEngine.runAutoAssignment({ limit: 100, reason: 'meta_webhook' });
+    assigned = { request, auto };
     logger.info({ ...ctx, step: 'H.assigned', leadId: inserted, assigned }, '[meta-ingest]');
   } else {
     logger.info({ ...ctx, step: 'H.queued_off_hours', leadId: inserted }, '[meta-ingest] distribution paused — lead stays unassigned until 08:00 IST');

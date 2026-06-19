@@ -10,7 +10,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { Modal, Skeleton, EmptyState } from '@/components/ui/Modal';
 import { LeadActions } from '@/components/leads/LeadActions';
 import { useLeadList } from '@/hooks/useLeads';
-import { useBulkLeadAction, useForceAssign, useActiveMembers, exportLeadsCsv } from '@/hooks/useAdmin';
+import { useBulkLeadAction, useForceAssign, useBulkReassignLeads, useActiveMembers, exportLeadsCsv } from '@/hooks/useAdmin';
 import { fmtDate, fmtRelative, clsx, humanize, isOverdue } from '@/lib/format';
 import type { LeadFilters, Lead } from '@/types';
 
@@ -27,13 +27,16 @@ function LeadsInner() {
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
   const [assignOpen, setAssignOpen] = useState(false);
+  const [assignMode, setAssignMode] = useState<'assign' | 'reassign'>('assign');
   const [targetUser, setTargetUser] = useState('');
+  const [assignReason, setAssignReason] = useState('');
   const [exporting, setExporting] = useState(false);
 
   const leads = useLeadList({ ...filters, q: search || undefined });
   const members = useActiveMembers();
   const bulkAction = useBulkLeadAction();
   const forceAssign = useForceAssign();
+  const bulkReassign = useBulkReassignLeads();
 
   const rows = leads.data?.rows ?? [];
   const total = leads.data?.total ?? 0;
@@ -59,10 +62,23 @@ function LeadsInner() {
 
   function handleAssign() {
     if (!targetUser || selected.length === 0) return;
-    forceAssign.mutate({ lead_ids: selected, user_id: targetUser }, {
-      onSuccess: (d: any) => { toast.success(`${d.assigned} leads assigned`); setSelected([]); setAssignOpen(false); setTargetUser(''); },
-      onError: () => toast.error('Assign failed'),
+    const mutation = assignMode === 'reassign' ? bulkReassign : forceAssign;
+    mutation.mutate({ lead_ids: selected, user_id: targetUser, reason: assignReason || undefined }, {
+      onSuccess: (d: any) => {
+        toast.success(`${d.assigned} lead(s) ${assignMode === 'reassign' ? 'reassigned' : 'assigned'}`);
+        setSelected([]);
+        setAssignOpen(false);
+        setTargetUser('');
+        setAssignReason('');
+      },
+      onError: (e: any) => toast.error(e?.response?.data?.error?.message || `${assignMode === 'reassign' ? 'Reassign' : 'Assign'} failed`),
     });
+  }
+
+  function openAssign(mode: 'assign' | 'reassign') {
+    setAssignMode(mode);
+    setAssignReason('');
+    setAssignOpen(true);
   }
 
   async function handleExport() {
@@ -117,8 +133,11 @@ function LeadsInner() {
       {selected.length > 0 && (
         <div className="flex items-center gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3">
           <span className="text-sm font-medium text-brand-800">{selected.length} selected</span>
-          <button onClick={() => setAssignOpen(true)} className="btn-primary rounded-lg px-3 py-1.5 text-xs inline-flex items-center gap-1.5">
+          <button onClick={() => openAssign('assign')} className="btn-primary rounded-lg px-3 py-1.5 text-xs inline-flex items-center gap-1.5">
             <ArrowRightLeft className="h-3.5 w-3.5" /> Assign
+          </button>
+          <button onClick={() => openAssign('reassign')} className="btn-outline rounded-lg px-3 py-1.5 text-xs inline-flex items-center gap-1.5">
+            <ArrowRightLeft className="h-3.5 w-3.5" /> Reassign
           </button>
           <button onClick={() => handleBulkAction('unassign')} className="btn-outline rounded-lg px-3 py-1.5 text-xs">Unassign</button>
           <button onClick={() => handleBulkAction('delete')} className="btn-danger rounded-lg px-3 py-1.5 text-xs inline-flex items-center gap-1.5">
@@ -194,19 +213,31 @@ function LeadsInner() {
       )}
 
       {/* Assign Modal */}
-      <Modal open={assignOpen} onClose={() => setAssignOpen(false)} title={`Assign ${selected.length} Lead(s)`} size="sm">
-        <div>
-          <label className="label">Assign To *</label>
+      <Modal open={assignOpen} onClose={() => setAssignOpen(false)} title={`${assignMode === 'reassign' ? 'Reassign' : 'Assign'} ${selected.length} Lead(s)`} size="sm">
+        <div className="space-y-3">
+          <div>
+          <label className="label">{assignMode === 'reassign' ? 'Reassign To' : 'Assign To'} *</label>
           <select className="input" value={targetUser} onChange={e => setTargetUser(e.target.value)}>
             <option value="">— Select member —</option>
             {members.data?.map(m => <option key={m.id} value={m.id}>{m.full_name} ({m.role}) — {m.lead_count} leads</option>)}
           </select>
+          </div>
+          <div>
+            <label className="label">Reason / note</label>
+            <textarea
+              className="input min-h-[72px]"
+              value={assignReason}
+              onChange={e => setAssignReason(e.target.value)}
+              placeholder={assignMode === 'reassign' ? 'Why are these leads being reassigned?' : 'Optional assignment note'}
+            />
+          </div>
         </div>
         <div className="mt-4 flex justify-end gap-2">
           <button onClick={() => setAssignOpen(false)} className="btn-ghost rounded-lg px-4 py-2 text-sm">Cancel</button>
-          <button onClick={handleAssign} disabled={forceAssign.isPending || !targetUser}
+          <button onClick={handleAssign} disabled={forceAssign.isPending || bulkReassign.isPending || !targetUser}
             className="btn-primary rounded-lg px-4 py-2 text-sm inline-flex items-center gap-2">
-            {forceAssign.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Assign
+            {(forceAssign.isPending || bulkReassign.isPending) && <Loader2 className="h-4 w-4 animate-spin" />}
+            {assignMode === 'reassign' ? 'Reassign' : 'Assign'}
           </button>
         </div>
       </Modal>

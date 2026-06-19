@@ -3,7 +3,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import {
   Users, ArrowLeft, Search, Plus, Pencil, Trash2, ShieldBan, ShieldCheck,
-  KeyRound, Settings2, Loader2, Eye, ChevronDown,
+  KeyRound, Settings2, Loader2, Eye, ChevronDown, UserRound,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
@@ -16,7 +16,7 @@ import type { Role, User } from '@/types';
 
 export default function UsersManagerPage() {
   return (
-    <AppShell title="User Management" subtitle="Manage all RMs, members, and partners" roles={['super_admin']}>
+    <AppShell title="User Management" subtitle="Manage all RMs, members, and partners" roles={['super_admin', 'admin']}>
       <UsersInner />
     </AppShell>
   );
@@ -152,7 +152,9 @@ function UsersInner() {
               {filtered.map(u => (
                 <tr key={u.id} className="hover:bg-slate-50 transition">
                   <td className="py-3 pr-3">
-                    <div className="font-medium text-slate-900">{u.full_name}</div>
+                    <Link href={`/dashboard/admin/users/${u.id}`} className="font-medium text-slate-900 hover:text-brand-700">
+                      {u.full_name}
+                    </Link>
                     <div className="text-xs text-slate-500">{u.email} · {u.phone}</div>
                   </td>
                   <td className="py-3 pr-3">
@@ -170,6 +172,9 @@ function UsersInner() {
                   <td className="py-3 pr-3 text-xs text-slate-500">{fmtDate(u.created_at, 'dd MMM yyyy')}</td>
                   <td className="py-3 text-right">
                     <div className="flex items-center justify-end gap-1">
+                      <Link href={`/dashboard/admin/users/${u.id}`} className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-brand-600" title="Open Profile">
+                        <UserRound className="h-3.5 w-3.5" />
+                      </Link>
                       <button onClick={() => setDetailUserId(u.id)} className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-blue-600" title="View Details"><Eye className="h-3.5 w-3.5" /></button>
                       <button onClick={() => openEdit(u)} className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-blue-600" title="Edit"><Pencil className="h-3.5 w-3.5" /></button>
                       <button onClick={() => openSettings(u)} className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-violet-600" title="Settings"><Settings2 className="h-3.5 w-3.5" /></button>

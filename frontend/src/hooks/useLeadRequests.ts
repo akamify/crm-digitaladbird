@@ -7,12 +7,15 @@ export interface LeadRequest {
   user_id: string;
   quantity: number;
   category: string | null;
-  status: 'pending' | 'approved' | 'rejected' | 'fulfilled';
+  status: 'pending' | 'approved' | 'partially_fulfilled' | 'fulfilled' | 'rejected' | 'cancelled';
   note: string | null;
   resolved_by: string | null;
   resolved_by_name: string | null;
   resolve_note: string | null;
   leads_assigned: number;
+  requested_quantity?: number | null;
+  approved_quantity?: number | null;
+  fulfilled_quantity?: number | null;
   created_at: string;
   updated_at: string | null;
   resolved_at: string | null;
@@ -107,8 +110,8 @@ export function useSubmitLeadRequest() {
 export function useApproveLeadRequest() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, note }: { id: string; note?: string }) =>
-      apiPost(`/lead-requests/${id}/approve`, { note }),
+    mutationFn: ({ id, note, approvedQuantity, adminNotes }: { id: string; note?: string; approvedQuantity?: number; adminNotes?: string }) =>
+      apiPost(`/lead-requests/${id}/approve`, { note, approvedQuantity, adminNotes }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['lead-requests'] });
       qc.invalidateQueries({ queryKey: ['lead-request-stats'] });

@@ -14,6 +14,7 @@
 const { query } = require('../config/database');
 const { assignLead, checkPendingBlocking } = require('./leadDistributionService');
 const { runDistributionCycle } = require('./requestDistributionEngine');
+const assignmentEngine = require('./leadAssignmentEngine');
 const logger = require('../utils/logger');
 
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // UTC+5:30
@@ -119,9 +120,27 @@ async function tick() {
     const active = await isDistributionActive();
     if (active) {
       try {
-        await runDistributionCycle();
+        const settings = await assignmentEngine.getAssignmentSettings();
+        const request = await assignmentEngine.runApprovedRequestFulfillment({ limit: settings.requestFulfillmentLimit });
+        const auto = await assignmentEngine.runAutoAssignment({ limit: settings.assignmentTickLimit, reason: 'scheduler_tick' });
+        let reassignment = null;
+        if (settings.autoReassignEnabled) {
+          reassignment = await assignmentEngine.runAutoReassignment({ limit: settings.reassignmentTickLimit });
+        }
+        if ((request.assigned || 0) > 0 || (auto.assigned || 0) > 0 || (reassignment?.reassigned || 0) > 0) {
+          logger.info({
+            request_assigned: request.assigned || 0,
+            auto_assigned: auto.assigned || 0,
+            reassigned: reassignment?.reassigned || 0,
+          }, '[Scheduler] Assignment engine tick complete');
+        }
       } catch (err) {
-        logger.error({ err }, '[Scheduler] Request distribution cycle error');
+        logger.error({ err }, '[Scheduler] Assignment engine tick error');
+        try {
+          await runDistributionCycle();
+        } catch (fallbackErr) {
+          logger.error({ err: fallbackErr }, '[Scheduler] Request distribution fallback error');
+        }
       }
     }
   } catch (err) {

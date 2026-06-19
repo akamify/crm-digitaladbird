@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
   ChevronDown, ChevronRight, Users, UserCheck, UserX,
-  Pencil, ShieldBan, ShieldCheck, Smile, Award, Phone, Mail,
+  Pencil, ShieldBan, ShieldCheck, Smile, Award, Phone, Mail, UserRound,
 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { Modal, PageLoader, Spinner } from '@/components/ui/Modal';
@@ -216,6 +217,13 @@ function MemberRow({ member }: { member: User }) {
 
         {/* Actions */}
         <div className="flex shrink-0 items-center gap-1 opacity-0 transition group-hover:opacity-100">
+          <Link
+            href={`/dashboard/admin/users/${member.id}`}
+            className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-brand-600"
+            title="Open profile"
+          >
+            <UserRound className="h-3.5 w-3.5" />
+          </Link>
           <button
             onClick={() => setEditOpen(true)}
             className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"

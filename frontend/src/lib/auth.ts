@@ -2,7 +2,7 @@
 import { create } from 'zustand';
 import { api, tokens, userStorage, apiPost, apiGet } from './api';
 
-export type Role = 'super_admin' | 'rm' | 'member' | 'partner';
+export type Role = 'super_admin' | 'admin' | 'rm' | 'member' | 'partner';
 export type MemberType = 'fresher' | 'veteran';
 
 export interface AuthUser {
@@ -128,7 +128,7 @@ export const useAuth = create<AuthState>((set, get) => ({
 
 /** Returns the dashboard path for a given role */
 export function dashboardPath(role: Role): string {
-  if (role === 'super_admin') return '/dashboard/admin';
+  if (role === 'super_admin' || role === 'admin') return '/dashboard/admin';
   if (role === 'rm')          return '/dashboard/rm';
   if (role === 'partner')     return '/dashboard/member';
   return '/dashboard/member';
@@ -137,6 +137,7 @@ export function dashboardPath(role: Role): string {
 /** Human-readable role label */
 export function roleLabel(role: Role | string): string {
   if (role === 'super_admin') return 'Super Admin';
+  if (role === 'admin')       return 'Admin';
   if (role === 'rm')          return 'RM';
   if (role === 'member')      return 'Member';
   if (role === 'partner')     return 'Partner';

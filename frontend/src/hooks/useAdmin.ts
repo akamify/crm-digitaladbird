@@ -135,7 +135,16 @@ export function useForceAssign() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { lead_ids: string[]; user_id: string; reason?: string }) =>
-      apiPost('/admin/force-assign', body),
+      apiPost('/admin/leads/bulk-assign', body),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['leads'] }); qc.invalidateQueries({ queryKey: ['admin'] }); },
+  });
+}
+
+export function useBulkReassignLeads() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { lead_ids: string[]; user_id: string; reason?: string }) =>
+      apiPost('/admin/leads/bulk-reassign', body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['leads'] }); qc.invalidateQueries({ queryKey: ['admin'] }); },
   });
 }

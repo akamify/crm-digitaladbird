@@ -15,8 +15,8 @@ const axios = require('axios');
 const config = require('../config/env');
 const { query, withTransaction } = require('../config/database');
 const logger = require('../utils/logger');
-const { assignLead } = require('./leadDistributionService');
 const { isDistributionActive } = require('./distributionScheduler');
+const assignmentEngine = require('./leadAssignmentEngine');
 const { onLeadCreated, findExistingByContact } = require('./leadEventService');
 const { validateLead } = require('./leadValidator');
 
@@ -356,7 +356,9 @@ async function ingestGraphLead(lead, formId) {
   let assigned = { reason: 'QUEUED_OUTSIDE_HOURS' };
   if (await isDistributionActive()) {
     try {
-      assigned = await assignLead(inserted);
+      const request = await assignmentEngine.runApprovedRequestFulfillment({ limit: 100 });
+      const auto = await assignmentEngine.runAutoAssignment({ limit: 100, reason: 'meta_periodic_sync' });
+      assigned = { request, auto };
     } catch (err) {
       logger.error({ leadId: inserted, err: err.message }, 'Distribution failed for synced lead');
       assigned = { reason: 'DISTRIBUTION_ERROR', error: err.message };

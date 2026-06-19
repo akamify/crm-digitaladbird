@@ -1198,7 +1198,7 @@ router.get('/admin/export/reports', authenticate, requireRole('super_admin'), as
            ) AS conv_rate
       FROM users u
       LEFT JOIN leads l ON l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
-     WHERE u.deleted_at IS NULL AND u.role IN ('rm', 'member')
+     WHERE u.deleted_at IS NULL AND u.role = 'member'
      GROUP BY u.id, u.full_name, u.email, u.role, u.team_name, u.member_type
      ORDER BY u.role, u.full_name
   `);

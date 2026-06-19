@@ -21,7 +21,7 @@ const { google }     = require('googleapis');
 const { decrypt }    = require('../utils/secretsCrypto');
 const { query, withTransaction } = require('../config/database');
 const logger         = require('../utils/logger');
-const { assignLead } = require('./leadDistributionService');
+const assignmentEngine = require('./leadAssignmentEngine');
 const { onLeadCreated } = require('./leadEventService');
 const { isDistributionActive } = require('./distributionScheduler');
 
@@ -347,7 +347,8 @@ async function importFromConfig(opts) {
       if (assign) {
         try {
           if (await isDistributionActive()) {
-            await assignLead(newId);
+            await assignmentEngine.runApprovedRequestFulfillment({ limit: 100 });
+            await assignmentEngine.runAutoAssignment({ limit: 100, reason: 'sheet_import' });
           }
         } catch (e) {
           logger.warn({ leadId: newId, err: e.message }, '[SheetImport] distribution failed (lead saved, will re-assign later)');

@@ -3,7 +3,7 @@
  * frontend speaks one language. Keep in sync with backend controllers.
  */
 
-export type Role = 'super_admin' | 'rm' | 'member' | 'partner';
+export type Role = 'super_admin' | 'admin' | 'rm' | 'member' | 'partner';
 export type MemberType = 'fresher' | 'veteran';
 export type LeadCategory = 'partner' | 'trader';
 

@@ -115,11 +115,13 @@ function onLeadCreated(leadId, { source = 'unknown' } = {}) {
       // the insert.
       if (!summary.assigned_to_user_id) {
         try {
-          const reqEngine = require('./requestDistributionEngine');
-          if (await reqEngine.isDistributionActive()) {
-            const r = await reqEngine.processAllMemberRequests();
-            if (r && r.totalFilled > 0) {
-              logger.info({ leadId, source, totalFilled: r.totalFilled, requestsProcessed: r.processed }, '[lead-fanout] pending requests topped up on new lead');
+          const assignmentEngine = require('./leadAssignmentEngine');
+          const scheduler = require('./distributionScheduler');
+          if (await scheduler.isDistributionActive()) {
+            const request = await assignmentEngine.runApprovedRequestFulfillment({ limit: 100 });
+            const auto = await assignmentEngine.runAutoAssignment({ limit: 100, reason: `${source}_fanout` });
+            if ((request.assigned || 0) > 0 || (auto.assigned || 0) > 0) {
+              logger.info({ leadId, source, requestAssigned: request.assigned, autoAssigned: auto.assigned }, '[lead-fanout] assignment engine topped up on new lead');
             }
           }
         } catch (err) {

@@ -6,7 +6,10 @@ import toast from 'react-hot-toast';
 import { useQuery } from '@tanstack/react-query';
 import { AppShell } from '@/components/layout/AppShell';
 import { Modal, Skeleton, EmptyState } from '@/components/ui/Modal';
-import { useDistributionRules, useCreateRule, useUpdateRule, useDeleteRule } from '@/hooks/useAdminEnterprise';
+import {
+  useDistributionRules, useCreateRule, useUpdateRule, useDeleteRule,
+  useAssignmentOverview, useUpdateAssignmentSettings, useRunDistributionNow, useRunReassignmentNow,
+} from '@/hooks/useAdminEnterprise';
 import { apiGet } from '@/lib/api';
 import { fmtDate, clsx, humanize } from '@/lib/format';
 
@@ -20,6 +23,10 @@ export default function DistributionPage() {
 
 function DistributionInner() {
   const { data: rules, isLoading } = useDistributionRules();
+  const assignmentOverview = useAssignmentOverview();
+  const updateAssignment = useUpdateAssignmentSettings();
+  const runDistribution = useRunDistributionNow();
+  const runReassignment = useRunReassignmentNow();
   const distStats = useQuery({ queryKey: ['dist-stats'], queryFn: () => apiGet<any>('/distribution/stats'), staleTime: 30_000, refetchInterval: 60_000 });
   const [createOpen, setCreateOpen] = useState(false);
   const [editItem, setEditItem] = useState<any>(null);
@@ -43,6 +50,16 @@ function DistributionInner() {
   }
 
   const ds = distStats.data;
+  const assignment = assignmentOverview.data;
+  const settings = assignment?.settings;
+  const astats = assignment?.stats || {};
+
+  function saveSetting(body: Record<string, boolean | number | string>) {
+    updateAssignment.mutate(body, {
+      onSuccess: () => toast.success('Assignment settings updated'),
+      onError: (e: any) => toast.error(e?.response?.data?.error?.message || 'Update failed'),
+    });
+  }
 
   return (
     <div className="space-y-6">
@@ -61,6 +78,79 @@ function DistributionInner() {
           <StatCard label="Today Received" value={ds.today_received} color="text-blue-700" />
           <StatCard label="Blocked Members" value={ds.blocked_members} color="text-red-700" />
           <StatCard label="Distribution" value={ds.distribution_enabled === 'true' ? 'Active' : 'Paused'} color={ds.distribution_enabled === 'true' ? 'text-green-700' : 'text-amber-700'} />
+        </div>
+      )}
+
+      {settings && (
+        <div className="card-padded space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">Assignment Settings</h2>
+              <p className="text-xs text-slate-500">Approved requests are fulfilled first, then round-robin assigns remaining queue.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => runDistribution.mutate(undefined, {
+                  onSuccess: (d: any) => toast.success(`Assigned ${Number(d?.request?.assigned || 0) + Number(d?.auto?.assigned || 0)} lead(s)`),
+                  onError: (e: any) => toast.error(e?.response?.data?.error?.message || 'Run failed'),
+                })}
+                disabled={runDistribution.isPending}
+                className="btn-primary rounded-lg px-3 py-2 text-xs inline-flex items-center gap-1.5"
+              >
+                {runDistribution.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                Run distribution now
+              </button>
+              <button
+                onClick={() => runReassignment.mutate(undefined, {
+                  onSuccess: (d: any) => toast.success(`Reassigned ${d?.reassigned || 0} lead(s)`),
+                  onError: (e: any) => toast.error(e?.response?.data?.error?.message || 'Run failed'),
+                })}
+                disabled={runReassignment.isPending}
+                className="btn-outline rounded-lg px-3 py-2 text-xs inline-flex items-center gap-1.5"
+              >
+                {runReassignment.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowLeft className="h-3.5 w-3.5" />}
+                Run reassignment now
+              </button>
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <label className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <span className="text-sm font-medium text-slate-700">Auto assignment</span>
+              <input type="checkbox" checked={settings.autoAssignEnabled} onChange={e => saveSetting({ autoAssignEnabled: e.target.checked })} />
+            </label>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <label className="text-xs font-medium text-slate-500">Start hour IST</label>
+              <input className="input mt-1 h-9" type="number" min={0} max={23} defaultValue={settings.assignStartHour}
+                onBlur={e => saveSetting({ assignStartHour: Number(e.target.value) })} />
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <label className="text-xs font-medium text-slate-500">End hour IST</label>
+              <input className="input mt-1 h-9" type="number" min={0} max={23} defaultValue={settings.assignEndHour}
+                onBlur={e => saveSetting({ assignEndHour: Number(e.target.value) })} />
+            </div>
+            <label className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <span className="text-sm font-medium text-slate-700">Auto reassignment</span>
+              <input type="checkbox" checked={settings.autoReassignEnabled} onChange={e => saveSetting({ autoReassignEnabled: e.target.checked })} />
+            </label>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <label className="text-xs font-medium text-slate-500">Inactive after hours</label>
+              <input className="input mt-1 h-9" type="number" min={1} defaultValue={settings.reassignAfterHours}
+                onBlur={e => saveSetting({ reassignAfterHours: Number(e.target.value) })} />
+            </div>
+            <label className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <span className="text-sm font-medium text-slate-700">High performers</span>
+              <input type="checkbox" checked={settings.reassignToHighPerformers} onChange={e => saveSetting({ reassignToHighPerformers: e.target.checked })} />
+            </label>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+            <StatCard label="Unassigned" value={String(astats.unassigned_leads ?? 0)} color="text-amber-700" />
+            <StatCard label="Assigned Today" value={String(astats.assigned_today ?? 0)} color="text-green-700" />
+            <StatCard label="Approved Requests" value={String(astats.approved_requests ?? 0)} color="text-blue-700" />
+            <StatCard label="Partial Requests" value={String(astats.partially_fulfilled_requests ?? 0)} color="text-violet-700" />
+            <StatCard label="Reassigned Today" value={String(astats.reassigned_today ?? 0)} color="text-rose-700" />
+          </div>
         </div>
       )}
 

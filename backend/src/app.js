@@ -10,6 +10,8 @@ const config       = require('./config/env');
 const logger       = require('./utils/logger');
 const apiRoutes    = require('./routes');
 const chatRoutes   = require('./routes/chat');
+const assignmentRoutes = require('./routes/assignment');
+const userProfileRoutes = require('./routes/userProfile');
 const errorHandler = require('./middleware/errorHandler');
 const meta         = require('./controllers/metaController');
 
@@ -165,6 +167,8 @@ app.get('/health/db-strict', async (_req, res) => {
   }
 });
 
+app.use('/api', assignmentRoutes);
+app.use('/api', userProfileRoutes);
 app.use('/api', apiRoutes);
 app.use('/api/chat', chatRoutes);
 

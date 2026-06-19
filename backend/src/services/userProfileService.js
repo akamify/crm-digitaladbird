@@ -1,0 +1,350 @@
+const { query } = require('../config/database');
+const { AppError } = require('../utils/errors');
+
+const ADMIN_ROLES = new Set(['super_admin', 'admin']);
+const CLOSED_CALL_STATUSES = ['converted', 'not_interested', 'wrong_number', 'invalid_number'];
+
+function rangeToDates(range = '30d', startDate, endDate) {
+  const end = endDate ? new Date(endDate) : new Date();
+  const start = startDate ? new Date(startDate) : new Date(end);
+  if (!startDate) {
+    const days = range === '7d' ? 7 : range === '90d' ? 90 : 30;
+    start.setDate(start.getDate() - days + 1);
+  }
+  return {
+    start: start.toISOString().slice(0, 10),
+    end: end.toISOString().slice(0, 10),
+  };
+}
+
+async function assertProfileAccess(actor, userId, { edit = false } = {}) {
+  if (!actor) throw new AppError(401, 'NO_USER', 'Not authenticated');
+  if (ADMIN_ROLES.has(actor.role)) return;
+  if (actor.role !== 'rm') throw new AppError(403, 'FORBIDDEN', 'Insufficient permissions');
+  if (edit) throw new AppError(403, 'FORBIDDEN', 'RM cannot edit user profiles');
+  const { rows: [target] } = await query(
+    `SELECT id FROM users
+      WHERE deleted_at IS NULL
+        AND (id = $1 OR report_to_id = $1)
+        AND id = $2`,
+    [actor.id, userId],
+  );
+  if (!target) throw new AppError(403, 'FORBIDDEN', 'You can only view users in your team');
+}
+
+async function getSanitizedUser(userId) {
+  const { rows: [user] } = await query(`
+    SELECT u.id, u.emp_code, u.full_name, u.email, u.phone, u.cp_id,
+           u.role, u.member_type, u.status, u.report_to_id, u.team_name,
+           u.daily_lead_cap, u.distribution_weight, u.is_available,
+           u.distribution_blocked, u.distribution_blocked_reason,
+           u.distribution_blocked_at, u.last_login_at, u.created_at, u.updated_at,
+           rm.id AS rm_id, rm.full_name AS rm_name, rm.email AS rm_email
+      FROM users u
+      LEFT JOIN users rm ON rm.id = u.report_to_id
+     WHERE u.id = $1 AND u.deleted_at IS NULL AND COALESCE(u.is_hidden, FALSE) = FALSE
+  `, [userId]);
+  if (!user) throw new AppError(404, 'NOT_FOUND', 'User not found');
+  return user;
+}
+
+async function getBasicCounts(userId) {
+  const { rows: [counts] } = await query(`
+    SELECT
+      COUNT(*)::int AS total_assigned_leads,
+      COUNT(*) FILTER (WHERE l.is_pending = TRUE)::int AS pending_leads,
+      COUNT(*) FILTER (WHERE l.call_status <> 'not_called')::int AS worked_leads,
+      COUNT(*) FILTER (WHERE l.call_status = 'converted')::int AS converted_leads,
+      COUNT(*) FILTER (WHERE l.stage = 'lost' OR l.call_status IN ('not_interested','wrong_number','invalid_number'))::int AS lost_not_interested_leads,
+      COUNT(*) FILTER (WHERE l.next_followup_at IS NOT NULL AND l.next_followup_at <= NOW())::int AS followups_due,
+      COUNT(*) FILTER (WHERE l.assigned_at::date = CURRENT_DATE)::int AS assigned_today,
+      COUNT(*) FILTER (WHERE l.assigned_at >= date_trunc('week', NOW()))::int AS assigned_this_week,
+      COUNT(*) FILTER (WHERE l.assigned_at >= date_trunc('month', NOW()))::int AS assigned_this_month
+    FROM leads l
+    WHERE l.assigned_to_user_id = $1 AND l.deleted_at IS NULL
+  `, [userId]);
+
+  const { rows: [requests] } = await query(`
+    SELECT
+      COUNT(*) FILTER (WHERE status = 'pending')::int AS requests_pending,
+      COUNT(*) FILTER (WHERE status IN ('approved','partially_fulfilled'))::int AS requests_approved,
+      COUNT(*) FILTER (WHERE status = 'fulfilled')::int AS requests_fulfilled
+    FROM lead_requests
+    WHERE user_id = $1
+  `, [userId]);
+
+  const { rows: [history] } = await query(`
+    SELECT
+      COUNT(*) FILTER (WHERE previous_user_id = $1)::int AS reassigned_out_count,
+      COUNT(*) FILTER (WHERE assigned_to_user_id = $1 AND previous_user_id IS NOT NULL)::int AS reassigned_in_count
+    FROM lead_assignments
+    WHERE previous_user_id = $1 OR assigned_to_user_id = $1
+  `, [userId]).catch(() => ({ rows: [{ reassigned_out_count: 0, reassigned_in_count: 0 }] }));
+
+  return { ...counts, ...requests, ...history };
+}
+
+async function getProfile(actor, userId) {
+  await assertProfileAccess(actor, userId);
+  const user = await getSanitizedUser(userId);
+  const counts = await getBasicCounts(userId);
+  const { rows: reportees } = await query(`
+    SELECT id, full_name, email, phone, role, member_type, status, team_name, is_available
+      FROM users
+     WHERE report_to_id = $1 AND deleted_at IS NULL AND COALESCE(is_hidden, FALSE) = FALSE
+     ORDER BY full_name
+  `, [userId]);
+  return { user, counts, reportees };
+}
+
+async function getPerformance(actor, userId, opts = {}) {
+  await assertProfileAccess(actor, userId);
+  const { start, end } = rangeToDates(opts.range, opts.start_date, opts.end_date);
+  const params = [userId, start, end];
+
+  const { rows: [summary] } = await query(`
+    SELECT
+      COUNT(*)::int AS assigned,
+      COUNT(*) FILTER (WHERE call_status <> 'not_called')::int AS worked,
+      COUNT(*) FILTER (WHERE is_pending = TRUE)::int AS pending,
+      COUNT(*) FILTER (WHERE call_status = 'converted')::int AS converted,
+      ROUND(
+        CASE WHEN COUNT(*) = 0 THEN 0
+             ELSE COUNT(*) FILTER (WHERE call_status = 'converted')::numeric * 100 / COUNT(*) END,
+        2
+      ) AS conversion_rate,
+      COUNT(*) FILTER (WHERE next_followup_at IS NOT NULL AND next_followup_at <= NOW())::int AS overdue_leads
+    FROM leads
+    WHERE assigned_to_user_id = $1 AND deleted_at IS NULL
+      AND assigned_at::date BETWEEN $2::date AND $3::date
+  `, params);
+
+  const { rows: dailyTrend } = await query(`
+    WITH days AS (
+      SELECT generate_series($2::date, $3::date, interval '1 day')::date AS day
+    )
+    SELECT d.day::text AS date,
+           COUNT(l.id)::int AS assigned_count,
+           COUNT(l.id) FILTER (WHERE l.call_status <> 'not_called')::int AS worked_count,
+           COUNT(l.id) FILTER (WHERE l.call_status = 'converted')::int AS converted_count,
+           COUNT(r.id)::int AS followups_done
+      FROM days d
+      LEFT JOIN leads l ON l.assigned_to_user_id = $1
+        AND l.deleted_at IS NULL
+        AND l.assigned_at::date = d.day
+      LEFT JOIN lead_remarks r ON r.user_id = $1
+        AND r.created_at::date = d.day
+     GROUP BY d.day
+     ORDER BY d.day
+  `, params);
+
+  const { rows: callStatusBreakdown } = await query(`
+    SELECT call_status AS status, COUNT(*)::int AS count
+      FROM leads
+     WHERE assigned_to_user_id = $1 AND deleted_at IS NULL
+       AND assigned_at::date BETWEEN $2::date AND $3::date
+     GROUP BY call_status
+     ORDER BY count DESC
+  `, params);
+
+  const { rows: sourceBreakdown } = await query(`
+    SELECT l.source, l.meta_form_id, mf.form_name, COUNT(*)::int AS count
+      FROM leads l
+      LEFT JOIN meta_forms mf ON mf.form_id = l.meta_form_id
+     WHERE l.assigned_to_user_id = $1 AND l.deleted_at IS NULL
+       AND l.assigned_at::date BETWEEN $2::date AND $3::date
+     GROUP BY l.source, l.meta_form_id, mf.form_name
+     ORDER BY count DESC
+     LIMIT 20
+  `, params);
+
+  const { rows: [ranking] } = await query(`
+    SELECT rank_position, score, leads_total, leads_converted, calls_made, conv_rate
+      FROM daily_rankings
+     WHERE user_id = $1
+     ORDER BY rank_date DESC
+     LIMIT 1
+  `, [userId]).catch(() => ({ rows: [null] }));
+
+  const { rows: [workload] } = await query(`
+    SELECT
+      COUNT(*) FILTER (WHERE is_pending = TRUE)::int AS currently_pending,
+      COUNT(*) FILTER (WHERE next_followup_at IS NOT NULL AND next_followup_at < NOW())::int AS overdue_leads,
+      COUNT(*) FILTER (WHERE assigned_at < NOW() - INTERVAL '24 hours'
+        AND call_status = 'not_called')::int AS inactive_assigned_leads
+    FROM leads
+    WHERE assigned_to_user_id = $1 AND deleted_at IS NULL
+  `, [userId]);
+
+  return {
+    range: { start, end },
+    summary: {
+      ...summary,
+      average_response_time: null,
+      follow_up_completion_rate: null,
+    },
+    dailyTrend,
+    callStatusBreakdown,
+    sourceBreakdown,
+    ranking: ranking || null,
+    workload,
+  };
+}
+
+async function getUserLeads(actor, userId, opts = {}) {
+  await assertProfileAccess(actor, userId);
+  const page = Math.max(1, Number.parseInt(opts.page || '1', 10));
+  const pageSize = Math.min(100, Math.max(1, Number.parseInt(opts.page_size || '25', 10)));
+  const offset = (page - 1) * pageSize;
+  const where = ['l.assigned_to_user_id = $1', 'l.deleted_at IS NULL'];
+  const params = [userId];
+
+  if (opts.call_status) { params.push(opts.call_status); where.push(`l.call_status = $${params.length}`); }
+  if (opts.status) { params.push(opts.status); where.push(`l.stage = $${params.length}`); }
+  if (opts.source) { params.push(opts.source); where.push(`l.source = $${params.length}`); }
+  if (opts.assigned_from) { params.push(opts.assigned_from); where.push(`l.assigned_at >= $${params.length}`); }
+  if (opts.assigned_to) { params.push(opts.assigned_to); where.push(`l.assigned_at <= $${params.length}`); }
+  if (opts.search) {
+    params.push(`%${String(opts.search).trim()}%`);
+    where.push(`(l.full_name ILIKE $${params.length} OR l.phone ILIKE $${params.length} OR l.email ILIKE $${params.length})`);
+  }
+
+  const whereSql = where.join(' AND ');
+  const { rows: [{ total }] } = await query(`SELECT COUNT(*)::int AS total FROM leads l WHERE ${whereSql}`, params);
+  params.push(pageSize, offset);
+  const { rows } = await query(`
+    SELECT l.id, l.full_name, l.phone, l.email, l.source, l.meta_form_id,
+           mf.form_name, l.campaign_name, l.campaign_label, l.assigned_at,
+           l.call_status, l.stage, l.is_pending, l.next_followup_at,
+           l.created_at,
+           GREATEST(l.updated_at, COALESCE((SELECT MAX(created_at) FROM lead_remarks r WHERE r.lead_id = l.id), l.updated_at)) AS last_activity_at
+      FROM leads l
+      LEFT JOIN meta_forms mf ON mf.form_id = l.meta_form_id
+     WHERE ${whereSql}
+     ORDER BY l.${opts.sort === 'created_at' ? 'created_at' : 'assigned_at'} DESC NULLS LAST
+     LIMIT $${params.length - 1} OFFSET $${params.length}
+  `, params);
+  return { rows, total, page, pageSize };
+}
+
+async function getRequests(actor, userId) {
+  await assertProfileAccess(actor, userId);
+  const { rows } = await query(`
+    SELECT id, 'member' AS request_type, quantity AS requested_quantity,
+           approved_quantity, COALESCE(fulfilled_quantity, leads_assigned, 0) AS fulfilled_quantity,
+           GREATEST(COALESCE(approved_quantity, quantity) - COALESCE(fulfilled_quantity, leads_assigned, 0), 0) AS remaining_quantity,
+           status, created_at AS requested_at, approved_by, approved_at, note, admin_notes
+      FROM lead_requests WHERE user_id = $1
+    UNION ALL
+    SELECT id, 'rm' AS request_type, quantity AS requested_quantity,
+           quantity AS approved_quantity, fulfilled_count AS fulfilled_quantity,
+           GREATEST(quantity - fulfilled_count, 0) AS remaining_quantity,
+           status, created_at AS requested_at, NULL::uuid AS approved_by, NULL::timestamptz AS approved_at, note, NULL::text AS admin_notes
+      FROM rm_lead_requests WHERE rm_id = $1
+    UNION ALL
+    SELECT id, 'partner' AS request_type, quantity AS requested_quantity,
+           quantity AS approved_quantity, leads_assigned AS fulfilled_quantity,
+           GREATEST(quantity - leads_assigned, 0) AS remaining_quantity,
+           status, created_at AS requested_at, resolved_by AS approved_by, resolved_at AS approved_at, note, resolve_note AS admin_notes
+      FROM partner_lead_requests WHERE partner_id = $1
+    ORDER BY requested_at DESC
+    LIMIT 100
+  `, [userId]);
+  return rows;
+}
+
+async function getAssignmentHistory(actor, userId) {
+  await assertProfileAccess(actor, userId);
+  const { rows } = await query(`
+    SELECT la.id, la.lead_id, l.full_name AS lead_name,
+           COALESCE(la.assignment_type, la.reason) AS assignment_type,
+           prev.full_name AS previous_user,
+           assigned.full_name AS assigned_to,
+           byu.full_name AS assigned_by,
+           la.reason,
+           COALESCE(la.created_at, la.assigned_at) AS created_at
+      FROM lead_assignments la
+      LEFT JOIN leads l ON l.id = la.lead_id
+      LEFT JOIN users prev ON prev.id = la.previous_user_id
+      LEFT JOIN users assigned ON assigned.id = COALESCE(la.assigned_to_user_id, la.user_id)
+      LEFT JOIN users byu ON byu.id = COALESCE(la.assigned_by_user_id, la.assigned_by)
+     WHERE COALESCE(la.assigned_to_user_id, la.user_id) = $1 OR la.previous_user_id = $1
+     ORDER BY COALESCE(la.created_at, la.assigned_at) DESC
+     LIMIT 100
+  `, [userId]);
+  return rows;
+}
+
+async function getActivity(actor, userId) {
+  await assertProfileAccess(actor, userId);
+  const { rows } = await query(`
+    SELECT 'activity_log' AS source, entity, entity_id, action, metadata, created_at
+      FROM activity_logs
+     WHERE user_id = $1
+    UNION ALL
+    SELECT 'lead_remark' AS source, 'lead' AS entity, lead_id::text AS entity_id,
+           COALESCE(call_status::text, 'remark') AS action,
+           jsonb_build_object('remark', remark) AS metadata,
+           created_at
+      FROM lead_remarks
+     WHERE user_id = $1
+    UNION ALL
+    SELECT 'chat_message' AS source, 'chat' AS entity, conversation_id::text AS entity_id,
+           message_type AS action,
+           jsonb_build_object('body', LEFT(body, 160)) AS metadata,
+           created_at
+      FROM chat_messages
+     WHERE sender_id = $1
+     ORDER BY created_at DESC
+     LIMIT 100
+  `, [userId]).catch(async () => {
+    const fallback = await query(`
+      SELECT 'lead_remark' AS source, 'lead' AS entity, lead_id::text AS entity_id,
+             COALESCE(call_status::text, 'remark') AS action,
+             jsonb_build_object('remark', remark) AS metadata,
+             created_at
+        FROM lead_remarks
+       WHERE user_id = $1
+       ORDER BY created_at DESC
+       LIMIT 100
+    `, [userId]);
+    return fallback;
+  });
+  return rows;
+}
+
+async function updateProfile(actor, userId, body) {
+  await assertProfileAccess(actor, userId, { edit: true });
+  const allowed = ['full_name', 'email', 'phone', 'cp_id', 'role', 'report_to_id', 'team_name', 'status', 'is_available'];
+  const sets = [];
+  const params = [];
+  for (const key of allowed) {
+    if (Object.prototype.hasOwnProperty.call(body, key)) {
+      params.push(body[key] || null);
+      sets.push(`${key} = $${params.length}`);
+    }
+  }
+  if (!sets.length) return getProfile(actor, userId);
+  params.push(userId);
+  const { rows: [updated] } = await query(
+    `UPDATE users SET ${sets.join(', ')}, updated_at = NOW()
+      WHERE id = $${params.length}
+        AND deleted_at IS NULL
+        AND COALESCE(is_hidden, FALSE) = FALSE
+        AND COALESCE(is_protected, FALSE) = FALSE
+      RETURNING id`,
+    params,
+  );
+  if (!updated) throw new AppError(404, 'NOT_FOUND', 'User not found or protected');
+  return getProfile(actor, userId);
+}
+
+module.exports = {
+  getProfile,
+  getPerformance,
+  getUserLeads,
+  getRequests,
+  getAssignmentHistory,
+  getActivity,
+  updateProfile,
+};

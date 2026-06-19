@@ -38,7 +38,7 @@ export default function AdminDashboardPage() {
     <AppShell
       title="Super Admin Dashboard"
       subtitle="Full system overview — all teams, all leads"
-      roles={['super_admin']}
+      roles={['super_admin', 'admin']}
     >
       <AdminDashboardInner />
     </AppShell>
@@ -231,10 +231,15 @@ function AdminDashboardInner() {
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
-                      onClick={() => approveReq.mutate({ id: r.id }, {
+                      onClick={() => {
+                        const raw = window.prompt('Approved quantity', String(r.quantity));
+                        if (raw === null) return;
+                        const approvedQuantity = Math.max(1, Number.parseInt(raw, 10) || r.quantity);
+                        approveReq.mutate({ id: r.id, approvedQuantity }, {
                         onSuccess: (data: any) => toast.success(`Approved! ${data.leads_assigned} lead(s) assigned`),
                         onError: () => toast.error('Approval failed'),
-                      })}
+                        });
+                      }}
                       disabled={approveReq.isPending}
                       className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition"
                     >

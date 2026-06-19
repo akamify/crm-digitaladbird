@@ -2,6 +2,62 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api';
 
+export interface AssignmentSettings {
+  autoAssignEnabled: boolean;
+  assignStartHour: number;
+  assignEndHour: number;
+  timezone: string;
+  autoReassignEnabled: boolean;
+  reassignAfterHours: number;
+  reassignToHighPerformers: boolean;
+  assignmentTickLimit: number;
+  requestFulfillmentLimit: number;
+  reassignmentTickLimit: number;
+}
+
+export function useAssignmentOverview() {
+  return useQuery({
+    queryKey: ['admin', 'assignment-overview'],
+    queryFn: () => apiGet<{ settings: AssignmentSettings; stats: Record<string, number> }>('/admin/assignment/overview'),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+}
+
+export function useUpdateAssignmentSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Partial<AssignmentSettings>) => apiPatch<AssignmentSettings>('/admin/assignment/settings', body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'assignment-overview'] });
+      qc.invalidateQueries({ queryKey: ['dist-stats'] });
+    },
+  });
+}
+
+export function useRunDistributionNow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiPost('/admin/distribution/run-now'),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'assignment-overview'] });
+      qc.invalidateQueries({ queryKey: ['lead-request-stats'] });
+    },
+  });
+}
+
+export function useRunReassignmentNow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiPost('/admin/reassignment/run-now'),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'assignment-overview'] });
+    },
+  });
+}
+
 // ── Campaign Management ──────────────────────────────────────────
 export interface AdminCampaign {
   id: string; campaign_id: string; campaign_name: string; internal_label: string | null;
