@@ -129,13 +129,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         )}
       </nav>
 
-      <div className="border-t border-slate-100 p-4">
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-          <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Signed in as</div>
-          <div className="mt-1 truncate text-sm font-medium text-slate-900">{user.name}</div>
-          <div className="mt-0.5 text-xs capitalize text-slate-500">{user.role}{user.team ? ` · ${user.team}` : ''}</div>
-        </div>
-      </div>
+     
     </aside>
   );
 }
