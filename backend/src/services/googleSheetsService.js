@@ -4,11 +4,13 @@
  * Auth precedence (per request):
  *   1. Active row in `integration_configs` (kind='google_sheets', is_active=true)
  *      — admin uploaded the service-account JSON via the Settings UI.
- *   2. Env vars (back-compat): GOOGLE_SERVICE_ACCOUNT_KEY{,_PATH}
+ *   2. Env vars (back-compat): GOOGLE_SERVICE_ACCOUNT_JSON,
+ *      GOOGLE_CREDENTIALS_PATH, GOOGLE_SERVICE_ACCOUNT_KEY{,_PATH}
  *
  * The DB-backed row holds the sheet_id, sheet_name AND the encrypted service-
  * account JSON. Admins can swap the active row at any time and the next sync
- * call picks up the new config without restarting PM2.
+ * call picks up the new config without restarting PM2. If the DB row only has
+ * sheet metadata, credentials fall back to env configuration.
  *
  * The Google Sheet MUST be shared (Editor) with the service account email.
  *
@@ -20,6 +22,7 @@
  *   - reloadActiveConfig() : drop cached clients so the next call uses new creds
  */
 const path = require('path');
+const fs = require('fs');
 const { google } = require('googleapis');
 const { query }  = require('../config/database');
 const logger     = require('../utils/logger');
@@ -32,6 +35,48 @@ const SCOPES = [
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1500;
+
+function parseServiceAccountJson(raw) {
+  if (!raw) return null;
+  if (typeof raw === 'object') return raw;
+  const text = String(raw).trim();
+  try { return JSON.parse(text); } catch (_) {}
+  try { return JSON.parse(Buffer.from(text, 'base64').toString('utf8')); } catch (_) {}
+  return null;
+}
+
+function readServiceAccountFile(filePath) {
+  if (!filePath) return null;
+  const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath);
+  if (!fs.existsSync(resolved)) return null;
+  const parsed = parseServiceAccountJson(fs.readFileSync(resolved, 'utf8'));
+  if (!parsed) throw new Error('GOOGLE_CREDENTIALS_PATH does not contain valid JSON');
+  return { creds: parsed, path: resolved };
+}
+
+function resolveEnvCredentials() {
+  const rawJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON
+    || process.env.GOOGLE_SERVICE_ACCOUNT_KEY
+    || '';
+  if (rawJson) {
+    const creds = parseServiceAccountJson(rawJson);
+    if (!creds) throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON is not valid service-account JSON');
+    return { creds, source: 'env_json', keyPath: null };
+  }
+
+  const filePath = process.env.GOOGLE_CREDENTIALS_PATH
+    || process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH
+    || '';
+  const file = readServiceAccountFile(filePath);
+  if (file) return { creds: file.creds, source: 'env_path', keyPath: file.path };
+  return null;
+}
+
+function validateServiceAccount(creds, sourceLabel) {
+  if (!creds || !creds.client_email || !creds.private_key) {
+    throw new Error(`${sourceLabel} Google credentials are missing client_email/private_key`);
+  }
+}
 
 // Cached per-purpose. Multiple sheets can coexist (Traders + Partners), each
 // with its own Google client. `null` purpose = legacy/un-tagged sheet.
@@ -47,6 +92,7 @@ const _initErrors  = new Map(); // purpose → Error
  *   - null       → backward-compat: any active row, then any active without purpose, then env
  */
 async function loadActiveConfig(purpose = null) {
+  let dbConfigFallback = null;
   // 1. Active DB row scoped to the requested purpose
   try {
     let sql, params;
@@ -66,9 +112,12 @@ async function loadActiveConfig(purpose = null) {
       params = [];
     }
     const { rows: [row] } = await query(sql, params);
+    if (row) {
+      dbConfigFallback = { configId: row.id, config: row.config || {}, purpose: row.purpose || null };
+    }
     if (row && row.secrets_encrypted) {
       const secrets = decrypt(row.secrets_encrypted);
-      if (!secrets || !secrets.client_email) throw new Error('Stored credentials missing client_email');
+      validateServiceAccount(secrets, 'Stored');
       const cfg = row.config || {};
       return {
         configId:   row.id,
@@ -77,6 +126,7 @@ async function loadActiveConfig(purpose = null) {
         purpose:    row.purpose || null,
         creds:      secrets,
         source:     'db',
+        keyPath:    null,
       };
     }
   } catch (err) {
@@ -86,31 +136,22 @@ async function loadActiveConfig(purpose = null) {
     // Otherwise (table doesn't exist yet, etc.) fall through to env.
   }
 
-  // 2. Env fallback (legacy) — only when no purpose was asked for
-  if (purpose) {
-    throw new Error(`No active "${purpose}" sheet configured. Upload one in Settings → Google Sheets → ${purpose === 'traders' ? 'Traders' : 'Partners'} tab.`);
-  }
-  const sheetId = process.env.GOOGLE_SHEET_ID || '';
-  const keyPath = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH || '';
-  const keyJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY || '';
+  // 2. Env fallback. If the DB row has sheet metadata but no secrets, keep
+  // the DB sheet details and resolve credentials from the environment.
+  const sheetId = dbConfigFallback?.config?.sheet_id || process.env.GOOGLE_SHEET_ID || '';
+  const envCreds = resolveEnvCredentials();
   if (!sheetId) throw new Error('No active Google Sheets config — upload credentials in Settings → Google Sheets.');
-  if (!keyPath && !keyJson) throw new Error('No Google credentials configured — upload service-account JSON in Settings.');
+  if (!envCreds) throw new Error('No Google credentials configured — upload service-account JSON in Settings or set GOOGLE_CREDENTIALS_PATH.');
 
-  let creds;
-  if (keyJson) {
-    try { creds = JSON.parse(keyJson); }
-    catch { creds = JSON.parse(Buffer.from(keyJson, 'base64').toString('utf8')); }
-  } else {
-    const resolved = path.isAbsolute(keyPath) ? keyPath : path.resolve(process.cwd(), keyPath);
-    creds = require(resolved);
-  }
+  validateServiceAccount(envCreds.creds, 'Environment');
   return {
-    configId:  null,
+    configId:  dbConfigFallback?.configId || null,
     sheetId,
-    sheetName: process.env.GOOGLE_SHEET_NAME || 'Leads',
-    purpose:   null,
-    creds,
-    source:    'env',
+    sheetName: dbConfigFallback?.config?.sheet_name || process.env.GOOGLE_SHEET_NAME || 'Leads',
+    purpose:   dbConfigFallback?.purpose || null,
+    creds:     envCreds.creds,
+    source:    envCreds.source,
+    keyPath:   envCreds.keyPath,
   };
 }
 
@@ -129,6 +170,8 @@ async function initClients(purpose = null) {
       sheetName:   cfg.sheetName,
       purpose:     cfg.purpose,
       clientEmail: cfg.creds.client_email,
+      source:      cfg.source,
+      keyPath:     cfg.keyPath || null,
       sheets:      google.sheets({ version: 'v4', auth: client }),
       drive:       google.drive({ version: 'v3', auth: client }),
     };
@@ -169,6 +212,36 @@ async function getActiveSheetName() {
 async function getActiveClientEmail() {
   try { return (await initClients()).clientEmail; }
   catch { return null; }
+}
+
+async function resolveConfigStatus(purpose = null) {
+  try {
+    const cfg = await loadActiveConfig(purpose);
+    return {
+      configured: !!(cfg.sheetId && cfg.creds?.client_email && cfg.creds?.private_key),
+      source: cfg.source,
+      sheet_id: cfg.sheetId || null,
+      sheet_name: cfg.sheetName || 'Leads',
+      service_account_email: cfg.creds?.client_email || null,
+      key_path: cfg.keyPath || null,
+      config_id: cfg.configId || null,
+      purpose: cfg.purpose || null,
+      has_credentials: !!(cfg.creds?.client_email && cfg.creds?.private_key),
+    };
+  } catch (err) {
+    return {
+      configured: false,
+      source: null,
+      sheet_id: process.env.GOOGLE_SHEET_ID || null,
+      sheet_name: process.env.GOOGLE_SHEET_NAME || 'Leads',
+      service_account_email: null,
+      key_path: process.env.GOOGLE_CREDENTIALS_PATH || process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH || null,
+      config_id: null,
+      purpose: purpose || null,
+      has_credentials: false,
+      error: err.message,
+    };
+  }
 }
 
 // ─── Retry wrapper ──────────────────────────────────────────────────
@@ -387,7 +460,7 @@ async function checkConnectivity() {
   result.sheet_id = c.sheetId;
   result.sheet_name = c.sheetName;
   result.service_account_email = c.clientEmail;
-  result.source = c.configId ? 'db' : 'env';
+  result.source = c.source || (c.configId ? 'db' : 'env');
 
   try {
     result.api_connected = true;
@@ -411,7 +484,7 @@ async function checkConnectivity() {
   } catch (err) {
     result.error = err.message;
     if (err?.response?.status === 403) {
-      result.error = 'Permission denied — share the sheet with: ' + (process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || 'the service account email');
+      result.error = 'Permission denied — share the sheet with: ' + (c.clientEmail || 'the service account email');
     } else if (err?.response?.status === 404) {
       result.error = 'Sheet not found — check GOOGLE_SHEET_ID';
     }
@@ -500,6 +573,7 @@ module.exports = {
   getActiveSheetId,
   getActiveSheetName,
   getActiveClientEmail,
+  resolveConfigStatus,
   testCredentials,
   previewRows,
 };

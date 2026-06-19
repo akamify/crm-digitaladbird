@@ -399,7 +399,7 @@ router.post('/distribution/check-blocking', authenticate, requireRole('super_adm
 }));
 
 // ---- Google Sheets Sync (Super Admin) --------------------------------
-const { syncAllLeads: sheetSync, appendLead: sheetAppend, getSheets, checkConnectivity: sheetsCheck, listSharedSheets } = require('../services/googleSheetsService');
+const { syncAllLeads: sheetSync, appendLead: sheetAppend, getSheets, checkConnectivity: sheetsCheck, listSharedSheets, resolveConfigStatus: sheetsResolveConfigStatus } = require('../services/googleSheetsService');
 
 router.post('/sheets/sync', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
   const result = await sheetSync();
@@ -2957,13 +2957,7 @@ router.get('/admin/lead-sources', authenticate, requireRole('super_admin'), resp
 
 // ── Google Sheets Control ────────────────────────────────────────
 router.get('/admin/sheets/config', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
-  const config = {
-    sheet_id: process.env.GOOGLE_SHEET_ID || null,
-    service_account_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || null,
-    sheet_name: process.env.GOOGLE_SHEET_NAME || 'Sheet1',
-    key_path: process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH || null,
-    configured: !!(process.env.GOOGLE_SHEET_ID && process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL),
-  };
+  const config = await sheetsResolveConfigStatus();
   let syncLog = [];
   try {
     const { rows } = await query(`SELECT * FROM activity_logs WHERE entity = 'sheets' ORDER BY created_at DESC LIMIT 20`);
@@ -3837,13 +3831,7 @@ router.get('/admin/meta/token-health', authenticate, requireRole('super_admin'),
 
 // Enriched Google Sheets status with detailed sync history
 router.get('/admin/sheets/enriched', authenticate, requireRole('super_admin'), responseCache(15000), asyncHandler(async (_req, res) => {
-  const config = {
-    sheet_id: process.env.GOOGLE_SHEET_ID || null,
-    service_account_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || null,
-    sheet_name: process.env.GOOGLE_SHEET_NAME || 'Sheet1',
-    key_path: process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH || null,
-    configured: !!(process.env.GOOGLE_SHEET_ID && process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL),
-  };
+  const config = await sheetsResolveConfigStatus();
 
   // Try to get live sheet status from integration check
   let liveStatus = null;
