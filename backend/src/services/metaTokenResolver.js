@@ -128,6 +128,7 @@ module.exports = {
   updatePageWebhookStatus: metaTokenRepository.updatePageWebhookStatus,
   updatePageFormsStatus: metaTokenRepository.updatePageFormsStatus,
   markPagesStaleExcept: metaTokenRepository.markPagesStaleExcept,
+  setPageActivation: metaTokenRepository.setPageActivation,
   deactivatePage: metaTokenRepository.deactivatePage,
   updateUserTokenStatus: metaTokenRepository.updateUserTokenStatus,
 };

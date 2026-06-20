@@ -40,7 +40,7 @@ async function request(method, path, payload, token, context = {}) {
     const response = await axios({
       method,
       url: `${GRAPH_BASE}/${pathname}`,
-      params: { ...queryParams, ...(method === 'get' ? payload : {}), access_token: token },
+      params: { ...queryParams, ...(['get', 'delete'].includes(method) ? payload : {}), access_token: token },
       data: method === 'post' ? new URLSearchParams(payload).toString() : undefined,
       headers: method === 'post' ? { 'content-type': 'application/x-www-form-urlencoded' } : undefined,
       timeout: context.timeout || 30000,
@@ -67,8 +67,12 @@ function graphPost(path, body, token, context) {
   return request('post', path, body || {}, token, context);
 }
 
+function graphDelete(path, params, token, context) {
+  return request('delete', path, params || {}, token, context);
+}
+
 function graphDebugToken(inputToken, appTokenOrUserToken) {
   return graphGet('debug_token', { input_token: inputToken }, appTokenOrUserToken, { tokenSource: 'app_or_user_token' });
 }
 
-module.exports = { graphGet, graphPost, graphDebugToken };
+module.exports = { graphGet, graphPost, graphDelete, graphDebugToken };

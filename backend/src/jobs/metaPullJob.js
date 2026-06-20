@@ -25,7 +25,15 @@ async function tick() {
   _running = true;
   try {
     // Anyforms registered in the CRM at all?
-    const { rows: forms } = await query(`SELECT form_id FROM meta_forms WHERE is_active = TRUE`);
+    const { rows: forms } = await query(`
+      SELECT f.form_id
+        FROM meta_forms f
+        JOIN meta_pages p ON p.page_id = f.page_id
+       WHERE f.is_active = TRUE
+         AND f.stale_at IS NULL
+         AND p.is_active = TRUE
+         AND p.connection_status = 'active'
+    `);
     if (!forms.length) return;
 
     const since = _lastSyncAt.toISOString();

@@ -8,7 +8,7 @@ async function findActivePageByPageId(pageId) {
             webhook_subscribed, webhook_last_checked, forms_status,
             forms_last_checked, stale_at
        FROM meta_pages
-      WHERE page_id = $1 AND is_active = TRUE
+      WHERE page_id = $1 AND is_active = TRUE AND connection_status = 'active'
       LIMIT 1`,
     [String(pageId)]
   );
@@ -22,7 +22,7 @@ async function findActivePages() {
             webhook_subscribed, webhook_last_checked, forms_status,
             forms_last_checked, stale_at
        FROM meta_pages
-      WHERE is_active = TRUE
+      WHERE is_active = TRUE AND connection_status = 'active'
       ORDER BY page_name NULLS LAST, page_id`
   );
   return rows;
@@ -33,7 +33,9 @@ async function findPageForForm(formId) {
     `SELECT f.form_id, f.page_id, p.page_name, p.page_access_token,
             p.token_is_valid, p.token_last_checked, p.token_last_error
        FROM meta_forms f
-       JOIN meta_pages p ON p.page_id = f.page_id AND p.is_active = TRUE
+       JOIN meta_pages p ON p.page_id = f.page_id
+                        AND p.is_active = TRUE
+                        AND p.connection_status = 'active'
       WHERE f.form_id = $1 AND f.is_active = TRUE
       LIMIT 1`,
     [String(formId)]
@@ -45,20 +47,24 @@ async function savePageToken({ pageId, pageName, token }) {
   const { rows } = await query(
     `INSERT INTO meta_pages(page_id, page_name, page_access_token, is_active,
                             token_is_valid, token_last_checked, token_last_error,
-                            token_source, stale_at, deactivated_at)
-     VALUES ($1, $2, $3, TRUE, TRUE, NOW(), NULL, 'db_page_token', NULL, NULL)
+                            token_source, stale_at, connection_status)
+     VALUES ($1, $2, $3, FALSE, TRUE, NOW(), NULL, 'db_page_token', NULL, 'discovered')
      ON CONFLICT (page_id) DO UPDATE
        SET page_name = COALESCE(EXCLUDED.page_name, meta_pages.page_name),
            page_access_token = EXCLUDED.page_access_token,
-           is_active = TRUE,
            token_is_valid = TRUE,
            token_last_checked = NOW(),
            token_last_error = NULL,
            token_source = 'db_page_token',
            stale_at = NULL,
-           deactivated_at = NULL,
+           connection_status = CASE
+             WHEN meta_pages.is_active = TRUE THEN 'active'
+             WHEN meta_pages.connection_status = 'deactivated' THEN 'deactivated'
+             ELSE 'discovered'
+           END,
            updated_at = NOW()
-     RETURNING id, page_id, page_name, is_active, token_is_valid, token_last_checked`,
+     RETURNING id, page_id, page_name, is_active, connection_status,
+               token_is_valid, token_last_checked`,
     [String(pageId), pageName || null, token]
   );
   return rows[0];
@@ -106,6 +112,7 @@ async function markPagesStaleExcept(pageIds) {
   const { rows } = await query(
     `UPDATE meta_pages
         SET is_active = FALSE,
+            connection_status = 'stale',
             stale_at = COALESCE(stale_at, NOW()),
             updated_at = NOW()
       WHERE is_active = TRUE
@@ -116,18 +123,28 @@ async function markPagesStaleExcept(pageIds) {
   return rows;
 }
 
-async function deactivatePage(pageId, userId = null) {
+async function setPageActivation(pageId, isActive, userId = null, reason = null) {
   const { rows } = await query(
     `UPDATE meta_pages
-        SET is_active = FALSE,
-            deactivated_at = NOW(),
-            deactivated_by = $2,
+        SET is_active = $2,
+            connection_status = CASE WHEN $2 THEN 'active' ELSE 'deactivated' END,
+            selected_at = CASE WHEN $2 THEN NOW() ELSE selected_at END,
+            selected_by_user_id = CASE WHEN $2 THEN $3 ELSE selected_by_user_id END,
+            deactivated_at = CASE WHEN $2 THEN NULL ELSE NOW() END,
+            deactivated_by = CASE WHEN $2 THEN NULL ELSE $3 END,
+            deactivation_reason = CASE WHEN $2 THEN NULL ELSE COALESCE($4, 'Deactivated by administrator') END,
+            stale_at = CASE WHEN $2 THEN NULL ELSE stale_at END,
             updated_at = NOW()
       WHERE page_id = $1
-      RETURNING id, page_id, page_name, is_active, deactivated_at`,
-    [String(pageId), userId]
+      RETURNING id, page_id, page_name, is_active, connection_status,
+                selected_at, deactivated_at, deactivation_reason`,
+    [String(pageId), !!isActive, userId, reason]
   );
   return rows[0] || null;
+}
+
+async function deactivatePage(pageId, userId = null, reason = null) {
+  return setPageActivation(pageId, false, userId, reason);
 }
 
 async function getStoredUserTokenRecord() {
@@ -213,6 +230,7 @@ module.exports = {
   updatePageWebhookStatus,
   updatePageFormsStatus,
   markPagesStaleExcept,
+  setPageActivation,
   deactivatePage,
   getStoredUserTokenRecord,
   getStoredUserToken,

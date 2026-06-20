@@ -513,6 +513,9 @@ export interface MetaPageEnriched {
   webhook_subscribed?: boolean | null; webhook_last_checked?: string | null;
   forms_status?: string | null; forms_last_checked?: string | null;
   stale_at?: string | null; deactivated_at?: string | null;
+  connection_status?: 'active' | 'discovered' | 'deactivated' | 'stale';
+  selected_at?: string | null; selected_by_user_id?: string | null;
+  deactivation_reason?: string | null;
 }
 
 export function useMetaPagesEnriched() {
@@ -640,6 +643,7 @@ export interface MetaTokenStatus {
   campaignSync: { status: 'available' | 'degraded' | 'error'; required_user_token?: boolean };
   connected?: boolean;
   warnings?: string[];
+  ignoredPages?: { total: number; discovered: number; stale: number };
 }
 
 export interface MetaSubscriptionStatus {
@@ -673,6 +677,18 @@ export function useDeactivateMetaPage() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (pageId: string) => apiPost(`/meta/pages/${pageId}/deactivate`, {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin'] });
+      qc.invalidateQueries({ queryKey: ['integration-status'] });
+    },
+  });
+}
+
+export function useSetMetaPageActivation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pageId, isActive }: { pageId: string; isActive: boolean }) =>
+      apiPatch(`/admin/meta/pages/${pageId}/activation`, { is_active: isActive }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin'] });
       qc.invalidateQueries({ queryKey: ['integration-status'] });

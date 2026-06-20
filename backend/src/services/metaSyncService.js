@@ -469,7 +469,15 @@ function parseFieldData(fieldData = []) {
  * Sync leads from all active forms.
  */
 async function syncAllFormLeads(options = {}) {
-  const { rows: forms } = await query(`SELECT form_id FROM meta_forms WHERE is_active = TRUE AND stale_at IS NULL`);
+  const { rows: forms } = await query(`
+    SELECT f.form_id
+      FROM meta_forms f
+      JOIN meta_pages p ON p.page_id = f.page_id
+     WHERE f.is_active = TRUE
+       AND f.stale_at IS NULL
+       AND p.is_active = TRUE
+       AND p.connection_status = 'active'
+  `);
   const results = {};
 
   for (const form of forms) {
@@ -654,6 +662,14 @@ async function subscribePageToLeadgen(pageId) {
   }, pageToken.token, { pageId: resolvedPageId, tokenSource: 'db_page_token' });
 }
 
+async function unsubscribePageFromLeadgen(pageId, pageToken) {
+  if (!pageToken) throw new Error('Page access token is required to disconnect the webhook');
+  return graphClient.graphDelete(`${pageId}/subscribed_apps`, {}, pageToken, {
+    pageId: String(pageId),
+    tokenSource: 'db_page_token',
+  });
+}
+
 /**
  * Check if page is subscribed to leadgen.
  */
@@ -744,6 +760,7 @@ module.exports = {
   listPageForms,
   syncPageForms,
   subscribePageToLeadgen,
+  unsubscribePageFromLeadgen,
   getPageSubscriptions,
   debugToken,
   checkConnectivity,

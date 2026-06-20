@@ -23,7 +23,7 @@ import {
   useMetaWebhookLogs, useSheetsEnriched, useMetaTokenStatus,
   useMetaSubscriptionStatus, useCampaignsEnriched,
   useSyncCampaigns, useSyncLeads, useUpdateMetaToken, useSubscribePage,
-  useTestPageToken, useUpdatePageToken, useSyncMetaPageForms, useDeactivateMetaPage,
+  useTestPageToken, useUpdatePageToken, useSyncMetaPageForms, useSetMetaPageActivation,
   // Dynamic Google Sheets credential management
   useSheetConfigs, useSheetsConnectivity, useCreateSheetConfig, useUpdateSheetConfig,
   useActivateSheetConfig, useTestSheetConfig, useSyncSheetConfig, useDeleteSheetConfig,
@@ -378,7 +378,7 @@ function MetaPagesTab() {
   const updatePageToken = useUpdatePageToken();
   const subscribePage = useSubscribePage();
   const syncPageForms = useSyncMetaPageForms();
-  const deactivatePage = useDeactivateMetaPage();
+  const setPageActivation = useSetMetaPageActivation();
 
   const add = useMutation({
     mutationFn: () => apiPost('/meta/pages', { page_id: pageId, page_name: pageName, page_access_token: token }),
@@ -420,9 +420,21 @@ function MetaPagesTab() {
 
   function handleDeactivatePage(pid: string, name: string) {
     if (!window.confirm(`Deactivate Meta page "${name}"? It will stop affecting integration health, but historical leads remain.`)) return;
-    deactivatePage.mutate(pid, {
+    setPageActivation.mutate({ pageId: pid, isActive: false }, {
       onSuccess: () => toast.success('Meta page deactivated'),
       onError: () => toast.error('Failed to deactivate page'),
+    });
+  }
+
+
+  function handleActivatePage(pid: string, name: string) {
+    if (!window.confirm(`Activate Meta page "${name}"? CRM will subscribe its webhook and sync its lead forms.`)) return;
+    setPageActivation.mutate({ pageId: pid, isActive: true }, {
+      onSuccess: () => toast.success('Meta page activated, webhook connected, and forms synced'),
+      onError: (error: unknown) => {
+        const message = (error as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message;
+        toast.error(message || 'Failed to activate page');
+      },
     });
   }
 
@@ -431,8 +443,9 @@ function MetaPagesTab() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Facebook className="h-5 w-5 text-blue-600" />
-          <h1 className="text-lg font-semibold text-slate-900">Meta Pages</h1>
-          <span className="chip-slate">{pages?.length || 0} connected</span>
+          <h1 className="text-lg font-semibold text-slate-900">Connected Meta Pages</h1>
+          <span className="chip-slate">{pages?.filter(page => page.is_active).length || 0} active</span>
+          <span className="chip-slate">{pages?.filter(page => !page.is_active).length || 0} inactive</span>
         </div>
         <Button size="sm" onClick={() => setAddOpen(true)} leftIcon={<Plus className="h-3.5 w-3.5" />}>Add Page</Button>
       </div>
@@ -440,9 +453,59 @@ function MetaPagesTab() {
       {isLoading ? <Skeleton className="h-64" /> : !pages?.length ? (
         <EmptyState title="No Meta pages connected" description="Add a Page Access Token and Page ID from your Meta Business account." />
       ) : (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="space-y-3">
+          <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+            Only active pages are subscribed, synced, imported, and included in integration health. Inactive pages are ignored.
+          </div>
+          <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+            <table className="min-w-[980px] w-full text-left text-xs">
+              <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-3 py-2.5">Page</th>
+                  <th className="px-3 py-2.5">Token</th>
+                  <th className="px-3 py-2.5">Webhook</th>
+                  <th className="px-3 py-2.5">Lead forms</th>
+                  <th className="px-3 py-2.5">Active in CRM</th>
+                  <th className="px-3 py-2.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {pages.map(p => (
+                  <tr key={`selection-${p.id}`} className={clsx(!p.is_active && 'bg-slate-50 text-slate-600')}>
+                    <td className="px-3 py-3">
+                      <div className="font-semibold text-slate-900">{p.page_name || p.page_id}</div>
+                      <div className="font-mono text-[10px] text-slate-500">{p.page_id}</div>
+                    </td>
+                    <td className="px-3 py-3">{p.token_is_valid === false ? 'Invalid' : p.has_token ? 'Valid' : 'Missing'}</td>
+                    <td className="px-3 py-3">{!p.is_active ? 'Ignored' : p.webhook_subscribed ? 'Subscribed' : 'Not subscribed'}</td>
+                    <td className="px-3 py-3">{!p.is_active ? 'Ignored' : p.forms_status || 'Not checked'}</td>
+                    <td className="px-3 py-3">
+                      <span className={clsx('rounded-full px-2 py-1 text-[10px] font-semibold', p.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-200 text-slate-600')}>
+                        {p.is_active ? 'Active' : humanize(p.connection_status || 'discovered')}
+                      </span>
+                    </td>
+                    <td className="px-3 py-3">
+                      <div className="flex justify-end gap-1.5">
+                        <Button size="sm" variant="ghost" onClick={() => handleTestToken(p.page_id)} disabled={testToken.isPending}>Verify</Button>
+                        <Button size="sm" variant="ghost" onClick={() => subscribePage.mutate(p.page_id)} disabled={!p.is_active || subscribePage.isPending}>Reconnect</Button>
+                        <Button size="sm" variant="ghost" onClick={() => syncPageForms.mutate(p.page_id)} disabled={!p.is_active || syncPageForms.isPending}>Sync Forms</Button>
+                        {p.is_active ? (
+                          <Button size="sm" variant="ghost" onClick={() => handleDeactivatePage(p.page_id, p.page_name || p.page_id)} disabled={setPageActivation.isPending}>Deactivate</Button>
+                        ) : (
+                          <Button size="sm" onClick={() => handleActivatePage(p.page_id, p.page_name || p.page_id)} disabled={setPageActivation.isPending || !p.has_token}>Activate</Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <details>
+            <summary className="cursor-pointer text-xs font-medium text-slate-600">Detailed page diagnostics</summary>
+            <div className="mt-3 space-y-3">
           {pages.map(p => (
-            <div key={p.id} className="card card-hover p-5">
+            <div key={p.id} className={clsx('card p-4', !p.is_active && 'bg-slate-50')}>
               <div className="flex items-start justify-between mb-3 gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -453,12 +516,12 @@ function MetaPagesTab() {
                 </div>
                 <span className={clsx(
                   'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ring-1 shrink-0',
-                  p.has_token
+                  p.has_token && p.token_is_valid !== false
                     ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
                     : 'bg-rose-50 text-rose-700 ring-rose-200'
                 )}>
-                  <StatusDot ok={p.has_token} warn={!p.has_token} />
-                  {p.has_token ? 'Token OK' : 'No token'}
+                  <StatusDot ok={p.has_token && p.token_is_valid !== false} warn={!p.has_token} />
+                  {p.token_is_valid === false ? 'Token invalid' : p.has_token ? 'Token valid' : 'No token'}
                 </span>
               </div>
 
@@ -492,11 +555,11 @@ function MetaPagesTab() {
                 <button onClick={() => handleTestToken(p.page_id)} disabled={testToken.isPending}
                   className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] font-medium text-amber-700 hover:bg-amber-100 transition disabled:opacity-60">
                   {testToken.isPending && testToken.variables === p.page_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Shield className="h-3 w-3" />}
-                  Test Token
+                  Verify
                 </button>
                 <button
                   onClick={() => subscribePage.mutate(p.page_id, { onSuccess: () => toast.success('Webhook reconnected'), onError: () => toast.error('Webhook reconnect failed') })}
-                  disabled={subscribePage.isPending}
+                  disabled={!p.is_active || subscribePage.isPending}
                   className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 transition disabled:opacity-60"
                 >
                   {subscribePage.isPending && subscribePage.variables === p.page_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Webhook className="h-3 w-3" />}
@@ -504,7 +567,7 @@ function MetaPagesTab() {
                 </button>
                 <button
                   onClick={() => syncPageForms.mutate(p.page_id, { onSuccess: () => toast.success('Lead forms synced'), onError: () => toast.error('Lead forms sync failed') })}
-                  disabled={syncPageForms.isPending}
+                  disabled={!p.is_active || syncPageForms.isPending}
                   className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[11px] font-medium text-violet-700 hover:bg-violet-100 transition disabled:opacity-60"
                 >
                   {syncPageForms.isPending && syncPageForms.variables === p.page_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
@@ -517,22 +580,34 @@ function MetaPagesTab() {
                 {p.is_active && (
                   <button
                     onClick={() => handleDeactivatePage(p.page_id, p.page_name || p.page_id)}
-                    disabled={deactivatePage.isPending}
+                    disabled={setPageActivation.isPending}
                     className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-600 hover:bg-slate-50 transition disabled:opacity-60"
                   >
                     <Power className="h-3 w-3" /> Deactivate
                   </button>
                 )}
+                {!p.is_active && (
+                  <button
+                    onClick={() => handleActivatePage(p.page_id, p.page_name || p.page_id)}
+                    disabled={setPageActivation.isPending || !p.has_token}
+                    className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 transition disabled:opacity-60"
+                  >
+                    <Power className="h-3 w-3" /> Activate
+                  </button>
+                )}
               </div>
-              <div className="mt-3 grid grid-cols-1 gap-1 text-[10px] text-slate-500 sm:grid-cols-3">
-                <span>Page token: {p.token_is_valid === false ? 'Invalid' : p.has_token ? 'Present' : 'Missing'}</span>
-                <span>Webhook: {p.webhook_subscribed ? 'Subscribed' : 'Not subscribed'}</span>
-                <span>Forms: {p.forms_status || 'Not checked'}</span>
+              <div className="mt-3 grid grid-cols-1 gap-1 text-[10px] text-slate-500 sm:grid-cols-4">
+                <span>Active in CRM: {p.is_active ? 'Yes' : 'No'} ({p.connection_status || 'discovered'})</span>
+                <span>Page token: {p.token_is_valid === false ? 'Invalid' : p.has_token ? 'Valid' : 'Missing'}</span>
+                <span>Webhook: {!p.is_active ? 'Ignored while inactive' : p.webhook_subscribed ? 'Subscribed' : 'Not subscribed'}</span>
+                <span>Forms: {!p.is_active ? 'Ignored while inactive' : p.forms_status || 'Not checked'}</span>
               </div>
               {p.stale_at && <div className="mt-2 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-700">Stale page: not returned by the latest User Token refresh.</div>}
               {p.token_last_error && <div className="mt-2 rounded bg-red-50 px-2 py-1 text-[11px] text-red-600">{p.token_last_error}</div>}
             </div>
           ))}
+            </div>
+          </details>
         </div>
       )}
 

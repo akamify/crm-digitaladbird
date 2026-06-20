@@ -92,7 +92,9 @@ router.get('/meta/pages',  authenticate, requireRole('super_admin'), asyncHandle
     SELECT id, page_id, page_name, is_active, created_at,
            token_is_valid, token_last_checked, token_last_error,
            webhook_subscribed, webhook_last_checked, forms_status,
-           forms_last_checked, stale_at, deactivated_at
+           forms_last_checked, stale_at, deactivated_at,
+           connection_status, selected_at, selected_by_user_id,
+           deactivation_reason
       FROM meta_pages
      ORDER BY is_active DESC, page_name NULLS LAST, page_id
   `);
@@ -120,17 +122,25 @@ router.post('/meta/pages', authenticate, requireRole('super_admin'), asyncHandle
   }
 
   const { rows: [r] } = await query(
-    `INSERT INTO meta_pages(page_id, page_name, page_access_token, token_is_valid, token_last_checked, token_last_error)
-       VALUES ($1, $2, $3, TRUE, NOW(), NULL)
+    `INSERT INTO meta_pages(page_id, page_name, page_access_token, is_active,
+                            connection_status, selected_at, selected_by_user_id,
+                            token_is_valid, token_last_checked, token_last_error)
+       VALUES ($1, $2, $3, TRUE, 'active', NOW(), $4, TRUE, NOW(), NULL)
        ON CONFLICT (page_id) DO UPDATE SET page_access_token = EXCLUDED.page_access_token,
                                             page_name        = COALESCE(EXCLUDED.page_name, meta_pages.page_name),
                                             is_active        = TRUE,
+                                            connection_status = 'active',
+                                            selected_at      = COALESCE(meta_pages.selected_at, NOW()),
+                                            selected_by_user_id = COALESCE(meta_pages.selected_by_user_id, EXCLUDED.selected_by_user_id),
+                                            stale_at         = NULL,
+                                            deactivated_at   = NULL,
+                                            deactivation_reason = NULL,
                                             token_is_valid   = TRUE,
                                             token_last_checked = NOW(),
                                             token_last_error = NULL,
                                             updated_at       = NOW()
        RETURNING id, page_id, page_name`,
-    [page_id, resolvedName, page_access_token]
+    [page_id, resolvedName, page_access_token, req.user.id]
   );
   {
     const { logActivity } = require('../utils/auditLog');
@@ -164,7 +174,7 @@ router.patch('/meta/pages/:pageId/token', authenticate, requireRole('super_admin
 
   const { rowCount, rows } = await query(
     `UPDATE meta_pages
-        SET page_access_token = $1, is_active = TRUE, token_is_valid = TRUE,
+        SET page_access_token = $1, token_is_valid = TRUE,
             token_last_checked = NOW(), token_last_error = NULL, updated_at = NOW()
       WHERE page_id = $2
       RETURNING id, page_id, page_name`,
@@ -208,6 +218,69 @@ router.post('/meta/pages/:pageId/deactivate', authenticate, requireRole('super_a
   const page = await tokenResolver.deactivatePage(pageId, req.user.id);
   if (!page) throw new AppError(404, 'NOT_FOUND', 'Page not registered in CRM');
   res.json({ success: true, data: page });
+}));
+
+router.patch('/admin/meta/pages/:pageId/activation', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { pageId } = req.params;
+  if (typeof req.body?.is_active !== 'boolean') {
+    throw new AppError(400, 'INVALID_META_PAGE_ACTIVATION', 'is_active must be true or false');
+  }
+
+  const tokenResolver = require('../services/metaTokenResolver');
+  if (req.body.is_active) {
+    const { rows: [candidate] } = await query(
+      `SELECT page_access_token FROM meta_pages WHERE page_id = $1`,
+      [pageId],
+    );
+    if (!candidate) throw new AppError(404, 'NOT_FOUND', 'Page not registered in CRM');
+    if (!candidate.page_access_token) {
+      throw new AppError(409, 'META_PAGE_TOKEN_MISSING', tokenResolver.PAGE_TOKEN_MISSING_MESSAGE);
+    }
+    await require('../services/metaGraphClient').graphGet(
+      pageId,
+      { fields: 'id,name' },
+      candidate.page_access_token,
+      { pageId, tokenSource: 'db_page_token' },
+    );
+  } else {
+    const { rows: [candidate] } = await query(
+      `SELECT page_access_token FROM meta_pages WHERE page_id = $1`,
+      [pageId],
+    );
+    if (!candidate) throw new AppError(404, 'NOT_FOUND', 'Page not registered in CRM');
+    if (candidate.page_access_token) {
+      await metaSync.unsubscribePageFromLeadgen(pageId, candidate.page_access_token)
+        .catch(error => logger.warn({ err: error.message, pageId }, '[Meta] webhook unsubscribe failed during deactivation'));
+    }
+  }
+  const page = await tokenResolver.setPageActivation(
+    pageId,
+    req.body.is_active,
+    req.user.id,
+    req.body?.reason || null,
+  );
+  if (!page) throw new AppError(404, 'NOT_FOUND', 'Page not registered in CRM');
+
+  const result = { ...page, webhook: 'skipped', forms: 'skipped' };
+  if (page.is_active) {
+    const token = await tokenResolver.getRequiredPageToken(pageId);
+    if (!token?.token) throw new AppError(409, 'META_PAGE_TOKEN_MISSING', tokenResolver.PAGE_TOKEN_MISSING_MESSAGE);
+    Object.assign(result, await subscribeAndVerifyMetaPage(pageId));
+    Object.assign(result, await syncFormsForMetaPage(pageId));
+  } else {
+    await tokenResolver.updatePageWebhookStatus(pageId, { subscribed: false }).catch(() => {});
+    result.webhook = 'not_subscribed';
+  }
+
+  const { logActivity } = require('../utils/auditLog');
+  await logActivity(req, {
+    entity: 'meta_page',
+    entity_id: pageId,
+    action: page.is_active ? 'activated' : 'deactivated',
+    metadata: { page_id: pageId, connection_status: page.connection_status },
+  }).catch(error => logger.warn({ err: error.message, pageId }, '[Meta] page activation audit failed'));
+
+  res.json({ success: true, data: result });
 }));
 
 router.post('/meta/pages/:pageId/sync-forms', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
@@ -1796,6 +1869,11 @@ async function updateMetaPageTokenWorkflow({ pageId, pageAccessToken, subscribeW
     webhook: 'skipped',
     forms: 'skipped',
   };
+  if (!page.is_active) {
+    result.connection_status = page.connection_status || 'discovered';
+    result.selection_required = true;
+    return result;
+  }
   if (subscribeWebhook) Object.assign(result, await subscribeAndVerifyMetaPage(page.page_id));
   if (syncForms) Object.assign(result, await syncFormsForMetaPage(page.page_id));
   return result;
@@ -1838,7 +1916,9 @@ router.post('/meta/update-token', authenticate, requireRole('super_admin'), asyn
   process.env.META_USER_ACCESS_TOKEN = accessToken;
   config.meta.userAccessToken = accessToken;
 
-  const stalePages = await tokenResolver.markPagesStaleExcept(derivedPages.map(page => page.page_id)).catch(() => []);
+  const stalePages = pageId
+    ? []
+    : await tokenResolver.markPagesStaleExcept(derivedPages.map(page => page.page_id)).catch(() => []);
   const pageResults = [];
   for (const page of derivedPages) {
     const result = {
@@ -1848,9 +1928,12 @@ router.post('/meta/update-token', authenticate, requireRole('super_admin'), asyn
       webhook: 'skipped',
       forms: 'skipped',
       formsCount: 0,
+      activeInCrm: !!page.is_active,
+      connection_status: page.connection_status || (page.is_active ? 'active' : 'discovered'),
     };
-    if (req.body?.subscribeWebhooks !== false) Object.assign(result, await subscribeAndVerifyMetaPage(page.page_id));
-    if (req.body?.syncForms !== false) Object.assign(result, await syncFormsForMetaPage(page.page_id));
+    if (page.is_active && req.body?.subscribeWebhooks !== false) Object.assign(result, await subscribeAndVerifyMetaPage(page.page_id));
+    if (page.is_active && req.body?.syncForms !== false) Object.assign(result, await syncFormsForMetaPage(page.page_id));
+    if (!page.is_active) result.selection_required = true;
     pageResults.push(result);
   }
 
@@ -1875,6 +1958,10 @@ router.post('/meta/update-token', authenticate, requireRole('super_admin'), asyn
   }
   if (permissionInfo.missing_recommended?.length) {
     warnings.push(`Recommended Meta permissions missing: ${permissionInfo.missing_recommended.join(', ')}`);
+  }
+  const discoveredCount = pageResults.filter(page => !page.activeInCrm).length;
+  if (discoveredCount) {
+    warnings.push(`${discoveredCount} newly discovered or inactive page(s) were saved but not activated. Select them explicitly in Connected Meta Pages.`);
   }
   if (stalePages.length) {
     warnings.push(`${stalePages.length} stale page(s) were marked inactive because this user token no longer returned them.`);
@@ -3890,13 +3977,16 @@ router.get('/admin/meta/pages-enriched', authenticate, requireRole('super_admin'
       p.token_is_valid, p.token_last_checked, p.token_last_error,
       p.webhook_subscribed, p.webhook_last_checked, p.forms_status,
       p.forms_last_checked, p.stale_at, p.deactivated_at,
+      p.connection_status, p.selected_at, p.selected_by_user_id,
+      p.deactivation_reason,
       (p.page_access_token IS NOT NULL AND p.page_access_token != '') AS has_token,
       (SELECT COUNT(*)::int FROM meta_forms f WHERE f.page_id = p.page_id) AS form_count,
       (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_page_id = p.page_id) AS lead_count,
       (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_page_id = p.page_id AND (COALESCE(l.meta_created_time, l.created_at) AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS today_leads,
       (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_page_id = p.page_id AND l.call_status = 'converted') AS conversions,
       (SELECT MAX(l.created_at) FROM leads l WHERE l.deleted_at IS NULL AND l.meta_page_id = p.page_id) AS last_lead_at
-    FROM meta_pages p ORDER BY p.is_active DESC, p.page_name
+    FROM meta_pages p
+    ORDER BY p.is_active DESC, p.connection_status, p.page_name
   `);
   res.json({ success: true, data: rows });
 }));
@@ -3912,7 +4002,7 @@ router.get('/admin/meta/forms-enriched', authenticate, requireRole('super_admin'
       (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_form_id = f.form_id AND l.is_pending = TRUE) AS pending_leads,
       (SELECT MAX(l.created_at) FROM leads l WHERE l.deleted_at IS NULL AND l.meta_form_id = f.form_id) AS last_lead_at
     FROM meta_forms f
-    LEFT JOIN meta_pages p ON p.page_id = f.page_id
+    JOIN meta_pages p ON p.page_id = f.page_id AND p.is_active = TRUE AND p.connection_status = 'active'
     ORDER BY f.form_name
   `);
   res.json({ success: true, data: rows });
@@ -4100,6 +4190,13 @@ router.get('/admin/meta/token-status', authenticate, requireRole('super_admin'),
   const tokenResolver = require('../services/metaTokenResolver');
   const { checkUserToken } = require('../jobs/metaTokenHealthJob');
   const pages = await tokenResolver.findActivePages();
+  const { rows: [ignoredPageCounts] } = await query(`
+    SELECT COUNT(*)::int AS total,
+           COUNT(*) FILTER (WHERE connection_status = 'discovered')::int AS discovered,
+           COUNT(*) FILTER (WHERE connection_status = 'stale')::int AS stale
+      FROM meta_pages
+     WHERE is_active = FALSE
+  `);
   const pageChecks = [];
   for (const page of pages) {
     if (!page.page_access_token) {
@@ -4178,7 +4275,11 @@ router.get('/admin/meta/token-status', authenticate, requireRole('super_admin'),
       leadForms: { status: leadFormsStatus, accessible: formOkCount > 0, accessible_count: formOkCount, error_count: formErrorCount },
       campaignSync: { status: userToken.status === 'valid' ? 'available' : 'degraded', required_user_token: true },
       connected: validPageCount > 0,
+      ignoredPages: ignoredPageCounts,
       warnings: [
+        ...(Number(ignoredPageCounts.total) > 0
+          ? [`${ignoredPageCounts.total} inactive page(s) are ignored by health checks and lead sync.`]
+          : []),
         ...(userToken.status !== 'valid' && validPageCount > 0 && webhookStatus === 'subscribed'
           ? ['User token is expired or missing, but page webhook subscription is active.']
           : []),

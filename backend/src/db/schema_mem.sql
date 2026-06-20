@@ -129,6 +129,11 @@ CREATE TABLE IF NOT EXISTS meta_pages (
   page_name         VARCHAR(190),
   page_access_token TEXT NOT NULL,
   is_active         BOOLEAN NOT NULL DEFAULT TRUE,
+  connection_status TEXT NOT NULL DEFAULT 'discovered',
+  selected_at       TIMESTAMPTZ,
+  selected_by_user_id UUID REFERENCES users(id),
+  deactivated_at    TIMESTAMPTZ,
+  deactivation_reason TEXT,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
