@@ -74,7 +74,7 @@ function LeadsInner() {
 
   const rows = useMemo(() => leads.data?.rows ?? [], [leads.data?.rows]);
   const assignableUsers = useMemo(
-    () => (members.data || []).filter(m => m.role === 'member' || m.role === 'partner'),
+    () => (members.data || []).filter(m => m.role === 'member'),
     [members.data],
   );
   const total = leads.data?.total ?? 0;
@@ -335,13 +335,13 @@ function LeadsInner() {
           <div>
           <label className="label">{assignMode === 'reassign' ? 'Reassign To' : 'Assign To'} *</label>
           <select className="input" value={targetUser} onChange={e => setTargetUser(e.target.value)} disabled={members.isLoading || members.isError}>
-            <option value="">Select member or partner</option>
+            <option value="">Select member</option>
             {assignableUsers.map(m => <option key={m.id} value={m.id}>{m.full_name} - {humanize(m.role)} - {m.lead_count} leads</option>)}
           </select>
           {members.isLoading && <p className="mt-1 text-xs text-slate-500">Loading members...</p>}
           {members.isError && <p className="mt-1 text-xs text-red-600">Could not load eligible members.</p>}
           {!members.isLoading && !members.isError && assignableUsers.length === 0 && (
-            <p className="mt-1 text-xs text-amber-600">No eligible active members or partners are available.</p>
+            <p className="mt-1 text-xs text-amber-600">No eligible active members are available.</p>
           )}
           </div>
           <div>

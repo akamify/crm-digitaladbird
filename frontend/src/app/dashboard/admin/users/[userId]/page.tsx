@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
   ArrowLeft, ArrowRightLeft, Briefcase, CalendarClock, CheckCircle2, Clock,
-  Edit3, History, Loader2, Mail, Phone, Search, Shield, UserRound, Users,
+  Edit3, History, KeyRound, Loader2, Mail, Phone, Search, Shield, ShieldBan, ShieldCheck, Trash2, UserRound, Users,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
@@ -15,8 +15,8 @@ import { AppShell } from '@/components/layout/AppShell';
 import { EmptyState, Modal, Skeleton, StatusChip } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import { clsx, fmtDate, fmtPhone, fmtRelative, humanize, initials } from '@/lib/format';
-import { useActiveMembers, useBulkReassignLeads } from '@/hooks/useAdmin';
-import { useUsers } from '@/hooks/useUsers';
+import { useActiveMembers, useBlockUser, useBulkReassignLeads, useUnblockUser } from '@/hooks/useAdmin';
+import { useDeleteUser, useSendPasswordResetLink, useUsers } from '@/hooks/useUsers';
 import {
   ActivityRow,
   AssignmentHistoryRow,
@@ -42,6 +42,8 @@ function apiErrorMessage(error: unknown, fallback: string) {
   if (code === 'INVALID_LEAD_ASSIGNEE_ROLE') {
     return 'Lead assignment is allowed only for Members and Partners. RM users can manage teams but cannot receive direct leads.';
   }
+  if (code === 'EMAIL_PROVIDER_NOT_CONFIGURED') return 'Email provider is not configured.';
+  if (code === 'USER_EMAIL_MISSING') return 'User has no registered email.';
   return data?.message || data?.error?.message || fallback;
 }
 
@@ -64,6 +66,10 @@ function UserProfileInner({ userId }: { userId: string }) {
   const profile = useAdminUserProfile(userId);
   const performance = useAdminUserPerformance(userId, range);
   const canEdit = currentUser?.role === 'super_admin' || currentUser?.role === 'admin';
+  const blockUser = useBlockUser();
+  const unblockUser = useUnblockUser();
+  const deleteUser = useDeleteUser();
+  const sendResetLink = useSendPasswordResetLink();
 
   if (profile.isLoading) {
     return <ProfileSkeleton />;
@@ -82,6 +88,39 @@ function UserProfileInner({ userId }: { userId: string }) {
 
   const { user, counts, reportees } = profile.data;
   const perf = performance.data;
+
+  function handleBlock() {
+    if (!confirm('Block this user? This user will no longer be able to login using email, phone, or CP ID. They will not receive new leads.')) return;
+    blockUser.mutate({ userId, reason: 'Blocked from user profile' }, {
+      onSuccess: () => { toast.success('User blocked'); profile.refetch(); },
+      onError: (error: unknown) => toast.error(apiErrorMessage(error, 'Block failed')),
+    });
+  }
+
+  function handleUnblock() {
+    if (!confirm('Unblock this user? This user will be able to login again if their role and credentials are valid.')) return;
+    unblockUser.mutate(userId, {
+      onSuccess: () => { toast.success('User unblocked'); profile.refetch(); },
+      onError: (error: unknown) => toast.error(apiErrorMessage(error, 'Unblock failed')),
+    });
+  }
+
+  function handleDelete() {
+    const reason = prompt('Disable this user profile? Historical data will be retained. Enter a reason:');
+    if (reason === null) return;
+    deleteUser.mutate({ id: userId, reason: reason.trim() || 'Disabled from user profile' }, {
+      onSuccess: () => { toast.success('User disabled'); profile.refetch(); },
+      onError: (error: unknown) => toast.error(apiErrorMessage(error, 'Disable failed')),
+    });
+  }
+
+  function handleSendResetLink() {
+    if (!confirm("Send password reset link? A secure password reset link will be sent to this user's registered email.")) return;
+    sendResetLink.mutate(userId, {
+      onSuccess: () => toast.success('Password reset link sent.'),
+      onError: (error: unknown) => toast.error(apiErrorMessage(error, 'Password reset link could not be sent')),
+    });
+  }
 
   return (
     <div className="space-y-6">
@@ -124,7 +163,28 @@ function UserProfileInner({ userId }: { userId: string }) {
             <Link href={`/dashboard/admin/leads-manager?assigned_to=${user.id}`} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
               <Briefcase className="h-4 w-4" /> Leads
             </Link>
+            {canEdit && user.status !== 'deleted' && (
+              <button onClick={handleSendResetLink} disabled={sendResetLink.isPending} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
+                {sendResetLink.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+                Send reset link
+              </button>
+            )}
             {canEdit && <EditProfileButton profile={profile.data} userId={userId} />}
+            {canEdit && user.role !== 'super_admin' && user.status === 'blocked' && (
+              <button onClick={handleUnblock} disabled={unblockUser.isPending} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
+                <ShieldCheck className="h-4 w-4" /> Unblock
+              </button>
+            )}
+            {canEdit && user.role !== 'super_admin' && user.status !== 'blocked' && user.status !== 'deleted' && (
+              <button onClick={handleBlock} disabled={blockUser.isPending} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-600">
+                <ShieldBan className="h-4 w-4" /> Block
+              </button>
+            )}
+            {canEdit && user.role !== 'super_admin' && user.status !== 'deleted' && (
+              <button onClick={handleDelete} disabled={deleteUser.isPending} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-700">
+                <Trash2 className="h-4 w-4" /> Disable
+              </button>
+            )}
           </div>
         </div>
       </section>
@@ -260,14 +320,13 @@ function EditProfileButton({ profile, userId }: { profile: UserProfileResponse; 
     full_name: profile.user.full_name || '',
     email: profile.user.email || '',
     phone: profile.user.phone || '',
-    cp_id: profile.user.cp_id || '',
-    role: profile.user.role || 'member',
-    status: profile.user.status || 'active',
+    role: profile.user.role === 'partner' ? 'member' : (profile.user.role || 'member'),
     report_to_id: profile.user.report_to_id || '',
     team_name: profile.user.team_name || '',
     is_available: Boolean(profile.user.is_available),
   });
   const rms = (users || []).filter(u => u.role === 'rm');
+  const selectedRm = rms.find(rm => rm.id === form.report_to_id);
 
   function submit() {
     if (!form.full_name.trim()) {
@@ -276,9 +335,8 @@ function EditProfileButton({ profile, userId }: { profile: UserProfileResponse; 
     }
     updateProfile.mutate({
       ...form,
-      report_to_id: form.report_to_id || null,
-      team_name: form.team_name || null,
-      cp_id: form.cp_id || null,
+      report_to_id: form.role === 'member' ? (form.report_to_id || null) : null,
+      team_name: form.role === 'rm' ? (form.team_name || null) : (selectedRm?.team_name || form.team_name || null),
     }, {
       onSuccess: () => {
         toast.success('Profile updated');
@@ -312,32 +370,31 @@ function EditProfileButton({ profile, userId }: { profile: UserProfileResponse; 
           <Field label="Full name" value={form.full_name} onChange={v => setForm(f => ({ ...f, full_name: v }))} />
           <Field label="Email" type="email" value={form.email} onChange={v => setForm(f => ({ ...f, email: v }))} />
           <Field label="Phone" value={form.phone} onChange={v => setForm(f => ({ ...f, phone: v }))} />
-          <Field label="CP ID" value={form.cp_id} onChange={v => setForm(f => ({ ...f, cp_id: v }))} />
+          <Field label="CP ID" value={profile.user.cp_id || 'System generated'} disabled />
           <label className="space-y-1.5 text-sm">
             <span className="font-medium text-slate-700">Role</span>
             <select className="input" value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
               <option value="super_admin">Super Admin</option>
               <option value="rm">RM</option>
               <option value="member">Member</option>
-              <option value="partner">Partner</option>
-            </select>
-          </label>
-          <label className="space-y-1.5 text-sm">
-            <span className="font-medium text-slate-700">Status</span>
-            <select className="input" value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-              <option value="blocked">Blocked</option>
             </select>
           </label>
           <label className="space-y-1.5 text-sm">
             <span className="font-medium text-slate-700">Reporting RM</span>
-            <select className="input" value={form.report_to_id} onChange={e => setForm(f => ({ ...f, report_to_id: e.target.value }))}>
+            <select className="input" value={form.report_to_id} disabled={form.role !== 'member'} onChange={e => {
+              const rm = rms.find(item => item.id === e.target.value);
+              setForm(f => ({ ...f, report_to_id: e.target.value, team_name: rm?.team_name || '' }));
+            }}>
               <option value="">No RM</option>
               {rms.map(rm => <option key={rm.id} value={rm.id}>{rm.full_name}</option>)}
             </select>
           </label>
-          <Field label="Team name" value={form.team_name} onChange={v => setForm(f => ({ ...f, team_name: v }))} />
+          <Field
+            label="Team name"
+            value={form.role === 'member' ? (selectedRm?.team_name || form.team_name || 'Derived from RM') : form.team_name}
+            disabled={form.role === 'member'}
+            onChange={v => setForm(f => ({ ...f, team_name: v }))}
+          />
           <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm">
             <input type="checkbox" checked={form.is_available} onChange={e => setForm(f => ({ ...f, is_available: e.target.checked }))} />
             <span className="font-medium text-slate-700">Available for lead distribution</span>
@@ -362,7 +419,7 @@ function AssignedLeadsTab({ userId, canReassign }: { userId: string; canReassign
   const rows = leads.data?.rows || [];
   const total = leads.data?.total || 0;
   const totalPages = Math.max(1, Math.ceil(total / 20));
-  const assignableUsers = (members.data || []).filter(m => m.role === 'member' || m.role === 'partner');
+  const assignableUsers = (members.data || []).filter(m => m.role === 'member');
 
   function toggle(id: string) {
     setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -474,11 +531,11 @@ function AssignedLeadsTab({ userId, canReassign }: { userId: string; canReassign
           <label className="space-y-1.5 text-sm">
             <span className="font-medium text-slate-700">New assignee</span>
             <select className="input" value={targetUser} onChange={e => setTargetUser(e.target.value)}>
-              <option value="">Select member or partner</option>
-              {assignableUsers.map(m => <option key={m.id} value={m.id}>{m.full_name} - {humanize(m.role)} - {m.team_name || 'No team'}</option>)}
+              <option value="">Select member</option>
+              {assignableUsers.map(m => <option key={m.id} value={m.id}>{m.full_name} - Member - {m.team_name || 'No team'}</option>)}
             </select>
             {!members.isLoading && assignableUsers.length === 0 && (
-              <span className="text-xs text-amber-600">No eligible active members or partners are available.</span>
+              <span className="text-xs text-amber-600">No eligible active members are available.</span>
             )}
           </label>
           <label className="space-y-1.5 text-sm">
@@ -603,11 +660,11 @@ function InfoRow({ label, value }: { label: string; value: string | number | nul
   );
 }
 
-function Field({ label, value, onChange, type = 'text' }: { label: string; value: string; onChange: (value: string) => void; type?: string }) {
+function Field({ label, value, onChange, type = 'text', disabled = false }: { label: string; value: string; onChange?: (value: string) => void; type?: string; disabled?: boolean }) {
   return (
     <label className="space-y-1.5 text-sm">
       <span className="font-medium text-slate-700">{label}</span>
-      <input className="input" type={type} value={value} onChange={e => onChange(e.target.value)} />
+      <input className="input" type={type} value={value} disabled={disabled} onChange={e => onChange?.(e.target.value)} />
     </label>
   );
 }

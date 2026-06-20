@@ -144,10 +144,11 @@ function ExportReportsTool() {
 // ─── 3. Add User (RM or Member) ─────────────────────────────────────
 function AddUserTool() {
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ full_name: '', email: '', phone: '', cp_id: '', role: 'member' as Role, team_name: '', report_to_id: '', sendWelcomeEmail: true });
+  const [form, setForm] = useState({ full_name: '', email: '', phone: '', role: 'member' as Role, team_name: '', report_to_id: '', sendWelcomeEmail: true });
   const create = useCreateUser();
   const { data: users } = useUsers();
   const rms = (users || []).filter(u => u.role === 'rm');
+  const selectedRm = rms.find(r => r.id === form.report_to_id);
 
   return (
     <>
@@ -167,10 +168,7 @@ function AddUserTool() {
               </select>
             </div>
           </div>
-          <div>
-            <label className="label">CP ID *</label>
-            <input className="input font-mono uppercase" value={form.cp_id} onChange={e => setForm(f => ({ ...f, cp_id: e.target.value.toUpperCase() }))} maxLength={40} />
-          </div>
+          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">CP ID will be generated automatically by the backend.</p>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="label">Email *</label>
@@ -192,8 +190,14 @@ function AddUserTool() {
               </div>
               <div>
                 <label className="label">Team Name</label>
-                <input className="input" value={form.team_name} onChange={e => setForm(f => ({ ...f, team_name: e.target.value }))} />
+                <input className="input" value={selectedRm?.team_name || form.team_name || 'Derived from RM'} disabled />
               </div>
+            </div>
+          )}
+          {form.role === 'rm' && (
+            <div>
+              <label className="label">Team Name *</label>
+              <input className="input" value={form.team_name} onChange={e => setForm(f => ({ ...f, team_name: e.target.value }))} />
             </div>
           )}
           <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={form.sendWelcomeEmail} onChange={e => setForm(f => ({ ...f, sendWelcomeEmail: e.target.checked }))} className="h-4 w-4 rounded border-slate-300" />Send onboarding email with password setup link</label>
@@ -201,12 +205,20 @@ function AddUserTool() {
         <div className="mt-4 flex justify-end gap-2">
           <button onClick={() => setOpen(false)} className="btn-ghost rounded-lg px-4 py-2 text-sm">Cancel</button>
           <button
-            disabled={create.isPending || !form.full_name || !form.email || !form.phone || !form.cp_id}
+            disabled={create.isPending || !form.full_name || !form.email || !form.phone || (form.role === 'member' && !form.report_to_id) || (form.role === 'rm' && !form.team_name.trim())}
             onClick={() => {
               create.mutate(
-                { full_name: form.full_name.trim(), email: form.email.trim(), phone: form.phone.trim(), cp_id: form.cp_id.trim().toUpperCase(), role: form.role, report_to_id: form.report_to_id || null, team_name: form.team_name || null, sendWelcomeEmail: form.sendWelcomeEmail },
                 {
-                  onSuccess: (created) => { toast.success('User created'); if (created.emailWarning) toast.error(created.emailWarning); setOpen(false); setForm({ full_name: '', email: '', phone: '', cp_id: '', role: 'member', team_name: '', report_to_id: '', sendWelcomeEmail: true }); },
+                  full_name: form.full_name.trim(),
+                  email: form.email.trim(),
+                  phone: form.phone.trim(),
+                  role: form.role,
+                  report_to_id: form.role === 'member' ? form.report_to_id : null,
+                  team_name: form.role === 'rm' ? form.team_name.trim() : null,
+                  sendWelcomeEmail: form.sendWelcomeEmail,
+                },
+                {
+                  onSuccess: (created) => { toast.success(`User created${created.cp_id ? ` (${created.cp_id})` : ''}`); if (created.emailWarning) toast.error(created.emailWarning); setOpen(false); setForm({ full_name: '', email: '', phone: '', role: 'member', team_name: '', report_to_id: '', sendWelcomeEmail: true }); },
                   onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed'),
                 }
               );
@@ -552,12 +564,12 @@ function HierarchyTool() {
   const [open, setOpen] = useState(false);
   const [memberId, setMemberId] = useState('');
   const [newRmId, setNewRmId] = useState('');
-  const [newTeam, setNewTeam] = useState('');
   const { data: users } = useUsers();
   const reassign = useReassignMember();
 
   const rms = (users || []).filter(u => u.role === 'rm');
   const members = (users || []).filter(u => u.role === 'member');
+  const selectedRm = rms.find(r => r.id === newRmId);
 
   return (
     <>
@@ -576,22 +588,22 @@ function HierarchyTool() {
           <div>
             <label className="label">New RM</label>
             <select className="input" value={newRmId} onChange={e => setNewRmId(e.target.value)}>
-              <option value="">— No RM (unassign) —</option>
+              <option value="">— Select RM —</option>
               {rms.map(r => <option key={r.id} value={r.id}>{r.full_name}</option>)}
             </select>
           </div>
           <div>
-            <label className="label">New Team Name</label>
-            <input className="input" value={newTeam} onChange={e => setNewTeam(e.target.value)} placeholder="Leave empty to keep current" />
+            <label className="label">Team Name</label>
+            <input className="input" value={selectedRm?.team_name || 'Select RM to derive team'} disabled />
           </div>
         </div>
         <div className="mt-4 flex justify-end gap-2">
           <button onClick={() => setOpen(false)} className="btn-ghost rounded-lg px-4 py-2 text-sm">Cancel</button>
           <button
-            disabled={reassign.isPending || !memberId}
+            disabled={reassign.isPending || !memberId || !newRmId}
             onClick={() => {
               reassign.mutate(
-                { member_id: memberId, new_rm_id: newRmId || null, ...(newTeam ? { new_team_name: newTeam } : {}) },
+                { member_id: memberId, new_rm_id: newRmId },
                 {
                   onSuccess: (d: any) => { toast.success(`${d.member} reassigned`); setOpen(false); },
                   onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed'),

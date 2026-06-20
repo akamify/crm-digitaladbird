@@ -23,7 +23,7 @@ import {
   useMetaWebhookLogs, useSheetsEnriched, useMetaTokenStatus,
   useMetaSubscriptionStatus, useCampaignsEnriched,
   useSyncCampaigns, useSyncLeads, useUpdateMetaToken, useSubscribePage,
-  useTestPageToken, useUpdatePageToken,
+  useTestPageToken, useUpdatePageToken, useSyncMetaPageForms, useDeactivateMetaPage,
   // Dynamic Google Sheets credential management
   useSheetConfigs, useSheetsConnectivity, useCreateSheetConfig, useUpdateSheetConfig,
   useActivateSheetConfig, useTestSheetConfig, useSyncSheetConfig, useDeleteSheetConfig,
@@ -256,7 +256,15 @@ function MetaAdminQuickActions({ onNavigate }: { onNavigate: (tab: SettingsTab) 
   function handleUpdateToken() {
     if (!userToken) { toast.error('Paste a fresh User Access Token'); return; }
     updateToken.mutate(
-      { user_access_token: userToken },
+      {
+        tokenType: 'user',
+        accessToken: userToken,
+        refreshPages: true,
+        subscribeWebhooks: true,
+        syncForms: true,
+        syncAdAccounts: true,
+        syncCampaigns: true,
+      },
       {
         onSuccess: () => {
           toast.success('Page token saved and webhook subscribed successfully');
@@ -368,6 +376,9 @@ function MetaPagesTab() {
   const [newToken, setNewToken] = useState('');
   const testToken = useTestPageToken();
   const updatePageToken = useUpdatePageToken();
+  const subscribePage = useSubscribePage();
+  const syncPageForms = useSyncMetaPageForms();
+  const deactivatePage = useDeactivateMetaPage();
 
   const add = useMutation({
     mutationFn: () => apiPost('/meta/pages', { page_id: pageId, page_name: pageName, page_access_token: token }),
@@ -405,6 +416,14 @@ function MetaPagesTab() {
         },
       },
     );
+  }
+
+  function handleDeactivatePage(pid: string, name: string) {
+    if (!window.confirm(`Deactivate Meta page "${name}"? It will stop affecting integration health, but historical leads remain.`)) return;
+    deactivatePage.mutate(pid, {
+      onSuccess: () => toast.success('Meta page deactivated'),
+      onError: () => toast.error('Failed to deactivate page'),
+    });
   }
 
   return (
@@ -475,11 +494,43 @@ function MetaPagesTab() {
                   {testToken.isPending && testToken.variables === p.page_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Shield className="h-3 w-3" />}
                   Test Token
                 </button>
+                <button
+                  onClick={() => subscribePage.mutate(p.page_id, { onSuccess: () => toast.success('Webhook reconnected'), onError: () => toast.error('Webhook reconnect failed') })}
+                  disabled={subscribePage.isPending}
+                  className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 transition disabled:opacity-60"
+                >
+                  {subscribePage.isPending && subscribePage.variables === p.page_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Webhook className="h-3 w-3" />}
+                  Reconnect Webhook
+                </button>
+                <button
+                  onClick={() => syncPageForms.mutate(p.page_id, { onSuccess: () => toast.success('Lead forms synced'), onError: () => toast.error('Lead forms sync failed') })}
+                  disabled={syncPageForms.isPending}
+                  className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[11px] font-medium text-violet-700 hover:bg-violet-100 transition disabled:opacity-60"
+                >
+                  {syncPageForms.isPending && syncPageForms.variables === p.page_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                  Sync Forms
+                </button>
                 <button onClick={() => { setUpdateTokenPage({ page_id: p.page_id, page_name: p.page_name || p.page_id }); setNewToken(''); }}
                   className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] font-medium text-rose-700 hover:bg-rose-100 transition">
                   <Key className="h-3 w-3" /> Update Token
                 </button>
+                {p.is_active && (
+                  <button
+                    onClick={() => handleDeactivatePage(p.page_id, p.page_name || p.page_id)}
+                    disabled={deactivatePage.isPending}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-600 hover:bg-slate-50 transition disabled:opacity-60"
+                  >
+                    <Power className="h-3 w-3" /> Deactivate
+                  </button>
+                )}
               </div>
+              <div className="mt-3 grid grid-cols-1 gap-1 text-[10px] text-slate-500 sm:grid-cols-3">
+                <span>Page token: {p.token_is_valid === false ? 'Invalid' : p.has_token ? 'Present' : 'Missing'}</span>
+                <span>Webhook: {p.webhook_subscribed ? 'Subscribed' : 'Not subscribed'}</span>
+                <span>Forms: {p.forms_status || 'Not checked'}</span>
+              </div>
+              {p.stale_at && <div className="mt-2 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-700">Stale page: not returned by the latest User Token refresh.</div>}
+              {p.token_last_error && <div className="mt-2 rounded bg-red-50 px-2 py-1 text-[11px] text-red-600">{p.token_last_error}</div>}
             </div>
           ))}
         </div>
@@ -971,9 +1022,14 @@ function CampaignsTab() {
                   <div className={clsx('h-2.5 w-2.5 rounded-full', c.is_active ? 'bg-emerald-500' : 'bg-slate-300')} />
                   <span className="font-semibold text-slate-900 truncate max-w-[250px]">{c.campaign_name}</span>
                 </div>
-                <span className={c.is_active ? 'chip-green' : 'chip-slate'}>{c.is_active ? 'Active' : 'Inactive'}</span>
+                <span className={c.is_active ? 'chip-green' : 'chip-slate'}>{c.effective_status || (c.is_active ? 'ACTIVE' : 'INACTIVE')}</span>
               </div>
-              {c.internal_label && <div className="mb-2"><span className="chip-blue text-[10px]">{c.internal_label}</span> {c.category && <span className="chip-slate text-[10px] ml-1">{c.category}</span>}</div>}
+              <div className="mb-2 flex flex-wrap gap-1">
+                {c.internal_label && <span className="chip-blue text-[10px]">{c.internal_label}</span>}
+                {c.category && <span className="chip-slate text-[10px]">{c.category}</span>}
+                <span className={clsx('text-[10px]', c.source === 'meta_api' ? 'chip-emerald' : 'chip-amber')}>{c.source === 'meta_api' ? 'Meta API' : 'Lead-derived legacy'}</span>
+                {c.ad_account_id && <span className="chip-slate text-[10px]">Ad account {c.ad_account_id}</span>}
+              </div>
 
               <div className="grid grid-cols-4 gap-2 mb-3">
                 <MiniStat label="Leads" value={c.lead_count} color="text-slate-900" />
@@ -983,9 +1039,12 @@ function CampaignsTab() {
               </div>
 
               <div className="text-xs text-slate-500 space-y-0.5">
+                {c.meta_status && <div>Configured status: <strong className="text-slate-700">{c.meta_status}</strong></div>}
+                {c.objective && <div>Objective: <strong className="text-slate-700">{humanize(c.objective)}</strong></div>}
                 {c.connected_form && <div>Form: <strong className="text-slate-700">{c.connected_form}</strong></div>}
                 {c.connected_page && <div>Page: <strong className="text-slate-700">{c.connected_page}</strong></div>}
                 {c.last_lead_at && <div>Last activity: {fmtRelative(c.last_lead_at)}</div>}
+                {c.last_meta_status_checked_at && <div>Meta checked: {fmtRelative(c.last_meta_status_checked_at)}</div>}
               </div>
             </div>
           ))}

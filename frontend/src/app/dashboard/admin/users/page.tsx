@@ -1,16 +1,14 @@
 'use client';
 import { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
-  Users, ArrowLeft, Search, Plus, Pencil, Trash2, ShieldBan, ShieldCheck,
-  Settings2, Loader2, Eye, UserRound,
+  Users, ArrowLeft, Search, Plus, Loader2, Eye, UserRound,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { Modal, Skeleton, EmptyState } from '@/components/ui/Modal';
-import { useUsers, useCreateUser, useUpdateUser, useDeleteUser } from '@/hooks/useUsers';
-import { useBlockUser, useUnblockUser } from '@/hooks/useAdmin';
-import { UserEmailActions } from '@/components/users/UserEmailActions';
+import { useUsers, useCreateUser, useUpdateUser } from '@/hooks/useUsers';
 import { useUpdateUserSettings, useAdminUserDetail } from '@/hooks/useAdminEnterprise';
 import { fmtDate, clsx, humanize } from '@/lib/format';
 import type { Role, User } from '@/types';
@@ -24,6 +22,7 @@ export default function UsersManagerPage() {
 }
 
 function UsersInner() {
+  const router = useRouter();
   const { data: users, isLoading } = useUsers();
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('all');
@@ -33,17 +32,15 @@ function UsersInner() {
   const [detailUserId, setDetailUserId] = useState<string | null>(null);
   const [settingsUser, setSettingsUser] = useState<User | null>(null);
   const [settings, setSettings] = useState({ daily_lead_cap: '', distribution_weight: '', team_name: '' });
-  const [form, setForm] = useState({ full_name: '', email: '', phone: '', cp_id: '', role: 'member' as Role, team_name: '', report_to_id: '', sendWelcomeEmail: true });
+  const [form, setForm] = useState({ full_name: '', email: '', phone: '', role: 'member' as Role, team_name: '', report_to_id: '', sendWelcomeEmail: true });
 
   const createUser = useCreateUser();
   const updateUser = useUpdateUser();
-  const deleteUser = useDeleteUser();
-  const blockUser = useBlockUser();
-  const unblockUser = useUnblockUser();
   const updateSettings = useUpdateUserSettings();
   const userDetail = useAdminUserDetail(detailUserId);
 
   const rms = (users || []).filter(u => u.role === 'rm');
+  const selectedRm = rms.find(r => r.id === form.report_to_id);
 
   const filtered = (users || [])
     .filter(u => roleFilter === 'all' || u.role === roleFilter)
@@ -55,26 +52,27 @@ function UsersInner() {
     admin: users?.filter(u => u.role === 'super_admin').length ?? 0,
     rm: users?.filter(u => u.role === 'rm').length ?? 0,
     member: users?.filter(u => u.role === 'member').length ?? 0,
-    partner: users?.filter(u => u.role === 'partner').length ?? 0,
     blocked: users?.filter(u => u.status === 'blocked').length ?? 0,
   };
 
   function openCreate() {
-    setForm({ full_name: '', email: '', phone: '', cp_id: '', role: 'member', team_name: '', report_to_id: '', sendWelcomeEmail: true });
+    setForm({ full_name: '', email: '', phone: '', role: 'member', team_name: '', report_to_id: '', sendWelcomeEmail: true });
     setCreateOpen(true);
-  }
-  function openEdit(u: User) {
-    setForm({ full_name: u.full_name, email: u.email, phone: u.phone, cp_id: u.cp_id || '', role: u.role, team_name: u.team_name || '', report_to_id: u.report_to_id || '', sendWelcomeEmail: true });
-    setEditUser(u);
-  }
-  function openSettings(u: User) {
-    setSettings({ daily_lead_cap: String(u.daily_lead_cap ?? ''), distribution_weight: String(u.distribution_weight ?? ''), team_name: u.team_name || '' });
-    setSettingsUser(u);
   }
 
   function handleSaveUser() {
-    if (!form.full_name || !form.email || !form.phone || !form.cp_id) { toast.error('Name, email, phone and CP ID are required'); return; }
-    const body = { full_name: form.full_name.trim(), email: form.email.trim(), phone: form.phone.trim(), cp_id: form.cp_id.trim().toUpperCase(), role: form.role, report_to_id: form.report_to_id || null, team_name: form.team_name || null, sendWelcomeEmail: form.sendWelcomeEmail };
+    if (!form.full_name || !form.email || !form.phone) { toast.error('Name, email and phone are required'); return; }
+    if (form.role === 'rm' && !form.team_name.trim()) { toast.error('Team name is required for RM'); return; }
+    if (form.role === 'member' && !form.report_to_id) { toast.error('Reporting RM is required for member'); return; }
+    const body = {
+      full_name: form.full_name.trim(),
+      email: form.email.trim(),
+      phone: form.phone.trim(),
+      role: form.role,
+      report_to_id: form.role === 'member' ? form.report_to_id : null,
+      team_name: form.role === 'rm' ? form.team_name.trim() : null,
+      sendWelcomeEmail: form.sendWelcomeEmail,
+    };
     if (editUser) {
       updateUser.mutate({ id: editUser.id, ...body }, {
         onSuccess: () => { toast.success('User updated'); setEditUser(null); },
@@ -102,7 +100,6 @@ function UsersInner() {
         <CountCard label="Admins" value={counts.admin} color="text-violet-700" />
         <CountCard label="RMs" value={counts.rm} color="text-blue-700" />
         <CountCard label="Members" value={counts.member} color="text-sky-700" />
-        <CountCard label="Partners" value={counts.partner} color="text-emerald-700" />
         <CountCard label="Blocked" value={counts.blocked} color="text-red-700" />
       </div>
 
@@ -117,7 +114,6 @@ function UsersInner() {
           <option value="super_admin">Admin</option>
           <option value="rm">RM</option>
           <option value="member">Member</option>
-          <option value="partner">Partner</option>
         </select>
         <select className="input w-32" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
           <option value="all">All Status</option>
@@ -149,7 +145,7 @@ function UsersInner() {
             </thead>
             <tbody className="divide-y divide-slate-50">
               {filtered.map(u => (
-                <tr key={u.id} className="hover:bg-slate-50 transition">
+                <tr key={u.id} className="hover:bg-slate-50 transition cursor-pointer" onClick={() => router.push(`/dashboard/admin/users/${u.id}`)}>
                   <td className="py-3 pr-3">
                     <Link href={`/dashboard/admin/users/${u.id}`} className="font-medium text-slate-900 hover:text-brand-700">
                       {u.full_name}
@@ -157,7 +153,7 @@ function UsersInner() {
                     <div className="text-xs text-slate-500">{u.email} · {u.phone}</div>
                   </td>
                   <td className="py-3 pr-3">
-                    <span className={clsx('chip', u.role === 'super_admin' ? 'chip-violet' : u.role === 'rm' ? 'chip-blue' : u.role === 'partner' ? 'chip-green' : 'chip-slate')}>
+                    <span className={clsx('chip', u.role === 'super_admin' ? 'chip-violet' : u.role === 'rm' ? 'chip-blue' : 'chip-slate')}>
                       {humanize(u.role)}
                     </span>
                   </td>
@@ -172,24 +168,10 @@ function UsersInner() {
                   <td className="py-3 pr-3 text-xs text-slate-500">{fmtDate(u.created_at, 'dd MMM yyyy')}</td>
                   <td className="py-3 text-right">
                     <div className="flex items-center justify-end gap-1">
-                      <Link href={`/dashboard/admin/users/${u.id}`} className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-brand-600" title="Open Profile">
-                        <UserRound className="h-3.5 w-3.5" />
+                 
+                      <Link onClick={(e) => e.stopPropagation()} href={`/dashboard/admin/users/${u.id}`} className="btn-outline inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs" title="Profile">
+                        <UserRound className="h-3.5 w-3.5" /> Profile
                       </Link>
-                      <button onClick={() => setDetailUserId(u.id)} className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-blue-600" title="View Details"><Eye className="h-3.5 w-3.5" /></button>
-                      <button onClick={() => openEdit(u)} className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-blue-600" title="Edit"><Pencil className="h-3.5 w-3.5" /></button>
-                      <button onClick={() => openSettings(u)} className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-violet-600" title="Settings"><Settings2 className="h-3.5 w-3.5" /></button>
-                      <UserEmailActions userId={u.id} />
-                      {u.role !== 'super_admin' && (u.status === 'blocked' ? (
-                        <button onClick={() => unblockUser.mutate(u.id, { onSuccess: () => toast.success('Unblocked') })}
-                          className="rounded p-1.5 text-slate-400 hover:bg-emerald-50 hover:text-emerald-600" title="Unblock"><ShieldCheck className="h-3.5 w-3.5" /></button>
-                      ) : (
-                        <button onClick={() => { if (confirm(`Block ${u.full_name}?`)) blockUser.mutate({ userId: u.id }, { onSuccess: () => toast.success('Blocked') }); }}
-                          className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600" title="Block"><ShieldBan className="h-3.5 w-3.5" /></button>
-                      ))}
-                      {u.role !== 'super_admin' && (
-                        <button onClick={() => { if (confirm(`Delete ${u.full_name}? This is permanent.`)) deleteUser.mutate(u.id, { onSuccess: () => toast.success('Deleted') }); }}
-                          className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600" title="Delete"><Trash2 className="h-3.5 w-3.5" /></button>
-                      )}
                     </div>
                   </td>
                 </tr>
@@ -207,7 +189,7 @@ function UsersInner() {
             <div><label className="label">Full Name *</label><input className="input" value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} /></div>
             <div><label className="label">Role *</label>
               <select className="input" value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value as Role }))}>
-                <option value="member">Member</option><option value="rm">RM</option><option value="partner">Partner</option>
+                <option value="member">Member</option><option value="rm">RM</option>
               </select>
             </div>
           </div>
@@ -215,15 +197,15 @@ function UsersInner() {
             <div><label className="label">Email *</label><input className="input" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
             <div><label className="label">Phone *</label><input className="input" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} /></div>
           </div>
-          <div><label className="label">CP ID *</label><input className="input font-mono uppercase" value={form.cp_id} onChange={e => setForm(f => ({ ...f, cp_id: e.target.value.toUpperCase() }))} maxLength={40} /></div>
+          {editUser && <div><label className="label">CP ID</label><input className="input font-mono uppercase" value={editUser.cp_id || 'System generated'} disabled /></div>}
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="label">Reports To (RM)</label>
-              <select className="input" value={form.report_to_id} onChange={e => setForm(f => ({ ...f, report_to_id: e.target.value }))}>
+            <div><label className="label">Reporting RM {form.role === 'member' ? '*' : ''}</label>
+              <select className="input" value={form.report_to_id} disabled={form.role !== 'member'} onChange={e => setForm(f => ({ ...f, report_to_id: e.target.value }))}>
                 <option value="">— None —</option>
                 {rms.map(r => <option key={r.id} value={r.id}>{r.full_name}</option>)}
               </select>
             </div>
-            <div><label className="label">Team Name</label><input className="input" value={form.team_name} onChange={e => setForm(f => ({ ...f, team_name: e.target.value }))} /></div>
+            <div><label className="label">Team Name {form.role === 'rm' ? '*' : ''}</label><input className="input" value={form.role === 'member' ? (selectedRm?.team_name || 'Derived from RM') : form.team_name} disabled={form.role === 'member'} onChange={e => setForm(f => ({ ...f, team_name: e.target.value }))} /></div>
           </div>
           {!editUser && <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={form.sendWelcomeEmail} onChange={e => setForm(f => ({ ...f, sendWelcomeEmail: e.target.checked }))} className="h-4 w-4 rounded border-slate-300" />Send onboarding email with password setup link</label>}
         </div>
@@ -279,7 +261,7 @@ function UsersInner() {
         <div className="space-y-3">
           <div><label className="label">Daily Lead Cap</label><input className="input" type="number" value={settings.daily_lead_cap} onChange={e => setSettings(s => ({ ...s, daily_lead_cap: e.target.value }))} /></div>
           <div><label className="label">Distribution Weight</label><input className="input" type="number" value={settings.distribution_weight} onChange={e => setSettings(s => ({ ...s, distribution_weight: e.target.value }))} /></div>
-          <div><label className="label">Team Name</label><input className="input" value={settings.team_name} onChange={e => setSettings(s => ({ ...s, team_name: e.target.value }))} /></div>
+          <div><label className="label">Team Name</label><input className="input" value={settingsUser?.role === 'member' ? (settingsUser.team_name || 'Derived from RM') : settings.team_name} disabled={settingsUser?.role === 'member'} onChange={e => setSettings(s => ({ ...s, team_name: e.target.value }))} /></div>
         </div>
         <div className="mt-4 flex justify-end gap-2">
           <button onClick={() => setSettingsUser(null)} className="btn-ghost rounded-lg px-4 py-2 text-sm">Cancel</button>
@@ -288,7 +270,7 @@ function UsersInner() {
               userId: settingsUser!.id,
               ...(settings.daily_lead_cap ? { daily_lead_cap: Number(settings.daily_lead_cap) } : {}),
               ...(settings.distribution_weight ? { distribution_weight: Number(settings.distribution_weight) } : {}),
-              ...(settings.team_name ? { team_name: settings.team_name } : {}),
+              ...(settingsUser?.role === 'rm' && settings.team_name ? { team_name: settings.team_name } : {}),
             }, { onSuccess: () => { toast.success('Settings saved'); setSettingsUser(null); }, onError: () => toast.error('Failed') });
           }} className="btn-primary rounded-lg px-4 py-2 text-sm inline-flex items-center gap-2">
             {updateSettings.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Save

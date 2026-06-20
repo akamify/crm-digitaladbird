@@ -33,13 +33,13 @@ async function getActiveRule(client, formId) {
 
 async function getEligibleMembers(client, rule) {
   // Members who:
-  //   - role = member/partner
+  //   - role = member
   //   - status = active AND is_available = true
   //   - NOT distribution_blocked (pending-work blocking)
   //   - belong to rule.eligible_user_ids if specified
   //   - have not exceeded daily_lead_cap today
   const params = [];
-  let where = `u.role IN ('member', 'partner') AND u.status = 'active' AND u.is_available = TRUE
+  let where = `u.role = 'member' AND u.status = 'active' AND u.is_available = TRUE
                AND u.distribution_blocked = FALSE AND u.deleted_at IS NULL`;
 
   if (rule.eligible_user_ids && rule.eligible_user_ids.length > 0) {
@@ -92,7 +92,7 @@ async function checkPendingBlocking() {
       FROM users u
       JOIN leads l ON l.assigned_to_user_id = u.id
         AND l.is_pending = TRUE AND l.deleted_at IS NULL
-     WHERE u.role IN ('member', 'partner') AND u.status = 'active'
+     WHERE u.role = 'member' AND u.status = 'active'
        AND u.distribution_blocked = FALSE AND u.deleted_at IS NULL
      GROUP BY u.id HAVING COUNT(l.id) >= $1
   `, [threshold]);

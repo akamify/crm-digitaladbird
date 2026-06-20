@@ -1,6 +1,6 @@
 const { query } = require('../config/database');
 const { AppError } = require('../utils/errors');
-const { validateUniqueCpId } = require('./userIdentityService');
+const { assertCpIdNotEditable, normalizeRole } = require('./userIdentityService');
 
 const ADMIN_ROLES = new Set(['super_admin', 'admin']);
 const CLOSED_CALL_STATUSES = ['converted', 'not_interested', 'wrong_number', 'invalid_number'];
@@ -316,17 +316,54 @@ async function getActivity(actor, userId) {
 
 async function updateProfile(actor, userId, body) {
   await assertProfileAccess(actor, userId, { edit: true });
-  const allowed = ['full_name', 'email', 'phone', 'cp_id', 'role', 'report_to_id', 'team_name', 'status', 'is_available'];
+  assertCpIdNotEditable(body);
+  if (body.role === 'partner') throw new AppError(400, 'PARTNER_ROLE_DEPRECATED', 'Partner users are now members.');
+  const { rows: [current] } = await query(
+    `SELECT role, report_to_id, team_name
+       FROM users
+      WHERE id = $1 AND deleted_at IS NULL AND COALESCE(is_hidden, FALSE) = FALSE`,
+    [userId],
+  );
+  if (!current) throw new AppError(404, 'NOT_FOUND', 'User not found');
+  const nextRole = Object.prototype.hasOwnProperty.call(body, 'role') ? normalizeRole(body.role) : null;
+  const effectiveRole = nextRole || normalizeRole(current.role);
+  const effectiveReportTo = Object.prototype.hasOwnProperty.call(body, 'report_to_id') ? body.report_to_id : current.report_to_id;
+  let rmForMember = null;
+  if (effectiveRole === 'rm' && !String(Object.prototype.hasOwnProperty.call(body, 'team_name') ? body.team_name : current.team_name || '').trim()) {
+    throw new AppError(400, 'TEAM_NAME_REQUIRED', 'RM must have a team name.');
+  }
+  if (effectiveRole === 'member') {
+    if (!effectiveReportTo) throw new AppError(400, 'REPORTING_RM_REQUIRED', 'Member must report to an RM.');
+    const { rows: [rm] } = await query(
+      `SELECT id, team_name FROM users
+        WHERE id = $1 AND role = 'rm' AND status = 'active' AND deleted_at IS NULL`,
+      [effectiveReportTo],
+    );
+    if (!rm) throw new AppError(400, 'INVALID_REPORTING_RM', 'Member must report to an active RM.');
+    rmForMember = rm;
+  }
+  const allowed = ['full_name', 'email', 'phone', 'role', 'report_to_id', 'team_name', 'is_available'];
   const sets = [];
   const params = [];
   for (const key of allowed) {
     if (Object.prototype.hasOwnProperty.call(body, key)) {
       let value = body[key] || null;
-      if (key === 'cp_id') value = await validateUniqueCpId(value, userId);
       if (key === 'email' && value) value = String(value).trim().toLowerCase();
+      if (key === 'role' && value) value = normalizeRole(value);
+      if (key === 'report_to_id' && effectiveRole === 'rm') value = null;
+      if (key === 'report_to_id' && effectiveRole === 'member') value = rmForMember.id;
+      if (key === 'team_name' && effectiveRole === 'member') value = rmForMember.team_name || null;
       params.push(value);
       sets.push(`${key} = $${params.length}`);
     }
+  }
+  if (effectiveRole === 'rm' && !Object.prototype.hasOwnProperty.call(body, 'report_to_id')) {
+    params.push(null);
+    sets.push(`report_to_id = $${params.length}`);
+  }
+  if (effectiveRole === 'member' && !Object.prototype.hasOwnProperty.call(body, 'team_name')) {
+    params.push(rmForMember.team_name || null);
+    sets.push(`team_name = $${params.length}`);
   }
   if (!sets.length) return getProfile(actor, userId);
   params.push(userId);

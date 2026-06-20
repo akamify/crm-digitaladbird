@@ -7,6 +7,10 @@ const { AppError } = require('../utils/errors');
 const USER_CACHE = new Map();
 const CACHE_TTL = 60_000;
 
+function normalizeRole(role) {
+  return role === 'partner' ? 'member' : role;
+}
+
 function getCachedUser(id) {
   const entry = USER_CACHE.get(id);
   if (entry && Date.now() - entry.ts < CACHE_TTL) return entry.user;
@@ -47,6 +51,7 @@ async function authenticate(req, _res, next) {
       );
       if (!rows[0]) throw new AppError(401, 'USER_NOT_FOUND', 'User no longer exists');
       user = rows[0];
+      user.role = normalizeRole(user.role);
       setCachedUser(payload.sub, user);
     }
 

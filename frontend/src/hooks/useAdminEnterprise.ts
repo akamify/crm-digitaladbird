@@ -509,6 +509,10 @@ export interface MetaPageEnriched {
   id: string; page_id: string; page_name: string; is_active: boolean; has_token: boolean;
   form_count: number; lead_count: number; today_leads: number; conversions: number;
   last_lead_at: string | null; created_at: string;
+  token_is_valid?: boolean | null; token_last_checked?: string | null; token_last_error?: string | null;
+  webhook_subscribed?: boolean | null; webhook_last_checked?: string | null;
+  forms_status?: string | null; forms_last_checked?: string | null;
+  stale_at?: string | null; deactivated_at?: string | null;
 }
 
 export function useMetaPagesEnriched() {
@@ -542,7 +546,7 @@ export function useUpdatePageToken() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ pageId, token }: { pageId: string; token: string }) =>
-      apiPatch(`/meta/pages/${pageId}/token`, { page_access_token: token }),
+      apiPost(`/meta/pages/${pageId}/update-token`, { pageAccessToken: token, test: true, subscribeWebhook: true, syncForms: true }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin'] });
       qc.invalidateQueries({ queryKey: ['integration-status'] });
@@ -631,9 +635,11 @@ export interface MetaTokenStatus {
   warning: string | null;
   pageTokens: { valid: number; invalid: number; missing: number; pages: MetaPageTokenStatus[] };
   userToken: { status: 'valid' | 'expired' | 'missing' | 'error'; source: string | null; requiredFor: string[]; error?: string };
-  webhook: { subscribed: boolean };
-  leadForms: { accessible: boolean };
-  campaignSync: { status: 'available' | 'degraded' };
+  webhook: { status?: 'subscribed' | 'partial' | 'not_subscribed'; subscribed: boolean; subscribed_count?: number; total?: number };
+  leadForms: { status?: 'accessible' | 'accessible_empty' | 'partial_error' | 'error'; accessible: boolean; accessible_count?: number; error_count?: number };
+  campaignSync: { status: 'available' | 'degraded' | 'error'; required_user_token?: boolean };
+  connected?: boolean;
+  warnings?: string[];
 }
 
 export interface MetaSubscriptionStatus {
@@ -652,6 +658,28 @@ export function useMetaTokenStatus() {
   });
 }
 
+export function useSyncMetaPageForms() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (pageId: string) => apiPost(`/meta/pages/${pageId}/sync-forms`, {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin'] });
+      qc.invalidateQueries({ queryKey: ['integration-status'] });
+    },
+  });
+}
+
+export function useDeactivateMetaPage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (pageId: string) => apiPost(`/meta/pages/${pageId}/deactivate`, {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin'] });
+      qc.invalidateQueries({ queryKey: ['integration-status'] });
+    },
+  });
+}
+
 // ── Meta Subscription Status ────────────────────────────────────
 export function useMetaSubscriptionStatus() {
   return useQuery({
@@ -667,6 +695,9 @@ export interface CampaignEnriched {
   description: string | null; lead_count: number; today_leads: number; conversions: number;
   pending_leads: number; last_lead_at: string | null; connected_form: string | null;
   connected_page: string | null; created_at: string;
+  meta_status?: string | null; effective_status?: string | null; configured_status?: string | null;
+  objective?: string | null; buying_type?: string | null; source?: string | null;
+  last_meta_status_checked_at?: string | null;
 }
 
 export function useCampaignsEnriched() {
@@ -698,7 +729,19 @@ export function useSyncLeads() {
 export function useUpdateMetaToken() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { user_access_token?: string; page_access_token?: string; page_id?: string }) => apiPost('/meta/update-token', body),
+    mutationFn: (body: {
+      accessToken?: string;
+      user_access_token?: string;
+      tokenType?: 'user' | 'page';
+      refreshPages?: boolean;
+      subscribeWebhooks?: boolean;
+      syncForms?: boolean;
+      syncAdAccounts?: boolean;
+      syncCampaigns?: boolean;
+      pageAccessToken?: string;
+      page_access_token?: string;
+      page_id?: string;
+    }) => apiPost('/meta/update-token', body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['admin'] }); },
   });
 }

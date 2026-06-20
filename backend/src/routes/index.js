@@ -40,9 +40,13 @@ router.get ('/auth/me',          authenticate, auth.me);
 // ---- Users --------------------------------------------------------
 router.get   ('/users',           authenticate, responseCache(10000), users.list);
 router.get   ('/users/hierarchy', authenticate, requireRole('super_admin', 'rm'), users.hierarchy);
-router.post  ('/users',           authenticate, requireRole('super_admin'), users.create);
-router.patch ('/users/:id',       authenticate, requireRole('super_admin'), users.update);
-router.delete('/users/:id',       authenticate, requireRole('super_admin'), users.softDelete);
+router.post  ('/users',           authenticate, requireRole('super_admin', 'admin'), users.create);
+router.get   ('/users/deleted',   authenticate, requireRole('super_admin', 'admin'), users.deleted);
+router.post  ('/users/:id/block', authenticate, requireRole('super_admin', 'admin'), users.block);
+router.post  ('/users/:id/unblock', authenticate, requireRole('super_admin', 'admin'), users.unblock);
+router.post  ('/users/:id/delete', authenticate, requireRole('super_admin', 'admin'), users.softDelete);
+router.patch ('/users/:id',       authenticate, requireRole('super_admin', 'admin'), users.update);
+router.delete('/users/:id',       authenticate, requireRole('super_admin', 'admin'), users.softDelete);
 
 // ---- Leads --------------------------------------------------------
 router.get  ('/leads',            authenticate, leads.list);
@@ -65,6 +69,8 @@ const { query } = require('../config/database');
 const { asyncHandler, AppError } = require('../utils/errors');
 const assignmentEngine = require('../services/leadAssignmentEngine');
 const { validateLeadAssignee } = require('../services/leadAssigneeValidator');
+const { normalizeRole } = require('../services/userIdentityService');
+const notifications = require('../services/notificationService');
 
 router.get('/rules',  authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
   const { rows } = await query(`SELECT * FROM distribution_rules ORDER BY priority`);
@@ -82,7 +88,14 @@ router.post('/rules', authenticate, requireRole('super_admin'), asyncHandler(asy
 }));
 
 router.get('/meta/pages',  authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
-  const { rows } = await query(`SELECT id, page_id, page_name, is_active, created_at FROM meta_pages`);
+  const { rows } = await query(`
+    SELECT id, page_id, page_name, is_active, created_at,
+           token_is_valid, token_last_checked, token_last_error,
+           webhook_subscribed, webhook_last_checked, forms_status,
+           forms_last_checked, stale_at, deactivated_at
+      FROM meta_pages
+     ORDER BY is_active DESC, page_name NULLS LAST, page_id
+  `);
   res.json({ success: true, data: rows });
 }));
 router.post('/meta/pages', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
@@ -167,6 +180,43 @@ router.patch('/meta/pages/:pageId/token', authenticate, requireRole('super_admin
     });
   }
   res.json({ success: true, data: rows[0] });
+}));
+
+router.post('/meta/pages/:pageId/update-token', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { pageId } = req.params;
+  const pageAccessToken = req.body?.pageAccessToken || req.body?.page_access_token;
+  if (!pageAccessToken) throw new AppError(400, 'INVALID', 'pageAccessToken required');
+  const result = await updateMetaPageTokenWorkflow({
+    pageId,
+    pageAccessToken,
+    subscribeWebhook: req.body?.subscribeWebhook !== false,
+    syncForms: req.body?.syncForms !== false,
+  });
+  const { logActivity } = require('../utils/auditLog');
+  await logActivity(req, {
+    entity: 'meta_page',
+    entity_id: pageId,
+    action: 'page_token_updated',
+    metadata: { page_id: pageId, webhook: result.webhook, forms: result.forms },
+  });
+  res.json({ success: true, data: result });
+}));
+
+router.post('/meta/pages/:pageId/deactivate', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { pageId } = req.params;
+  const tokenResolver = require('../services/metaTokenResolver');
+  const page = await tokenResolver.deactivatePage(pageId, req.user.id);
+  if (!page) throw new AppError(404, 'NOT_FOUND', 'Page not registered in CRM');
+  res.json({ success: true, data: page });
+}));
+
+router.post('/meta/pages/:pageId/sync-forms', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const { pageId } = req.params;
+  const result = await syncFormsForMetaPage(pageId);
+  if (result.forms === 'error' || result.forms === 'permission_error') {
+    return res.status(502).json({ success: false, error: { code: 'META_FORMS_SYNC_FAILED', message: result.error }, data: result });
+  }
+  res.json({ success: true, data: result });
 }));
 
 // Test an existing page's stored token against Graph API
@@ -596,6 +646,21 @@ router.post('/lead-requests', authenticate, asyncHandler(async (req, res) => {
     [req.user.id, r.id, JSON.stringify({ quantity: qty, category: cat, assigned }), req.ip]
   );
 
+  const { rows: [requester] } = await query(
+    `SELECT id, full_name, role, report_to_id FROM users WHERE id = $1`,
+    [req.user.id],
+  );
+  await notifications.notifyLeadRequestCreated({
+    requestId: r.id,
+    requesterId: req.user.id,
+    requesterName: requester?.full_name || req.user.full_name || req.user.name,
+    requesterRole: requester?.role || req.user.role,
+    rmId: requester?.report_to_id || null,
+    quantity: qty,
+    category: cat,
+    assigned,
+  });
+
   // Real-time notify admin + the RM who owns this requester + the requester
   emitLeadRequest(r.status === 'fulfilled' ? 'fulfilled' : 'created', r.id);
 
@@ -724,6 +789,21 @@ router.post('/lead-requests/:id/approve', authenticate, requireRole('super_admin
     [finalStatus, req.user.id, resolvedAt, req.body.note || null, assigned, id]
   );
 
+  await notifications.notifyLeadRequestResolved({
+    requestId: id,
+    requesterId: request.user_id,
+    quantity: request.quantity,
+    assigned,
+    status: finalStatus,
+    note: req.body.note || null,
+  });
+  if (assigned > 0) {
+    await notifications.notifyLeadAssigned(request.user_id, assigned, {
+      request_id: id,
+      assignment_type: 'lead_request_approval',
+    });
+  }
+
   emitLeadRequest(fullyDone ? 'approved' : 'partially_approved', id);
 
   // Audit trail
@@ -768,6 +848,17 @@ router.post('/lead-requests/:id/reject', authenticate, requireRole('super_admin'
     [req.user.id, req.body.note || null, id]
   );
   if (!r) throw new AppError(404, 'NOT_FOUND', 'Request not found or already resolved');
+  const { rows: [requester] } = await query(`SELECT user_id, quantity FROM lead_requests WHERE id = $1`, [id]);
+  if (requester) {
+    await notifications.notifyLeadRequestResolved({
+      requestId: id,
+      requesterId: requester.user_id,
+      quantity: requester.quantity,
+      assigned: 0,
+      status: 'rejected',
+      note: req.body.note || null,
+    });
+  }
   emitLeadRequest('rejected', r.id);
   {
     const { logActivity } = require('../utils/auditLog');
@@ -923,6 +1014,21 @@ router.post('/rm-lead-requests', authenticate, requireRole('rm', 'super_admin'),
 
   // Re-fetch to get updated status
   const { rows: [updated] } = await query(`SELECT * FROM rm_lead_requests WHERE id = $1`, [r.id]);
+  await notifications.notifyAdmins(
+    'rm_lead_request',
+    'New RM lead request',
+    `${req.user.full_name || req.user.name || 'RM'} requested ${qty} lead(s)${updated?.fulfilled_count ? `; ${updated.fulfilled_count} moved to RM pool` : ''}.`,
+    { request_id: r.id, rm_id: req.user.id, quantity: qty, category: cat, fulfilled_count: updated?.fulfilled_count || 0 },
+  );
+  await notifications.notifyUser(
+    req.user.id,
+    'rm_lead_request_submitted',
+    'RM lead request submitted',
+    updated?.fulfilled_count
+      ? `Your request for ${qty} lead(s) was submitted. ${updated.fulfilled_count} lead(s) moved to your RM pool.`
+      : `Your request for ${qty} lead(s) was submitted.`,
+    { request_id: r.id, quantity: qty, category: cat, fulfilled_count: updated?.fulfilled_count || 0 },
+  );
   res.status(201).json({ success: true, data: updated });
 }));
 
@@ -1021,6 +1127,11 @@ router.post('/rm-pool/assign', authenticate, requireRole('rm', 'super_admin'), a
     `INSERT INTO lead_assignments(lead_id, user_id, assigned_by, reason) VALUES ($1, $2, $3, 'rm_manual')`,
     [lead_id, member_id, rmId]
   );
+  await notifications.notifyLeadAssigned(member_id, 1, {
+    lead_id,
+    assigned_by: rmId,
+    assignment_type: 'rm_manual',
+  });
 
   res.json({ success: true, data: { lead_id, member_id, assigned: true } });
 }));
@@ -1395,36 +1506,30 @@ router.post('/admin/notifications/read-all', authenticate, requireRole('super_ad
 
 // --- 9. Team Hierarchy Controls (reassign member to different RM) ---
 router.post('/admin/reassign-member', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
-  const { member_id, new_rm_id, new_team_name } = req.body;
+  const { member_id, new_rm_id } = req.body;
   if (!member_id) throw new AppError(400, 'INVALID', 'member_id required');
+  if (!new_rm_id) throw new AppError(400, 'RM_REQUIRED', 'Member must report to an active RM');
 
-  const setClauses = ['updated_at = NOW()'];
-  const params = [];
+  const { rows: [rm] } = await query(
+    `SELECT id, team_name FROM users
+      WHERE id = $1 AND role = 'rm' AND deleted_at IS NULL AND COALESCE(status, 'active') = 'active'`,
+    [new_rm_id],
+  );
+  if (!rm) throw new AppError(404, 'NOT_FOUND', 'Target RM not found');
 
-  if (new_rm_id !== undefined) {
-    if (new_rm_id) {
-      const { rows: [rm] } = await query(`SELECT id FROM users WHERE id = $1 AND role = 'rm' AND deleted_at IS NULL`, [new_rm_id]);
-      if (!rm) throw new AppError(404, 'NOT_FOUND', 'Target RM not found');
-    }
-    params.push(new_rm_id || null);
-    setClauses.push(`report_to_id = $${params.length}`);
-  }
-  if (new_team_name !== undefined) {
-    params.push(new_team_name || null);
-    setClauses.push(`team_name = $${params.length}`);
-  }
-
-  params.push(member_id);
   const { rows: [user] } = await query(
-    `UPDATE users SET ${setClauses.join(', ')} WHERE id = $${params.length} AND deleted_at IS NULL RETURNING id, full_name`,
-    params
+    `UPDATE users
+        SET report_to_id = $1, team_name = $2, updated_at = NOW()
+      WHERE id = $3 AND role = 'member' AND deleted_at IS NULL
+      RETURNING id, full_name`,
+    [new_rm_id, rm.team_name || null, member_id],
   );
   if (!user) throw new AppError(404, 'NOT_FOUND', 'Member not found');
 
   await query(
     `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata, ip_address)
        VALUES ($1, 'user', $2, 'reassign_team', $3, $4)`,
-    [req.user.id, member_id, JSON.stringify({ new_rm_id, new_team_name }), req.ip]
+    [req.user.id, member_id, JSON.stringify({ new_rm_id, team_name: rm.team_name || null }), req.ip]
   );
 
   res.json({ success: true, data: { member: user.full_name } });
@@ -1563,7 +1668,7 @@ router.get('/admin/active-members', authenticate, requireRole('super_admin', 'ad
       FROM users u
       LEFT JOIN users r ON r.id = u.report_to_id
      WHERE u.deleted_at IS NULL
-       AND u.role IN ('member', 'partner')
+       AND u.role = 'member'
        AND u.status = 'active'
        AND COALESCE(u.is_available, TRUE) = TRUE
        AND COALESCE(u.distribution_blocked, FALSE) = FALSE
@@ -1647,55 +1752,146 @@ router.get('/reports/campaign-summary', authenticate, asyncHandler(async (_req, 
 const metaSync = require('../services/metaSyncService');
 const config = require('../config/env');
 
+async function subscribeAndVerifyMetaPage(pageId) {
+  const result = { page_id: String(pageId), webhook: 'not_subscribed', subscribed: false };
+  try {
+    await metaSync.subscribePageToLeadgen(pageId);
+    const status = await metaSync.getPageSubscriptions(pageId);
+    const apps = status.data || [];
+    const subscribed = apps.some(app => Array.isArray(app.subscribed_fields) && app.subscribed_fields.includes('leadgen'));
+    await require('../services/metaTokenResolver').updatePageWebhookStatus(pageId, { subscribed });
+    return { ...result, webhook: subscribed ? 'subscribed' : 'not_subscribed', subscribed, subscriptions: apps };
+  } catch (error) {
+    await require('../services/metaTokenResolver').updatePageWebhookStatus(pageId, { subscribed: false, error: error.message }).catch(() => {});
+    return { ...result, webhook: 'error', error: error.message, code: error.code || 'META_GRAPH_ERROR' };
+  }
+}
+
+async function syncFormsForMetaPage(pageId) {
+  try {
+    const forms = await metaSync.syncPageForms(pageId);
+    return { page_id: String(pageId), forms: forms.total ? 'accessible' : 'accessible_empty', formsCount: forms.total, created: forms.created, updated: forms.updated };
+  } catch (error) {
+    const isPermission = /permission|permissions|does not have/i.test(error.message || '');
+    await require('../services/metaTokenResolver').updatePageFormsStatus(pageId, {
+      status: isPermission ? 'permission_error' : 'error',
+      error: error.message,
+    }).catch(() => {});
+    return { page_id: String(pageId), forms: isPermission ? 'permission_error' : 'error', formsCount: 0, error: error.message, code: error.code || 'META_GRAPH_ERROR' };
+  }
+}
+
+async function updateMetaPageTokenWorkflow({ pageId, pageAccessToken, subscribeWebhook = true, syncForms = true }) {
+  const tokenResolver = require('../services/metaTokenResolver');
+  const page = await tokenResolver.validateAndSavePageToken({ pageId, token: pageAccessToken });
+  const result = {
+    page_id: page.page_id,
+    page_name: page.page_name,
+    pageToken: 'valid',
+    webhook: 'skipped',
+    forms: 'skipped',
+  };
+  if (subscribeWebhook) Object.assign(result, await subscribeAndVerifyMetaPage(page.page_id));
+  if (syncForms) Object.assign(result, await syncFormsForMetaPage(page.page_id));
+  return result;
+}
+
 // Update Meta access token at runtime (no restart needed)
 router.post('/meta/update-token', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
-  const { user_access_token, page_access_token, page_id } = req.body;
-  if (!user_access_token && !page_access_token) {
-    throw new AppError(400, 'INVALID', 'Provide user_access_token or page_access_token');
-  }
   const tokenResolver = require('../services/metaTokenResolver');
-  const updatedPages = [];
-  if (user_access_token) {
-    await tokenResolver.validateUserTokenPermissions(user_access_token);
-    const derivedPages = await tokenResolver.deriveAndSavePageTokenFromUserToken({ userToken: user_access_token, pageId: page_id || null });
-    await tokenResolver.saveUserToken(user_access_token, req.user.id);
-    process.env.META_USER_ACCESS_TOKEN = user_access_token;
-    config.meta.userAccessToken = user_access_token;
-    updatedPages.push(...derivedPages);
-  }
-  if (page_access_token) {
-    if (!page_id) throw new AppError(400, 'META_PAGE_ID_REQUIRED', 'page_id is required when updating a Page Access Token directly');
-    updatedPages.push(await tokenResolver.validateAndSavePageToken({ pageId: page_id, token: page_access_token }));
+  const accessToken = req.body?.accessToken || req.body?.user_access_token;
+  const pageAccessToken = req.body?.pageAccessToken || req.body?.page_access_token;
+  const pageId = req.body?.pageId || req.body?.page_id || null;
+  const tokenType = req.body?.tokenType || (accessToken ? 'user' : 'page');
+
+  if (tokenType === 'page' || pageAccessToken) {
+    if (!pageId || !pageAccessToken) throw new AppError(400, 'META_PAGE_ID_REQUIRED', 'page_id and pageAccessToken are required for a Page Access Token update');
+    const pageResult = await updateMetaPageTokenWorkflow({
+      pageId,
+      pageAccessToken,
+      subscribeWebhook: req.body?.subscribeWebhook !== false,
+      syncForms: req.body?.syncForms !== false,
+    });
+    return res.json({ success: true, data: { token_updated: true, userToken: null, pages: [pageResult], warnings: [] } });
   }
 
-  const subscriptions = [];
-  for (const page of updatedPages) {
+  if (!accessToken) throw new AppError(400, 'INVALID', 'Provide accessToken or user_access_token');
+
+  let permissionInfo;
+  try {
+    permissionInfo = await tokenResolver.validateUserTokenPermissions(accessToken);
+  } catch (error) {
+    await tokenResolver.updateUserTokenStatus({ status: 'invalid', error: error.message }).catch(() => {});
+    throw error;
+  }
+
+  const derivedPages = await tokenResolver.deriveAndSavePageTokenFromUserToken({ userToken: accessToken, pageId });
+  await tokenResolver.saveUserToken(accessToken, req.user.id, {
+    status: 'valid',
+    permissions: permissionInfo.permissions,
+  });
+  process.env.META_USER_ACCESS_TOKEN = accessToken;
+  config.meta.userAccessToken = accessToken;
+
+  const stalePages = await tokenResolver.markPagesStaleExcept(derivedPages.map(page => page.page_id)).catch(() => []);
+  const pageResults = [];
+  for (const page of derivedPages) {
+    const result = {
+      page_id: page.page_id,
+      page_name: page.page_name,
+      pageToken: 'valid',
+      webhook: 'skipped',
+      forms: 'skipped',
+      formsCount: 0,
+    };
+    if (req.body?.subscribeWebhooks !== false) Object.assign(result, await subscribeAndVerifyMetaPage(page.page_id));
+    if (req.body?.syncForms !== false) Object.assign(result, await syncFormsForMetaPage(page.page_id));
+    pageResults.push(result);
+  }
+
+  let adAccounts = null;
+  let campaignSync = null;
+  const warnings = [];
+  if (req.body?.syncAdAccounts !== false) {
     try {
-      await metaSync.subscribePageToLeadgen(page.page_id);
-      const status = await metaSync.getPageSubscriptions(page.page_id);
-      const apps = status.data || [];
-      const subscribed = apps.some(app => Array.isArray(app.subscribed_fields) && app.subscribed_fields.includes('leadgen'));
-      subscriptions.push({ page_id: page.page_id, subscribed, subscriptions: apps });
+      adAccounts = await metaSync.syncAdAccounts();
     } catch (error) {
-      subscriptions.push({ page_id: page.page_id, subscribed: false, error: error.message });
+      adAccounts = { error: error.message };
+      warnings.push(`Ad account sync failed: ${error.message}`);
     }
   }
-
-  // Immediately try to sync campaigns with the new token
-  let syncResult = null;
-  try {
-    syncResult = await metaSync.syncAllCampaigns();
-  } catch (err) {
-    syncResult = { error: err.message };
+  if (req.body?.syncCampaigns !== false) {
+    try {
+      campaignSync = await metaSync.syncAllCampaigns();
+    } catch (error) {
+      campaignSync = { error: error.message };
+      warnings.push(`Campaign sync failed: ${error.message}`);
+    }
+  }
+  if (permissionInfo.missing_recommended?.length) {
+    warnings.push(`Recommended Meta permissions missing: ${permissionInfo.missing_recommended.join(', ')}`);
+  }
+  if (stalePages.length) {
+    warnings.push(`${stalePages.length} stale page(s) were marked inactive because this user token no longer returned them.`);
   }
 
-  await query(
+  query(
     `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata, ip_address)
-       VALUES ($1, 'meta', 'token', 'update_token', $2, $3)`,
-    [req.user.id, JSON.stringify({ updated: ['user_token', 'derived_page_tokens'], pages: updatedPages.map(page => page.page_id), sync: syncResult ? 'attempted' : 'skipped' }), req.ip]
-  );
+       VALUES ($1, 'meta', NULL, 'update_token', $2, $3)`,
+    [req.user.id, JSON.stringify({ updated: ['user_token', 'derived_page_tokens'], pages: pageResults.map(page => page.page_id), stale_pages: stalePages.map(page => page.page_id) }), req.ip]
+  ).catch(error => logger.warn({ err: error.message }, '[Meta] audit log failed for update-token'));
 
-  res.json({ success: true, data: { token_updated: true, pages: updatedPages, subscriptions, campaign_sync: syncResult } });
+  res.json({
+    success: true,
+    data: {
+      token_updated: true,
+      userToken: { status: 'valid', permissions: permissionInfo.permissions },
+      pages: pageResults,
+      adAccounts,
+      campaign_sync: campaignSync,
+      warnings,
+    },
+  });
 }));
 
 // Force campaign sync now (uses current token)
@@ -1859,8 +2055,13 @@ router.post('/meta/subscriptions', authenticate, requireRole('super_admin'), asy
   const { page_id } = req.body || {};
   try {
     const data = await metaSync.subscribePageToLeadgen(page_id);
-    res.json({ success: true, data });
+    const verify = await metaSync.getPageSubscriptions(page_id);
+    const apps = verify.data || [];
+    const subscribed = apps.some(app => Array.isArray(app.subscribed_fields) && app.subscribed_fields.includes('leadgen'));
+    if (page_id) await require('../services/metaTokenResolver').updatePageWebhookStatus(page_id, { subscribed });
+    res.json({ success: true, data: { subscribe: data, status: verify, subscribed } });
   } catch (err) {
+    if (page_id) await require('../services/metaTokenResolver').updatePageWebhookStatus(page_id, { subscribed: false, error: err.message }).catch(() => {});
     if (err instanceof AppError) throw err;
     const fb = err.response?.data?.error;
     const msg = fb?.message || err.message || 'Failed to subscribe page';
@@ -1876,16 +2077,11 @@ router.post('/meta/subscriptions', authenticate, requireRole('super_admin'), asy
 // ══════════════════════════════════════════════════════════════════════
 
 async function notifyUser(userId, type, title, body, metadata = {}) {
-  await query(
-    `INSERT INTO user_notifications(user_id, type, title, body, metadata)
-       VALUES ($1, $2, $3, $4, $5)`,
-    [userId, type, title, body, JSON.stringify(metadata)]
-  ).catch(() => {});
+  return notifications.notifyUser(userId, type, title, body, metadata);
 }
 
 async function notifyAdmins(type, title, body, metadata = {}) {
-  const { rows } = await query(`SELECT id FROM users WHERE role = 'super_admin' AND deleted_at IS NULL`);
-  for (const r of rows) await notifyUser(r.id, type, title, body, metadata);
+  return notifications.notifyAdmins(type, title, body, metadata);
 }
 
 async function logTimeline(requestId, actorId, action, detail, metadata = {}) {
@@ -2754,7 +2950,7 @@ router.get('/rm-monitoring/team-overview', authenticate, requireRole('rm', 'supe
              COUNT(*) FILTER (WHERE (r.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS remarks_today
       FROM lead_remarks r WHERE r.user_id = u.id
     ) lact ON true
-    WHERE u.report_to_id = $1 AND u.deleted_at IS NULL AND u.role IN ('member', 'partner')
+    WHERE u.report_to_id = $1 AND u.deleted_at IS NULL AND u.role = 'member'
     ORDER BY lc.converted DESC NULLS LAST, lc.worked DESC NULLS LAST, u.full_name
   `, [rmId]);
 
@@ -3449,8 +3645,8 @@ router.get('/admin/analytics/overview', authenticate, requireRole('super_admin')
     SELECT
       (SELECT COUNT(*)::int FROM users WHERE deleted_at IS NULL AND status = 'active') AS active_users,
       (SELECT COUNT(*)::int FROM users WHERE deleted_at IS NULL AND role = 'rm') AS total_rms,
-      (SELECT COUNT(*)::int FROM users WHERE deleted_at IS NULL AND role = 'member') AS total_members,
-      (SELECT COUNT(*)::int FROM users WHERE deleted_at IS NULL AND role = 'partner') AS total_partners,
+      (SELECT COUNT(*)::int FROM users WHERE deleted_at IS NULL AND role::text IN ('member', 'partner')) AS total_members,
+      0 AS total_partners,
       (SELECT COUNT(*)::int FROM users WHERE deleted_at IS NULL AND status = 'blocked') AS blocked_users,
       (SELECT COUNT(*)::int FROM leads WHERE deleted_at IS NULL) AS total_leads,
       (SELECT COUNT(*)::int FROM leads WHERE deleted_at IS NULL AND assigned_to_user_id IS NULL) AS unassigned_leads,
@@ -3480,7 +3676,7 @@ router.get('/admin/analytics/overview', authenticate, requireRole('super_admin')
       ROUND(COUNT(l.id) FILTER (WHERE l.call_status = 'converted')::numeric / NULLIF(COUNT(l.id), 0) * 100, 1) AS conv_rate
     FROM users u
     LEFT JOIN leads l ON l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
-    WHERE u.deleted_at IS NULL AND u.role IN ('member', 'partner')
+    WHERE u.deleted_at IS NULL AND u.role = 'member'
     GROUP BY u.id, u.full_name, u.role, u.team_name
     ORDER BY conversions DESC LIMIT 15
   `);
@@ -3540,13 +3736,43 @@ router.get('/admin/users/:userId/detail', authenticate, requireRole('super_admin
 router.post('/admin/users/:userId/update-settings', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
   const { userId } = req.params;
   const { daily_lead_cap, distribution_weight, role, is_available, team_name, report_to_id } = req.body;
+  const { rows: [current] } = await query(
+    `SELECT role, report_to_id, team_name FROM users WHERE id = $1 AND deleted_at IS NULL`,
+    [userId],
+  );
+  if (!current) throw new AppError(404, 'NOT_FOUND', 'User not found');
+
+  const nextRole = role !== undefined ? normalizeRole(role) : null;
+  const effectiveRole = nextRole || normalizeRole(current.role);
+  const effectiveReportTo = report_to_id !== undefined ? report_to_id : current.report_to_id;
+  let derivedTeamName = team_name !== undefined ? team_name : current.team_name;
+
+  if (effectiveRole === 'rm') {
+    if (!String(derivedTeamName || '').trim()) throw new AppError(400, 'TEAM_NAME_REQUIRED', 'Team name is required for RM');
+    derivedTeamName = String(derivedTeamName).trim();
+  }
+
+  if (effectiveRole === 'member') {
+    if (!effectiveReportTo) throw new AppError(400, 'RM_REQUIRED', 'Member must report to an active RM');
+    const { rows: [rm] } = await query(
+      `SELECT id, team_name FROM users
+        WHERE id = $1 AND role = 'rm' AND deleted_at IS NULL AND COALESCE(status, 'active') = 'active'`,
+      [effectiveReportTo],
+    );
+    if (!rm) throw new AppError(400, 'INVALID_RM', 'Member must report to an active RM');
+    derivedTeamName = rm.team_name || null;
+  }
+
   const sets = []; const vals = []; let idx = 0;
   if (daily_lead_cap !== undefined) { sets.push(`daily_lead_cap = $${++idx}`); vals.push(daily_lead_cap); }
   if (distribution_weight !== undefined) { sets.push(`distribution_weight = $${++idx}`); vals.push(distribution_weight); }
-  if (role !== undefined) { sets.push(`role = $${++idx}`); vals.push(role); }
+  if (role !== undefined) { sets.push(`role = $${++idx}`); vals.push(nextRole); }
   if (is_available !== undefined) { sets.push(`is_available = $${++idx}`); vals.push(is_available); }
-  if (team_name !== undefined) { sets.push(`team_name = $${++idx}`); vals.push(team_name); }
-  if (report_to_id !== undefined) { sets.push(`report_to_id = $${++idx}`); vals.push(report_to_id || null); }
+  if (team_name !== undefined || effectiveRole === 'member') { sets.push(`team_name = $${++idx}`); vals.push(derivedTeamName); }
+  if (report_to_id !== undefined || effectiveRole === 'rm' || effectiveRole === 'member') {
+    sets.push(`report_to_id = $${++idx}`);
+    vals.push(effectiveRole === 'rm' ? null : effectiveReportTo);
+  }
   if (sets.length === 0) throw new AppError(400, 'INVALID', 'Nothing to update');
   sets.push(`updated_at = NOW()`);
   vals.push(userId);
@@ -3623,7 +3849,7 @@ router.get('/admin/analytics/conversions', authenticate, requireRole('super_admi
     LEFT JOIN LATERAL (
       SELECT MIN(lr.created_at) AS first_remark FROM lead_remarks lr WHERE lr.lead_id = l.id
     ) lr_first ON TRUE
-    WHERE u.deleted_at IS NULL AND u.role IN ('member', 'partner')
+    WHERE u.deleted_at IS NULL AND u.role = 'member'
     GROUP BY u.id, u.full_name, u.role, u.team_name
     HAVING COUNT(l.id) > 0
     ORDER BY conversions DESC
@@ -3656,13 +3882,16 @@ router.get('/admin/analytics/conversions', authenticate, requireRole('super_admi
 router.get('/admin/meta/pages-enriched', authenticate, requireRole('super_admin'), responseCache(15000), asyncHandler(async (_req, res) => {
   const { rows } = await query(`
     SELECT p.id, p.page_id, p.page_name, p.is_active, p.created_at,
+      p.token_is_valid, p.token_last_checked, p.token_last_error,
+      p.webhook_subscribed, p.webhook_last_checked, p.forms_status,
+      p.forms_last_checked, p.stale_at, p.deactivated_at,
       (p.page_access_token IS NOT NULL AND p.page_access_token != '') AS has_token,
       (SELECT COUNT(*)::int FROM meta_forms f WHERE f.page_id = p.page_id) AS form_count,
       (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_page_id = p.page_id) AS lead_count,
       (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_page_id = p.page_id AND (COALESCE(l.meta_created_time, l.created_at) AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS today_leads,
       (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_page_id = p.page_id AND l.call_status = 'converted') AS conversions,
       (SELECT MAX(l.created_at) FROM leads l WHERE l.deleted_at IS NULL AND l.meta_page_id = p.page_id) AS last_lead_at
-    FROM meta_pages p ORDER BY p.page_name
+    FROM meta_pages p ORDER BY p.is_active DESC, p.page_name
   `);
   res.json({ success: true, data: rows });
 }));
@@ -3905,7 +4134,23 @@ router.get('/admin/meta/token-status', authenticate, requireRole('super_admin'),
   const userToken = await checkUserToken();
   const validPageCount = pageChecks.filter(page => page.status === 'valid').length;
   const invalidPageCount = pageChecks.filter(page => page.status === 'invalid').length;
-  const webhookSubscribed = pageChecks.length > 0 && pageChecks.every(page => page.webhook_subscribed);
+  const subscribedCount = pageChecks.filter(page => page.webhook_subscribed).length;
+  const webhookStatus = pageChecks.length === 0
+    ? 'not_subscribed'
+    : subscribedCount === pageChecks.length
+      ? 'subscribed'
+      : subscribedCount > 0
+        ? 'partial'
+        : 'not_subscribed';
+  const formOkCount = pageChecks.filter(page => page.forms_accessible).length;
+  const formErrorCount = pageChecks.filter(page => page.forms_error).length;
+  const leadFormsStatus = pageChecks.length === 0
+    ? 'error'
+    : formOkCount > 0 && formErrorCount > 0
+      ? 'partial_error'
+      : formOkCount > 0
+        ? (pageChecks.some(page => (page.form_count || 0) > 0) ? 'accessible' : 'accessible_empty')
+        : 'error';
   const connectivity = validPageCount > 0
     ? { connected: true, token_source: 'db_page_token', pages: validPageCount }
     : { connected: false, error: pageChecks[0]?.error || 'No valid DB Page Access Token' };
@@ -3924,10 +4169,19 @@ router.get('/admin/meta/token-status', authenticate, requireRole('super_admin'),
       error: validPageCount === 0 ? connectivity.error : null,
       pageTokens: { valid: validPageCount, invalid: invalidPageCount, missing: pageChecks.filter(page => page.status === 'missing').length, pages: pageChecks },
       userToken: { ...userToken, requiredFor: ['refresh_pages', 'adaccounts', 'campaign_sync'] },
-      webhook: { subscribed: webhookSubscribed },
-      leadForms: { accessible: pageChecks.some(page => page.forms_accessible) },
-      campaignSync: { status: userToken.status === 'valid' ? 'available' : 'degraded' },
-      warning: userToken.status !== 'valid' && validPageCount > 0 && webhookSubscribed
+      webhook: { status: webhookStatus, subscribed: webhookStatus === 'subscribed', subscribed_count: subscribedCount, total: pageChecks.length },
+      leadForms: { status: leadFormsStatus, accessible: formOkCount > 0, accessible_count: formOkCount, error_count: formErrorCount },
+      campaignSync: { status: userToken.status === 'valid' ? 'available' : 'degraded', required_user_token: true },
+      connected: validPageCount > 0,
+      warnings: [
+        ...(userToken.status !== 'valid' && validPageCount > 0 && webhookStatus === 'subscribed'
+          ? ['User token is expired or missing, but page webhook subscription is active.']
+          : []),
+        ...(leadFormsStatus === 'error' || leadFormsStatus === 'partial_error'
+          ? ['Some Meta Lead Forms could not be accessed. Check Page token permissions for leads_retrieval and pages_manage_ads.']
+          : []),
+      ],
+      warning: userToken.status !== 'valid' && validPageCount > 0 && webhookStatus === 'subscribed'
         ? 'User token is expired or missing, but page webhook subscription is active.'
         : null,
     },
@@ -3956,6 +4210,9 @@ router.get('/admin/meta/campaigns-enriched', authenticate, requireRole('super_ad
   const { rows } = await query(`
     SELECT mc.id, mc.campaign_id, mc.campaign_name, mc.internal_label, mc.ad_account_id,
       mc.is_active, mc.category, mc.description, mc.created_at,
+      mc.meta_status, mc.effective_status, mc.configured_status, mc.objective,
+      mc.buying_type, mc.start_time, mc.stop_time, mc.meta_created_time,
+      mc.meta_updated_time, mc.source, mc.last_meta_status_checked_at,
       (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_campaign_id = mc.campaign_id) AS lead_count,
       (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_campaign_id = mc.campaign_id AND (COALESCE(l.meta_created_time, l.created_at) AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS today_leads,
       (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_campaign_id = mc.campaign_id AND l.call_status = 'converted') AS conversions,
@@ -3966,7 +4223,7 @@ router.get('/admin/meta/campaigns-enriched', authenticate, requireRole('super_ad
         SELECT f2.page_id FROM meta_forms f2 WHERE f2.campaign_label = mc.internal_label LIMIT 1
       )) AS connected_page
     FROM meta_campaigns mc
-    ORDER BY mc.is_active DESC, lead_count DESC
+    ORDER BY mc.is_active DESC, mc.last_meta_status_checked_at DESC NULLS LAST, lead_count DESC
   `);
   res.json({ success: true, data: rows });
 }));

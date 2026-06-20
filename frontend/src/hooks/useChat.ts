@@ -155,7 +155,7 @@ export function useSocketConnection() {
       'message:delivered': () => enqueue('chat-messages'),
       'lead:call:created': () => enqueue('lead-calls', 'lead-communication-thread', 'chat-messages'),
       'lead:call:updated': () => enqueue('lead-calls', 'lead-communication-thread', 'chat-messages', 'leads'),
-      'notification:new': () => enqueue('chat-unread', 'chat-notifications'),
+      'notification:new': () => enqueue('chat-unread', 'chat-notifications', 'notifications', 'admin'),
       'unread:update': () => enqueue('chat-unread', 'chat-conversations'),
       'broadcast:new': () => enqueue('chat-conversations', 'chat-unread'),
       'user:online': () => enqueue('chat-contacts', 'chat-conversations'),
@@ -175,6 +175,11 @@ export function useSocketConnection() {
           toast.success(`New lead${lead.full_name ? `: ${lead.full_name}` : ''} ${tag}`, { id: `lead-${lead.id}`, duration: 4000 });
         }
       },
+      'lead:assigned': (payload: { count?: number }) => {
+        enqueue('leads', 'reports', 'notifications', 'admin', 'dist-stats');
+        toast.success(`${payload.count || 1} lead(s) assigned to you`, { id: 'lead-assigned', duration: 4000 });
+      },
+      'team:lead-assigned': () => enqueue('leads', 'reports', 'notifications', 'admin', 'dist-stats'),
 
       // Partner/member lead-request lifecycle. Admin sees ALL events; the RM
       // who owns the requester sees the events for their team only (backend

@@ -9,6 +9,12 @@ const TYPE_COLORS: Record<string, string> = {
   partner_request: 'bg-violet-100 text-violet-700',
   request_approved: 'bg-emerald-100 text-emerald-700',
   request_rejected: 'bg-rose-100 text-rose-700',
+  request_partially_fulfilled: 'bg-amber-100 text-amber-700',
+  lead_request: 'bg-indigo-100 text-indigo-700',
+  lead_request_submitted: 'bg-indigo-100 text-indigo-700',
+  rm_lead_request: 'bg-cyan-100 text-cyan-700',
+  rm_lead_request_submitted: 'bg-cyan-100 text-cyan-700',
+  lead_assigned: 'bg-blue-100 text-blue-700',
   leads_delivered: 'bg-blue-100 text-blue-700',
   rm_assigned: 'bg-sky-100 text-sky-700',
 };

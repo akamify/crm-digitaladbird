@@ -36,9 +36,14 @@ async function getPageTokenForForm(formId) {
 }
 
 async function getUserToken() {
-  const stored = await metaTokenRepository.getStoredUserToken();
-  const token = stored || config.meta.userAccessToken || process.env.META_USER_ACCESS_TOKEN || null;
-  return token ? { token, source: stored ? 'db_user_token' : 'env_user_token' } : null;
+  const stored = await metaTokenRepository.getStoredUserTokenRecord();
+  const token = stored?.token || config.meta.userAccessToken || process.env.META_USER_ACCESS_TOKEN || null;
+  return token ? {
+    token,
+    source: stored?.token ? 'db_user_token' : 'env_user_token',
+    config: stored?.config || {},
+    updated_at: stored?.updated_at || null,
+  } : null;
 }
 
 async function validateUserTokenPermissions(userToken) {
@@ -46,12 +51,23 @@ async function validateUserTokenPermissions(userToken) {
   const granted = new Set((response.data || [])
     .filter(permission => permission.status === 'granted')
     .map(permission => permission.permission));
-  const required = ['pages_show_list', 'pages_manage_metadata', 'leads_retrieval'];
+  const required = [
+    'pages_show_list',
+    'pages_manage_metadata',
+    'leads_retrieval',
+    'pages_read_engagement',
+    'ads_read',
+  ];
+  const recommended = ['pages_manage_ads', 'ads_management', 'business_management'];
   const missing = required.filter(permission => !granted.has(permission));
   if (missing.length) {
     throw new AppError(422, 'META_USER_TOKEN_PERMISSIONS_MISSING', `Meta user token is missing required permissions: ${missing.join(', ')}`, { missing_permissions: missing });
   }
-  return { valid: true, permissions: required };
+  return {
+    valid: true,
+    permissions: Array.from(granted),
+    missing_recommended: recommended.filter(permission => !granted.has(permission)),
+  };
 }
 
 async function validateAndSavePageToken({ pageId, pageName, token }) {
@@ -73,7 +89,7 @@ async function validateAndSavePageToken({ pageId, pageName, token }) {
 
 async function deriveAndSavePageTokenFromUserToken({ userToken, pageId = null }) {
   const response = await graphGet('me/accounts', {
-    fields: 'id,name,access_token,tasks', limit: 100,
+    fields: 'id,name,access_token,tasks,category', limit: 100,
   }, userToken, { tokenSource: 'user_token' });
   const accounts = response.data || [];
   const selected = pageId ? accounts.filter(page => String(page.id) === String(pageId)) : accounts;
@@ -91,6 +107,10 @@ async function deriveAndSavePageTokenFromUserToken({ userToken, pageId = null })
   return saved;
 }
 
+async function saveUserToken(token, updatedByUserId = null, metadata = {}) {
+  return metaTokenRepository.saveUserToken(token, updatedByUserId, metadata);
+}
+
 module.exports = {
   PAGE_TOKEN_MISSING_MESSAGE,
   PAGE_TOKEN_INVALID_MESSAGE,
@@ -102,7 +122,12 @@ module.exports = {
   validateUserTokenPermissions,
   validateAndSavePageToken,
   deriveAndSavePageTokenFromUserToken,
-  saveUserToken: metaTokenRepository.saveUserToken,
+  saveUserToken,
   findActivePages: metaTokenRepository.findActivePages,
   updatePageHealth: metaTokenRepository.updatePageHealth,
+  updatePageWebhookStatus: metaTokenRepository.updatePageWebhookStatus,
+  updatePageFormsStatus: metaTokenRepository.updatePageFormsStatus,
+  markPagesStaleExcept: metaTokenRepository.markPagesStaleExcept,
+  deactivatePage: metaTokenRepository.deactivatePage,
+  updateUserTokenStatus: metaTokenRepository.updateUserTokenStatus,
 };

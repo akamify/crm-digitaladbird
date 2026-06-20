@@ -20,10 +20,13 @@ export function UserEmailActions({ userId }: { userId: string }) {
       <button
         type="button"
         disabled={reset.isPending}
-        onClick={() => reset.mutate(userId, {
-          onSuccess: () => toast.success('Reset link sent.'),
-          onError: (error) => toast.error(errorMessage(error)),
-        })}
+        onClick={() => {
+          if (!confirm("Send password reset link? A secure password reset link will be sent to this user's registered email.")) return;
+          reset.mutate(userId, {
+            onSuccess: () => toast.success('Reset link sent.'),
+            onError: (error) => toast.error(errorMessage(error)),
+          });
+        }}
         className="rounded p-1.5 text-slate-400 hover:bg-orange-50 hover:text-orange-600 disabled:opacity-50"
         title="Send password reset link"
         aria-label="Send password reset link"

@@ -32,13 +32,17 @@ async function checkUserToken() {
   try {
     const response = await graphDebugToken(resolved.token, appToken);
     const data = response.data || response;
-    return {
+    const result = {
       status: data.is_valid === false ? 'expired' : 'valid',
       source: resolved.source,
       expires_at: data.expires_at ? new Date(data.expires_at * 1000).toISOString() : null,
     };
+    await metaTokens.updateUserTokenStatus(result).catch(() => {});
+    return result;
   } catch (error) {
-    return { status: error.isOAuthError ? 'expired' : 'error', source: resolved.source, error: error.message };
+    const result = { status: error.isOAuthError ? 'expired' : 'error', source: resolved.source, error: error.message };
+    await metaTokens.updateUserTokenStatus(result).catch(() => {});
+    return result;
   }
 }
 

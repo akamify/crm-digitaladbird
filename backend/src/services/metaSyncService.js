@@ -84,7 +84,21 @@ async function syncCampaigns(adAccountId) {
   const campaigns = await graphGetAll(
     `${adAccountId}/campaigns`,
     {
-      fields: 'id,name,status,objective,created_time,updated_time',
+      fields: [
+        'id',
+        'name',
+        'status',
+        'effective_status',
+        'configured_status',
+        'objective',
+        'created_time',
+        'updated_time',
+        'start_time',
+        'stop_time',
+        'buying_type',
+        'daily_budget',
+        'lifetime_budget',
+      ].join(','),
       limit: 100,
       _useUserToken: true,
     }
@@ -97,14 +111,51 @@ async function syncCampaigns(adAccountId) {
     const label = deriveCampaignLabel(c.name);
 
     const result = await query(
-      `INSERT INTO meta_campaigns(campaign_id, campaign_name, internal_label, ad_account_id, is_active)
-       VALUES($1, $2, $3, $4, $5)
+      `INSERT INTO meta_campaigns(
+         campaign_id, campaign_name, internal_label, ad_account_id, is_active,
+         meta_status, effective_status, configured_status, objective, buying_type,
+         start_time, stop_time, meta_created_time, meta_updated_time,
+         daily_budget, lifetime_budget, source, last_meta_status_checked_at, last_sync_error
+       )
+       VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'meta_api', NOW(), NULL)
        ON CONFLICT(campaign_id) DO UPDATE
          SET campaign_name = EXCLUDED.campaign_name,
-             is_active = CASE WHEN EXCLUDED.is_active THEN TRUE ELSE meta_campaigns.is_active END,
+             ad_account_id = EXCLUDED.ad_account_id,
+             is_active = EXCLUDED.is_active,
+             meta_status = EXCLUDED.meta_status,
+             effective_status = EXCLUDED.effective_status,
+             configured_status = EXCLUDED.configured_status,
+             objective = EXCLUDED.objective,
+             buying_type = EXCLUDED.buying_type,
+             start_time = EXCLUDED.start_time,
+             stop_time = EXCLUDED.stop_time,
+             meta_created_time = EXCLUDED.meta_created_time,
+             meta_updated_time = EXCLUDED.meta_updated_time,
+             daily_budget = EXCLUDED.daily_budget,
+             lifetime_budget = EXCLUDED.lifetime_budget,
+             source = 'meta_api',
+             last_meta_status_checked_at = NOW(),
+             last_sync_error = NULL,
              updated_at = NOW()
        RETURNING (xmax = 0) AS is_new`,
-      [c.id, c.name, label, adAccountId, c.status === 'ACTIVE']
+      [
+        c.id,
+        c.name,
+        label,
+        normalizeAdAccountId(adAccountId),
+        c.effective_status === 'ACTIVE',
+        c.status || null,
+        c.effective_status || null,
+        c.configured_status || null,
+        c.objective || null,
+        c.buying_type || null,
+        parseMetaDate(c.start_time),
+        parseMetaDate(c.stop_time),
+        parseMetaDate(c.created_time),
+        parseMetaDate(c.updated_time),
+        c.daily_budget ? Number(c.daily_budget) : null,
+        c.lifetime_budget ? Number(c.lifetime_budget) : null,
+      ]
     );
 
     if (result.rows[0]?.is_new) created++;
@@ -140,12 +191,11 @@ function deriveCampaignLabel(name) {
  */
 async function syncAllCampaigns() {
   const results = {};
-  const adAccounts = config.meta.adAccountIds;
+  const { rows } = await query(`SELECT account_id FROM meta_ad_accounts WHERE is_active = TRUE ORDER BY account_id`);
+  const adAccounts = rows.map(r => normalizeGraphAdAccountId(r.account_id));
 
-  if (!adAccounts.length) {
-    // Fallback: read from DB
-    const { rows } = await query(`SELECT account_id FROM meta_ad_accounts WHERE is_active = TRUE`);
-    adAccounts.push(...rows.map(r => r.account_id));
+  if (!adAccounts.length && config.meta.adAccountIds.length) {
+    adAccounts.push(...config.meta.adAccountIds.map(normalizeGraphAdAccountId));
   }
 
   for (const accId of adAccounts) {
@@ -158,6 +208,21 @@ async function syncAllCampaigns() {
   }
 
   return results;
+}
+
+function parseMetaDate(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function normalizeAdAccountId(value) {
+  return String(value || '').replace(/^act_/, '');
+}
+
+function normalizeGraphAdAccountId(value) {
+  const id = String(value || '').trim();
+  return id.startsWith('act_') ? id : `act_${id}`;
 }
 
 // ─── Lead Sync from Forms ─────────────────────────────────────────────
@@ -431,11 +496,51 @@ async function getAdAccountInfo(adAccountId) {
  */
 async function listAdAccounts() {
   const data = await graphGet('me/adaccounts', {
-    fields: 'id,name,account_id,account_status,currency',
+    fields: 'id,name,account_id,account_status,currency,business',
     limit: 100,
     _useUserToken: true,
   });
   return data.data || [];
+}
+
+async function syncAdAccounts() {
+  const accounts = await listAdAccounts();
+  let created = 0;
+  let updated = 0;
+
+  for (const account of accounts) {
+    const accountId = normalizeAdAccountId(account.account_id || account.id);
+    const result = await query(
+      `INSERT INTO meta_ad_accounts(
+         account_id, account_name, account_status, currency,
+         business_id, business_name, is_active, last_synced_at, last_sync_error
+       )
+       VALUES($1, $2, $3, $4, $5, $6, TRUE, NOW(), NULL)
+       ON CONFLICT(account_id) DO UPDATE
+         SET account_name = EXCLUDED.account_name,
+             account_status = EXCLUDED.account_status,
+             currency = EXCLUDED.currency,
+             business_id = EXCLUDED.business_id,
+             business_name = EXCLUDED.business_name,
+             is_active = TRUE,
+             last_synced_at = NOW(),
+             last_sync_error = NULL,
+             updated_at = NOW()
+       RETURNING (xmax = 0) AS is_new`,
+      [
+        accountId,
+        account.name || null,
+        account.account_status ?? null,
+        account.currency || null,
+        account.business?.id || null,
+        account.business?.name || null,
+      ]
+    );
+    if (result.rows[0]?.is_new) created++;
+    else updated++;
+  }
+
+  return { total: accounts.length, created, updated, accounts: accounts.map(account => normalizeAdAccountId(account.account_id || account.id)) };
 }
 
 // ─── Forms Discovery ──────────────────────────────────────────────────
@@ -456,6 +561,49 @@ async function listPageForms(pageId) {
     _pageId: resolvedPageId,
   });
   return data.data || [];
+}
+
+async function syncPageForms(pageId) {
+  const forms = await listPageForms(pageId);
+  let created = 0;
+  let updated = 0;
+
+  for (const form of forms) {
+    const result = await query(
+      `INSERT INTO meta_forms(
+         form_id, form_name, page_id, status, leads_count, created_time,
+         is_active, last_synced_at, last_sync_error
+       )
+       VALUES($1, $2, $3, $4, $5, $6, TRUE, NOW(), NULL)
+       ON CONFLICT(form_id) DO UPDATE
+         SET form_name = EXCLUDED.form_name,
+             page_id = EXCLUDED.page_id,
+             status = EXCLUDED.status,
+             leads_count = EXCLUDED.leads_count,
+             created_time = EXCLUDED.created_time,
+             is_active = EXCLUDED.status IS DISTINCT FROM 'ARCHIVED',
+             last_synced_at = NOW(),
+             last_sync_error = NULL
+       RETURNING (xmax = 0) AS is_new`,
+      [
+        String(form.id),
+        form.name || null,
+        String(pageId),
+        form.status || null,
+        form.leads_count ?? null,
+        parseMetaDate(form.created_time),
+      ]
+    );
+    if (result.rows[0]?.is_new) created++;
+    else updated++;
+  }
+
+  await metaTokens.updatePageFormsStatus(pageId, {
+    status: forms.length ? 'accessible' : 'accessible_empty',
+    synced: true,
+  });
+
+  return { page_id: String(pageId), total: forms.length, created, updated, forms };
 }
 
 // ─── Page Subscriptions (webhook prep) ────────────────────────────────
@@ -560,7 +708,9 @@ module.exports = {
   getCampaignStats,
   getAdAccountInfo,
   listAdAccounts,
+  syncAdAccounts,
   listPageForms,
+  syncPageForms,
   subscribePageToLeadgen,
   getPageSubscriptions,
   debugToken,

@@ -30,9 +30,14 @@ export interface User {
   daily_lead_cap?: number | null;
   distribution_weight?: number | null;
   is_available?: boolean;
-  status?: 'active' | 'blocked' | 'inactive';
+  status?: 'active' | 'blocked' | 'inactive' | 'deleted';
   is_active?: boolean;
   created_at?: string;
+  updated_at?: string;
+  deleted_at?: string | null;
+  deleted_by?: string | null;
+  delete_reason?: string | null;
+  manager_name?: string | null;
   emailWarning?: string | null;
 }
 

@@ -8,6 +8,7 @@ const { query, withTransaction } = require('../config/database');
 const { AppError } = require('../utils/errors');
 const logger = require('../utils/logger');
 const { assertLeadAssigneeUser, validateLeadAssignee } = require('./leadAssigneeValidator');
+const { notifyLeadAssigned, notifyLeadRequestResolved } = require('./notificationService');
 
 const DEFAULT_RULE_NAME = '__assignment_engine_default__';
 const CLOSED_STAGES = new Set(['won', 'lost', 'dropped']);
@@ -85,7 +86,7 @@ async function getAvailableMembers(options = {}, client = null) {
   const runner = client || { query };
   const params = [];
   let where = `
-    u.role IN ('member', 'partner')
+    u.role = 'member'
     AND u.status = 'active'
     AND u.deleted_at IS NULL
     AND COALESCE(u.is_available, TRUE) = TRUE
@@ -201,15 +202,7 @@ async function insertAssignmentHistory(client, {
 }
 
 async function notifyAssigned(client, memberId, count, metadata = {}) {
-  try {
-    await client.query(
-      `INSERT INTO user_notifications(user_id, type, title, body, metadata)
-       VALUES ($1, 'lead_assigned', 'Lead assigned', $2, $3)`,
-      [memberId, count === 1 ? '1 lead has been assigned to you' : `${count} leads have been assigned to you`, JSON.stringify(metadata)],
-    );
-  } catch (_) {
-    // user_notifications is optional in local/old schemas.
-  }
+  await notifyLeadAssigned(memberId, count, metadata, client);
 }
 
 async function assignLeadToMember(input) {
@@ -459,6 +452,15 @@ async function runApprovedRequestFulfillment({ limit = 100, actor = null } = {})
         await notifyAssigned(client, req.user_id, filled, { request_id: req.id, assignment_type: 'request_fulfillment' });
       }
       const status = await markRequestAfterFulfillment(client, req, filled);
+      if (filled || status.status === 'fulfilled') {
+        await notifyLeadRequestResolved({
+          requestId: req.id,
+          requesterId: req.user_id,
+          quantity: approved,
+          assigned: status.fulfilled,
+          status: status.status,
+        }, client);
+      }
       assigned += filled;
       requestResults.push({ requestId: req.id, assigned: filled, status: status.status, remaining: status.remaining });
     }
@@ -475,6 +477,7 @@ async function runAutoAssignment({ limit = 100, reason = 'auto_round_robin', act
     const leads = await pickAssignableLeads(client, { limit });
     let assigned = 0;
     const results = [];
+    const assignedByMember = new Map();
     for (const lead of leads) {
       const member = await pickRoundRobinMember(client, members);
       if (!member) break;
@@ -496,7 +499,11 @@ async function runAutoAssignment({ limit = 100, reason = 'auto_round_robin', act
         reason,
       });
       assigned++;
+      assignedByMember.set(member.id, (assignedByMember.get(member.id) || 0) + 1);
       results.push({ leadId: lead.id, assigned: true, memberId: member.id });
+    }
+    for (const [memberId, count] of assignedByMember.entries()) {
+      await notifyAssigned(client, memberId, count, { assignment_type: 'auto', reason });
     }
     return { assigned, scanned: leads.length, results };
   });
@@ -592,6 +599,11 @@ async function runAutoReassignment({ limit = 50, actor = null, bypassWindow = fa
         assignmentType: 'auto_reassign',
         previousUserId: lead.assigned_to_user_id,
         reason: `inactive_for_${settings.reassignAfterHours}_hours`,
+      });
+      await notifyAssigned(client, next.id, 1, {
+        lead_id: lead.id,
+        assignment_type: 'auto_reassign',
+        previous_user_id: lead.assigned_to_user_id,
       });
       reassigned++;
       results.push({ leadId: lead.id, reassigned: true, previousUserId: lead.assigned_to_user_id, memberId: next.id });

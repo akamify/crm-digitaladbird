@@ -19,6 +19,7 @@
 const { query, withTransaction } = require('../config/database');
 const logger = require('../utils/logger');
 const { assertLeadAssigneeUser } = require('./leadAssigneeValidator');
+const { notifyLeadAssigned, notifyLeadRequestResolved } = require('./notificationService');
 
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
@@ -238,8 +239,18 @@ async function fulfillMemberRequest(requestId) {
     );
 
     if (assigned > 0) {
+      await notifyLeadAssigned(req.user_id, assigned, { request_id: req.id, assignment_type: 'lead_request' }, client);
       logger.info({ requestId, userId: req.user_id, assigned, totalAssigned, requested: req.quantity },
         '[RequestEngine] Member request auto-assigned from queue');
+    }
+    if (assigned > 0 || status === 'fulfilled') {
+      await notifyLeadRequestResolved({
+        requestId: req.id,
+        requesterId: req.user_id,
+        quantity: req.quantity,
+        assigned: totalAssigned,
+        status,
+      }, client);
     }
 
     return { filled: assigned, totalAssigned, requested: req.quantity, status };
@@ -282,7 +293,7 @@ async function distributeRoundRobin() {
         FROM lead_requests lr
         JOIN users u ON u.id = lr.user_id
        WHERE lr.status = 'pending'
-         AND u.role IN ('member', 'partner')
+         AND u.role = 'member'
          AND u.status = 'active' AND u.deleted_at IS NULL
          AND COALESCE(u.is_available, TRUE) = TRUE
          AND COALESCE(u.distribution_blocked, FALSE) = FALSE
@@ -359,14 +370,16 @@ async function distributeRoundRobin() {
         // Bookkeep per-user receipts for the post-commit broadcast
         if (!userAssignments.has(req.user_id)) {
           userAssignments.set(req.user_id, {
-            user_id: req.user_id,
-            partner_name: req.partner_name,
-            rm_id: req.rm_id,
-            request_id: req.id,
-            lead_ids: [],
-          });
-        }
-        userAssignments.get(req.user_id).lead_ids.push(lead.id);
+          user_id: req.user_id,
+          partner_name: req.partner_name,
+          rm_id: req.rm_id,
+          request_id: req.id,
+          quantity: req.quantity,
+          previous_assigned: req.quantity - req.remaining,
+          lead_ids: [],
+        });
+      }
+      userAssignments.get(req.user_id).lead_ids.push(lead.id);
 
         if (req.remaining === 0) {
           // Request fully filled — remove from queue + mark fulfilled
@@ -403,6 +416,22 @@ async function distributeRoundRobin() {
     }
 
     // 4. Post-commit broadcasts (after transaction returns)
+    for (const rec of userAssignments.values()) {
+      await notifyLeadAssigned(rec.user_id, rec.lead_ids.length, {
+        request_id: rec.request_id,
+        assignment_type: 'lead_request_round_robin',
+        lead_ids: rec.lead_ids,
+      }, client);
+      await notifyLeadRequestResolved({
+        requestId: rec.request_id,
+        requesterId: rec.user_id,
+        quantity: rec.quantity,
+        assigned: rec.previous_assigned + rec.lead_ids.length,
+        status: rec.previous_assigned + rec.lead_ids.length >= rec.quantity ? 'fulfilled' : 'pending',
+      }, client);
+    }
+
+    // 5. Post-commit broadcasts (after transaction returns)
     // Stash them on the client so the wrapper can fire after COMMIT.
     client._postCommitEmits = () => {
       for (const rec of userAssignments.values()) {

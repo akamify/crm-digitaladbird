@@ -1,14 +1,14 @@
 'use client';
 import { useState, useMemo } from 'react';
-import { UserPlus, Pencil, Trash2, Users as UsersIcon, Power } from 'lucide-react';
-import toast from 'react-hot-toast';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { UserPlus, Users as UsersIcon, Eye, UserRound } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Skeleton, EmptyState } from '@/components/ui/Modal';
 import { UserFormModal } from '@/components/users/UserFormModal';
-import { UserEmailActions } from '@/components/users/UserEmailActions';
-import { useUsers, useUpdateUser, useDeleteUser } from '@/hooks/useUsers';
+import { useUsers } from '@/hooks/useUsers';
 import { useAuth } from '@/lib/auth';
 import { fmtRelative, fmtDate, humanize, initials, clsx } from '@/lib/format';
 import type { User } from '@/types';
@@ -22,10 +22,9 @@ export default function UsersPage() {
 }
 
 function UsersInner() {
+  const router = useRouter();
   const { user } = useAuth();
   const { data: users, isLoading } = useUsers();
-  const update = useUpdateUser();
-  const del    = useDeleteUser();
 
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
@@ -46,7 +45,6 @@ function UsersInner() {
 
   const rms = useMemo(() => (users ?? []).filter(u => u.role === 'rm' || u.role === 'super_admin'), [users]);
   const canManage = user?.role === 'super_admin';
-  const canEmailTeam = user?.role === 'rm';
 
   return (
     <div className="space-y-4">
@@ -84,12 +82,12 @@ function UsersInner() {
                   <th className="px-4 py-2.5 font-medium text-right">Cap</th>
                   <th className="px-4 py-2.5 font-medium text-right">Weight</th>
                   <th className="px-4 py-2.5 font-medium">Joined</th>
-                  {(canManage || canEmailTeam) && <th className="px-4 py-2.5 font-medium text-right">Actions</th>}
+                  <th className="px-4 py-2.5 font-medium text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map(u => (
-                  <tr key={u.id} className="table-row">
+                  <tr key={u.id} className="table-row cursor-pointer" onClick={() => router.push(`/dashboard/admin/users/${u.id}`)}>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         <span className={clsx(
@@ -113,48 +111,13 @@ function UsersInner() {
                     <td className="px-4 py-3 text-right tabular-nums text-slate-700">{u.daily_lead_cap ?? '∞'}</td>
                     <td className="px-4 py-3 text-right tabular-nums text-slate-700">{u.distribution_weight ?? 1}</td>
                     <td className="px-4 py-3 text-xs text-slate-500" title={fmtDate(u.created_at)}>{fmtRelative(u.created_at)}</td>
-                    {(canManage || canEmailTeam) && (
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-end gap-1">
-                          {(canManage || u.report_to_id === user?.id) && <UserEmailActions userId={u.id} />}
-                          {canManage && <>
-                          <button
-                            onClick={() => update.mutate({ id: u.id, is_available: !u.is_available }, {
-                              onSuccess: () => toast.success(`Marked ${!u.is_available ? 'available' : 'unavailable'}`),
-                              onError:   () => toast.error('Update failed'),
-                            })}
-                            className={clsx(
-                              'inline-flex h-8 w-8 items-center justify-center rounded-md transition',
-                              u.is_available ? 'text-emerald-600 hover:bg-emerald-50' : 'text-slate-400 hover:bg-slate-100',
-                            )}
-                            title={u.is_available ? 'Available for leads' : 'Unavailable'}
-                          >
-                            <Power className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => { setEditing(u); setOpen(true); }}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100"
-                            title="Edit"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => {
-                              if (!confirm(`Deactivate ${u.full_name}? Their account will no longer receive leads.`)) return;
-                              del.mutate(u.id, {
-                                onSuccess: () => toast.success('User deactivated'),
-                                onError:   () => toast.error('Could not deactivate'),
-                              });
-                            }}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-rose-500 hover:bg-rose-50"
-                            title="Deactivate"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                          </>}
-                        </div>
-                      </td>
-                    )}
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-2">
+                        <Link onClick={(e) => e.stopPropagation()} href={`/dashboard/admin/users/${u.id}`} className="btn-outline inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs">
+                          <UserRound className="h-3.5 w-3.5" /> Profile
+                        </Link>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>

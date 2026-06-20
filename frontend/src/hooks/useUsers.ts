@@ -1,6 +1,6 @@
 'use client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api';
+import { apiGet, apiPost, apiPatch } from '@/lib/api';
 import type { User, Role } from '@/types';
 
 export function useUsers() {
@@ -21,7 +21,6 @@ export interface CreateUserInput {
   full_name: string;
   email: string;
   phone: string;
-  cp_id: string;
   role: Role;
   report_to_id?: string | null;
   team_name?: string | null;
@@ -50,8 +49,15 @@ export function useUpdateUser() {
 export function useDeleteUser() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => apiDelete(`/users/${id}`),
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) => apiPost(`/users/${id}/delete`, { reason }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  });
+}
+
+export function useDeletedUsers() {
+  return useQuery({
+    queryKey: ['users', 'deleted'],
+    queryFn: () => apiGet<User[]>('/users/deleted'),
   });
 }
 
