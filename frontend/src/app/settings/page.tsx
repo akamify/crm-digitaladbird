@@ -1159,7 +1159,7 @@ function SheetsTab() {
       </div>
 
       {/* Dynamic credentials management — admin can upload JSON, switch sheets, no SSH/.env needed */}
-      <GoogleSheetRoutingPanel />
+      <SheetCredentialsManager />
 
       {isLoading ? <Skeleton className="h-64" /> : (
         <>
@@ -1304,8 +1304,16 @@ function GoogleSheetRoutingPanel() {
   }
 
   function testCategory(category: 'trader' | 'partner' | 'unknown') {
-    testRouting.mutate({ category }, {
-      onSuccess: (r) => toast.success(`${r.category_label} → ${r.sheet_name}${r.sheet_exists ? ' (exists)' : ' (missing)'}`),
+    testRouting.mutate({
+      default_sheet_name: form.default_sheet_name,
+      trader_sheet_name: category === 'trader' ? form.trader_sheet_name : form.default_sheet_name,
+      partner_sheet_name: category === 'partner' ? form.partner_sheet_name : form.default_sheet_name,
+      unknown_sheet_name: category === 'unknown' ? form.unknown_sheet_name : form.default_sheet_name,
+    }, {
+      onSuccess: (r) => {
+        const target = r.results?.[category === 'trader' ? 'trader' : category === 'partner' ? 'partner' : 'unknown'];
+        toast.success(`${target?.sheet_name || category} ${target?.exists ? '(exists)' : '(missing)'}`);
+      },
       onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Routing test failed'),
     });
   }
@@ -1381,7 +1389,7 @@ function GoogleSheetRoutingPanel() {
  * Admin uploads / pastes Google Service-Account JSON directly, switches active sheet,
  * tests / syncs / previews — everything without SSH or .env editing.
  */
-function SheetCredentialsManager() {
+function LegacySheetCredentialsManager() {
   const list = useSheetConfigs();
   const conn = useSheetsConnectivity();
   const stats = useSheetStats();
@@ -1664,6 +1672,62 @@ function SheetCredentialsManager() {
   );
 }
 
+function SheetCredentialsManager() {
+  const routing = useGoogleSheetRoutingSettings();
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50/60 to-white p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <Sheet className="h-4 w-4 text-emerald-600" />
+        <h2 className="text-sm font-semibold text-slate-900">Credentials & Sheets</h2>
+        <span className={clsx('chip text-[10px]', routing.data?.connected ? 'chip-emerald' : 'chip-amber')}>
+          {routing.data?.connected ? `Live · source: ${routing.data?.source || '-'}` : routing.isLoading ? 'Checking...' : 'Not connected'}
+        </span>
+        <div className="ml-auto flex items-center gap-2">
+          <Button size="sm" leftIcon={<Pencil className="h-3.5 w-3.5" />} onClick={() => setOpen(true)}>
+            Update Sheet Names
+          </Button>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-dashed border-emerald-200 bg-white px-4 py-4">
+        <p className="text-sm text-slate-700">
+          Google credentials are managed on the server. Update sheet tab names below to control where leads are synced.
+        </p>
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">Connected</div>
+            <div className="text-xs text-slate-700">{routing.data?.connected ? 'Yes' : 'No'}</div>
+          </div>
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">Source</div>
+            <div className="text-xs text-slate-700">{routing.data?.source || 'Not set'}</div>
+          </div>
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">Spreadsheet ID</div>
+            <div className="text-xs font-mono text-slate-700 truncate">{routing.data?.spreadsheet_id || 'Not set'}</div>
+          </div>
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">Current Default Sheet Name</div>
+            <div className="text-xs text-slate-700">{routing.data?.default_sheet_name || 'Leads'}</div>
+          </div>
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">Service Account Email</div>
+            <div className="text-xs font-mono text-slate-700 truncate">{routing.data?.service_account_email || 'Not set'}</div>
+          </div>
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">Key Path</div>
+            <div className="text-xs font-mono text-slate-700 truncate">{routing.data?.key_path || 'Not set'}</div>
+          </div>
+        </div>
+      </div>
+
+      <SheetCredentialsModal open={open} onClose={() => setOpen(false)} target={null} defaultPurpose="traders" />
+    </div>
+  );
+}
+
 function SheetImportLogsModal({ open, onClose, config }: { open: boolean; onClose: () => void; config: SheetConfigPublic | null }) {
   const logs = useSheetImportLogs(open && config ? config.id : null, 25);
   return (
@@ -1728,7 +1792,103 @@ function SheetImportLogsModal({ open, onClose, config }: { open: boolean; onClos
   );
 }
 
-function SheetCredentialsModal({ open, onClose, target, defaultPurpose = 'traders' }: { open: boolean; onClose: () => void; target: SheetConfigPublic | null; defaultPurpose?: 'traders' | 'partners' }) {
+function SheetCredentialsModal({ open, onClose, target: _target, defaultPurpose: _defaultPurpose = 'traders' }: { open: boolean; onClose: () => void; target: SheetConfigPublic | null; defaultPurpose?: 'traders' | 'partners' }) {
+  const routing = useGoogleSheetRoutingSettings();
+  const updateRouting = useUpdateGoogleSheetRoutingSettings();
+  const testRouting = useTestGoogleSheetRouting();
+  const [form, setForm] = useState({
+    default_sheet_name: 'Leads',
+    trader_sheet_name: 'Trader Leads',
+    partner_sheet_name: 'Partner Leads',
+    unknown_sheet_name: 'Unknown Leads',
+  });
+
+  React.useEffect(() => {
+    if (!open || !routing.data) return;
+    setForm({
+      default_sheet_name: routing.data.default_sheet_name || 'Leads',
+      trader_sheet_name: routing.data.trader_sheet_name || '',
+      partner_sheet_name: routing.data.partner_sheet_name || '',
+      unknown_sheet_name: routing.data.unknown_sheet_name || routing.data.default_sheet_name || 'Leads',
+    });
+  }, [open, routing.data]);
+
+  function handleTest() {
+    testRouting.mutate(form, {
+      onSuccess: (result) => {
+        const rows = Object.values(result.results || {});
+        const missing = rows.filter((row) => !row.exists);
+        if (missing.length) {
+          toast.success('Sheet test completed. Some tabs are missing.');
+        } else {
+          toast.success('All sheet tabs found.');
+        }
+      },
+      onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string }, message?: string } } })?.response?.data?.error?.message || (e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Sheet test failed'),
+    });
+  }
+
+  function handleSave() {
+    updateRouting.mutate(form, {
+      onSuccess: () => {
+        toast.success('Google Sheet names saved successfully.');
+        onClose();
+      },
+      onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string }, message?: string } } })?.response?.data?.error?.message || (e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to save sheet names'),
+    });
+  }
+
+  const testResults = testRouting.data?.results || null;
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Update Google Sheet Names"
+      size="md"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="outline" onClick={handleTest} loading={testRouting.isPending}>Test</Button>
+          <Button onClick={handleSave} loading={updateRouting.isPending}>Save</Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <Input label="Default Sheet Name" value={form.default_sheet_name} onChange={(e) => setForm((s) => ({ ...s, default_sheet_name: e.target.value }))} />
+        <Input label="Trader Leads Sheet Name" value={form.trader_sheet_name} onChange={(e) => setForm((s) => ({ ...s, trader_sheet_name: e.target.value }))} />
+        <Input label="Partner Leads Sheet Name" value={form.partner_sheet_name} onChange={(e) => setForm((s) => ({ ...s, partner_sheet_name: e.target.value }))} />
+        <Input label="Unknown Leads Sheet Name" value={form.unknown_sheet_name} onChange={(e) => setForm((s) => ({ ...s, unknown_sheet_name: e.target.value }))} />
+
+        {testResults && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <div className="text-xs font-semibold text-slate-900">Sheet Test Results</div>
+            <div className="mt-2 space-y-2 text-xs">
+              {([
+                ['Default', testResults.default],
+                ['Trader', testResults.trader],
+                ['Partner', testResults.partner],
+                ['Unknown', testResults.unknown],
+              ] as const).map(([label, result]) => (
+                <div key={label} className="flex items-center justify-between rounded-md bg-white px-3 py-2">
+                  <div>
+                    <div className="font-medium text-slate-900">{label}</div>
+                    <div className="text-slate-500">{result.sheet_name}</div>
+                  </div>
+                  <span className={clsx('chip text-[10px]', result.exists ? 'chip-emerald' : 'chip-amber')}>
+                    {result.exists ? 'Found' : 'Missing'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+function LegacySheetCredentialsModal({ open, onClose, target, defaultPurpose = 'traders' }: { open: boolean; onClose: () => void; target: SheetConfigPublic | null; defaultPurpose?: 'traders' | 'partners' }) {
   const create = useCreateSheetConfig();
   const update = useUpdateSheetConfig();
   const [label, setLabel] = useState('');

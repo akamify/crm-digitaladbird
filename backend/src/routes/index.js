@@ -3733,7 +3733,16 @@ router.get('/admin/google-sheets/settings', authenticate, requireRole('super_adm
 
 router.patch('/admin/google-sheets/settings', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
   const data = await sheetsSvc.updateSheetRoutingSettings(req.body || {});
-  res.json({ success: true, data, message: 'Google Sheet settings saved successfully.' });
+  res.json({
+    success: true,
+    data: {
+      default_sheet_name: data.default_sheet_name,
+      trader_sheet_name: data.trader_sheet_name,
+      partner_sheet_name: data.partner_sheet_name,
+      unknown_sheet_name: data.unknown_sheet_name,
+    },
+    message: 'Google Sheet names saved successfully.',
+  });
 }));
 
 router.post('/admin/google-sheets/test-connection', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
@@ -3742,15 +3751,20 @@ router.post('/admin/google-sheets/test-connection', authenticate, requireRole('s
 }));
 
 router.post('/admin/google-sheets/test-sheet-routing', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
-  const category = String(req.body?.category || 'unknown').toLowerCase();
-  const data = await sheetsSvc.testSheetRouting(category);
-  res.json({ success: true, data: { ...data, category_label: data.category === 'trader' ? 'Trader Lead' : data.category === 'partner' ? 'Partner Lead' : 'Unknown' } });
-}));
-
-router.post('/admin/google-sheets/test-routing', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
-  const category = String(req.body?.category || 'unknown').toLowerCase();
-  const data = await sheetsSvc.testSheetRouting(category);
-  res.json({ success: true, data: { ...data, category_label: data.category === 'trader' ? 'Trader Lead' : data.category === 'partner' ? 'Partner Lead' : 'Unknown' } });
+  let data;
+  try {
+    data = await sheetsSvc.testSheetRouting(req.body || {});
+  } catch (error) {
+    if (/No active Google Sheets config|No Google credentials configured|No active Google Sheets configuration/i.test(error.message || '')) {
+      return res.status(400).json({
+        success: false,
+        code: 'GOOGLE_SHEETS_NOT_CONFIGURED',
+        message: 'Google Sheets is not configured on the server.',
+      });
+    }
+    throw error;
+  }
+  res.json({ success: true, ...data });
 }));
 
 router.post('/admin/google-sheets/create-missing-tabs', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {

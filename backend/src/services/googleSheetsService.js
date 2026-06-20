@@ -801,13 +801,6 @@ async function updateSheetRoutingSettings(patch = {}) {
   });
   const next = { ...baseConfig };
 
-  if (patch.spreadsheet_id !== undefined) {
-    const nextSpreadsheetId = String(patch.spreadsheet_id || '').trim();
-    if (!nextSpreadsheetId) {
-      throw new Error('Spreadsheet ID is required.');
-    }
-    next.sheet_id = nextSpreadsheetId;
-  }
   if (patch.default_sheet_name !== undefined) next.default_sheet_name = sanitizeSheetName(patch.default_sheet_name) || 'Leads';
   if (patch.trader_sheet_name !== undefined) next.trader_sheet_name = sanitizeSheetName(patch.trader_sheet_name || '');
   if (patch.partner_sheet_name !== undefined) next.partner_sheet_name = sanitizeSheetName(patch.partner_sheet_name || '');
@@ -822,11 +815,14 @@ async function updateSheetRoutingSettings(patch = {}) {
     if (!next.trader_sheet_name) throw new Error('Trader Lead Sheet Name is required when category routing is enabled.');
     if (!next.partner_sheet_name) throw new Error('Partner Lead Sheet Name is required when category routing is enabled.');
   }
+  if (!next.unknown_sheet_name) {
+    next.unknown_sheet_name = next.default_sheet_name;
+  }
 
   const merged = {
     ...(base?.config || {}),
     ...next,
-    sheet_id: next.sheet_id || fallback.sheet_id || null,
+    sheet_id: (base?.config?.sheet_id || fallback.sheet_id || null),
     default_sheet_name: next.default_sheet_name,
     trader_sheet_name: next.trader_sheet_name || null,
     partner_sheet_name: next.partner_sheet_name || null,
@@ -841,31 +837,51 @@ async function updateSheetRoutingSettings(patch = {}) {
   return getSheetRoutingSettings();
 }
 
-async function testSheetRouting(category = 'unknown') {
+async function testSheetRouting(input = 'unknown') {
   const c = await initClients();
-  const settings = await getSheetRoutingSettings();
-  const resolved = resolveLeadSheetName({
-    lead: { category },
-    config: {
-      sheet_name: settings.default_sheet_name,
-      default_sheet_name: settings.default_sheet_name,
-      trader_sheet_name: settings.trader_sheet_name,
-      partner_sheet_name: settings.partner_sheet_name,
-      unknown_sheet_name: settings.unknown_sheet_name,
-      auto_create_missing_sheets: settings.auto_create_missing_sheets,
-      category_sheet_routing_enabled: settings.category_sheet_routing_enabled,
-    },
-  });
   const meta = await c.sheets.spreadsheets.get({
     spreadsheetId: c.sheetId,
     fields: 'sheets.properties.title',
   });
-  const exists = (meta.data.sheets || []).some((sheet) => sheet.properties?.title === resolved.sheetName);
+  const existingTitles = new Set((meta.data.sheets || []).map((sheet) => sheet.properties?.title).filter(Boolean));
+
+  if (typeof input === 'string') {
+    const settings = await getSheetRoutingSettings();
+    const resolved = resolveLeadSheetName({
+      lead: { category: input },
+      config: {
+        sheet_name: settings.default_sheet_name,
+        default_sheet_name: settings.default_sheet_name,
+        trader_sheet_name: settings.trader_sheet_name,
+        partner_sheet_name: settings.partner_sheet_name,
+        unknown_sheet_name: settings.unknown_sheet_name,
+        auto_create_missing_sheets: settings.auto_create_missing_sheets,
+        category_sheet_routing_enabled: settings.category_sheet_routing_enabled,
+      },
+    });
+    const exists = existingTitles.has(resolved.sheetName);
+    return {
+      category: normalizeCategory(input),
+      sheet_name: resolved.sheetName,
+      sheet_exists: exists,
+      spreadsheet_id: c.sheetId,
+    };
+  }
+
+  const defaultSheet = sanitizeSheetName(input.default_sheet_name || '') || 'Leads';
+  const traderSheet = sanitizeSheetName(input.trader_sheet_name || '') || defaultSheet;
+  const partnerSheet = sanitizeSheetName(input.partner_sheet_name || '') || defaultSheet;
+  const unknownSheet = sanitizeSheetName(input.unknown_sheet_name || '') || defaultSheet;
+
   return {
-    category: normalizeCategory(category),
-    sheet_name: resolved.sheetName,
-    sheet_exists: exists,
     spreadsheet_id: c.sheetId,
+    results: {
+      default: { sheet_name: defaultSheet, exists: existingTitles.has(defaultSheet) },
+      trader: { sheet_name: traderSheet, exists: existingTitles.has(traderSheet) },
+      partner: { sheet_name: partnerSheet, exists: existingTitles.has(partnerSheet) },
+      unknown: { sheet_name: unknownSheet, exists: existingTitles.has(unknownSheet) },
+    },
+    message: 'Sheet name test completed.',
   };
 }
 

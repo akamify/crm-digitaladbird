@@ -565,8 +565,22 @@ export function useUpdateGoogleSheetRoutingSettings() {
 
 export function useTestGoogleSheetRouting() {
   return useMutation({
-    mutationFn: ({ category }: { category: 'trader' | 'partner' | 'unknown' }) =>
-      apiPost<{ category: string; category_label: string; sheet_name: string; sheet_exists: boolean; spreadsheet_id: string | null }>('/admin/google-sheets/test-routing', { category }),
+    mutationFn: (body: {
+      default_sheet_name: string;
+      trader_sheet_name: string;
+      partner_sheet_name: string;
+      unknown_sheet_name: string;
+    }) =>
+      apiPost<{
+        spreadsheet_id: string | null;
+        results: {
+          default: { sheet_name: string; exists: boolean };
+          trader: { sheet_name: string; exists: boolean };
+          partner: { sheet_name: string; exists: boolean };
+          unknown: { sheet_name: string; exists: boolean };
+        };
+        message: string;
+      }>('/admin/google-sheets/test-sheet-routing', body),
   });
 }
 
