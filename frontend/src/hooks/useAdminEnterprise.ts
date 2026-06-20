@@ -186,6 +186,17 @@ export interface SheetsConnectivity {
   error: string | null;
 }
 
+export interface GoogleSheetRoutingSettings {
+  config_id: string | null;
+  spreadsheet_id: string | null;
+  default_sheet_name: string;
+  trader_sheet_name: string;
+  partner_sheet_name: string;
+  unknown_sheet_name: string;
+  auto_create_missing_sheets: boolean;
+  category_sheet_routing_enabled: boolean;
+}
+
 export function useSheetConfigs() {
   return useQuery({
     queryKey: ['admin', 'sheet-configs'],
@@ -523,6 +534,57 @@ export interface MetaPageEnriched {
   connection_status?: 'active' | 'discovered' | 'deactivated' | 'stale';
   selected_at?: string | null; selected_by_user_id?: string | null;
   deactivation_reason?: string | null;
+}
+
+export function useGoogleSheetRoutingSettings() {
+  return useQuery({
+    queryKey: ['admin', 'google-sheet-routing-settings'],
+    queryFn: () => apiGet<GoogleSheetRoutingSettings>('/admin/google-sheets/settings'),
+    staleTime: 15_000,
+  });
+}
+
+export function useUpdateGoogleSheetRoutingSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Partial<GoogleSheetRoutingSettings>) => apiPatch<GoogleSheetRoutingSettings>('/admin/google-sheets/settings', body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'google-sheet-routing-settings'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'sheet-configs'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'sheets-connectivity'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'sheets-enriched'] });
+    },
+  });
+}
+
+export function useTestGoogleSheetRouting() {
+  return useMutation({
+    mutationFn: ({ category }: { category: 'trader' | 'partner' | 'unknown' }) =>
+      apiPost<{ category: string; category_label: string; sheet_name: string; sheet_exists: boolean; spreadsheet_id: string | null }>('/admin/google-sheets/test-sheet-routing', { category }),
+  });
+}
+
+export function useCreateMissingGoogleSheetTabs() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiPost<{ created_or_verified: string[] }>('/admin/google-sheets/create-missing-tabs', {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'google-sheet-routing-settings'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'sheets-connectivity'] });
+    },
+  });
+}
+
+export function useExportLeadsByCategoryToSheets() {
+  return useMutation({
+    mutationFn: (body: {
+      mode: 'dry_run' | 'export_all' | 'not_synced';
+      category?: 'all' | 'trader' | 'partner' | 'unknown';
+      date_from?: string | null;
+      date_to?: string | null;
+      skip_duplicates?: boolean;
+    }) => apiPost<{ mode: string; summary: Record<string, { sheet_name: string; count: number }> }>('/admin/google-sheets/export-leads-by-category', body),
+  });
 }
 
 export function useUpdateCampaignCategory() {

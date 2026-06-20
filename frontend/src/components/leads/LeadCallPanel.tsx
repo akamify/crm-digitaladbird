@@ -5,7 +5,7 @@ import { Loader2, PhoneCall, Plus } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Modal, Skeleton, EmptyState } from '@/components/ui/Modal';
 import { fmtDate, fmtRelative } from '@/lib/format';
-import { triggerPhoneCall } from '@/lib/phone';
+import { buildTelHref, triggerPhoneCall } from '@/lib/phone';
 import type { LeadCallLog } from '@/hooks/useLeadCommunication';
 
 interface Props {
@@ -26,10 +26,11 @@ export function LeadCallPanel({ phone, calls, loading, disabled, starting, loggi
   const [notes, setNotes] = useState('');
   const [followup, setFollowup] = useState('');
   const providerMode = process.env.NEXT_PUBLIC_CALL_PROVIDER || 'disabled';
+  const telHref = buildTelHref(phone);
 
   async function startCall() {
     try {
-      if (!phone || !triggerPhoneCall(phone)) {
+      if (!telHref || !triggerPhoneCall(phone)) {
         toast.error('This lead does not have a valid phone number.');
         return;
       }
@@ -69,7 +70,7 @@ export function LeadCallPanel({ phone, calls, loading, disabled, starting, loggi
       <div className="flex flex-wrap gap-2">
         <button
           className="btn-primary inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"
-          disabled={disabled || !phone || starting}
+          disabled={disabled || !telHref || starting}
           onClick={startCall}
         >
           {starting ? <Loader2 className="h-4 w-4 animate-spin" /> : <PhoneCall className="h-4 w-4" />}

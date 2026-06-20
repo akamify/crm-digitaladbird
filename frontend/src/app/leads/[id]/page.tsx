@@ -20,7 +20,7 @@ import { useLead, useLockLead, useUnlockLead } from '@/hooks/useLeads';
 import { useAuth } from '@/lib/auth';
 import { useUpdateLeadCategory } from '@/hooks/useAdminEnterprise';
 import { fmtDate, fmtRelative, fmtPhone, humanize, stageChip, clsx } from '@/lib/format';
-import { triggerPhoneCall } from '@/lib/phone';
+import { buildTelHref, triggerPhoneCall } from '@/lib/phone';
 
 export default function LeadDetailPage() {
   return (
@@ -66,6 +66,7 @@ function LeadDetailInner() {
   const lockedByOther = !!lead.locked_until && new Date(lead.locked_until) > new Date() && !lockedByMe;
   const canReassign  = user.role === 'super_admin' || user.role === 'rm';
   const canEditCategory = user.role === 'super_admin' || user.role === 'admin';
+  const telHref = buildTelHref(lead.phone);
 
   return (
     <div className="space-y-6">
@@ -167,15 +168,25 @@ function LeadDetailInner() {
               variant="outline" leftIcon={<MessageCircle className="h-4 w-4" />}
               onClick={() => router.push(`/chat?leadId=${id}`)}
             >Chat</Button>
-            <Button
-              variant="outline" leftIcon={<Phone className="h-4 w-4" />}
-              disabled={!lead.phone}
-              onClick={() => {
-                if (!triggerPhoneCall(lead.phone)) {
-                  toast.error('This lead does not have a valid phone number.');
-                }
-              }}
-            >Call</Button>
+            {telHref ? (
+              <a
+                href={telHref}
+                onClick={() => {
+                  if (!triggerPhoneCall(lead.phone)) {
+                    toast.error('This lead does not have a valid phone number.');
+                  }
+                }}
+                className="btn-outline inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-sm font-medium transition"
+              >
+                <Phone className="h-4 w-4" />
+                <span>Call</span>
+              </a>
+            ) : (
+              <Button
+                variant="outline" leftIcon={<Phone className="h-4 w-4" />}
+                disabled
+              >Call</Button>
+            )}
             <Button
               variant="primary" leftIcon={<MessageSquarePlus className="h-4 w-4" />}
               onClick={() => setRemarkOpen(true)}

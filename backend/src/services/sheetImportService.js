@@ -25,6 +25,7 @@ const assignmentEngine = require('./leadAssignmentEngine');
 const { onLeadCreated } = require('./leadEventService');
 const { isDistributionActive } = require('./distributionScheduler');
 const { resolveLeadCategory, resolveAndPersistLeadCategory } = require('./leadCategory/leadCategoryResolver');
+const { normalizeCategory, sanitizeSheetName } = require('./googleSheets/googleSheetNameResolver');
 
 const SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly'];
 
@@ -222,6 +223,10 @@ async function importFromConfig(opts) {
   );
   if (!cfg) throw new Error('Config not found');
   if (!cfg.secrets_encrypted) throw new Error('No credentials on this config');
+  const configSheetName = sanitizeSheetName(cfg.config?.sheet_name || 'Sheet1');
+  const traderSheetName = sanitizeSheetName(cfg.config?.trader_sheet_name || '');
+  const partnerSheetName = sanitizeSheetName(cfg.config?.partner_sheet_name || '');
+  const unknownSheetName = sanitizeSheetName(cfg.config?.unknown_sheet_name || '');
 
   // Create the log row immediately so failures are still tracked
   const { rows: [log] } = await query(
@@ -312,9 +317,16 @@ async function importFromConfig(opts) {
       // lead as category='partner' so partner lead-requests pull from this pool;
       // "traders" → category='trader'. Default 'trader' matches the column's
       // default in 002_roles_and_categories.sql.
-      const leadCategory = cfg.purpose === 'partners' ? 'partner'
-                         : cfg.purpose === 'traders'  ? 'trader'
-                         : 'unknown';
+      let leadCategory = cfg.purpose === 'partners' ? 'partner'
+                       : cfg.purpose === 'traders'  ? 'trader'
+                       : 'unknown';
+      if (configSheetName && traderSheetName && configSheetName === traderSheetName) leadCategory = 'trader';
+      else if (configSheetName && partnerSheetName && configSheetName === partnerSheetName) leadCategory = 'partner';
+      else if (configSheetName && unknownSheetName && configSheetName === unknownSheetName) leadCategory = 'unknown';
+      const explicitCategory = normalizeCategory(lead.product_tag);
+      if (['trader', 'partner'].includes(explicitCategory)) {
+        leadCategory = explicitCategory;
+      }
       const categoryResolution = await resolveLeadCategory({
         leadPayload: { ...lead, category: leadCategory, meta_form_id: safeFormId },
       });

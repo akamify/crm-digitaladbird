@@ -234,6 +234,10 @@ CREATE TABLE IF NOT EXISTS leads (
   category_resolved_at TIMESTAMPTZ,
   category_manually_updated_by_user_id UUID REFERENCES users(id),
   category_manually_updated_at TIMESTAMPTZ,
+  google_sheet_last_synced_at TIMESTAMPTZ,
+  google_sheet_last_spreadsheet_id TEXT,
+  google_sheet_last_sheet_name TEXT,
+  google_sheet_last_sync_error TEXT,
   assigned_to_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
   assigned_at         TIMESTAMPTZ,
   assigned_by_rule_id UUID REFERENCES distribution_rules(id) ON DELETE SET NULL,
@@ -258,6 +262,7 @@ CREATE INDEX IF NOT EXISTS idx_leads_form        ON leads(meta_form_id);
 CREATE INDEX IF NOT EXISTS idx_leads_followup    ON leads(next_followup_at);
 CREATE INDEX IF NOT EXISTS idx_leads_pending     ON leads(is_pending);
 CREATE INDEX IF NOT EXISTS idx_leads_phone       ON leads(phone);
+CREATE INDEX IF NOT EXISTS idx_leads_google_sheet_last_synced_at ON leads(google_sheet_last_synced_at);
 
 -- LEAD ASSIGNMENT HISTORY
 CREATE TABLE IF NOT EXISTS lead_assignments (

@@ -27,7 +27,8 @@ import {
   // Dynamic Google Sheets credential management
   useSheetConfigs, useSheetsConnectivity, useCreateSheetConfig, useUpdateSheetConfig,
   useActivateSheetConfig, useTestSheetConfig, useSyncSheetConfig, useDeleteSheetConfig,
-  useSheetPreview, useSheetStats,
+  useSheetPreview, useSheetStats, useGoogleSheetRoutingSettings, useUpdateGoogleSheetRoutingSettings,
+  useTestGoogleSheetRouting, useCreateMissingGoogleSheetTabs, useExportLeadsByCategoryToSheets,
   // Sheet → CRM import
   useSheetImport, useSheetImportLogs, useToggleAutoImport,
   type SheetConfigPublic,
@@ -1158,6 +1159,7 @@ function SheetsTab() {
 
       {/* Dynamic credentials management — admin can upload JSON, switch sheets, no SSH/.env needed */}
       <SheetCredentialsManager />
+      <GoogleSheetRoutingPanel />
 
       {isLoading ? <Skeleton className="h-64" /> : (
         <>
@@ -1250,6 +1252,110 @@ function SheetsTab() {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+function GoogleSheetRoutingPanel() {
+  const routing = useGoogleSheetRoutingSettings();
+  const updateRouting = useUpdateGoogleSheetRoutingSettings();
+  const testRouting = useTestGoogleSheetRouting();
+  const createTabs = useCreateMissingGoogleSheetTabs();
+  const exportByCategory = useExportLeadsByCategoryToSheets();
+  const [form, setForm] = useState({
+    default_sheet_name: 'Leads',
+    trader_sheet_name: 'Trader Leads',
+    partner_sheet_name: 'Partner Leads',
+    unknown_sheet_name: 'Unknown Leads',
+    auto_create_missing_sheets: true,
+    category_sheet_routing_enabled: true,
+  });
+
+  useEffect(() => {
+    if (!routing.data) return;
+    setForm({
+      default_sheet_name: routing.data.default_sheet_name || 'Leads',
+      trader_sheet_name: routing.data.trader_sheet_name || '',
+      partner_sheet_name: routing.data.partner_sheet_name || '',
+      unknown_sheet_name: routing.data.unknown_sheet_name || '',
+      auto_create_missing_sheets: routing.data.auto_create_missing_sheets,
+      category_sheet_routing_enabled: routing.data.category_sheet_routing_enabled,
+    });
+  }, [routing.data]);
+
+  function save() {
+    updateRouting.mutate(form, {
+      onSuccess: () => toast.success('Sheet routing settings saved'),
+      onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Failed to save sheet routing'),
+    });
+  }
+
+  function testCategory(category: 'trader' | 'partner' | 'unknown') {
+    testRouting.mutate({ category }, {
+      onSuccess: (r) => toast.success(`${r.category_label} → ${r.sheet_name}${r.sheet_exists ? ' (exists)' : ' (missing)'}`),
+      onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Routing test failed'),
+    });
+  }
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-900">Google Sheet Lead Routing</h2>
+          <p className="mt-1 text-xs text-slate-500">Category-wise tab routing for trader, partner, and unknown leads. Existing rows are not moved automatically when tab names change.</p>
+        </div>
+        <span className="chip-slate text-[10px]">Inactive pages are ignored</span>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Input label="Spreadsheet ID" value={routing.data?.spreadsheet_id || 'No active config'} readOnly />
+        <Input label="Default Sheet Name" value={form.default_sheet_name} onChange={(e) => setForm((s) => ({ ...s, default_sheet_name: e.target.value }))} />
+        <Input label="Trader Lead Sheet Name" value={form.trader_sheet_name} onChange={(e) => setForm((s) => ({ ...s, trader_sheet_name: e.target.value }))} />
+        <Input label="Partner Lead Sheet Name" value={form.partner_sheet_name} onChange={(e) => setForm((s) => ({ ...s, partner_sheet_name: e.target.value }))} />
+        <Input label="Unknown Lead Sheet Name" value={form.unknown_sheet_name} onChange={(e) => setForm((s) => ({ ...s, unknown_sheet_name: e.target.value }))} />
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-slate-700">
+        <label className="inline-flex items-center gap-2">
+          <input type="checkbox" checked={form.category_sheet_routing_enabled} onChange={(e) => setForm((s) => ({ ...s, category_sheet_routing_enabled: e.target.checked }))} />
+          Enable Category Sheet Routing
+        </label>
+        <label className="inline-flex items-center gap-2">
+          <input type="checkbox" checked={form.auto_create_missing_sheets} onChange={(e) => setForm((s) => ({ ...s, auto_create_missing_sheets: e.target.checked }))} />
+          Auto-create Missing Sheet Tabs
+        </label>
+      </div>
+
+      <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs">
+        <div className="font-medium text-slate-900">Routing preview</div>
+        <div className="mt-2 grid grid-cols-1 gap-1 text-slate-600 sm:grid-cols-3">
+          <div>Trader Lead → <span className="font-medium text-slate-900">{form.trader_sheet_name || form.default_sheet_name}</span></div>
+          <div>Partner Lead → <span className="font-medium text-slate-900">{form.partner_sheet_name || form.default_sheet_name}</span></div>
+          <div>Unknown → <span className="font-medium text-slate-900">{form.unknown_sheet_name || form.default_sheet_name}</span></div>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button size="sm" onClick={save} loading={updateRouting.isPending}>Save Settings</Button>
+        <Button size="sm" variant="outline" onClick={() => testCategory('trader')} loading={testRouting.isPending}>Test Trader</Button>
+        <Button size="sm" variant="outline" onClick={() => testCategory('partner')} loading={testRouting.isPending}>Test Partner</Button>
+        <Button size="sm" variant="outline" onClick={() => testCategory('unknown')} loading={testRouting.isPending}>Test Unknown</Button>
+        <Button size="sm" variant="outline" onClick={() => createTabs.mutate(undefined, {
+          onSuccess: (r) => toast.success(`Verified tabs: ${r.created_or_verified.join(', ')}`),
+          onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Tab creation failed'),
+        })} loading={createTabs.isPending}>Create Missing Sheet Tabs</Button>
+        <Button size="sm" variant="outline" onClick={() => exportByCategory.mutate({
+          mode: 'dry_run',
+          category: 'all',
+          skip_duplicates: true,
+        }, {
+          onSuccess: (r) => {
+            const summary = Object.entries(r.summary || {}).map(([key, value]) => `${key}: ${value.count} → ${value.sheet_name}`).join(' | ');
+            toast.success(summary || 'No leads matched');
+          },
+          onError: () => toast.error('Dry run failed'),
+        })} loading={exportByCategory.isPending}>Dry Run Export</Button>
+      </div>
     </div>
   );
 }

@@ -7,7 +7,7 @@ import {
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { Modal, Skeleton, EmptyState } from '@/components/ui/Modal';
-import { useAdminCampaigns, useUpdateCampaign, useUpdateCampaignCategory, useBackfillCampaignCategory, type AdminCampaign } from '@/hooks/useAdminEnterprise';
+import { useAdminCampaigns, useUpdateCampaignCategory, useBackfillCampaignCategory, type AdminCampaign } from '@/hooks/useAdminEnterprise';
 import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
 import { clsx, humanize } from '@/lib/format';
 
@@ -26,7 +26,6 @@ function CampaignsInner() {
   const [editItem, setEditItem] = useState<AdminCampaign | null>(null);
   const [form, setForm] = useState({ campaign_name: '', internal_label: '', category: 'unknown' as 'trader' | 'partner' | 'unknown', ad_account_id: '', category_notes: '', backfill_mode: 'none' as 'none' | 'dry_run' | 'unknown_only' | 'force_all' });
 
-  const updateCampaign = useUpdateCampaign();
   const updateCategory = useUpdateCampaignCategory();
   const backfillCategory = useBackfillCampaignCategory();
 
@@ -51,10 +50,8 @@ function CampaignsInner() {
   }
 
   async function handleSave() {
-    if (!form.campaign_name.trim()) { toast.error('Campaign name required'); return; }
     if (editItem) {
       try {
-        await updateCampaign.mutateAsync({ id: editItem.id, campaign_name: form.campaign_name, internal_label: form.internal_label });
         await updateCategory.mutateAsync({ campaignId: editItem.campaign_id, category: form.category, notes: form.category_notes });
         if (form.backfill_mode !== 'none') {
           const summary = await backfillCategory.mutateAsync({ campaignId: editItem.campaign_id, mode: form.backfill_mode });
@@ -156,16 +153,16 @@ function CampaignsInner() {
 
       {/* Create/Edit Modal */}
       <Modal open={!!editItem} onClose={() => setEditItem(null)}
-        title="Edit Campaign" size="md">
+        title="Edit Campaign Category" size="md">
         <div className="space-y-3">
           <div>
             <label className="label">Campaign Name</label>
-            <input className="input" value={form.campaign_name} onChange={e => setForm(f => ({ ...f, campaign_name: e.target.value }))} />
+            <input className="input bg-slate-50 text-slate-600" value={form.campaign_name} readOnly />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="label">Internal Label</label>
-              <input className="input" value={form.internal_label} onChange={e => setForm(f => ({ ...f, internal_label: e.target.value }))} />
+              <input className="input bg-slate-50 text-slate-600" value={form.internal_label} readOnly />
             </div>
             <div>
               <label className="label">Category</label>
@@ -181,7 +178,7 @@ function CampaignsInner() {
             <input className="input" value={form.ad_account_id} readOnly placeholder="e.g. act_123456" />
           </div>
           <div><label className="label">Category notes</label><textarea className="input min-h-20" value={form.category_notes} onChange={e => setForm(f => ({ ...f, category_notes: e.target.value }))} /></div>
-          <p className="text-xs text-slate-500">Campaign status is fetched from Meta. Pause, activate, or delete must be done in Meta Ads Manager.</p>
+          <p className="text-xs text-slate-500">Campaign name and status are fetched dynamically from Meta. Pause, activate, delete, or rename must be done in Meta Ads Manager.</p>
           <div>
             <label className="label">Existing leads</label>
             <select className="input" value={form.backfill_mode} onChange={e => setForm(f => ({ ...f, backfill_mode: e.target.value as typeof f.backfill_mode }))}>
@@ -194,9 +191,9 @@ function CampaignsInner() {
         </div>
         <div className="mt-4 flex justify-end gap-2">
           <button onClick={() => setEditItem(null)} className="btn-ghost rounded-lg px-4 py-2 text-sm">Cancel</button>
-          <button onClick={handleSave} disabled={updateCampaign.isPending || updateCategory.isPending || backfillCategory.isPending}
+          <button onClick={handleSave} disabled={updateCategory.isPending || backfillCategory.isPending}
             className="btn-primary rounded-lg px-4 py-2 text-sm inline-flex items-center gap-2">
-            {(updateCampaign.isPending || updateCategory.isPending || backfillCategory.isPending) && <Loader2 className="h-4 w-4 animate-spin" />}
+            {(updateCategory.isPending || backfillCategory.isPending) && <Loader2 className="h-4 w-4 animate-spin" />}
             Save Changes
           </button>
         </div>

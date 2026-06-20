@@ -3369,6 +3369,12 @@ function publicConfigRow(row) {
     is_active: row.is_active,
     sheet_id: row.config?.sheet_id || null,
     sheet_name: row.config?.sheet_name || 'Leads',
+    default_sheet_name: row.config?.default_sheet_name || row.config?.sheet_name || 'Leads',
+    trader_sheet_name: row.config?.trader_sheet_name || null,
+    partner_sheet_name: row.config?.partner_sheet_name || null,
+    unknown_sheet_name: row.config?.unknown_sheet_name || null,
+    auto_create_missing_sheets: row.config?.auto_create_missing_sheets !== false,
+    category_sheet_routing_enabled: row.config?.category_sheet_routing_enabled !== false,
     service_account_email: row.config?.service_account_email || null,
     has_credentials: !!row.secrets_encrypted,
     last_tested_at: row.last_tested_at,
@@ -3718,6 +3724,44 @@ router.delete('/admin/sheets/configs/:id', authenticate, requireRole('super_admi
 router.get('/admin/sheets/connectivity', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
   const result = await sheetsSvc.checkConnectivity();
   res.json({ success: true, data: result });
+}));
+
+router.get('/admin/google-sheets/settings', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const data = await sheetsSvc.getSheetRoutingSettings();
+  res.json({ success: true, data });
+}));
+
+router.patch('/admin/google-sheets/settings', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const data = await sheetsSvc.updateSheetRoutingSettings(req.body || {});
+  res.json({ success: true, data });
+}));
+
+router.post('/admin/google-sheets/test-connection', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const data = await sheetsSvc.checkConnectivity();
+  res.json({ success: true, data });
+}));
+
+router.post('/admin/google-sheets/test-sheet-routing', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const category = String(req.body?.category || 'unknown').toLowerCase();
+  const data = await sheetsSvc.testSheetRouting(category);
+  res.json({ success: true, data: { ...data, category_label: data.category === 'trader' ? 'Trader Lead' : data.category === 'partner' ? 'Partner Lead' : 'Unknown' } });
+}));
+
+router.post('/admin/google-sheets/create-missing-tabs', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const data = await sheetsSvc.createMissingTabs();
+  res.json({ success: true, data });
+}));
+
+router.post('/admin/google-sheets/export-leads-by-category', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const body = req.body || {};
+  const data = await sheetsSvc.exportLeadsByCategory({
+    mode: body.mode || 'dry_run',
+    category: body.category || 'all',
+    dateFrom: body.date_from || null,
+    dateTo: body.date_to || null,
+    skipDuplicates: body.skip_duplicates !== false,
+  });
+  res.json({ success: true, data });
 }));
 
 // ── Sheet → CRM import ────────────────────────────────────────────────

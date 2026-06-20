@@ -10,11 +10,23 @@ export function buildTelHref(phone?: string | null) {
 export function triggerPhoneCall(phone?: string | null) {
   const href = buildTelHref(phone);
   if (!href || typeof window === 'undefined' || typeof document === 'undefined') return false;
-  const link = document.createElement('a');
-  link.href = href;
-  link.style.display = 'none';
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  return true;
+
+  try {
+    // Use direct top-level navigation first so the browser treats this as a
+    // real user-initiated dial action instead of a synthetic hidden-anchor click.
+    window.location.href = href;
+    return true;
+  } catch {
+    try {
+      const link = document.createElement('a');
+      link.href = href;
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }
