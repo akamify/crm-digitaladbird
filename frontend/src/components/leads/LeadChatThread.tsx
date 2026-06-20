@@ -5,6 +5,7 @@ import { Loader2, Send } from 'lucide-react';
 import { EmptyState, Skeleton } from '@/components/ui/Modal';
 import { fmtPhone, fmtRelative, clsx, humanize } from '@/lib/format';
 import type { ChatMessage } from '@/hooks/useChat';
+import { LeadCategoryBadge } from './LeadCategoryBadge';
 
 interface Props {
   lead?: {
@@ -15,6 +16,8 @@ interface Props {
     campaign_label?: string | null;
     meta_form_id?: string | null;
     assigned_to_name?: string | null;
+    category?: 'trader' | 'partner' | 'unknown' | null;
+    category_source?: string | null;
   };
   messages: ChatMessage[];
   loading: boolean;
@@ -51,6 +54,7 @@ export function LeadChatThread({ lead, messages, loading, disabled, sending, onS
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <div className="text-sm font-semibold text-slate-900">{lead.full_name || 'Unnamed lead'}</div>
+              <LeadCategoryBadge category={lead.category} className="mt-1" />
               <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
                 {lead.phone && <span>{fmtPhone(lead.phone)}</span>}
                 <span>{humanize(lead.source || 'manual')}</span>

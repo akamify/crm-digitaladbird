@@ -7,6 +7,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { LeadFilters } from '@/components/leads/LeadFilters';
 import { LeadActions } from '@/components/leads/LeadActions';
 import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
+import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
 import { Skeleton, EmptyState, StatusChip, Modal } from '@/components/ui/Modal';
 import { useLeadList } from '@/hooks/useLeads';
 import { fmtDate, fmtRelative, fmtPhone, humanize, stageChip, isOverdue, isDueToday, clsx } from '@/lib/format';
@@ -27,6 +28,7 @@ function LeadsInner() {
   const sp = useSearchParams();
   const initial = useMemo<LeadFilterType>(() => ({
     q: sp.get('q') || '',
+    category: (sp.get('category') as LeadFilterType['category']) || '',
     stage: (sp.get('stage') as LeadFilterType['stage']) || '',
     call_status: (sp.get('call_status') as LeadFilterType['call_status']) || '',
     followup: (sp.get('followup') as LeadFilterType['followup']) || '',
@@ -91,6 +93,7 @@ function LeadsInner() {
                   <th className="px-4 py-2.5 font-medium">Lead</th>
                   <th className="px-4 py-2.5 font-medium">Contact</th>
                   <th className="px-4 py-2.5 font-medium">Source</th>
+                  <th className="px-4 py-2.5 font-medium">Category</th>
                   <th className="px-4 py-2.5 font-medium">Campaign</th>
                   <th className="px-4 py-2.5 font-medium">Stage</th>
                   <th className="px-4 py-2.5 font-medium">Call status</th>
@@ -130,6 +133,7 @@ function LeadsInner() {
                         <div>{humanize(l.source)}</div>
                         {l.campaign_label && <div className="text-xs text-slate-500">{l.campaign_label}</div>}
                       </td>
+                      <td className="px-4 py-3"><LeadCategoryBadge category={l.category} /></td>
                       <td className="px-4 py-3 text-slate-700 max-w-[180px]">
                         {l.campaign_name ? (
                           <>

@@ -19,6 +19,7 @@ import { MovementIndicator, ScoreBadge } from '@/components/rankings/RankBadge';
 import { useAuth } from '@/lib/auth';
 import { fmtDate, fmtRelative, isOverdue, isDueToday, clsx } from '@/lib/format';
 import type { LeadCategory } from '@/types';
+import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
 
 export default function MemberDashboardPage() {
   return (
@@ -203,7 +204,7 @@ function MemberDashboardInner() {
       {/* Lead category filter */}
       <div className="flex items-center gap-2">
         <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Lead type:</span>
-        {(['all', 'partner', 'trader'] as const).map(c => (
+        {(['all', 'partner', 'trader', 'unknown'] as const).map(c => (
           <button
             key={c}
             onClick={() => setCategory(c)}
@@ -213,7 +214,7 @@ function MemberDashboardInner() {
                 : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
             }`}
           >
-            {c === 'all' ? 'All' : c === 'partner' ? 'Partners' : 'Traders'}
+            {c === 'all' ? 'All' : c === 'partner' ? 'Partner Leads' : c === 'trader' ? 'Trader Leads' : 'Unknown'}
           </button>
         ))}
       </div>
@@ -223,7 +224,7 @@ function MemberDashboardInner() {
         <div className="card-padded lg:col-span-2">
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-900">
-              My leads {category !== 'all' && <span className="ml-1 font-normal text-slate-500">— {category === 'partner' ? 'Partners' : 'Traders'}</span>}
+              My leads {category !== 'all' && <span className="ml-1 font-normal text-slate-500">— {category === 'partner' ? 'Partner Leads' : category === 'trader' ? 'Trader Leads' : 'Unknown'}</span>}
             </h2>
             <Link href="/leads" className="text-xs text-brand-600 hover:text-brand-700 inline-flex items-center gap-1">
               All leads <ArrowRight className="h-3 w-3" />
@@ -241,11 +242,7 @@ function MemberDashboardInner() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="truncate text-sm font-medium text-slate-900">{l.full_name || 'Unnamed lead'}</span>
-                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                          (l as any).category === 'partner' ? 'bg-violet-100 text-violet-700' : 'bg-sky-100 text-sky-700'
-                        }`}>
-                          {(l as any).category || 'trader'}
-                        </span>
+                        <LeadCategoryBadge category={l.category} />
                       </div>
                       <div className="text-xs text-slate-500">{l.phone || '—'} · {l.source || 'manual'}</div>
                     </div>

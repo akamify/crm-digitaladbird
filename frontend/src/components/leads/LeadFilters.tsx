@@ -43,6 +43,13 @@ const FOLLOWUP_OPTS = [
   { value: 'upcoming', label: 'Upcoming' },
 ];
 
+const CATEGORY_OPTS = [
+  { value: '', label: 'All categories' },
+  { value: 'trader', label: 'Trader Leads' },
+  { value: 'partner', label: 'Partner Leads' },
+  { value: 'unknown', label: 'Unknown' },
+];
+
 export function LeadFilters({ value, onChange }: Props) {
   const set = <K extends keyof LeadFilters>(k: K, v: LeadFilters[K]) =>
     onChange({ ...value, [k]: v, page: 1 });
@@ -53,7 +60,7 @@ export function LeadFilters({ value, onChange }: Props) {
     ...(campaignNames || []).map(n => ({ value: n, label: n })),
   ];
 
-  const hasFilters = !!(value.q || value.stage || value.call_status || value.followup || value.source || value.campaign || value.from || value.to || value.pending);
+  const hasFilters = !!(value.q || value.category || value.stage || value.call_status || value.followup || value.source || value.campaign || value.from || value.to || value.pending);
 
   return (
     <div className="card p-4">
@@ -83,7 +90,12 @@ export function LeadFilters({ value, onChange }: Props) {
         />
       </div>
 
-      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-5">
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-6">
+        <Select
+          value={value.category || ''}
+          options={CATEGORY_OPTS}
+          onChange={(e: ChangeEvent<HTMLSelectElement>) => set('category', e.target.value as LeadFilters['category'])}
+        />
         <Select
           value={value.campaign || ''}
           options={campaignOpts}

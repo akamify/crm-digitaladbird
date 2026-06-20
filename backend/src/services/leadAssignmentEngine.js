@@ -266,7 +266,14 @@ async function assignLeadToMember(input) {
       requestId,
       reason,
     });
-    await notifyAssigned(client, memberId, 1, { lead_id: leadId, assignment_type: assignmentType, request_id: requestId });
+    await notifyAssigned(client, memberId, 1, {
+      lead_id: leadId,
+      assignment_type: assignmentType,
+      request_id: requestId,
+      previous_user_id: lead.assigned_to_user_id || null,
+      assigned_by: assignedBy,
+      reason,
+    });
     return { leadId, assigned: true, previousUserId: lead.assigned_to_user_id || null, memberId };
   });
 }
@@ -326,12 +333,33 @@ async function assignLeadsBulk({ leadIds, memberId, assignedBy = null, actor = n
     const assigned = results.filter(r => r.assigned).length;
     const skipped = results.filter(r => !r.assigned);
     if (assigned) {
-      await notifyAssigned(client, memberId, assigned, {
-        assignment_type: assignmentType,
-        count: assigned,
-        lead_ids: results.filter(r => r.assigned).map(r => r.leadId),
-        assigned_by: assignedBy,
-      });
+      const assignedResults = results.filter(r => r.assigned);
+      if (allowReassign) {
+        const byPreviousUser = new Map();
+        for (const result of assignedResults) {
+          const key = result.previousUserId || '__unassigned__';
+          if (!byPreviousUser.has(key)) byPreviousUser.set(key, []);
+          byPreviousUser.get(key).push(result.leadId);
+        }
+        for (const [previousUserId, ids] of byPreviousUser.entries()) {
+          await notifyAssigned(client, memberId, ids.length, {
+            assignment_type: assignmentType,
+            count: ids.length,
+            lead_ids: ids,
+            previous_user_id: previousUserId === '__unassigned__' ? null : previousUserId,
+            assigned_by: assignedBy,
+            reason,
+          });
+        }
+      } else {
+        await notifyAssigned(client, memberId, assigned, {
+          assignment_type: assignmentType,
+          count: assigned,
+          lead_ids: assignedResults.map(r => r.leadId),
+          assigned_by: assignedBy,
+          reason,
+        });
+      }
     }
     return {
       requested_count: leadIds.length,
@@ -614,6 +642,7 @@ async function runAutoReassignment({ limit = 50, actor = null, bypassWindow = fa
         lead_id: lead.id,
         assignment_type: 'auto_reassign',
         previous_user_id: lead.assigned_to_user_id,
+        assigned_by: actor?.id || null,
       });
       reassigned++;
       results.push({ leadId: lead.id, reassigned: true, previousUserId: lead.assigned_to_user_id, memberId: next.id });

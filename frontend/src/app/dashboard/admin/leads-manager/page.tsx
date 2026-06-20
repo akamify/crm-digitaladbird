@@ -11,8 +11,10 @@ import { AppShell } from '@/components/layout/AppShell';
 import { Modal, Skeleton, EmptyState } from '@/components/ui/Modal';
 import { LeadActions } from '@/components/leads/LeadActions';
 import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
+import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
 import { useLeadList, useMetaCampaigns } from '@/hooks/useLeads';
 import { useForceAssign, useBulkReassignLeads, useActiveMembers, exportLeadsCsv } from '@/hooks/useAdmin';
+import { useBulkUpdateLeadCategory } from '@/hooks/useAdminEnterprise';
 import { fmtDate, fmtRelative, clsx, humanize, isOverdue } from '@/lib/format';
 import type { LeadFilters, Lead } from '@/types';
 
@@ -71,6 +73,15 @@ function LeadsInner() {
   const members = useActiveMembers();
   const forceAssign = useForceAssign();
   const bulkReassign = useBulkReassignLeads();
+  const bulkCategory = useBulkUpdateLeadCategory();
+
+  function changeSelectedCategory(category: 'trader' | 'partner' | 'unknown') {
+    if (!selected.length || !window.confirm(`Change ${selected.length} selected lead(s) to ${category === 'trader' ? 'Trader Lead' : category === 'partner' ? 'Partner Lead' : 'Unknown'}?`)) return;
+    bulkCategory.mutate({ leadIds: selected, category, reason: 'Bulk update from Admin Leads Manager' }, {
+      onSuccess: () => { toast.success('Lead categories updated'); setSelected([]); },
+      onError: () => toast.error('Bulk category update failed'),
+    });
+  }
 
   const rows = useMemo(() => leads.data?.rows ?? [], [leads.data?.rows]);
   const assignableUsers = useMemo(
@@ -197,7 +208,7 @@ function LeadsInner() {
           <option value="not_interested">Not Interested</option><option value="follow_up">Follow-up</option><option value="busy">Busy</option>
         </select>
         <select className="input w-32" value={filters.category || ''} onChange={e => updateFilters({ category: e.target.value as LeadFilters['category'] })}>
-          <option value="">All Categories</option><option value="partner">Partner</option><option value="trader">Trader</option>
+          <option value="">All Categories</option><option value="partner">Partner Leads</option><option value="trader">Trader Leads</option><option value="unknown">Unknown</option>
         </select>
         <select className="input w-36" value={filters.assigned_to || ''} onChange={e => updateFilters({ assigned_to: e.target.value || undefined })}>
           <option value="">All assignees</option>
@@ -225,6 +236,9 @@ function LeadsInner() {
           <button disabled={selected.length === 0} onClick={() => openAssign('reassign')} className="btn-outline rounded-lg px-3 py-1.5 text-xs inline-flex items-center gap-1.5 disabled:opacity-50">
             <ArrowRightLeft className="h-3.5 w-3.5" /> Reassign
           </button>
+          <select className="input h-8 w-auto text-xs" defaultValue="" onChange={event => { if (event.target.value) changeSelectedCategory(event.target.value as 'trader' | 'partner' | 'unknown'); event.target.value = ''; }} disabled={bulkCategory.isPending}>
+            <option value="">Change category...</option><option value="trader">Trader Lead</option><option value="partner">Partner Lead</option><option value="unknown">Unknown</option>
+          </select>
           <button onClick={() => setSelected([])} className="ml-auto text-xs text-slate-500 hover:text-slate-700">Clear</button>
         </div>
       )}
@@ -256,6 +270,7 @@ function LeadsInner() {
                 </th>
                 <th className="py-2 pr-3 font-medium">Lead</th>
                 <th className="py-2 pr-3 font-medium">Source</th>
+                <th className="py-2 pr-3 font-medium">Category</th>
                 <th className="py-2 pr-3 font-medium">Stage</th>
                 <th className="py-2 pr-3 font-medium">Status</th>
                 <th className="py-2 pr-3 font-medium">Assigned To</th>
@@ -286,6 +301,7 @@ function LeadsInner() {
                     </Link>
                   </td>
                   <td className="py-3 pr-3 text-xs text-slate-600">{humanize(l.source || 'manual')}{l.campaign_name ? <div className="text-slate-400 truncate max-w-[100px]">{l.campaign_name}</div> : null}</td>
+                  <td className="py-3 pr-3"><LeadCategoryBadge category={l.category} /></td>
                   <td className="py-3 pr-3"><span className={clsx('chip', l.stage === 'won' ? 'chip-green' : l.stage === 'lost' ? 'chip-red' : 'chip-slate')}>{humanize(l.stage)}</span></td>
                   <td className="py-3 pr-3"><span className={clsx('chip', l.call_status === 'converted' ? 'chip-green' : l.call_status === 'not_called' ? 'chip-amber' : l.call_status === 'interested' ? 'chip-blue' : 'chip-slate')}>{humanize(l.call_status)}</span></td>
                   <td className="py-3 pr-3 text-xs text-slate-600">{l.assigned_to_name || <span className="text-amber-600">Unassigned</span>}</td>

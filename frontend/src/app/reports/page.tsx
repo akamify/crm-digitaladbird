@@ -5,7 +5,8 @@ import {
 } from 'recharts';
 import { AppShell } from '@/components/layout/AppShell';
 import { Skeleton, EmptyState } from '@/components/ui/Modal';
-import { useDaily, useByUser, useFunnel, useSources } from '@/hooks/useReports';
+import { useDaily, useByUser, useFunnel, useSources, useCategories } from '@/hooks/useReports';
+import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
 import { humanize } from '@/lib/format';
 import { format } from 'date-fns';
 
@@ -24,9 +25,16 @@ function ReportsInner() {
   const byUser  = useByUser();
   const funnel  = useFunnel();
   const sources = useSources();
+  const categories = useCategories();
 
   return (
     <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {(['trader', 'partner', 'unknown'] as const).map(category => {
+          const stat = categories.data?.find(item => item.category === category);
+          return <div key={category} className="card-padded"><LeadCategoryBadge category={category} /><div className="mt-3 text-2xl font-bold text-slate-900">{stat?.total || 0}</div><div className="mt-1 text-xs text-slate-500">{stat?.conversions || 0} converted · {stat?.pending || 0} pending · {stat?.followups_due || 0} follow-ups due</div></div>;
+        })}
+      </div>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div className="card-padded">
           <Header title="Daily activity (30d)" subtitle="Leads vs conversions per day" />

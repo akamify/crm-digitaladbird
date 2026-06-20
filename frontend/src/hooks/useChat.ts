@@ -34,7 +34,7 @@ export interface ChatConversation {
   last_message_at: string | null;
   unread_count: number;
   other_user?: { id: string; full_name: string; role: string; status: string; email: string; last_seen_at: string | null } | null;
-  lead?: { id: string; full_name: string; phone: string; email: string } | null;
+  lead?: { id: string; full_name: string; phone: string; email: string; category: 'trader' | 'partner' | 'unknown'; category_source?: string | null; campaign_name?: string | null; meta_campaign_id?: string | null; meta_form_id?: string | null } | null;
 }
 
 export interface ChatAttachment {
@@ -255,14 +255,15 @@ export function useChatContacts() {
   });
 }
 
-export function useChatConversations(type?: string, archived?: boolean) {
+export function useChatConversations(type?: string, archived?: boolean, leadCategory?: 'trader' | 'partner' | 'unknown') {
   const { user } = useAuth();
   const params = new URLSearchParams();
   if (type) params.set('type', type);
   if (archived) params.set('archived', 'true');
+  if (leadCategory) params.set('lead_category', leadCategory);
   const qs = params.toString();
   return useQuery({
-    queryKey: ['chat-conversations', type ?? null, archived ?? null],
+    queryKey: ['chat-conversations', type ?? null, archived ?? null, leadCategory ?? null],
     queryFn: () => safeApiGet<ChatConversation[]>(`/chat/conversations${qs ? `?${qs}` : ''}`),
     enabled: !!user,
     staleTime: 5_000,

@@ -58,3 +58,21 @@ export function useSources() {
     retry: 2,
   });
 }
+
+export interface CategoryStat {
+  category: 'trader' | 'partner' | 'unknown';
+  total: number;
+  conversions: number;
+  pending: number;
+  followups_due: number;
+}
+
+export function useCategories() {
+  return useQuery({
+    queryKey: ['reports', 'categories'],
+    queryFn: () => apiGet<CategoryStat[]>('/reports/categories'),
+    staleTime: 60_000,
+    refetchInterval: 120_000,
+    retry: 2,
+  });
+}

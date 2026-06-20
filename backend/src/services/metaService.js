@@ -18,6 +18,7 @@ const { isDistributionActive } = require('./distributionScheduler');
 const assignmentEngine = require('./leadAssignmentEngine');
 const { appendLead: sheetAppend } = require('./googleSheetsService');
 const { onLeadCreated, findExistingByContact } = require('./leadEventService');
+const { resolveLeadCategory, resolveAndPersistLeadCategory } = require('./leadCategory/leadCategoryResolver');
 const { validateLead } = require('./leadValidator');
 const metaTokens = require('./metaTokenResolver');
 const { graphGet } = require('./metaGraphClient');
@@ -79,6 +80,9 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
   // Fast path: same leadgen_id already in DB
   const dup = await query(`SELECT id FROM leads WHERE meta_lead_id = $1`, [leadgen_id]);
   if (dup.rowCount > 0) {
+    await resolveAndPersistLeadCategory(dup.rows[0].id, {
+      leadPayload: { meta_form_id: form_id, meta_page_id: page_id },
+    }).catch(() => {});
     logger.info({ ...ctx, step: 'B.dup_meta_lead_id', existing_lead: dup.rows[0].id }, '[meta-ingest] already ingested');
     return { status: 'duplicate', leadId: dup.rows[0].id, reason: 'meta_lead_id' };
   }
@@ -124,6 +128,9 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
   // creates separate meta_lead_id values but should not create separate leads.
   const dupContact = await findExistingByContact({ phone: fields.phone, email: fields.email });
   if (dupContact) {
+    await resolveAndPersistLeadCategory(dupContact.id, {
+      leadPayload: { ...fields, ...detail, meta_campaign_id: detail.campaign_id, meta_form_id: form_id, meta_page_id: page_id },
+    }).catch(() => {});
     logger.info({ ...ctx, step: 'F.dup_contact', reason: dupContact.reason, existing_lead: dupContact.id, dedup_window_days: process.env.LEAD_DEDUP_WINDOW_DAYS || '30' }, '[meta-ingest] skipped — same phone/email within dedup window. Set LEAD_DEDUP_WINDOW_DAYS=0 to disable.');
     return { status: 'duplicate', leadId: dupContact.id, reason: dupContact.reason };
   }
@@ -155,7 +162,7 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
   let campaignRow = null;
   if (detail.campaign_id) {
     const { rows: [campRow] } = await query(
-      `SELECT internal_label, campaign_name FROM meta_campaigns WHERE campaign_id = $1`,
+      `SELECT internal_label, campaign_name, category, ad_account_id FROM meta_campaigns WHERE campaign_id = $1`,
       [detail.campaign_id]
     );
     if (campRow) {
@@ -173,6 +180,11 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
     }
   }
   const campaignName = resolveCampaignName({ payload: detail, fields, form: formRow, campaign: campaignRow });
+  const categoryResolution = await resolveLeadCategory({
+    leadPayload: { ...fields, ...detail, campaign_name: campaignName, meta_campaign_id: detail.campaign_id, meta_form_id: form_id, meta_page_id: page_id, form_name: formRow?.form_name },
+    campaign: campaignRow,
+    form: formRow,
+  });
 
   const metaCreatedTime = created_time ? new Date(created_time * 1000) : null;
 
@@ -184,8 +196,9 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
          meta_campaign_id, meta_adset_id, meta_ad_id, meta_created_time,
          campaign_id, adset_id, ad_id, form_name, page_id,
          campaign_label, product_tag, raw_payload,
-         campaign_name, adset_name, ad_name
-       ) VALUES ($1, $2, $3, $4, $5, 'meta', $6, $7, $8, $9, $10, $11, $12, $9, $10, $11, $19, $8, $13, $14, $15, $16, $17, $18)
+         campaign_name, adset_name, ad_name,
+         category, category_source, category_rule_id, category_resolved_at
+       ) VALUES ($1, $2, $3, $4, $5, 'meta', $6, $7, $8, $9, $10, $11, $12, $9, $10, $11, $19, $8, $13, $14, $15, $16, $17, $18, $20, $21, $22, NOW())
        ON CONFLICT (meta_lead_id) DO NOTHING
        RETURNING id`,
       [
@@ -208,6 +221,9 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
         detail.adset_name    || null,
         detail.ad_name       || null,
         formRow?.form_name || null,
+        categoryResolution.category,
+        categoryResolution.source,
+        categoryResolution.rule_id,
       ]
     );
     return ins.rows[0]?.id || null;

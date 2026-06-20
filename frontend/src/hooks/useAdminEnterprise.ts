@@ -63,6 +63,8 @@ export interface AdminCampaign {
   id: string; campaign_id: string; campaign_name: string; internal_label: string | null;
   ad_account_id: string | null; is_active: boolean; category: string | null; created_at: string;
   total_leads: number; today_leads: number; conversions: number; pending_leads: number;
+  lead_category?: 'trader' | 'partner' | 'unknown'; lead_category_label?: string;
+  category_notes?: string | null; category_updated_at?: string | null; category_updated_by_name?: string | null;
 }
 
 export function useAdminCampaigns() {
@@ -516,6 +518,45 @@ export interface MetaPageEnriched {
   connection_status?: 'active' | 'discovered' | 'deactivated' | 'stale';
   selected_at?: string | null; selected_by_user_id?: string | null;
   deactivation_reason?: string | null;
+}
+
+export function useUpdateCampaignCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ campaignId, category, notes }: { campaignId: string; category: 'trader' | 'partner' | 'unknown'; notes?: string }) =>
+      apiPatch(`/admin/campaigns/${campaignId}/category`, { category, notes }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'campaigns'] }),
+  });
+}
+
+export function useBackfillCampaignCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ campaignId, mode }: { campaignId: string; mode: 'dry_run' | 'unknown_only' | 'force_all' }) =>
+      apiPost<{ scanned: number; updated: number; skipped: number }>(`/admin/campaigns/${campaignId}/backfill-category`, { mode }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['leads'] }),
+  });
+}
+
+export function useUpdateLeadCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ leadId, category, reason }: { leadId: string; category: 'trader' | 'partner' | 'unknown'; reason?: string }) =>
+      apiPatch(`/admin/leads/${leadId}/category`, { category, reason }),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ['lead', variables.leadId] });
+      qc.invalidateQueries({ queryKey: ['leads'] });
+    },
+  });
+}
+
+export function useBulkUpdateLeadCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ leadIds, category, reason }: { leadIds: string[]; category: 'trader' | 'partner' | 'unknown'; reason?: string }) =>
+      apiPatch('/admin/leads/bulk-category', { lead_ids: leadIds, category, reason }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['leads'] }),
+  });
 }
 
 export function useMetaPagesEnriched() {

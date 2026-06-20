@@ -6,6 +6,7 @@ const { appendLead: sheetAppend } = require('../services/googleSheetsService');
 const { onLeadCreated, findExistingByContact } = require('../services/leadEventService');
 const logger = require('../utils/logger');
 const config = require('../config/env');
+const { resolveLeadCategory } = require('../services/leadCategory/leadCategoryResolver');
 
 /**
  * GET /api/leads — paginated, filterable list scoped by role.
@@ -85,7 +86,7 @@ exports.list = asyncHandler(async (req, res) => {
   if (req.query.from)        { params.push(req.query.from);         where.push(`l.created_at >= $${params.length}`); }
   if (req.query.to)          { params.push(req.query.to);           where.push(`l.created_at <= $${params.length}`); }
   if (req.query.pending === 'true') where.push(`l.is_pending = TRUE`);
-  if (req.query.category && ['partner', 'trader'].includes(req.query.category)) {
+  if (req.query.category && ['partner', 'trader', 'unknown'].includes(req.query.category)) {
     params.push(req.query.category);
     where.push(`l.category = $${params.length}`);
   }
@@ -118,6 +119,7 @@ exports.list = asyncHandler(async (req, res) => {
     SELECT
       l.id, l.full_name, l.phone, l.email, l.city, l.state,
       l.source, l.meta_form_id, l.campaign_label, l.product_tag,
+      l.category, l.category_source, l.category_rule_id, l.category_resolved_at,
       l.campaign_name, l.adset_name, l.ad_name,
       l.meta_campaign_id, l.meta_adset_id, l.meta_ad_id,
       l.stage, l.call_status, l.last_call_at, l.next_followup_at, l.call_attempts,
@@ -288,7 +290,7 @@ exports.reassign = asyncHandler(async (req, res) => {
 /** Admin/RM: manually create a lead and auto-assign. */
 exports.create = asyncHandler(async (req, res) => {
   if (!['super_admin', 'rm'].includes(req.user.role)) throw new AppError(403, 'FORBIDDEN', 'Not allowed');
-  const { full_name, phone, email, city, state, source, product_tag, campaign_label, raw_payload, assigned_to_user_id } = req.body;
+  const { full_name, phone, email, city, state, source, product_tag, campaign_label, campaign_name, meta_campaign_id, meta_form_id, raw_payload, assigned_to_user_id } = req.body;
   if (!full_name && !phone && !email) throw new AppError(400, 'INVALID_LEAD', 'Provide at least name/phone/email');
 
   // Phone/email dedup — the same person shouldn't be entered twice from a
@@ -300,11 +302,16 @@ exports.create = asyncHandler(async (req, res) => {
     }
   }
 
+  const categoryResolution = await resolveLeadCategory({ leadPayload: req.body || {} });
   const { rows: [lead] } = await query(
-    `INSERT INTO leads (full_name, phone, email, city, state, source, product_tag, campaign_label, raw_payload)
-        VALUES ($1, $2, $3, $4, $5, COALESCE($6, 'manual')::lead_source, $7, $8, $9)
+    `INSERT INTO leads (full_name, phone, email, city, state, source, product_tag, campaign_label,
+                        campaign_name, meta_campaign_id, meta_form_id, raw_payload,
+                        category, category_source, category_rule_id, category_resolved_at)
+        VALUES ($1, $2, $3, $4, $5, COALESCE($6, 'manual')::lead_source, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())
         RETURNING id`,
-    [full_name, phone, email, city, state, source || null, product_tag, campaign_label, raw_payload || null]
+    [full_name, phone, email, city, state, source || null, product_tag, campaign_label,
+      campaign_name || null, meta_campaign_id || null, meta_form_id || null, raw_payload || null,
+      categoryResolution.category, categoryResolution.source, categoryResolution.rule_id]
   );
 
   let assignment;

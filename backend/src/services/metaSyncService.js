@@ -17,6 +17,7 @@ const logger = require('../utils/logger');
 const { isDistributionActive } = require('./distributionScheduler');
 const assignmentEngine = require('./leadAssignmentEngine');
 const { onLeadCreated, findExistingByContact } = require('./leadEventService');
+const { resolveLeadCategory, resolveAndPersistLeadCategory } = require('./leadCategory/leadCategoryResolver');
 const { validateLead } = require('./leadValidator');
 const graphClient = require('./metaGraphClient');
 const metaTokens = require('./metaTokenResolver');
@@ -319,7 +320,12 @@ async function ingestGraphLead(lead, formId) {
 
   // Check duplicate by meta_lead_id first (fast path)
   const dup = await query(`SELECT id FROM leads WHERE meta_lead_id = $1`, [leadgenId]);
-  if (dup.rowCount > 0) return { status: 'duplicate', leadId: dup.rows[0].id, reason: 'meta_lead_id' };
+  if (dup.rowCount > 0) {
+    await resolveAndPersistLeadCategory(dup.rows[0].id, {
+      leadPayload: { ...lead, meta_campaign_id: lead.campaign_id, meta_form_id: formId },
+    }).catch(() => {});
+    return { status: 'duplicate', leadId: dup.rows[0].id, reason: 'meta_lead_id' };
+  }
 
   // Parse field data
   const fields = parseFieldData(lead.field_data || []);
@@ -341,7 +347,12 @@ async function ingestGraphLead(lead, formId) {
   // Cross-dedup by phone/email so the same person submitting multiple Meta
   // forms doesn't generate a duplicate CRM lead.
   const dupContact = await findExistingByContact({ phone: fields.phone, email: fields.email });
-  if (dupContact) return { status: 'duplicate', leadId: dupContact.id, reason: dupContact.reason };
+  if (dupContact) {
+    await resolveAndPersistLeadCategory(dupContact.id, {
+      leadPayload: { ...fields, ...lead, meta_campaign_id: lead.campaign_id, meta_form_id: formId },
+    }).catch(() => {});
+    return { status: 'duplicate', leadId: dupContact.id, reason: dupContact.reason };
+  }
 
   // Get form metadata for campaign_label and product_tag.
   // Auto-register an unknown form so the leads.meta_form_id FK is satisfied —
@@ -384,6 +395,11 @@ async function ingestGraphLead(lead, formId) {
 
   const pageId = formRow?.page_id || config.meta.pageId || null;
   const campaignName = resolveCampaignName({ payload: lead, fields, form: formRow, campaign: campaignRow });
+  const categoryResolution = await resolveLeadCategory({
+    leadPayload: { ...fields, ...lead, campaign_name: campaignName, meta_campaign_id: lead.campaign_id, meta_form_id: formId, meta_page_id: pageId, form_name: formRow?.form_name },
+    campaign: campaignRow,
+    form: formRow,
+  });
   const metaCreatedTime = lead.created_time ? new Date(lead.created_time) : null;
 
   const inserted = await withTransaction(async (client) => {
@@ -394,8 +410,9 @@ async function ingestGraphLead(lead, formId) {
          meta_campaign_id, meta_adset_id, meta_ad_id, meta_created_time,
          campaign_id, adset_id, ad_id, form_name, page_id,
          campaign_label, product_tag, raw_payload,
-         campaign_name, adset_name, ad_name
-       ) VALUES ($1, $2, $3, $4, $5, 'meta', $6, $7, $8, $9, $10, $11, $12, $9, $10, $11, $16, $8, $13, $14, $15, $17, $18, $19)
+         campaign_name, adset_name, ad_name,
+         category, category_source, category_rule_id, category_resolved_at
+       ) VALUES ($1, $2, $3, $4, $5, 'meta', $6, $7, $8, $9, $10, $11, $12, $9, $10, $11, $16, $8, $13, $14, $15, $17, $18, $19, $20, $21, $22, NOW())
        ON CONFLICT (meta_lead_id) DO NOTHING
        RETURNING id`,
       [
@@ -418,6 +435,9 @@ async function ingestGraphLead(lead, formId) {
         campaignName,
         lead.adset_name || null,
         lead.ad_name || null,
+        categoryResolution.category,
+        categoryResolution.source,
+        categoryResolution.rule_id,
       ]
     );
     return ins.rows[0]?.id || null;

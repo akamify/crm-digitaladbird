@@ -24,6 +24,7 @@ const logger         = require('../utils/logger');
 const assignmentEngine = require('./leadAssignmentEngine');
 const { onLeadCreated } = require('./leadEventService');
 const { isDistributionActive } = require('./distributionScheduler');
+const { resolveLeadCategory, resolveAndPersistLeadCategory } = require('./leadCategory/leadCategoryResolver');
 
 const SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly'];
 
@@ -313,19 +314,23 @@ async function importFromConfig(opts) {
       // default in 002_roles_and_categories.sql.
       const leadCategory = cfg.purpose === 'partners' ? 'partner'
                          : cfg.purpose === 'traders'  ? 'trader'
-                         : 'trader';
+                         : 'unknown';
+      const categoryResolution = await resolveLeadCategory({
+        leadPayload: { ...lead, category: leadCategory, meta_form_id: safeFormId },
+      });
 
-      const newId = await withTransaction(async (client) => {
+      const insertResult = await withTransaction(async (client) => {
         const dup = await findExistingId(client, lead);
-        if (dup) return null;
+        if (dup) return { id: dup.id, duplicate: true };
         const ins = await client.query(
           `INSERT INTO leads (
              full_name, phone, email, city, state,
              source, meta_lead_id, meta_form_id, meta_page_id,
              meta_campaign_id, meta_adset_id, meta_ad_id, meta_created_time,
-             product_tag, campaign_name, adset_name, ad_name, raw_payload, category
+             product_tag, campaign_name, adset_name, ad_name, raw_payload,
+             category, category_source, category_rule_id, category_resolved_at
            ) VALUES (
-             $1,$2,$3,$4,$5, $6,$7,$8,$9, $10,$11,$12,$13, $14,$15,$16,$17, $18, $19
+             $1,$2,$3,$4,$5, $6,$7,$8,$9, $10,$11,$12,$13, $14,$15,$16,$17, $18, $19,$20,$21,NOW()
            )
            ON CONFLICT (meta_lead_id) DO NOTHING
            RETURNING id`,
@@ -335,13 +340,24 @@ async function importFromConfig(opts) {
             lead.meta_campaign_id, lead.meta_adset_id, lead.meta_ad_id, lead.meta_created_time,
             lead.product_tag, lead.campaign_name, lead.adset_name, lead.ad_name,
             JSON.stringify({ imported_from: 'google_sheet', config_id: configId, sheet_purpose: cfg.purpose, source_row: row, raw_form_id: lead.meta_form_id }),
-            leadCategory,
+            categoryResolution.category,
+            categoryResolution.source,
+            categoryResolution.rule_id,
           ],
         );
-        return ins.rows[0]?.id || null;
+        return { id: ins.rows[0]?.id || null, duplicate: !ins.rows[0] };
       });
 
-      if (!newId) { stats.duplicates++; continue; }
+      if (!insertResult.id || insertResult.duplicate) {
+        stats.duplicates++;
+        if (insertResult.id) {
+          await resolveAndPersistLeadCategory(insertResult.id, {
+            leadPayload: { ...lead, category: leadCategory, meta_form_id: safeFormId },
+          }).catch(() => {});
+        }
+        continue;
+      }
+      const newId = insertResult.id;
       stats.imported++;
 
       if (assign) {

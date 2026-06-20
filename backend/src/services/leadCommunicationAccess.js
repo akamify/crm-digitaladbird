@@ -7,7 +7,8 @@ const LEAD_COMMUNICATION_FORBIDDEN_MESSAGE = 'You can communicate only with lead
 async function loadLead(leadId, runner = { query }) {
   const { rows: [lead] } = await runner.query(
     `SELECT l.id, l.full_name, l.phone, l.email, l.source, l.campaign_name,
-            l.campaign_label, l.meta_form_id, l.stage, l.call_status,
+            l.campaign_label, l.meta_campaign_id, l.meta_form_id,
+            l.category, l.category_source, l.stage, l.call_status,
             l.assigned_to_user_id, l.deleted_at,
             u.full_name AS assigned_to_name,
             u.report_to_id AS assigned_user_rm_id

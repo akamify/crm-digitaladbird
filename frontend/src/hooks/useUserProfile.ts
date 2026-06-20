@@ -131,6 +131,8 @@ export interface ProfileLead {
   phone?: string | null;
   email?: string | null;
   source?: string | null;
+  category?: 'trader' | 'partner' | 'unknown';
+  category_source?: string | null;
   meta_form_id?: string | null;
   form_name?: string | null;
   campaign_name?: string | null;
@@ -165,6 +167,8 @@ export interface AssignmentHistoryRow {
   lead_name?: string | null;
   campaign_name?: string | null;
   source?: string | null;
+  category?: 'trader' | 'partner' | 'unknown';
+  category_source?: string | null;
   meta_form_id?: string | null;
   form_name?: string | null;
   assignment_type?: string | null;

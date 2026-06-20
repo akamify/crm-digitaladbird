@@ -15,8 +15,10 @@ import { RemarkModal } from '@/components/leads/RemarkModal';
 import { ReassignModal } from '@/components/leads/ReassignModal';
 import { WorkflowPanel } from '@/components/leads/WorkflowPanel';
 import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
+import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
 import { useLead, useLockLead, useUnlockLead } from '@/hooks/useLeads';
 import { useAuth } from '@/lib/auth';
+import { useUpdateLeadCategory } from '@/hooks/useAdminEnterprise';
 import { fmtDate, fmtRelative, fmtPhone, humanize, stageChip, clsx } from '@/lib/format';
 
 export default function LeadDetailPage() {
@@ -34,6 +36,7 @@ function LeadDetailInner() {
   const { data: lead, isLoading } = useLead(id);
   const lock   = useLockLead();
   const unlock = useUnlockLead();
+  const updateCategory = useUpdateLeadCategory();
 
   const [remarkOpen, setRemarkOpen]     = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
@@ -61,6 +64,7 @@ function LeadDetailInner() {
   const lockedByMe   = lead.locked_by_user_id === user.id;
   const lockedByOther = !!lead.locked_until && new Date(lead.locked_until) > new Date() && !lockedByMe;
   const canReassign  = user.role === 'super_admin' || user.role === 'rm';
+  const canEditCategory = user.role === 'super_admin' || user.role === 'admin';
 
   return (
     <div className="space-y-6">
@@ -77,6 +81,7 @@ function LeadDetailInner() {
               </h2>
               <span className={stageChip[lead.stage] || 'chip-slate'}>{humanize(lead.stage)}</span>
               <StatusChip status={lead.call_status} />
+              <LeadCategoryBadge category={lead.category} />
               {lockedByOther && (
                 <span className="chip-amber inline-flex items-center gap-1">
                   <Lock className="h-3 w-3" /> Locked by another rep
@@ -115,6 +120,26 @@ function LeadDetailInner() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {canEditCategory && (
+              <select
+                className="input h-9 w-auto text-xs"
+                aria-label="Lead category"
+                value={lead.category || 'unknown'}
+                disabled={updateCategory.isPending}
+                onChange={(event) => {
+                  const category = event.target.value as 'trader' | 'partner' | 'unknown';
+                  if (!window.confirm(`Change this lead category to ${category === 'trader' ? 'Trader Lead' : category === 'partner' ? 'Partner Lead' : 'Unknown'}?`)) return;
+                  updateCategory.mutate({ leadId: id, category, reason: 'Manual correction from lead detail' }, {
+                    onSuccess: () => toast.success('Lead category updated'),
+                    onError: () => toast.error('Category update failed'),
+                  });
+                }}
+              >
+                <option value="trader">Trader Lead</option>
+                <option value="partner">Partner Lead</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            )}
             {lockedByMe ? (
               <Button
                 variant="ghost" leftIcon={<Unlock className="h-4 w-4" />}
@@ -157,6 +182,8 @@ function LeadDetailInner() {
         <div className="mt-5 grid grid-cols-2 gap-4 border-t border-slate-100 pt-4 sm:grid-cols-4">
           <Meta label="Assigned to"   value={lead.assigned_to_name || '—'} />
           <Meta label="Source"        value={humanize(lead.source)} />
+          <Meta label="Lead category" value={lead.category === 'trader' ? 'Trader Lead' : lead.category === 'partner' ? 'Partner Lead' : 'Unknown'} />
+          <Meta label="Category source" value={humanize(lead.category_source || 'unknown')} />
           <Meta label="Form ID"       value={lead.meta_form_id || '—'} mono />
           <Meta label="Campaign label" value={lead.campaign_label || '—'} />
           <Meta label="Call attempts" value={String(lead.call_attempts ?? 0)} />

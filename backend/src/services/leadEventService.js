@@ -20,6 +20,7 @@ async function loadLeadSummary(leadId) {
   const { rows: [r] } = await query(
     `SELECT l.id, l.full_name, l.phone, l.email, l.source,
             l.campaign_name, l.ad_name, l.adset_name, l.meta_form_id, l.product_tag,
+            l.category, l.category_source,
             l.assigned_to_user_id, u.full_name AS assigned_to_name,
             l.created_at
        FROM leads l
@@ -132,4 +133,17 @@ function onLeadCreated(leadId, { source = 'unknown' } = {}) {
     .catch(err => logger.error({ err: err.message, leadId }, '[lead-fanout] side-effects failed'));
 }
 
-module.exports = { onLeadCreated, findExistingByContact, loadLeadSummary };
+const notificationEvents = require('./notificationService');
+
+module.exports = {
+  onLeadCreated,
+  findExistingByContact,
+  loadLeadSummary,
+  notifyLeadsAssigned: notificationEvents.notifyLeadsAssigned,
+  notifyLeadsReassigned: notificationEvents.notifyLeadsReassigned,
+  notifyLeadRequestCreated: notificationEvents.notifyLeadRequestCreated,
+  notifyLeadRequestApproved: (input, runner) => notificationEvents.notifyLeadRequestResolved({ ...input, status: 'approved' }, runner),
+  notifyLeadRequestRejected: (input, runner) => notificationEvents.notifyLeadRequestResolved({ ...input, status: 'rejected' }, runner),
+  notifyPartnerRequestApproved: notificationEvents.notifyPartnerRequestApproved,
+  notifyPartnerRequestRejected: notificationEvents.notifyPartnerRequestRejected,
+};

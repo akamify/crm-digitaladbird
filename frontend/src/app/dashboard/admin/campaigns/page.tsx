@@ -8,7 +8,8 @@ import {
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { Modal, Skeleton, EmptyState } from '@/components/ui/Modal';
-import { useAdminCampaigns, useCreateCampaign, useUpdateCampaign, useDeleteCampaign } from '@/hooks/useAdminEnterprise';
+import { useAdminCampaigns, useCreateCampaign, useUpdateCampaign, useDeleteCampaign, useUpdateCampaignCategory, useBackfillCampaignCategory, type AdminCampaign } from '@/hooks/useAdminEnterprise';
+import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
 import { fmtDate, clsx, humanize } from '@/lib/format';
 
 export default function CampaignsPage() {
@@ -24,12 +25,14 @@ function CampaignsInner() {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'active' | 'paused'>('all');
   const [createOpen, setCreateOpen] = useState(false);
-  const [editItem, setEditItem] = useState<any>(null);
-  const [form, setForm] = useState({ campaign_name: '', internal_label: '', category: '', ad_account_id: '' });
+  const [editItem, setEditItem] = useState<AdminCampaign | null>(null);
+  const [form, setForm] = useState({ campaign_name: '', internal_label: '', category: 'unknown' as 'trader' | 'partner' | 'unknown', ad_account_id: '', category_notes: '', backfill_mode: 'none' as 'none' | 'dry_run' | 'unknown_only' | 'force_all' });
 
   const createCampaign = useCreateCampaign();
   const updateCampaign = useUpdateCampaign();
   const deleteCampaign = useDeleteCampaign();
+  const updateCategory = useUpdateCampaignCategory();
+  const backfillCategory = useBackfillCampaignCategory();
 
   const filtered = (campaigns || [])
     .filter(c => filter === 'all' || (filter === 'active' ? c.is_active : !c.is_active))
@@ -40,22 +43,28 @@ function CampaignsInner() {
   }), { leads: 0, today: 0, conv: 0, pending: 0 });
 
   function openCreate() {
-    setForm({ campaign_name: '', internal_label: '', category: '', ad_account_id: '' });
+    setForm({ campaign_name: '', internal_label: '', category: 'unknown', ad_account_id: '', category_notes: '', backfill_mode: 'none' });
     setCreateOpen(true);
   }
 
-  function openEdit(c: any) {
-    setForm({ campaign_name: c.campaign_name, internal_label: c.internal_label || '', category: c.category || '', ad_account_id: c.ad_account_id || '' });
+  function openEdit(c: AdminCampaign) {
+    const category = c.lead_category || (c.category as 'trader' | 'partner' | 'unknown') || 'unknown';
+    setForm({ campaign_name: c.campaign_name, internal_label: c.internal_label || '', category, ad_account_id: c.ad_account_id || '', category_notes: c.category_notes || '', backfill_mode: 'none' });
     setEditItem(c);
   }
 
-  function handleSave() {
+  async function handleSave() {
     if (!form.campaign_name.trim()) { toast.error('Campaign name required'); return; }
     if (editItem) {
-      updateCampaign.mutate({ id: editItem.id, ...form }, {
-        onSuccess: () => { toast.success('Campaign updated'); setEditItem(null); },
-        onError: () => toast.error('Update failed'),
-      });
+      try {
+        await updateCampaign.mutateAsync({ id: editItem.id, campaign_name: form.campaign_name, internal_label: form.internal_label });
+        await updateCategory.mutateAsync({ campaignId: editItem.campaign_id, category: form.category, notes: form.category_notes });
+        if (form.backfill_mode !== 'none') {
+          const summary = await backfillCategory.mutateAsync({ campaignId: editItem.campaign_id, mode: form.backfill_mode });
+          toast.success(`${form.backfill_mode === 'dry_run' ? 'Dry run' : 'Backfill'}: ${summary.updated} updated, ${summary.skipped} skipped`);
+        } else toast.success('Campaign category saved for future leads');
+        setEditItem(null);
+      } catch { toast.error('Campaign category update failed'); }
     } else {
       createCampaign.mutate(form, {
         onSuccess: () => { toast.success('Campaign created'); setCreateOpen(false); },
@@ -127,7 +136,7 @@ function CampaignsInner() {
                     <div className="text-[10px] text-slate-400 mt-0.5">{c.campaign_id}</div>
                   </td>
                   <td className="py-3 pr-3 text-slate-600">{c.internal_label || '—'}</td>
-                  <td className="py-3 pr-3">{c.category ? <span className="chip-blue">{humanize(c.category)}</span> : '—'}</td>
+                  <td className="py-3 pr-3"><LeadCategoryBadge category={c.lead_category || (c.category as 'trader' | 'partner' | 'unknown')} /></td>
                   <td className="py-3 pr-3">
                     <span className={clsx('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium',
                       c.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600')}>
@@ -176,17 +185,30 @@ function CampaignsInner() {
             </div>
             <div>
               <label className="label">Category</label>
-              <select className="input" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
-                <option value="">None</option>
-                <option value="partner">Partner</option>
-                <option value="trader">Trader</option>
+              <select className="input" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value as 'trader' | 'partner' | 'unknown' }))}>
+                <option value="trader">Trader Lead</option>
+                <option value="partner">Partner Lead</option>
+                <option value="unknown">Unknown</option>
               </select>
             </div>
           </div>
           <div>
             <label className="label">Ad Account ID</label>
-            <input className="input" value={form.ad_account_id} onChange={e => setForm(f => ({ ...f, ad_account_id: e.target.value }))} placeholder="e.g. act_123456" />
+            <input className="input" value={form.ad_account_id} readOnly={!!editItem} onChange={e => setForm(f => ({ ...f, ad_account_id: e.target.value }))} placeholder="e.g. act_123456" />
           </div>
+          {editItem && <>
+            <div><label className="label">Category notes</label><textarea className="input min-h-20" value={form.category_notes} onChange={e => setForm(f => ({ ...f, category_notes: e.target.value }))} /></div>
+            <p className="text-xs text-slate-500">This category will be applied to future leads coming from this campaign.</p>
+            <div>
+              <label className="label">Existing leads</label>
+              <select className="input" value={form.backfill_mode} onChange={e => setForm(f => ({ ...f, backfill_mode: e.target.value as typeof f.backfill_mode }))}>
+                <option value="none">No, only future leads</option>
+                <option value="dry_run">Dry run</option>
+                <option value="unknown_only">Yes, update only unknown leads</option>
+                <option value="force_all">Yes, force update all leads</option>
+              </select>
+            </div>
+          </>}
         </div>
         <div className="mt-4 flex justify-end gap-2">
           <button onClick={() => { setCreateOpen(false); setEditItem(null); }} className="btn-ghost rounded-lg px-4 py-2 text-sm">Cancel</button>

@@ -14,6 +14,7 @@ const assignmentRoutes = require('./routes/assignment');
 const userProfileRoutes = require('./routes/userProfile');
 const leadCallRoutes = require('./routes/leadCalls');
 const passwordResetRoutes = require('./routes/passwordReset');
+const leadCategoryRoutes = require('./routes/leadCategories');
 const errorHandler = require('./middleware/errorHandler');
 const meta         = require('./controllers/metaController');
 
@@ -172,6 +173,7 @@ app.get('/health/db-strict', async (_req, res) => {
 app.use('/api', assignmentRoutes);
 app.use('/api', userProfileRoutes);
 app.use('/api', passwordResetRoutes);
+app.use('/api', leadCategoryRoutes);
 app.use('/api', leadCallRoutes);
 app.use('/api', apiRoutes);
 app.use('/api/chat', chatRoutes);

@@ -9,6 +9,7 @@ import { clsx, fmtPhone, humanize } from '@/lib/format';
 import { LeadChatThread } from './LeadChatThread';
 import { LeadCallPanel } from './LeadCallPanel';
 import { leadCommunicationErrorMessage, useLeadCommunication } from '@/hooks/useLeadCommunication';
+import { LeadCategoryBadge } from './LeadCategoryBadge';
 
 type Tab = 'chat' | 'calls' | 'history';
 
@@ -26,6 +27,8 @@ interface Props {
     assigned_to_user_id?: string | null;
     stage?: string;
     call_status?: string;
+    category?: 'trader' | 'partner' | 'unknown' | null;
+    category_source?: string | null;
   };
   remarks?: Array<{ id: string; remark: string; created_at: string; by_name?: string; author_name?: string }>;
   defaultTab?: Tab;
@@ -59,6 +62,7 @@ export function LeadCommunicationPanel({ leadId, lead, remarks = [], defaultTab 
           </div>
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
             <span>{lead.full_name || 'Unnamed lead'}</span>
+            <LeadCategoryBadge category={lead.category} />
             <span>{fmtPhone(lead.phone || '')}</span>
             <span>{humanize(lead.source || 'manual')}</span>
             <span>{lead.campaign_name || lead.campaign_label || lead.meta_form_id || 'No campaign'}</span>

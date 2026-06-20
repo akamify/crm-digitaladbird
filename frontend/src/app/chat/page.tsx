@@ -29,6 +29,7 @@ import {
   ChatConversation, ChatMessage, ChatContact, ChatAttachment,
 } from '@/hooks/useChat';
 import { onConnectionStatus } from '@/lib/socket';
+import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
 
 // ─── Constants ──────────────────────────────────────────────────────
 
@@ -728,6 +729,7 @@ function ConversationList({
 }) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'unread' | 'direct' | 'lead' | 'broadcast' | 'archived'>('all');
+  const [leadCategory, setLeadCategory] = useState<'all' | 'trader' | 'partner' | 'unknown'>('all');
   const leadOnly = user.role === 'member' || user.role === 'partner';
   const { data: unreadData } = useChatUnread();
   const totalUnread = unreadData?.unread || 0;
@@ -735,7 +737,8 @@ function ConversationList({
   const { data: archivedConvs = [] } = useChatConversations(undefined, filter === 'archived');
 
   const displayConversations = (filter === 'archived' ? archivedConvs : conversations)
-    .filter(c => !leadOnly || c.type === 'lead');
+    .filter(c => !leadOnly || c.type === 'lead')
+    .filter(c => leadCategory === 'all' || (c.type === 'lead' && (c.lead?.category || 'unknown') === leadCategory));
 
   const pinned = displayConversations.filter(c => c.is_pinned && (filter === 'all' || (filter === 'unread' && c.unread_count > 0)));
   const regular = displayConversations.filter(c => {
@@ -771,6 +774,7 @@ function ConversationList({
               <span className={clsx('truncate text-sm', conv.unread_count > 0
                 ? (dark ? 'font-bold text-white' : 'font-bold text-slate-900')
                 : (dark ? 'font-medium text-slate-200' : 'font-medium text-slate-700'))}>{name}</span>
+              {conv.type === 'lead' && <LeadCategoryBadge category={conv.lead?.category} />}
             </div>
             <span className={clsx('shrink-0 text-[11px]', conv.unread_count > 0 ? 'text-teal-500 font-medium' : (dark ? 'text-slate-500' : 'text-slate-400'))}>
               {formatListTime(conv.last_message_at)}
@@ -829,6 +833,13 @@ function ConversationList({
                 ? 'bg-teal-600 text-white'
                 : (dark ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'))}>
             {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
+          </button>
+        ))}
+      </div>
+      <div className={clsx('shrink-0 flex gap-1 px-3 py-2 border-b overflow-x-auto', dark ? 'border-slate-700 bg-[#111b21]' : 'border-slate-100 bg-white')}>
+        {(['all', 'trader', 'partner', 'unknown'] as const).map(category => (
+          <button key={category} onClick={() => setLeadCategory(category)} className={clsx('rounded-full px-3 py-1 text-[11px] font-medium whitespace-nowrap', leadCategory === category ? 'bg-violet-600 text-white' : dark ? 'bg-slate-700 text-slate-300' : 'bg-slate-100 text-slate-600')}>
+            {category === 'all' ? 'All categories' : category === 'trader' ? 'Trader Leads' : category === 'partner' ? 'Partner Leads' : 'Unknown'}
           </button>
         ))}
       </div>
@@ -1128,6 +1139,7 @@ function MessageThread({
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-bold text-white">{title}</div>
+          {conversation?.type === 'lead' && <LeadCategoryBadge category={conversation.lead?.category} className="mt-0.5" />}
           <div className="text-[11px] text-white/70">
             {recordingNames.length > 0 ? <span className="text-red-200">{recordingNames.join(', ')} recording <Mic className="inline h-2.5 w-2.5 animate-pulse" /></span>
               : typingNames.length > 0 ? <span className="text-emerald-200">{typingNames.join(', ')} typing <TypingDots /></span>

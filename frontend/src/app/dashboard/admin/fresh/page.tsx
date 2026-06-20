@@ -10,6 +10,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { Modal, Skeleton, EmptyState } from '@/components/ui/Modal';
 import { LeadActions } from '@/components/leads/LeadActions';
 import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
+import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
 import { useFreshLeads, type FreshLeadRow, type FreshLeadsScope } from '@/hooks/useAdminEnterprise';
 import { fmtRelative, fmtDate, humanize, clsx } from '@/lib/format';
 
@@ -153,9 +154,7 @@ function FreshLeadsInner() {
                     </Link>
                   </td>
                   <td className="py-2.5 pr-3">
-                    <span className={clsx('chip text-[10px]', l.category === 'partner' ? 'chip-violet' : l.category === 'trader' ? 'chip-blue' : 'chip-slate')}>
-                      {l.category || '—'}
-                    </span>
+                    <LeadCategoryBadge category={l.category} />
                   </td>
                   <td className="py-2.5 pr-3 text-xs text-slate-700 max-w-[200px]">
                     {l.campaign_name ? (

@@ -18,6 +18,10 @@ exports.summary = asyncHandler(async (req, res) => {
   let dateClause = '';
   if (from) { params.push(from); dateClause += ` AND l.created_at >= $${params.length}`; }
   if (to)   { params.push(to);   dateClause += ` AND l.created_at <= $${params.length}`; }
+  if (req.query.category && ['trader', 'partner', 'unknown'].includes(req.query.category)) {
+    params.push(req.query.category);
+    dateClause += ` AND l.category = $${params.length}`;
+  }
 
   // "Today" is calendar-day-in-IST regardless of the DB session timezone —
   // see /admin/leads/fresh for rationale.
@@ -40,6 +44,28 @@ exports.summary = asyncHandler(async (req, res) => {
   );
 
   res.json({ success: true, data: k });
+});
+
+exports.categories = asyncHandler(async (req, res) => {
+  const visible = await getVisibleUserIds(req.user);
+  const scope = buildScope(visible);
+  const params = [...scope.params];
+  let filters = '';
+  if (req.query.from) { params.push(req.query.from); filters += ` AND l.created_at >= $${params.length}`; }
+  if (req.query.to) { params.push(req.query.to); filters += ` AND l.created_at <= $${params.length}`; }
+  const { rows } = await query(
+    `SELECT COALESCE(l.category, 'unknown') AS category,
+            COUNT(*)::int AS total,
+            COUNT(*) FILTER (WHERE l.call_status = 'converted')::int AS conversions,
+            COUNT(*) FILTER (WHERE l.is_pending)::int AS pending,
+            COUNT(*) FILTER (WHERE l.next_followup_at IS NOT NULL AND l.next_followup_at <= NOW())::int AS followups_due
+       FROM leads l
+      WHERE l.deleted_at IS NULL ${scope.sql}${filters}
+      GROUP BY COALESCE(l.category, 'unknown')
+      ORDER BY total DESC`,
+    params,
+  );
+  res.json({ success: true, data: rows });
 });
 
 /** GET /api/reports/daily?days=14 -> { day, leads, conversions, pending }[] */

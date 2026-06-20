@@ -5,7 +5,7 @@
 
 export type Role = 'super_admin' | 'admin' | 'rm' | 'member' | 'partner';
 export type MemberType = 'fresher' | 'veteran';
-export type LeadCategory = 'partner' | 'trader';
+export type LeadCategory = 'partner' | 'trader' | 'unknown';
 
 export type LeadStage =
   | 'new' | 'contacted' | 'qualified' | 'follow_up' | 'won' | 'lost';
@@ -67,6 +67,9 @@ export interface Lead {
   next_followup_at: string | null;
   call_attempts: number;
   category: LeadCategory;
+  category_source: string | null;
+  category_rule_id: string | null;
+  category_resolved_at: string | null;
   assigned_to_user_id: string | null;
   assigned_to_name: string | null;
   locked_by_user_id: string | null;

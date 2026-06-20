@@ -122,6 +122,38 @@ CREATE TABLE IF NOT EXISTS email_delivery_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_email_delivery_user_created ON email_delivery_logs(user_id, created_at);
 
+-- USER NOTIFICATIONS
+CREATE TABLE IF NOT EXISTS user_notifications (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id        UUID NOT NULL REFERENCES users(id),
+  type           VARCHAR(50) NOT NULL,
+  title          VARCHAR(200) NOT NULL,
+  body           TEXT,
+  metadata       JSONB DEFAULT '{}',
+  is_read        BOOLEAN NOT NULL DEFAULT FALSE,
+  event_type     TEXT,
+  entity_type    TEXT,
+  entity_id      UUID,
+  dedupe_key     TEXT,
+  email_status   TEXT,
+  email_sent_at  TIMESTAMPTZ,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_user_notif_user ON user_notifications(user_id, is_read);
+CREATE INDEX IF NOT EXISTS idx_user_notif_created ON user_notifications(created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_notifications_dedupe_key
+  ON user_notifications(dedupe_key)
+  WHERE dedupe_key IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS admin_notifications (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  type        VARCHAR(50) NOT NULL,
+  title       VARCHAR(200) NOT NULL,
+  body        TEXT,
+  metadata    JSONB DEFAULT '{}',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- META PAGES
 CREATE TABLE IF NOT EXISTS meta_pages (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -146,6 +178,8 @@ CREATE TABLE IF NOT EXISTS meta_forms (
   page_id         VARCHAR(64) NOT NULL REFERENCES meta_pages(page_id) ON DELETE CASCADE,
   campaign_label  VARCHAR(120),
   product_tag     VARCHAR(120),
+  lead_category   TEXT NOT NULL DEFAULT 'unknown',
+  category_notes  TEXT,
   is_active       BOOLEAN NOT NULL DEFAULT TRUE,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -178,6 +212,12 @@ CREATE TABLE IF NOT EXISTS leads (
   campaign_label      VARCHAR(120),
   product_tag         VARCHAR(120),
   raw_payload         JSONB,
+  category            TEXT NOT NULL DEFAULT 'unknown',
+  category_source     TEXT,
+  category_rule_id    UUID REFERENCES lead_category_rules(id) ON DELETE SET NULL,
+  category_resolved_at TIMESTAMPTZ,
+  category_manually_updated_by_user_id UUID REFERENCES users(id),
+  category_manually_updated_at TIMESTAMPTZ,
   assigned_to_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
   assigned_at         TIMESTAMPTZ,
   assigned_by_rule_id UUID REFERENCES distribution_rules(id) ON DELETE SET NULL,
@@ -247,6 +287,21 @@ CREATE TABLE IF NOT EXISTS lead_call_logs (
   failure_reason     TEXT,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS lead_category_rules (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  rule_name TEXT NOT NULL,
+  source_type TEXT NOT NULL,
+  match_value TEXT NOT NULL,
+  match_mode TEXT NOT NULL DEFAULT 'exact',
+  category TEXT NOT NULL,
+  priority INTEGER NOT NULL DEFAULT 100,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  notes TEXT,
+  created_by_user_id UUID REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_lead_call_logs_lead_created ON lead_call_logs(lead_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_lead_call_logs_user_created ON lead_call_logs(user_id, created_at);

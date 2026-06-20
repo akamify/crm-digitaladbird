@@ -117,7 +117,7 @@ async function canMessage(sender, targetUserId) {
 // ─── GET /conversations ────────────────────────────────────────────
 router.get('/conversations', asyncHandler(async (req, res) => {
   const userId = req.user.id;
-  const { type, archived, page = 1, limit = 50 } = req.query;
+  const { type, archived, lead_category, page = 1, limit = 50 } = req.query;
   const offset = (Math.max(1, +page) - 1) * +limit;
 
   let typeFilter = '';
@@ -125,10 +125,20 @@ router.get('/conversations', asyncHandler(async (req, res) => {
   const params = [userId, +limit, offset];
   let idx = 4;
   let roleScopeFilter = '';
+  let categoryFilter = '';
 
   if (type) {
     typeFilter = `AND c.type = $${idx}`;
     params.push(type);
+    idx++;
+  }
+  if (lead_category && ['trader', 'partner', 'unknown'].includes(lead_category)) {
+    categoryFilter = `AND c.type = 'lead' AND EXISTS (
+      SELECT 1 FROM leads category_lead
+       WHERE category_lead.id = c.lead_id
+         AND category_lead.category = $${idx}
+    )`;
+    params.push(lead_category);
     idx++;
   }
 
@@ -178,7 +188,7 @@ router.get('/conversations', asyncHandler(async (req, res) => {
       WHERE m.conversation_id = c.id AND m.is_deleted = FALSE
       ORDER BY m.created_at DESC LIMIT 1
     ) lm ON TRUE
-    WHERE c.is_deleted = FALSE ${typeFilter} ${archiveFilter} ${roleScopeFilter}
+    WHERE c.is_deleted = FALSE ${typeFilter} ${archiveFilter} ${roleScopeFilter} ${categoryFilter}
     ORDER BY c.is_pinned DESC, COALESCE(lm.created_at, c.created_at) DESC
     LIMIT $2 OFFSET $3
   `, params);
@@ -199,7 +209,8 @@ router.get('/conversations', asyncHandler(async (req, res) => {
   const leadsMap = {};
   if (leadIds.length) {
     const { rows: leads } = await query(
-      `SELECT id, full_name, phone, email FROM leads WHERE id = ANY($1)`, [leadIds]
+      `SELECT id, full_name, phone, email, category, category_source, campaign_name, meta_campaign_id, meta_form_id
+         FROM leads WHERE id = ANY($1)`, [leadIds]
     );
     for (const l of leads) leadsMap[l.id] = l;
   }

@@ -63,6 +63,7 @@ router.get('/reports/daily',   authenticate, responseCache(30000), reports.daily
 router.get('/reports/by-user', authenticate, requireRole('super_admin', 'rm'), responseCache(15000), reports.byUser);
 router.get('/reports/funnel',  authenticate, responseCache(30000), reports.funnel);
 router.get('/reports/sources', authenticate, responseCache(30000), reports.sources);
+router.get('/reports/categories', authenticate, responseCache(30000), reports.categories);
 
 // ---- Admin: Distribution rules + Meta management ------------------
 const { query } = require('../config/database');
@@ -1345,12 +1346,12 @@ router.get('/admin/export/leads', authenticate, requireRole('super_admin', 'admi
   `, params);
 
   // Build CSV
-  const headers = ['ID','Name','Phone','Email','City','State','Source','Category','Stage','Call Status','Campaign Label','Product','Campaign Name','Ad Set','Ad Name','Assigned To','Assigned At','Next Followup','Call Attempts','Created','Updated'];
+  const headers = ['ID','Name','Phone','Email','City','State','Source','Category','Category Label','Stage','Call Status','Campaign Label','Product','Campaign Name','Ad Set','Ad Name','Assigned To','Assigned At','Next Followup','Call Attempts','Created','Updated'];
   const csvRows = [headers.join(',')];
   for (const r of rows) {
     csvRows.push([
       r.id, esc(r.full_name), esc(r.phone), esc(r.email), esc(r.city), esc(r.state),
-      r.source, r.category, r.stage, r.call_status,
+      r.source, r.category, r.category === 'trader' ? 'Trader Lead' : r.category === 'partner' ? 'Partner Lead' : 'Unknown', r.stage, r.call_status,
       esc(r.campaign_label), esc(r.product_tag),
       esc(r.campaign_name), esc(r.adset_name), esc(r.ad_name),
       esc(r.assigned_to),
@@ -2200,12 +2201,16 @@ router.post('/partner-requests', authenticate, asyncHandler(async (req, res) => 
   );
 
   await logTimeline(r.id, req.user.id, 'created', `Requested ${r.quantity} leads${r.category ? ` (${r.category})` : ''}`);
-  await notifyAdmins('partner_request', 'New Partner Request', `${req.user.name} requested ${r.quantity} leads`, { request_id: r.id, partner_id: req.user.id });
-
-  const rmId = req.user.reportToId || req.user.report_to_id;
-  if (rmId) {
-    await notifyUser(rmId, 'partner_request', 'Partner Lead Request', `${req.user.name} requested ${r.quantity} leads`, { request_id: r.id });
-  }
+  await notifications.notifyLeadRequestCreated({
+    requestId: r.id,
+    requesterId: req.user.id,
+    requesterName: req.user.full_name || req.user.name,
+    requesterRole: 'partner',
+    rmId: req.user.reportToId || req.user.report_to_id,
+    quantity: r.quantity,
+    category: r.category,
+    requestType: 'partner',
+  });
 
   res.status(201).json({ success: true, data: r });
 }));
@@ -2314,8 +2319,19 @@ router.post('/partner-requests/:id/approve', authenticate, requireRole('super_ad
     [req.user.id, note || null, r.id]
   );
 
-  await logTimeline(r.id, req.user.id, 'approved', `Approved by ${req.user.name}${note ? ': ' + note : ''}`);
-  await notifyUser(r.partner_id, 'request_approved', 'Request Approved', `Your request for ${r.quantity} leads has been approved`, { request_id: r.id });
+  await logTimeline(r.id, req.user.id, 'approved', `Approved by ${req.user.full_name || req.user.name}${note ? ': ' + note : ''}`);
+  await notifications.notifyLeadRequestResolved({
+    requestId: r.id,
+    requesterId: r.partner_id,
+    quantity: r.quantity,
+    assigned: r.leads_assigned || 0,
+    status: 'approved',
+    note,
+    requestType: 'partner',
+    resolvedByUserId: req.user.id,
+    approvedByUserId: req.user.id,
+    approverName: req.user.full_name || req.user.name,
+  });
 
   res.json({ success: true, data: { message: 'Request approved' } });
 }));
@@ -2336,8 +2352,19 @@ router.post('/partner-requests/:id/reject', authenticate, requireRole('super_adm
     [req.user.id, note || null, r.id]
   );
 
-  await logTimeline(r.id, req.user.id, 'rejected', `Rejected by ${req.user.name}${note ? ': ' + note : ''}`);
-  await notifyUser(r.partner_id, 'request_rejected', 'Request Rejected', `Your request for ${r.quantity} leads was rejected${note ? ': ' + note : ''}`, { request_id: r.id });
+  await logTimeline(r.id, req.user.id, 'rejected', `Rejected by ${req.user.full_name || req.user.name}${note ? ': ' + note : ''}`);
+  await notifications.notifyLeadRequestResolved({
+    requestId: r.id,
+    requesterId: r.partner_id,
+    quantity: r.quantity,
+    assigned: 0,
+    status: 'rejected',
+    note,
+    requestType: 'partner',
+    resolvedByUserId: req.user.id,
+    rejectedByUserId: req.user.id,
+    approverName: req.user.full_name || req.user.name,
+  });
 
   res.json({ success: true, data: { message: 'Request rejected' } });
 }));
@@ -2384,7 +2411,26 @@ router.post('/partner-requests/:id/assign', authenticate, requireRole('super_adm
   );
 
   await logTimeline(r.id, req.user.id, 'assigned', `${assigned} leads auto-assigned (${newTotal}/${r.quantity} total)`, { assigned, total: newTotal });
-  await notifyUser(r.partner_id, 'leads_delivered', 'Leads Delivered', `${assigned} leads have been assigned to you`, { request_id: r.id, count: assigned });
+  if (assigned > 0) {
+    await notifications.notifyLeadAssigned(r.partner_id, assigned, {
+      request_id: r.id,
+      count: assigned,
+      lead_ids: leads.slice(0, assigned).map(l => l.id),
+      assignment_type: 'partner_request',
+      assigned_by: req.user.id,
+    });
+    await notifications.notifyLeadRequestResolved({
+      requestId: r.id,
+      requesterId: r.partner_id,
+      quantity: r.quantity,
+      assigned: newTotal,
+      status: newStatus === 'completed' ? 'approved' : 'partially_approved',
+      requestType: 'partner',
+      resolvedByUserId: req.user.id,
+      approvedByUserId: req.user.id,
+      approverName: req.user.full_name || req.user.name,
+    });
+  }
 
   res.json({ success: true, data: { assigned, total_assigned: newTotal, remaining: r.quantity - newTotal, status: newStatus } });
 }));
@@ -2422,7 +2468,15 @@ router.post('/partner-requests/:id/manual-assign', authenticate, requireRole('su
   );
 
   await logTimeline(r.id, req.user.id, 'manual_assign', `${assigned} leads manually assigned`, { lead_ids: lead_ids.slice(0, 10), assigned });
-  await notifyUser(r.partner_id, 'leads_delivered', 'Leads Delivered', `${assigned} leads have been assigned to you`, { request_id: r.id, count: assigned });
+  if (assigned > 0) {
+    await notifications.notifyLeadAssigned(r.partner_id, assigned, {
+      request_id: r.id,
+      count: assigned,
+      lead_ids: lead_ids.slice(0, assigned),
+      assignment_type: 'partner_manual',
+      assigned_by: req.user.id,
+    });
+  }
 
   res.json({ success: true, data: { assigned, total_assigned: newTotal, status: newStatus } });
 }));
@@ -3127,6 +3181,10 @@ router.get('/rm-monitoring/member-requests', authenticate, requireRole('rm', 'su
 router.get('/admin/campaigns', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
   const { rows } = await query(`
     SELECT mc.*,
+      mc.campaign_id AS meta_campaign_id,
+      mc.category AS lead_category,
+      CASE mc.category WHEN 'trader' THEN 'Trader Lead' WHEN 'partner' THEN 'Partner Lead' ELSE 'Unknown' END AS lead_category_label,
+      category_user.full_name AS category_updated_by_name,
       (SELECT COUNT(*)::int FROM leads l WHERE l.meta_campaign_id = mc.campaign_id AND l.deleted_at IS NULL) AS total_leads,
       (SELECT COUNT(*)::int FROM leads l WHERE l.meta_campaign_id = mc.campaign_id AND l.deleted_at IS NULL
         AND (COALESCE(l.meta_created_time, l.created_at) AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS today_leads,
@@ -3135,6 +3193,7 @@ router.get('/admin/campaigns', authenticate, requireRole('super_admin'), asyncHa
       (SELECT COUNT(*)::int FROM leads l WHERE l.meta_campaign_id = mc.campaign_id AND l.deleted_at IS NULL
         AND l.is_pending = TRUE) AS pending_leads
     FROM meta_campaigns mc
+    LEFT JOIN users category_user ON category_user.id = mc.category_updated_by_user_id
     ORDER BY mc.created_at DESC
   `);
   res.json({ success: true, data: rows });

@@ -351,7 +351,7 @@ async function getUserLeads(actor, userId, opts = {}) {
   const { rows: [{ total }] } = await query(`SELECT COUNT(*)::int AS total FROM leads l WHERE ${whereSql}`, params);
   params.push(pageSize, offset);
   const { rows } = await query(`
-    SELECT l.id, l.full_name, l.phone, l.email, l.source, l.meta_form_id,
+    SELECT l.id, l.full_name, l.phone, l.email, l.source, l.category, l.category_source, l.meta_form_id,
            mf.form_name, l.campaign_name, l.campaign_label, l.assigned_at,
            l.call_status, l.stage, l.is_pending, l.next_followup_at,
            l.created_at,
@@ -453,7 +453,7 @@ async function getAssignmentHistory(actor, userId, opts = {}) {
   const page = Math.max(1, Number.parseInt(opts.page || '1', 10));
   params.push(pageSize, (page - 1) * pageSize);
   const { rows } = await query(`
-    SELECT la.id, la.lead_id, l.full_name AS lead_name, l.campaign_name, l.source,
+    SELECT la.id, la.lead_id, l.full_name AS lead_name, l.campaign_name, l.source, l.category, l.category_source,
            l.meta_form_id, mf.form_name,
            COALESCE(la.assignment_type, la.reason) AS assignment_type,
            prev.full_name AS previous_user,

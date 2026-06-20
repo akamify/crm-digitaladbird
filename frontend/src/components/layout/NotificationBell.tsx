@@ -3,6 +3,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Bell, Check, CheckCheck, X } from 'lucide-react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
+import toast from 'react-hot-toast';
 import { useNotifications, useMarkRead, useMarkAllRead, type UserNotification } from '@/hooks/useNotifications';
 import { fmtRelative } from '@/lib/format';
 import { clsx } from '@/lib/format';
@@ -14,16 +15,43 @@ const TYPE_COLORS: Record<string, string> = {
   request_rejected: 'bg-rose-100 text-rose-700',
   request_partially_fulfilled: 'bg-amber-100 text-amber-700',
   lead_request: 'bg-indigo-100 text-indigo-700',
+  lead_request_created: 'bg-indigo-100 text-indigo-700',
+  lead_request_approved: 'bg-emerald-100 text-emerald-700',
+  lead_request_partially_approved: 'bg-amber-100 text-amber-700',
+  lead_request_rejected: 'bg-rose-100 text-rose-700',
   lead_request_submitted: 'bg-indigo-100 text-indigo-700',
   rm_lead_request: 'bg-cyan-100 text-cyan-700',
+  rm_lead_request_created: 'bg-cyan-100 text-cyan-700',
+  rm_lead_request_approved: 'bg-emerald-100 text-emerald-700',
+  rm_lead_request_rejected: 'bg-rose-100 text-rose-700',
   rm_lead_request_submitted: 'bg-cyan-100 text-cyan-700',
-  lead_assigned: 'bg-blue-100 text-blue-700',
+  leads_assigned: 'bg-blue-100 text-blue-700',
+  leads_reassigned: 'bg-purple-100 text-purple-700',
   leads_delivered: 'bg-blue-100 text-blue-700',
+  bulk_leads_assigned: 'bg-blue-100 text-blue-700',
+  auto_leads_distributed: 'bg-sky-100 text-sky-700',
+  lead_request_needs_approval: 'bg-amber-100 text-amber-700',
+  partner_request_created: 'bg-violet-100 text-violet-700',
+  partner_request_approved: 'bg-emerald-100 text-emerald-700',
+  partner_request_partially_approved: 'bg-amber-100 text-amber-700',
+  partner_request_rejected: 'bg-rose-100 text-rose-700',
+  lead_assigned: 'bg-blue-100 text-blue-700',
   rm_assigned: 'bg-sky-100 text-sky-700',
 };
 
 function typeLabel(type: string) {
   return type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function notificationTarget(n: UserNotification) {
+  const leadId = typeof n.metadata?.lead_id === 'string' ? n.metadata.lead_id : null;
+  if (leadId) return `/leads/${leadId}`;
+  if (Array.isArray(n.metadata?.lead_ids) && n.metadata.lead_ids.length > 0) return '/leads';
+  const eventType = String(n.metadata?.event_type || n.type || '');
+  if (eventType.includes('partner_request')) return '/partner-requests';
+  if (eventType.includes('lead_request') || eventType.includes('rm_lead_request') || eventType.includes('request_')) return '/partner-requests';
+  if (eventType.includes('reassigned') || eventType.includes('assigned')) return '/leads';
+  return null;
 }
 
 export function NotificationBell() {
@@ -49,7 +77,12 @@ export function NotificationBell() {
   useEffect(() => {
     let cleanup: (() => void) | null = null;
     connectSocket().then((socket) => {
-      const handler = () => qc.invalidateQueries({ queryKey: ['notifications'] });
+      const handler = (notification?: UserNotification) => {
+        qc.invalidateQueries({ queryKey: ['notifications'] });
+        if (notification?.title) {
+          toast.success(notification.title, { id: `notif-${notification.id || notification.type}`, duration: 4000 });
+        }
+      };
       socket.on('notification:new', handler);
       cleanup = () => socket.off('notification:new', handler);
     }).catch(() => {});
@@ -109,7 +142,7 @@ export function NotificationBell() {
               </div>
             ) : (
               items.map((n: UserNotification) => {
-                const leadId = typeof n.metadata?.lead_id === 'string' ? n.metadata.lead_id : null;
+                const target = notificationTarget(n);
                 const content = (
                   <>
                     <div className="shrink-0 mt-0.5">
@@ -144,10 +177,10 @@ export function NotificationBell() {
                 );
                 const onClick = () => {
                   if (!n.is_read) markRead.mutate(n.id);
-                  if (leadId) setOpen(false);
+                  if (target) setOpen(false);
                 };
-                return leadId ? (
-                  <Link key={n.id} href={`/leads/${leadId}`} onClick={onClick} className={className}>
+                return target ? (
+                  <Link key={n.id} href={target} onClick={onClick} className={className}>
                     {content}
                   </Link>
                 ) : (
