@@ -15,6 +15,7 @@ const userProfileRoutes = require('./routes/userProfile');
 const leadCallRoutes = require('./routes/leadCalls');
 const passwordResetRoutes = require('./routes/passwordReset');
 const leadCategoryRoutes = require('./routes/leadCategories');
+const waspRoutes = require('./routes/wasp');
 const errorHandler = require('./middleware/errorHandler');
 const meta         = require('./controllers/metaController');
 
@@ -137,6 +138,23 @@ app.post('/webhook',       ...META_RAW, meta.receive);
 // Serve uploaded chat files
 const path = require('path');
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
+app.use('/api/integrations/wasp/webhook',
+  express.raw({ type: '*/*', limit: '2mb' }),
+  (req, _res, next) => {
+    req.rawBody = req.body;
+    if (Buffer.isBuffer(req.body)) {
+      const raw = req.body.toString('utf8');
+      try {
+        req.body = raw ? JSON.parse(raw) : {};
+      } catch {
+        req.body = { raw };
+      }
+    }
+    next();
+  }
+);
+app.use('/api', waspRoutes);
 
 // Everything else uses JSON body parser.
 app.use(express.json({ limit: '10mb' }));

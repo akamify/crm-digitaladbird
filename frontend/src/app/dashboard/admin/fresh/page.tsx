@@ -183,7 +183,6 @@ function FreshLeadsInner() {
                       name={l.full_name}
                       compact
                       onChat={() => openCommunication(l, 'chat')}
-                      onCall={() => openCommunication(l, 'calls')}
                     />
                   </td>
                 </tr>

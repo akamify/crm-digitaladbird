@@ -5,6 +5,7 @@ import { Loader2, PhoneCall, Plus } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Modal, Skeleton, EmptyState } from '@/components/ui/Modal';
 import { fmtDate, fmtRelative } from '@/lib/format';
+import { triggerPhoneCall } from '@/lib/phone';
 import type { LeadCallLog } from '@/hooks/useLeadCommunication';
 
 interface Props {
@@ -28,8 +29,12 @@ export function LeadCallPanel({ phone, calls, loading, disabled, starting, loggi
 
   async function startCall() {
     try {
+      if (!phone || !triggerPhoneCall(phone)) {
+        toast.error('This lead does not have a valid phone number.');
+        return;
+      }
       await onStart();
-      toast.success(providerMode === 'disabled' ? 'Call log created' : 'Call initiated');
+      toast.success(providerMode === 'disabled' ? 'Dialer opened and call log created' : 'Call initiated');
     } catch {
       toast.error('Could not start call');
     }
@@ -57,7 +62,7 @@ export function LeadCallPanel({ phone, calls, loading, disabled, starting, loggi
       <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
         Call provider: <span className="font-medium text-slate-900">{providerMode}</span>.
         {(providerMode === 'disabled' || providerMode === 'mock') && (
-          <span> This action creates an in-system call log only. No external call redirect is used.</span>
+          <span> This action opens the device dialer using the lead phone number and also records the call attempt in CRM.</span>
         )}
       </div>
 

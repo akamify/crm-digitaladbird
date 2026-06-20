@@ -29,12 +29,15 @@ function initSchema() {
     logger.warn('pg-mem schema file not found:', schemaPath);
     return;
   }
-  const sql = fs.readFileSync(schemaPath, 'utf8');
+  const sql = fs.readFileSync(schemaPath, 'utf8')
+    .split(/\r?\n/)
+    .filter(line => !line.trim().startsWith('--'))
+    .join('\n');
   // Split on semicolons, filter empty, run each
   const statements = sql
     .split(';')
     .map(s => s.trim())
-    .filter(s => s.length > 0 && !s.startsWith('--'));
+    .filter(s => s.length > 0);
 
   let ok = 0;
   let skip = 0;

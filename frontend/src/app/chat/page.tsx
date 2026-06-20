@@ -26,6 +26,7 @@ import {
   useSendMessageWithMentions, usePinnedMessages,
   useUploadMultipleFiles, useAdminExportChat,
   useConversationParticipants, useSocketConnection, useLeadThread,
+  useSendWaspMessage,
   ChatConversation, ChatMessage, ChatContact, ChatAttachment,
 } from '@/hooks/useChat';
 import { onConnectionStatus } from '@/lib/socket';
@@ -144,6 +145,26 @@ function formatLastSeen(d: string | null) {
   if (diff < 60) return `last seen ${Math.floor(diff)}m ago`;
   if (diff < 1440) return `last seen ${Math.floor(diff / 60)}h ago`;
   return `last seen ${new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+}
+
+function formatSessionExpiry(d?: string | null) {
+  if (!d) return '';
+  const diffMs = new Date(d).getTime() - Date.now();
+  if (diffMs <= 0) return 'expired';
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 60) return `${minutes}m left`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours}h ${rest}m left` : `${hours}h left`;
+}
+
+function sessionBadge(session?: ChatConversation['session']) {
+  if (!session) return null;
+  if (session.status === 'open') return { label: `Session open${session.expires_at ? ` - ${formatSessionExpiry(session.expires_at)}` : ''}`, tone: 'emerald' };
+  if (session.status === 'expired') return { label: 'WhatsApp session expired', tone: 'amber' };
+  if (session.status === 'waiting_for_customer') return { label: 'Waiting for customer message', tone: 'slate' };
+  if (session.status === 'admin_only_external') return { label: 'Admin-only external chat', tone: 'violet' };
+  return null;
 }
 
 function formatFileSize(bytes: number) {
@@ -728,7 +749,7 @@ function ConversationList({
   dark: boolean;
 }) {
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<'all' | 'unread' | 'direct' | 'lead' | 'broadcast' | 'archived'>('all');
+  const [filter, setFilter] = useState<'all' | 'unread' | 'direct' | 'lead' | 'broadcast' | 'whatsapp' | 'external' | 'open' | 'expired' | 'archived'>('all');
   const [leadCategory, setLeadCategory] = useState<'all' | 'trader' | 'partner' | 'unknown'>('all');
   const leadOnly = user.role === 'member' || user.role === 'partner';
   const { data: unreadData } = useChatUnread();
@@ -744,7 +765,11 @@ function ConversationList({
   const regular = displayConversations.filter(c => {
     if (filter === 'archived') return true;
     if (filter === 'unread' && c.unread_count === 0) return false;
-    if (filter !== 'all' && filter !== 'unread' && c.type !== filter) return false;
+    if (filter === 'whatsapp' && c.channel !== 'whatsapp') return false;
+    if (filter === 'external' && !c.is_external_unknown) return false;
+    if (filter === 'open' && c.session?.status !== 'open') return false;
+    if (filter === 'expired' && c.session?.status !== 'expired') return false;
+    if (!['all', 'unread', 'whatsapp', 'external', 'open', 'expired'].includes(filter) && c.type !== filter) return false;
     if (pinned.includes(c)) return false;
     if (!search) return true;
     const q = search.toLowerCase();
@@ -775,6 +800,12 @@ function ConversationList({
                 ? (dark ? 'font-bold text-white' : 'font-bold text-slate-900')
                 : (dark ? 'font-medium text-slate-200' : 'font-medium text-slate-700'))}>{name}</span>
               {conv.type === 'lead' && <LeadCategoryBadge category={conv.lead?.category} />}
+              {conv.channel === 'whatsapp' && (
+                <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700">WA</span>
+              )}
+              {conv.is_external_unknown && (
+                <span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[9px] font-semibold text-violet-700">External</span>
+              )}
             </div>
             <span className={clsx('shrink-0 text-[11px]', conv.unread_count > 0 ? 'text-teal-500 font-medium' : (dark ? 'text-slate-500' : 'text-slate-400'))}>
               {formatListTime(conv.last_message_at)}
@@ -793,6 +824,11 @@ function ConversationList({
               </span>
             )}
           </div>
+          {conv.channel === 'whatsapp' && conv.session && (
+            <div className={clsx('mt-1 text-[10px]', conv.session.status === 'open' ? 'text-emerald-500' : dark ? 'text-amber-300' : 'text-amber-600')}>
+              {conv.session.status === 'open' ? `WhatsApp session open${conv.session.expires_at ? ` - ${formatSessionExpiry(conv.session.expires_at)}` : ''}` : conv.disabled_reason || conv.session.disabled_reason}
+            </div>
+          )}
         </div>
       </button>
     );
@@ -824,15 +860,15 @@ function ConversationList({
 
       <div className={clsx('shrink-0 flex gap-1 px-3 py-2 border-b overflow-x-auto', dark ? 'border-slate-700 bg-[#111b21]' : 'border-slate-100 bg-white')}>
         {(leadOnly
-          ? (['all', 'unread', 'lead', 'archived'] as const)
-          : (['all', 'unread', 'direct', 'lead', 'broadcast', 'archived'] as const)
+          ? (['all', 'unread', 'lead', 'whatsapp', 'open', 'expired', 'archived'] as const)
+          : (['all', 'unread', 'direct', 'lead', 'whatsapp', 'external', 'open', 'expired', 'broadcast', 'archived'] as const)
         ).map(f => (
           <button key={f} onClick={() => setFilter(f)}
             className={clsx('rounded-full px-3 py-1 text-[11px] font-medium transition whitespace-nowrap',
               filter === f
                 ? 'bg-teal-600 text-white'
                 : (dark ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'))}>
-            {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
+            {f === 'all' ? 'All' : f === 'whatsapp' ? 'WhatsApp' : f === 'external' ? 'External' : f === 'open' ? 'Open session' : f === 'expired' ? 'Expired' : f.charAt(0).toUpperCase() + f.slice(1)}
           </button>
         ))}
       </div>
@@ -904,6 +940,7 @@ function MessageThread({
   const { data, isLoading } = useChatMessages(conversationId);
   const sendMsg = useSendMessage(conversationId);
   const sendMsgWithMentions = useSendMessageWithMentions(conversationId);
+  const sendWasp = useSendWaspMessage(conversationId);
   const markRead = useMarkConversationRead(conversationId);
   const uploadFile = useUploadFile(conversationId);
   const uploadMulti = useUploadMultipleFiles(conversationId);
@@ -939,12 +976,22 @@ function MessageThread({
   const [mentionQuery, setMentionQuery] = useState('');
   const [showMentions, setShowMentions] = useState(false);
   const [showParticipants, setShowParticipants] = useState(false);
+  const [sendMode, setSendMode] = useState<'internal' | 'whatsapp'>('internal');
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const typingTimer = useRef<NodeJS.Timeout | null>(null);
   const prevMsgCount = useRef(0);
   const messages = data?.messages || [];
+  const isWaspConversation = conversation?.channel === 'whatsapp' || conversation?.provider === 'wasp';
+  const canSendWasp = Boolean(isWaspConversation && conversation?.can_send_whatsapp);
+  const sessionInfo = sessionBadge(conversation?.session);
+  const waspDisabledReason = conversation?.disabled_reason || conversation?.session?.disabled_reason || 'Waiting for customer message. WhatsApp reply is available only after the customer sends a message.';
+  const isSending = sendMode === 'whatsapp' ? sendWasp.isPending : (sendMsg.isPending || sendMsgWithMentions.isPending);
+
+  useEffect(() => {
+    setSendMode('internal');
+  }, [conversationId]);
 
   useEffect(() => {
     const draft = localStorage.getItem(`chat-draft-${conversationId}`);
@@ -979,7 +1026,24 @@ function MessageThread({
       return;
     }
     const text = input.trim();
-    if (!text || sendMsg.isPending) return;
+    if (!text || isSending) return;
+
+    if (sendMode === 'whatsapp') {
+      if (!canSendWasp) {
+        toast.error(waspDisabledReason);
+        return;
+      }
+      sendWasp.mutate({ text }, {
+        onSuccess: () => {
+          setInput('');
+          setReplyTo(null);
+          sendStopTyping();
+          localStorage.removeItem(`chat-draft-${conversationId}`);
+          inputRef.current?.focus();
+        },
+      });
+      return;
+    }
 
     const mentionIds = extractMentions(text, contacts);
     if (mentionIds.length > 0) {
@@ -1139,7 +1203,28 @@ function MessageThread({
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-bold text-white">{title}</div>
-          {conversation?.type === 'lead' && <LeadCategoryBadge category={conversation.lead?.category} className="mt-0.5" />}
+          <div className="mt-0.5 flex flex-wrap items-center gap-1">
+            {conversation?.type === 'lead' && <LeadCategoryBadge category={conversation.lead?.category} />}
+            {isWaspConversation && (
+              <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-semibold text-white">
+                WaspAkamify WhatsApp
+              </span>
+            )}
+            {conversation?.is_external_unknown && (
+              <span className="rounded-full bg-violet-500/25 px-2 py-0.5 text-[10px] font-semibold text-violet-100">
+                Admin-only external
+              </span>
+            )}
+            {sessionInfo && (
+              <span className={clsx('rounded-full px-2 py-0.5 text-[10px] font-semibold',
+                sessionInfo.tone === 'emerald' ? 'bg-emerald-500/25 text-emerald-100'
+                  : sessionInfo.tone === 'amber' ? 'bg-amber-500/25 text-amber-100'
+                  : sessionInfo.tone === 'violet' ? 'bg-violet-500/25 text-violet-100'
+                  : 'bg-white/15 text-white/80')}>
+                {sessionInfo.label}
+              </span>
+            )}
+          </div>
           <div className="text-[11px] text-white/70">
             {recordingNames.length > 0 ? <span className="text-red-200">{recordingNames.join(', ')} recording <Mic className="inline h-2.5 w-2.5 animate-pulse" /></span>
               : typingNames.length > 0 ? <span className="text-emerald-200">{typingNames.join(', ')} typing <TypingDots /></span>
@@ -1426,7 +1511,29 @@ function MessageThread({
 
       {/* Input area */}
       {!isRecording && (
-        <div className={clsx('shrink-0 flex items-end gap-2 px-3 py-2 border-t', dark ? 'bg-[#202c33] border-slate-700' : 'bg-slate-100 border-slate-200')} style={{ position: 'relative' }}>
+        <div className={clsx('shrink-0 border-t', dark ? 'bg-[#202c33] border-slate-700' : 'bg-slate-100 border-slate-200')} style={{ position: 'relative' }}>
+          {isWaspConversation && !editingMsg && (
+            <div className={clsx('flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b', dark ? 'border-slate-700' : 'border-slate-200')}>
+              <div className="flex items-center gap-1 rounded-full p-1" style={{ backgroundColor: dark ? '#111b21' : '#e2e8f0' }}>
+                <button type="button" onClick={() => setSendMode('internal')}
+                  className={clsx('rounded-full px-3 py-1 text-[11px] font-semibold transition',
+                    sendMode === 'internal' ? 'bg-white text-slate-800 shadow-sm' : dark ? 'text-slate-300 hover:text-white' : 'text-slate-600 hover:text-slate-900')}>
+                  Internal note
+                </button>
+                <button type="button" disabled={!canSendWasp}
+                  onClick={() => canSendWasp ? setSendMode('whatsapp') : toast.error(waspDisabledReason)}
+                  className={clsx('rounded-full px-3 py-1 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50',
+                    sendMode === 'whatsapp' ? 'bg-emerald-600 text-white shadow-sm' : dark ? 'text-slate-300 hover:text-white' : 'text-slate-600 hover:text-slate-900')}>
+                  WhatsApp reply
+                </button>
+              </div>
+              <span className={clsx('text-[11px]', canSendWasp ? (dark ? 'text-emerald-300' : 'text-emerald-700') : (dark ? 'text-amber-300' : 'text-amber-700'))}>
+                {canSendWasp ? 'Customer session is open.' : waspDisabledReason}
+              </span>
+            </div>
+          )}
+
+          <div className="flex items-end gap-2 px-3 py-2">
           <input ref={fileRef} type="file" className="hidden" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip,.rar,.7z,.webm,.ogg" multiple onChange={handleFileUpload} />
 
           {showMentions && mentionQuery && (
@@ -1453,16 +1560,17 @@ function MessageThread({
             style={{ minHeight: '42px' }}
           />
           {input.trim() ? (
-            <button onClick={handleSend} disabled={sendMsg.isPending}
+            <button onClick={handleSend} disabled={isSending || (sendMode === 'whatsapp' && !canSendWasp)}
               className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-white shadow-sm transition hover:brightness-110"
-              style={{ backgroundColor: editingMsg ? '#3b82f6' : WA_GREEN_TEAL }}>
-              {sendMsg.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              style={{ backgroundColor: editingMsg ? '#3b82f6' : sendMode === 'whatsapp' ? '#16a34a' : WA_GREEN_TEAL }}>
+              {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
             </button>
           ) : (
             <button onClick={() => setIsRecording(true)} className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-white shadow-sm transition hover:brightness-110" style={{ backgroundColor: WA_GREEN_TEAL }}>
               <Mic className="h-5 w-5" />
             </button>
           )}
+          </div>
         </div>
       )}
 
@@ -1721,6 +1829,14 @@ export default function ChatPage() {
       last_message_at: null,
       unread_count: 0,
       lead: leadThread.data.lead || null,
+      channel: leadThread.data.conversation?.channel,
+      provider: leadThread.data.conversation?.provider,
+      session: leadThread.data.conversation?.session,
+      can_send_whatsapp: leadThread.data.conversation?.can_send_whatsapp,
+      disabled_reason: leadThread.data.conversation?.disabled_reason,
+      session_status: leadThread.data.conversation?.session_status,
+      session_expires_at: leadThread.data.conversation?.session_expires_at,
+      is_external_unknown: leadThread.data.conversation?.is_external_unknown,
     } as ChatConversation;
   }, [conversations, leadId, leadThread.data, selectedId]);
 

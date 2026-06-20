@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { apiGet, apiPost, api } from '@/lib/api';
 import { getSocket, connectSocket, joinConversation, leaveConversation, emitTyping, emitStopTyping } from '@/lib/socket';
 import { useAuth } from '@/lib/auth';
+import { useNewMessageSound } from './useNewMessageSound';
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -22,6 +23,17 @@ export interface ChatConversation {
   type: 'direct' | 'lead' | 'broadcast';
   title: string | null;
   lead_id: string | null;
+  channel?: 'internal' | 'whatsapp';
+  provider?: string | null;
+  customer_phone?: string | null;
+  customer_wa_id?: string | null;
+  external_conversation_id?: string | null;
+  session_status?: string | null;
+  session_expires_at?: string | null;
+  is_external_unknown?: boolean;
+  session?: { status: string; can_send_whatsapp: boolean; expires_at: string | null; disabled_reason: string | null };
+  can_send_whatsapp?: boolean;
+  disabled_reason?: string | null;
   is_pinned: boolean;
   is_archived: boolean;
   is_muted: boolean;
@@ -53,11 +65,17 @@ export interface ChatReaction {
 
 export interface ChatMessage {
   id: string;
-  sender_id: string;
+  sender_id: string | null;
   sender_name: string;
   sender_role: string;
   body: string;
-  message_type: 'text' | 'system' | 'file' | 'voice';
+  message_type: 'text' | 'system' | 'file' | 'voice' | 'image' | 'audio' | 'video' | 'document';
+  channel?: 'internal' | 'whatsapp';
+  provider?: string | null;
+  direction?: 'internal' | 'inbound' | 'outbound';
+  sender_type?: 'user' | 'customer' | 'system';
+  external_message_id?: string | null;
+  external_conversation_id?: string | null;
   metadata?: Record<string, unknown>;
   created_at: string;
   edited_at?: string;
@@ -69,7 +87,8 @@ export interface ChatMessage {
   reply_to?: { id: string; body: string; sender_id: string; sender_name: string } | null;
   forwarded_from_id?: string;
   forwarded_from?: { id: string; body: string; sender_name: string } | null;
-  delivery_status?: 'sent' | 'delivered' | 'read';
+  delivery_status?: 'local' | 'queued' | 'sent' | 'delivered' | 'read' | 'received' | 'failed';
+  delivery_error?: string | null;
   attachments: ChatAttachment[];
   reactions: ChatReaction[];
   mentions?: string[];
@@ -113,6 +132,7 @@ export function useSocketConnection() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const listenersAttached = useRef(false);
+  const { play: playNewMessageSound } = useNewMessageSound(true);
 
   useEffect(() => {
     if (!user) return;
@@ -173,6 +193,15 @@ export function useSocketConnection() {
         if (user.role === 'super_admin' || user.role === 'rm' || mine) {
           const tag = lead.campaign_name ? `· ${lead.campaign_name}` : '';
           toast.success(`New lead${lead.full_name ? `: ${lead.full_name}` : ''} ${tag}`, { id: `lead-${lead.id}`, duration: 4000 });
+        }
+      },
+      'chat:message:new': (payload: { conversation_id?: string; direction?: string; play_sound?: boolean; message?: ChatMessage }) => {
+        enqueue('chat-conversations', 'chat-unread', 'notifications');
+        if (payload.conversation_id) {
+          qc.invalidateQueries({ queryKey: ['chat-messages', payload.conversation_id] });
+        }
+        if (payload.direction === 'inbound' && payload.play_sound) {
+          playNewMessageSound(payload.message?.external_message_id || payload.message?.id);
         }
       },
       'lead:assigned': (payload: { count?: number }) => {
@@ -239,7 +268,7 @@ export function useSocketConnection() {
         });
       }
     };
-  }, [user, qc]);
+  }, [user, qc, playNewMessageSound]);
 }
 
 // ─── Data hooks ────────────────────────────────────────────────────
@@ -255,20 +284,40 @@ export function useChatContacts() {
   });
 }
 
-export function useChatConversations(type?: string, archived?: boolean, leadCategory?: 'trader' | 'partner' | 'unknown') {
+export function useChatConversations(type?: string, archived?: boolean, leadCategory?: 'trader' | 'partner' | 'unknown', extra?: { channel?: string; externalUnknown?: boolean; session?: string; assignedToMe?: boolean }) {
   const { user } = useAuth();
   const params = new URLSearchParams();
   if (type) params.set('type', type);
   if (archived) params.set('archived', 'true');
   if (leadCategory) params.set('lead_category', leadCategory);
+  if (extra?.channel) params.set('channel', extra.channel);
+  if (extra?.externalUnknown) params.set('external_unknown', 'true');
+  if (extra?.session) params.set('session', extra.session);
+  if (extra?.assignedToMe) params.set('assigned_to_me', 'true');
   const qs = params.toString();
   return useQuery({
-    queryKey: ['chat-conversations', type ?? null, archived ?? null, leadCategory ?? null],
+    queryKey: ['chat-conversations', type ?? null, archived ?? null, leadCategory ?? null, extra ?? null],
     queryFn: () => safeApiGet<ChatConversation[]>(`/chat/conversations${qs ? `?${qs}` : ''}`),
     enabled: !!user,
     staleTime: 5_000,
     refetchInterval: 30_000,
     retry: 2,
+  });
+}
+
+export function useSendWaspMessage(conversationId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { text: string }) =>
+      safeApiPost<{ message: ChatMessage; session: ChatConversation['session'] }>(`/chat/conversations/${conversationId}/wasp/messages`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['chat-messages', conversationId] });
+      qc.invalidateQueries({ queryKey: ['chat-conversations'] });
+    },
+    onError: (error: unknown) => {
+      const msg = (error as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'WhatsApp message could not be sent.';
+      toast.error(msg);
+    },
   });
 }
 
@@ -548,7 +597,7 @@ export function useChatNotifications() {
 export function useLeadThread(leadId: string | null) {
   return useQuery({
     queryKey: ['chat-lead-thread', leadId],
-    queryFn: () => safeApiGet<{ conversationId: string; lead: any; messages: ChatMessage[] }>(
+    queryFn: () => safeApiGet<{ conversationId: string; conversation?: ChatConversation; lead: any; messages: ChatMessage[] }>(
       `/chat/lead/${leadId}/thread`
     ),
     enabled: !!leadId,

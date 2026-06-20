@@ -8,6 +8,8 @@ const { AppError, asyncHandler } = require('../utils/errors');
 const { emitToUser, emitToConversation } = require('../services/socketService');
 const { assertLeadCommunicationAccess } = require('../services/leadCommunicationAccess');
 const { getOrCreateLeadConversation } = require('../services/leadConversationService');
+const { getChatSessionState } = require('../services/chat/chatSessionService');
+const { sendWaspTextMessage } = require('../services/wasp/waspOutboundService');
 const logger = require('../utils/logger');
 
 const DIRECT_CHAT_DISABLED_CODE = 'DIRECT_CHAT_DISABLED_FOR_ROLE';
@@ -77,10 +79,13 @@ async function assertParticipant(userId, conversationId) {
 
 async function assertConversationAccess(user, conversationId) {
   const { rows: [conversation] } = await query(
-    `SELECT id, type, lead_id FROM chat_conversations WHERE id = $1 AND is_deleted = FALSE`,
+    `SELECT id, type, lead_id, channel, is_external_unknown FROM chat_conversations WHERE id = $1 AND is_deleted = FALSE`,
     [conversationId],
   );
   if (!conversation) throw new AppError(404, 'CONVERSATION_NOT_FOUND', 'Conversation not found');
+  if (conversation.is_external_unknown && !['super_admin', 'admin'].includes(user.role)) {
+    throw new AppError(403, 'ADMIN_ONLY_EXTERNAL_CHAT', 'This conversation is not linked to a lead and can be handled only by admin.');
+  }
   if (conversation.type === 'lead' && conversation.lead_id) {
     await assertLeadCommunicationAccess(user, conversation.lead_id);
     await query(
@@ -117,7 +122,7 @@ async function canMessage(sender, targetUserId) {
 // ─── GET /conversations ────────────────────────────────────────────
 router.get('/conversations', asyncHandler(async (req, res) => {
   const userId = req.user.id;
-  const { type, archived, lead_category, page = 1, limit = 50 } = req.query;
+  const { type, archived, lead_category, channel, external_unknown, assigned_to_me, session, page = 1, limit = 50 } = req.query;
   const offset = (Math.max(1, +page) - 1) * +limit;
 
   let typeFilter = '';
@@ -126,6 +131,10 @@ router.get('/conversations', asyncHandler(async (req, res) => {
   let idx = 4;
   let roleScopeFilter = '';
   let categoryFilter = '';
+  let channelFilter = '';
+  let externalFilter = '';
+  let assignedFilter = '';
+  let sessionFilter = '';
 
   if (type) {
     typeFilter = `AND c.type = $${idx}`;
@@ -141,9 +150,30 @@ router.get('/conversations', asyncHandler(async (req, res) => {
     params.push(lead_category);
     idx++;
   }
+  if (channel && ['whatsapp', 'internal'].includes(channel)) {
+    channelFilter = `AND COALESCE(c.channel, 'internal') = $${idx}`;
+    params.push(channel);
+    idx++;
+  }
+  if (external_unknown === 'true') {
+    externalFilter = `AND COALESCE(c.is_external_unknown, FALSE) = TRUE`;
+  }
+  if (assigned_to_me === 'true') {
+    assignedFilter = `AND c.type = 'lead' AND EXISTS (
+      SELECT 1 FROM leads assigned_filter_lead
+       WHERE assigned_filter_lead.id = c.lead_id
+         AND assigned_filter_lead.assigned_to_user_id = $1
+    )`;
+  }
+  if (session === 'open') {
+    sessionFilter = `AND COALESCE(c.session_status, 'closed') = 'open' AND c.session_expires_at > NOW()`;
+  } else if (session === 'expired') {
+    sessionFilter = `AND COALESCE(c.channel, 'internal') = 'whatsapp' AND c.session_expires_at <= NOW()`;
+  }
 
   if (isLeadOnlyChatRole(req.user)) {
     roleScopeFilter = `AND c.type = 'lead'
+      AND COALESCE(c.is_external_unknown, FALSE) = FALSE
       AND EXISTS (
         SELECT 1 FROM leads l
          WHERE l.id = c.lead_id
@@ -152,7 +182,7 @@ router.get('/conversations', asyncHandler(async (req, res) => {
       )`;
   } else if (req.user.role === 'rm') {
     roleScopeFilter = `AND (
-      c.type != 'lead'
+      (c.type != 'lead' AND COALESCE(c.is_external_unknown, FALSE) = FALSE)
       OR EXISTS (
         SELECT 1 FROM leads l
         JOIN users au ON au.id = l.assigned_to_user_id
@@ -166,6 +196,9 @@ router.get('/conversations', asyncHandler(async (req, res) => {
 
   const { rows } = await query(`
     SELECT c.id, c.type, c.title, c.lead_id, c.is_pinned,
+      c.channel, c.provider, c.customer_phone, c.customer_wa_id,
+      c.external_conversation_id, c.session_status, c.last_inbound_at,
+      c.last_outbound_at, c.session_expires_at, c.is_external_unknown,
       c.created_at, c.updated_at,
       cp.is_muted, cp.is_archived,
       lm.body AS last_message,
@@ -176,7 +209,7 @@ router.get('/conversations', asyncHandler(async (req, res) => {
       (SELECT COUNT(*) FROM chat_messages m
         WHERE m.conversation_id = cp.conversation_id
         AND m.created_at > cp.last_read_at
-        AND m.sender_id != $1
+        AND (m.sender_id IS NULL OR m.sender_id != $1)
         AND m.is_deleted = FALSE
       )::int AS unread_count
     FROM chat_conversations c
@@ -184,11 +217,11 @@ router.get('/conversations', asyncHandler(async (req, res) => {
     LEFT JOIN LATERAL (
       SELECT m.body, m.message_type, m.sender_id, u2.full_name AS sender_name, m.created_at
       FROM chat_messages m
-      JOIN users u2 ON u2.id = m.sender_id
+      LEFT JOIN users u2 ON u2.id = m.sender_id
       WHERE m.conversation_id = c.id AND m.is_deleted = FALSE
       ORDER BY m.created_at DESC LIMIT 1
     ) lm ON TRUE
-    WHERE c.is_deleted = FALSE ${typeFilter} ${archiveFilter} ${roleScopeFilter} ${categoryFilter}
+    WHERE c.is_deleted = FALSE ${typeFilter} ${archiveFilter} ${roleScopeFilter} ${categoryFilter} ${channelFilter} ${externalFilter} ${assignedFilter} ${sessionFilter}
     ORDER BY c.is_pinned DESC, COALESCE(lm.created_at, c.created_at) DESC
     LIMIT $2 OFFSET $3
   `, params);
@@ -218,6 +251,9 @@ router.get('/conversations', asyncHandler(async (req, res) => {
   for (const conv of rows) {
     conv.other_user = conv.type === 'direct' ? (otherUsersMap[conv.id] || null) : undefined;
     conv.lead = conv.type === 'lead' && conv.lead_id ? (leadsMap[conv.lead_id] || null) : undefined;
+    conv.session = getChatSessionState(conv);
+    conv.can_send_whatsapp = conv.session.can_send_whatsapp;
+    conv.disabled_reason = conv.session.disabled_reason;
   }
 
   res.json({ success: true, data: rows });
@@ -291,6 +327,31 @@ router.post('/conversations', asyncHandler(async (req, res) => {
 }));
 
 // ─── GET /conversations/:id/messages ───────────────────────────────
+router.get('/conversations/:id', asyncHandler(async (req, res) => {
+  const convId = req.params.id;
+  const conversation = await assertConversationAccess(req.user, convId);
+  const { rows: [row] } = await query(
+    `SELECT c.*, l.full_name AS lead_name, l.phone AS lead_phone,
+            l.category AS lead_category, l.category_source, l.campaign_name,
+            l.assigned_to_user_id, au.full_name AS assigned_to_name
+       FROM chat_conversations c
+       LEFT JOIN leads l ON l.id = c.lead_id AND l.deleted_at IS NULL
+       LEFT JOIN users au ON au.id = l.assigned_to_user_id
+      WHERE c.id = $1`,
+    [conversation.id],
+  );
+  const session = getChatSessionState(row);
+  res.json({
+    success: true,
+    data: {
+      ...row,
+      session,
+      can_send_whatsapp: session.can_send_whatsapp,
+      disabled_reason: session.disabled_reason,
+    },
+  });
+}));
+
 router.get('/conversations/:id/messages', asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const convId = req.params.id;
@@ -301,7 +362,9 @@ router.get('/conversations/:id/messages', asyncHandler(async (req, res) => {
 
   const { rows } = await query(`
     SELECT m.id, m.sender_id, u.full_name AS sender_name, u.role AS sender_role,
-      m.body, m.message_type, m.metadata, m.created_at, m.edited_at,
+      m.body, m.message_type, m.metadata, m.channel, m.provider, m.direction, m.sender_type,
+      m.external_message_id, m.external_conversation_id, m.delivery_status, m.delivery_error,
+      m.created_at, m.edited_at,
       m.reply_to_id, m.is_deleted, m.forwarded_from_id,
       COALESCE(
         (SELECT json_agg(json_build_object('id', a.id, 'file_name', a.file_name, 'file_type', a.file_type, 'file_size', a.file_size, 'file_path', a.file_path))
@@ -317,7 +380,7 @@ router.get('/conversations/:id/messages', asyncHandler(async (req, res) => {
         (SELECT json_agg(cm.user_id) FROM chat_mentions cm WHERE cm.message_id = m.id), '[]'::json
       ) AS mentions
     FROM chat_messages m
-    JOIN users u ON u.id = m.sender_id
+    LEFT JOIN users u ON u.id = m.sender_id
     WHERE m.conversation_id = $1
       AND NOT EXISTS (SELECT 1 FROM chat_deleted_for_user dfu WHERE dfu.message_id = m.id AND dfu.user_id = $3)
     ORDER BY m.created_at DESC, m.id DESC
@@ -368,18 +431,29 @@ router.get('/conversations/:id/messages', asyncHandler(async (req, res) => {
 
   const enriched = rows.reverse().map(m => ({
     ...m,
+    sender_name: m.sender_name || (m.sender_type === 'customer' ? 'Customer' : 'System'),
+    sender_role: m.sender_role || m.sender_type || 'system',
     body: m.is_deleted ? 'This message was deleted' : m.body,
     reply_to: m.reply_to_id ? replyMap[m.reply_to_id] || null : null,
     forwarded_from: m.forwarded_from_id ? fwdMap[m.forwarded_from_id] || null : null,
     delivery_status: m.sender_id === userId
       ? (statusMap[m.id]?.all_read ? 'read' : statusMap[m.id]?.all_delivered ? 'delivered' : 'sent')
-      : undefined,
+      : (m.delivery_status || undefined),
   }));
 
   res.json({ success: true, data: { messages: enriched, total: count, page: +page } });
 }));
 
 // ─── POST /conversations/:id/messages ──────────────────────────────
+router.post('/conversations/:id/wasp/messages', asyncHandler(async (req, res) => {
+  const result = await sendWaspTextMessage({
+    conversationId: req.params.id,
+    user: req.user,
+    text: req.body?.text || req.body?.body || '',
+  });
+  res.status(201).json({ success: true, data: result });
+}));
+
 router.post('/conversations/:id/messages', asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const convId = req.params.id;
@@ -806,7 +880,7 @@ router.get('/unread', asyncHandler(async (req, res) => {
       (SELECT COUNT(*) FROM chat_messages m
         WHERE m.conversation_id = cp.conversation_id
         AND m.created_at > cp.last_read_at
-        AND m.sender_id != $1
+        AND (m.sender_id IS NULL OR m.sender_id != $1)
         AND m.is_deleted = FALSE)
     ), 0)::int AS count
     FROM chat_participants cp
@@ -956,17 +1030,34 @@ router.post('/notifications/read-all', asyncHandler(async (req, res) => {
 router.get('/lead/:leadId/thread', asyncHandler(async (req, res) => {
   const { leadId } = req.params;
   const { conversationId: convId, lead } = await getOrCreateLeadConversation({ leadId, user: req.user });
+  const { rows: [conversation] } = await query(`SELECT * FROM chat_conversations WHERE id = $1`, [convId]);
+  const session = getChatSessionState(conversation);
 
   const { rows: messages } = await query(`
     SELECT m.id, m.sender_id, u.full_name AS sender_name, u.role AS sender_role,
-      m.body, m.message_type, m.metadata, m.created_at
-    FROM chat_messages m JOIN users u ON u.id = m.sender_id
+      m.body, m.message_type, m.metadata, m.channel, m.provider, m.direction, m.sender_type,
+      m.external_message_id, m.delivery_status, m.delivery_error, m.created_at
+    FROM chat_messages m LEFT JOIN users u ON u.id = m.sender_id
     WHERE m.conversation_id = $1 AND m.is_deleted = FALSE
     ORDER BY m.created_at ASC
     LIMIT 100
   `, [convId]);
 
-  res.json({ success: true, data: { conversationId: convId, lead, messages } });
+  res.json({
+    success: true,
+    data: {
+      conversationId: convId,
+      lead,
+      messages: messages.map(m => ({
+        ...m,
+        sender_name: m.sender_name || (m.sender_type === 'customer' ? 'Customer' : 'System'),
+        sender_role: m.sender_role || m.sender_type || 'system',
+      })),
+      session,
+      can_send_whatsapp: session.can_send_whatsapp,
+      disabled_reason: session.disabled_reason,
+    },
+  });
 }));
 
 // ─── ADMIN: GET /admin/conversations ─────────────────────────────

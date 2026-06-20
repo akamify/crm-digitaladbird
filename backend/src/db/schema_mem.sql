@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS users (
   distribution_weight INTEGER NOT NULL DEFAULT 1,
   is_available        BOOLEAN NOT NULL DEFAULT TRUE,
   last_login_at       TIMESTAMPTZ,
+  last_seen_at         TIMESTAMPTZ,
   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   deleted_at          TIMESTAMPTZ
@@ -195,6 +196,21 @@ CREATE TABLE IF NOT EXISTS distribution_rules (
   is_active     BOOLEAN NOT NULL DEFAULT TRUE,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS lead_category_rules (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  rule_name TEXT NOT NULL,
+  source_type TEXT NOT NULL,
+  match_value TEXT NOT NULL,
+  match_mode TEXT NOT NULL DEFAULT 'exact',
+  category TEXT NOT NULL,
+  priority INTEGER NOT NULL DEFAULT 100,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  notes TEXT,
+  created_by_user_id UUID REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- LEADS (without GENERATED column - use regular boolean column)
@@ -355,3 +371,113 @@ LEFT JOIN users m ON m.report_to_id = rm.id AND m.role = 'member' AND m.deleted_
 LEFT JOIN leads l ON l.assigned_to_user_id = m.id AND l.deleted_at IS NULL
 WHERE rm.role = 'rm' AND rm.deleted_at IS NULL
 GROUP BY rm.id, rm.full_name;
+
+-- CHAT / WASP COMPATIBILITY
+CREATE TABLE IF NOT EXISTS chat_conversations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  type VARCHAR(20) NOT NULL DEFAULT 'direct',
+  title VARCHAR(255),
+  lead_id UUID REFERENCES leads(id) ON DELETE SET NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
+  is_archived BOOLEAN NOT NULL DEFAULT FALSE,
+  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  channel TEXT DEFAULT 'internal',
+  provider TEXT,
+  customer_phone TEXT,
+  customer_wa_id TEXT,
+  external_conversation_id TEXT,
+  session_status TEXT DEFAULT 'closed',
+  last_inbound_at TIMESTAMPTZ,
+  last_outbound_at TIMESTAMPTZ,
+  session_expires_at TIMESTAMPTZ,
+  is_external_unknown BOOLEAN DEFAULT FALSE,
+  provider_metadata JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS chat_participants (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id UUID NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  is_muted BOOLEAN NOT NULL DEFAULT FALSE,
+  is_blocked BOOLEAN NOT NULL DEFAULT FALSE,
+  is_archived BOOLEAN NOT NULL DEFAULT FALSE,
+  UNIQUE(conversation_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id UUID NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,
+  sender_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  body TEXT NOT NULL,
+  message_type VARCHAR(20) NOT NULL DEFAULT 'text',
+  metadata JSONB DEFAULT '{}'::jsonb,
+  channel TEXT DEFAULT 'internal',
+  provider TEXT,
+  direction TEXT DEFAULT 'internal',
+  sender_type TEXT DEFAULT 'user',
+  external_message_id TEXT,
+  external_conversation_id TEXT,
+  delivery_status TEXT DEFAULT 'local',
+  delivery_error TEXT,
+  provider_payload JSONB DEFAULT '{}'::jsonb,
+  status_updated_at TIMESTAMPTZ,
+  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  reply_to_id UUID REFERENCES chat_messages(id) ON DELETE SET NULL,
+  edited_at TIMESTAMPTZ,
+  original_body TEXT,
+  forwarded_from_id UUID REFERENCES chat_messages(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS chat_read_receipts (
+  message_id UUID NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (message_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS chat_notifications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type VARCHAR(50) NOT NULL DEFAULT 'message',
+  title VARCHAR(255) NOT NULL,
+  body TEXT,
+  conversation_id UUID REFERENCES chat_conversations(id) ON DELETE CASCADE,
+  lead_id UUID REFERENCES leads(id) ON DELETE SET NULL,
+  sender_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  action_url VARCHAR(500),
+  is_read BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS wasp_webhook_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_type TEXT,
+  external_message_id TEXT,
+  external_conversation_id TEXT,
+  customer_phone TEXT,
+  customer_wa_id TEXT,
+  matched_lead_id UUID REFERENCES leads(id) ON DELETE SET NULL,
+  matched_conversation_id UUID REFERENCES chat_conversations(id) ON DELETE SET NULL,
+  processing_status TEXT DEFAULT 'received',
+  error_message TEXT,
+  payload JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_conv_type ON chat_conversations(type);
+CREATE INDEX IF NOT EXISTS idx_chat_conv_lead ON chat_conversations(lead_id);
+CREATE INDEX IF NOT EXISTS idx_chat_conv_customer_phone ON chat_conversations(customer_phone);
+CREATE INDEX IF NOT EXISTS idx_chat_participants_user ON chat_participants(user_id);
+CREATE INDEX IF NOT EXISTS idx_chat_participants_conv ON chat_participants(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_conv ON chat_messages(conversation_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_sender ON chat_messages(sender_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_external ON chat_messages(provider, external_message_id);
+CREATE INDEX IF NOT EXISTS idx_chat_notif_user_unread ON chat_notifications(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_wasp_logs_external_message ON wasp_webhook_logs(external_message_id);
+CREATE INDEX IF NOT EXISTS idx_wasp_logs_customer_phone ON wasp_webhook_logs(customer_phone);

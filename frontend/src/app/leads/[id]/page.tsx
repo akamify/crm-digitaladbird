@@ -20,6 +20,7 @@ import { useLead, useLockLead, useUnlockLead } from '@/hooks/useLeads';
 import { useAuth } from '@/lib/auth';
 import { useUpdateLeadCategory } from '@/hooks/useAdminEnterprise';
 import { fmtDate, fmtRelative, fmtPhone, humanize, stageChip, clsx } from '@/lib/format';
+import { triggerPhoneCall } from '@/lib/phone';
 
 export default function LeadDetailPage() {
   return (
@@ -166,6 +167,15 @@ function LeadDetailInner() {
               variant="outline" leftIcon={<MessageCircle className="h-4 w-4" />}
               onClick={() => router.push(`/chat?leadId=${id}`)}
             >Chat</Button>
+            <Button
+              variant="outline" leftIcon={<Phone className="h-4 w-4" />}
+              disabled={!lead.phone}
+              onClick={() => {
+                if (!triggerPhoneCall(lead.phone)) {
+                  toast.error('This lead does not have a valid phone number.');
+                }
+              }}
+            >Call</Button>
             <Button
               variant="primary" leftIcon={<MessageSquarePlus className="h-4 w-4" />}
               onClick={() => setRemarkOpen(true)}

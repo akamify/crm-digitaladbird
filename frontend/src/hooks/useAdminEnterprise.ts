@@ -65,6 +65,11 @@ export interface AdminCampaign {
   total_leads: number; today_leads: number; conversions: number; pending_leads: number;
   lead_category?: 'trader' | 'partner' | 'unknown'; lead_category_label?: string;
   category_notes?: string | null; category_updated_at?: string | null; category_updated_by_name?: string | null;
+  meta_status?: string | null;
+  effective_status?: string | null;
+  configured_status?: string | null;
+  source?: string | null;
+  last_meta_status_checked_at?: string | null;
 }
 
 export function useAdminCampaigns() {

@@ -2,15 +2,14 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import {
-  Megaphone, Plus, Pencil, Trash2, Play, Pause, ArrowLeft, Search,
-  TrendingUp, Loader2, BarChart3, Filter,
+  Megaphone, Pencil, ArrowLeft, Search, Loader2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { Modal, Skeleton, EmptyState } from '@/components/ui/Modal';
-import { useAdminCampaigns, useCreateCampaign, useUpdateCampaign, useDeleteCampaign, useUpdateCampaignCategory, useBackfillCampaignCategory, type AdminCampaign } from '@/hooks/useAdminEnterprise';
+import { useAdminCampaigns, useUpdateCampaign, useUpdateCampaignCategory, useBackfillCampaignCategory, type AdminCampaign } from '@/hooks/useAdminEnterprise';
 import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
-import { fmtDate, clsx, humanize } from '@/lib/format';
+import { clsx, humanize } from '@/lib/format';
 
 export default function CampaignsPage() {
   return (
@@ -23,29 +22,27 @@ export default function CampaignsPage() {
 function CampaignsInner() {
   const { data: campaigns, isLoading } = useAdminCampaigns();
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<'all' | 'active' | 'paused'>('all');
-  const [createOpen, setCreateOpen] = useState(false);
+  const [filter, setFilter] = useState<'all' | 'active' | 'paused' | 'attention'>('all');
   const [editItem, setEditItem] = useState<AdminCampaign | null>(null);
   const [form, setForm] = useState({ campaign_name: '', internal_label: '', category: 'unknown' as 'trader' | 'partner' | 'unknown', ad_account_id: '', category_notes: '', backfill_mode: 'none' as 'none' | 'dry_run' | 'unknown_only' | 'force_all' });
 
-  const createCampaign = useCreateCampaign();
   const updateCampaign = useUpdateCampaign();
-  const deleteCampaign = useDeleteCampaign();
   const updateCategory = useUpdateCampaignCategory();
   const backfillCategory = useBackfillCampaignCategory();
 
   const filtered = (campaigns || [])
-    .filter(c => filter === 'all' || (filter === 'active' ? c.is_active : !c.is_active))
+    .filter(c => {
+      if (filter === 'all') return true;
+      const status = metaStatusTone(c).key;
+      if (filter === 'active') return status === 'active';
+      if (filter === 'paused') return status === 'paused';
+      return status === 'attention';
+    })
     .filter(c => !search || c.campaign_name?.toLowerCase().includes(search.toLowerCase()) || c.internal_label?.toLowerCase().includes(search.toLowerCase()));
 
   const totals = (campaigns || []).reduce((a, c) => ({
     leads: a.leads + c.total_leads, today: a.today + c.today_leads, conv: a.conv + c.conversions, pending: a.pending + c.pending_leads,
   }), { leads: 0, today: 0, conv: 0, pending: 0 });
-
-  function openCreate() {
-    setForm({ campaign_name: '', internal_label: '', category: 'unknown', ad_account_id: '', category_notes: '', backfill_mode: 'none' });
-    setCreateOpen(true);
-  }
 
   function openEdit(c: AdminCampaign) {
     const category = c.lead_category || (c.category as 'trader' | 'partner' | 'unknown') || 'unknown';
@@ -65,11 +62,6 @@ function CampaignsInner() {
         } else toast.success('Campaign category saved for future leads');
         setEditItem(null);
       } catch { toast.error('Campaign category update failed'); }
-    } else {
-      createCampaign.mutate(form, {
-        onSuccess: () => { toast.success('Campaign created'); setCreateOpen(false); },
-        onError: () => toast.error('Create failed'),
-      });
     }
   }
 
@@ -97,16 +89,13 @@ function CampaignsInner() {
           <input className="input pl-10" placeholder="Search campaigns..." value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         <div className="flex items-center gap-1 rounded-lg border border-slate-200 p-0.5">
-          {(['all', 'active', 'paused'] as const).map(f => (
+          {(['all', 'active', 'paused', 'attention'] as const).map(f => (
             <button key={f} onClick={() => setFilter(f)}
               className={clsx('rounded-md px-3 py-1.5 text-xs font-medium transition', filter === f ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-100')}>
-              {f === 'all' ? 'All' : f === 'active' ? 'Active' : 'Paused'}
+              {f === 'all' ? 'All' : f === 'active' ? 'Active' : f === 'paused' ? 'Paused' : 'Needs attention'}
             </button>
           ))}
         </div>
-        <button onClick={openCreate} className="btn-primary rounded-lg px-4 py-2 text-sm inline-flex items-center gap-2">
-          <Plus className="h-4 w-4" /> New Campaign
-        </button>
       </div>
 
       {/* Table */}
@@ -125,6 +114,7 @@ function CampaignsInner() {
                 <th className="py-2 pr-3 font-medium text-right">Today</th>
                 <th className="py-2 pr-3 font-medium text-right">Conv</th>
                 <th className="py-2 pr-3 font-medium text-right">Pending</th>
+                <th className="py-2 pr-3 font-medium">Meta Source</th>
                 <th className="py-2 font-medium text-right">Actions</th>
               </tr>
             </thead>
@@ -138,28 +128,22 @@ function CampaignsInner() {
                   <td className="py-3 pr-3 text-slate-600">{c.internal_label || '—'}</td>
                   <td className="py-3 pr-3"><LeadCategoryBadge category={c.lead_category || (c.category as 'trader' | 'partner' | 'unknown')} /></td>
                   <td className="py-3 pr-3">
-                    <span className={clsx('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium',
-                      c.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600')}>
-                      {c.is_active ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
-                      {c.is_active ? 'Active' : 'Paused'}
+                    <span className={clsx('inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium', metaStatusTone(c).className)}>
+                      {metaStatusTone(c).label}
                     </span>
+                    <div className="mt-1 text-[10px] text-slate-400">
+                      {c.effective_status || c.meta_status || 'Unknown'}
+                    </div>
                   </td>
                   <td className="py-3 pr-3 text-right tabular-nums font-medium">{c.total_leads}</td>
                   <td className="py-3 pr-3 text-right tabular-nums text-emerald-700">{c.today_leads}</td>
                   <td className="py-3 pr-3 text-right tabular-nums text-green-700">{c.conversions}</td>
                   <td className="py-3 pr-3 text-right tabular-nums text-amber-700">{c.pending_leads}</td>
+                  <td className="py-3 pr-3 text-xs text-slate-500">{c.source === 'meta_api' ? 'Meta API' : humanize(c.source || 'legacy')}</td>
                   <td className="py-3 text-right">
                     <div className="flex items-center justify-end gap-1">
-                      <button onClick={() => updateCampaign.mutate({ id: c.id, is_active: !c.is_active }, { onSuccess: () => toast.success(c.is_active ? 'Paused' : 'Activated') })}
-                        className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" title={c.is_active ? 'Pause' : 'Activate'}>
-                        {c.is_active ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-                      </button>
                       <button onClick={() => openEdit(c)} className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-blue-600" title="Edit">
                         <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                      <button onClick={() => { if (confirm(`Delete "${c.campaign_name}"?`)) deleteCampaign.mutate(c.id, { onSuccess: () => toast.success('Deleted') }); }}
-                        className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600" title="Delete">
-                        <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </div>
                   </td>
@@ -171,11 +155,11 @@ function CampaignsInner() {
       )}
 
       {/* Create/Edit Modal */}
-      <Modal open={createOpen || !!editItem} onClose={() => { setCreateOpen(false); setEditItem(null); }}
-        title={editItem ? 'Edit Campaign' : 'Create Campaign'} size="md">
+      <Modal open={!!editItem} onClose={() => setEditItem(null)}
+        title="Edit Campaign" size="md">
         <div className="space-y-3">
           <div>
-            <label className="label">Campaign Name *</label>
+            <label className="label">Campaign Name</label>
             <input className="input" value={form.campaign_name} onChange={e => setForm(f => ({ ...f, campaign_name: e.target.value }))} />
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -194,33 +178,39 @@ function CampaignsInner() {
           </div>
           <div>
             <label className="label">Ad Account ID</label>
-            <input className="input" value={form.ad_account_id} readOnly={!!editItem} onChange={e => setForm(f => ({ ...f, ad_account_id: e.target.value }))} placeholder="e.g. act_123456" />
+            <input className="input" value={form.ad_account_id} readOnly placeholder="e.g. act_123456" />
           </div>
-          {editItem && <>
-            <div><label className="label">Category notes</label><textarea className="input min-h-20" value={form.category_notes} onChange={e => setForm(f => ({ ...f, category_notes: e.target.value }))} /></div>
-            <p className="text-xs text-slate-500">This category will be applied to future leads coming from this campaign.</p>
-            <div>
-              <label className="label">Existing leads</label>
-              <select className="input" value={form.backfill_mode} onChange={e => setForm(f => ({ ...f, backfill_mode: e.target.value as typeof f.backfill_mode }))}>
-                <option value="none">No, only future leads</option>
-                <option value="dry_run">Dry run</option>
-                <option value="unknown_only">Yes, update only unknown leads</option>
-                <option value="force_all">Yes, force update all leads</option>
-              </select>
-            </div>
-          </>}
+          <div><label className="label">Category notes</label><textarea className="input min-h-20" value={form.category_notes} onChange={e => setForm(f => ({ ...f, category_notes: e.target.value }))} /></div>
+          <p className="text-xs text-slate-500">Campaign status is fetched from Meta. Pause, activate, or delete must be done in Meta Ads Manager.</p>
+          <div>
+            <label className="label">Existing leads</label>
+            <select className="input" value={form.backfill_mode} onChange={e => setForm(f => ({ ...f, backfill_mode: e.target.value as typeof f.backfill_mode }))}>
+              <option value="none">No, only future leads</option>
+              <option value="dry_run">Dry run</option>
+              <option value="unknown_only">Yes, update only unknown leads</option>
+              <option value="force_all">Yes, force update all leads</option>
+            </select>
+          </div>
         </div>
         <div className="mt-4 flex justify-end gap-2">
-          <button onClick={() => { setCreateOpen(false); setEditItem(null); }} className="btn-ghost rounded-lg px-4 py-2 text-sm">Cancel</button>
-          <button onClick={handleSave} disabled={createCampaign.isPending || updateCampaign.isPending}
+          <button onClick={() => setEditItem(null)} className="btn-ghost rounded-lg px-4 py-2 text-sm">Cancel</button>
+          <button onClick={handleSave} disabled={updateCampaign.isPending || updateCategory.isPending || backfillCategory.isPending}
             className="btn-primary rounded-lg px-4 py-2 text-sm inline-flex items-center gap-2">
-            {(createCampaign.isPending || updateCampaign.isPending) && <Loader2 className="h-4 w-4 animate-spin" />}
-            {editItem ? 'Save Changes' : 'Create Campaign'}
+            {(updateCampaign.isPending || updateCategory.isPending || backfillCategory.isPending) && <Loader2 className="h-4 w-4 animate-spin" />}
+            Save Changes
           </button>
         </div>
       </Modal>
     </div>
   );
+}
+
+function metaStatusTone(c: AdminCampaign) {
+  const status = String(c.effective_status || c.meta_status || c.configured_status || '').toUpperCase();
+  if (status === 'ACTIVE') return { key: 'active', label: 'Active', className: 'bg-emerald-100 text-emerald-700' };
+  if (['PAUSED', 'ARCHIVED', 'DELETED'].includes(status)) return { key: 'paused', label: status === 'PAUSED' ? 'Paused' : humanize(status), className: 'bg-slate-100 text-slate-600' };
+  if (['IN_PROCESS', 'WITH_ISSUES', 'PENDING_REVIEW', 'DISAPPROVED'].includes(status)) return { key: 'attention', label: humanize(status), className: 'bg-amber-100 text-amber-700' };
+  return { key: 'attention', label: 'Unknown', className: 'bg-slate-100 text-slate-500' };
 }
 
 function SummaryCard({ label, value, color }: { label: string; value: number; color: string }) {

@@ -39,7 +39,7 @@ router.delete('/admin/lead-category-rules/:id', asyncHandler(async (req, res) =>
 router.patch('/admin/campaigns/:campaignId/category', asyncHandler(async (req, res) => {
   const campaign = await service.updateCampaignCategory(req.params.campaignId, req.body || {}, req.user.id);
   await logActivity(req, { entity: 'campaign', entity_id: campaign.id, action: 'lead_category_updated', metadata: { meta_campaign_id: campaign.campaign_id, old_category: campaign.old_category, new_category: campaign.category, notes: req.body?.notes || null } });
-  res.json({ success: true, campaign });
+  res.json({ success: true, data: campaign });
 }));
 
 router.patch('/admin/meta/forms/:formId/category', asyncHandler(async (req, res) => {
@@ -51,7 +51,7 @@ router.patch('/admin/meta/forms/:formId/category', asyncHandler(async (req, res)
 router.post('/admin/campaigns/:campaignId/backfill-category', asyncHandler(async (req, res) => {
   const summary = await service.backfillCampaign(req.params.campaignId, req.body?.mode || 'dry_run');
   await logActivity(req, { entity: 'campaign', entity_id: null, action: 'lead_category_backfill', metadata: { meta_campaign_id: req.params.campaignId, ...summary } }).catch(() => {});
-  res.json({ success: true, ...summary });
+  res.json({ success: true, data: summary });
 }));
 
 router.patch('/admin/leads/:leadId/category', asyncHandler(async (req, res) => {

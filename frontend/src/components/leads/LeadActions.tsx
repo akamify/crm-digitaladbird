@@ -2,6 +2,7 @@
 
 import { Phone, MessageCircle, Mail } from 'lucide-react';
 import { clsx } from '@/lib/format';
+import { triggerPhoneCall } from '@/lib/phone';
 
 type Size = 'xs' | 'sm';
 
@@ -12,7 +13,7 @@ interface Props {
   waMessage?: string;
   size?: Size;
   compact?: boolean;
-  onCall?: () => void;
+  onCall?: () => void | Promise<unknown>;
   onChat?: () => void;
 }
 
@@ -21,13 +22,19 @@ export function LeadActions({ phone, email, size = 'xs', compact = false, onCall
   const cls = size === 'sm' ? 'px-2 py-1.5 text-xs' : 'px-1.5 py-1 text-[11px]';
   const icon = size === 'sm' ? 'h-3.5 w-3.5' : 'h-3 w-3';
 
+  async function handleCall() {
+    if (!phone) return;
+    triggerPhoneCall(phone);
+    await onCall?.();
+  }
+
   return (
     <div className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-      {phone && onCall ? (
+      {phone ? (
         <button
           type="button"
           title={`Call ${phone}`}
-          onClick={(e) => { e.stopPropagation(); onCall(); }}
+          onClick={(e) => { e.stopPropagation(); void handleCall(); }}
           className={clsx('inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 font-medium text-blue-700 hover:bg-blue-100 transition', cls)}
         >
           <Phone className={icon} />{!compact && 'Call'}

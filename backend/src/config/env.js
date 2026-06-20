@@ -97,6 +97,23 @@ const config = {
     onboardingTemplateId: process.env.BREVO_ONBOARDING_TEMPLATE_ID || '',
     adminResetTemplateId: process.env.BREVO_ADMIN_RESET_TEMPLATE_ID || '',
   },
+
+  wasp: {
+    enabled: String(process.env.WASP_CHAT_ENABLED || 'false').toLowerCase() === 'true',
+    baseUrl: (process.env.WASP_BASE_URL || 'https://wasp.akamify.com').replace(/\/+$/, ''),
+    apiKey: process.env.WASP_API_KEY || '',
+    apiKeyHeader: process.env.WASP_API_KEY_HEADER || 'X-API-Key',
+    sendMessagePath: process.env.WASP_SEND_MESSAGE_PATH || '/api/chat/messages/send',
+    fetchMessagesPath: process.env.WASP_FETCH_MESSAGES_PATH || '/api/chat/messages',
+    webhookSecret: process.env.WASP_WEBHOOK_SECRET || '',
+    webhookPath: process.env.WASP_WEBHOOK_PATH || '/api/integrations/wasp/webhook',
+    defaultCountryCode: process.env.WASP_DEFAULT_COUNTRY_CODE || '91',
+    chatSessionHours: parseInt(process.env.WASP_CHAT_SESSION_HOURS || '24', 10),
+    unknownContactsAdminOnly: String(process.env.WASP_UNKNOWN_CONTACTS_ADMIN_ONLY || 'true').toLowerCase() !== 'false',
+    createLeadFromUnknownInbound: String(process.env.WASP_CREATE_LEAD_FROM_UNKNOWN_INBOUND || 'false').toLowerCase() === 'true',
+    inboundEmailNotifyAssignee: String(process.env.WASP_INBOUND_EMAIL_NOTIFY_ASSIGNEE || 'true').toLowerCase() !== 'false',
+    newMessageSoundEnabled: String(process.env.WASP_NEW_MESSAGE_SOUND_ENABLED || 'true').toLowerCase() !== 'false',
+  },
 };
 
 module.exports = config;
