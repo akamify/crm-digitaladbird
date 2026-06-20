@@ -3732,7 +3732,19 @@ router.get('/admin/google-sheets/settings', authenticate, requireRole('super_adm
 }));
 
 router.patch('/admin/google-sheets/settings', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
-  const data = await sheetsSvc.updateSheetRoutingSettings(req.body || {});
+  let data;
+  try {
+    data = await sheetsSvc.updateSheetRoutingSettings(req.body || {});
+  } catch (error) {
+    if (error?.code === 'GOOGLE_SHEETS_NOT_CONFIGURED') {
+      return res.status(400).json({
+        success: false,
+        code: 'GOOGLE_SHEETS_NOT_CONFIGURED',
+        message: 'Google Sheets is not configured on the server.',
+      });
+    }
+    throw error;
+  }
   res.json({
     success: true,
     data: {
@@ -3755,7 +3767,7 @@ router.post('/admin/google-sheets/test-sheet-routing', authenticate, requireRole
   try {
     data = await sheetsSvc.testSheetRouting(req.body || {});
   } catch (error) {
-    if (/No active Google Sheets config|No Google credentials configured|No active Google Sheets configuration/i.test(error.message || '')) {
+    if (error?.code === 'GOOGLE_SHEETS_NOT_CONFIGURED' || /No active Google Sheets config|No Google credentials configured|No active Google Sheets configuration|Google Sheets is not configured/i.test(error.message || '')) {
       return res.status(400).json({
         success: false,
         code: 'GOOGLE_SHEETS_NOT_CONFIGURED',
@@ -3764,7 +3776,7 @@ router.post('/admin/google-sheets/test-sheet-routing', authenticate, requireRole
     }
     throw error;
   }
-  res.json({ success: true, ...data });
+  res.json({ success: true, data, ...data });
 }));
 
 router.post('/admin/google-sheets/create-missing-tabs', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {

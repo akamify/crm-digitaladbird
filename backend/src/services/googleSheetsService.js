@@ -239,6 +239,59 @@ async function getRoutingBaseConfig() {
   return row ? { id: row.id, config: getRoutingConfig(row.config || {}) } : null;
 }
 
+async function ensureEnvBackedRoutingConfig({ fallback, config }) {
+  if (!fallback?.configured || !fallback?.sheet_id) {
+    const error = new Error('Google Sheets is not configured on the server.');
+    error.code = 'GOOGLE_SHEETS_NOT_CONFIGURED';
+    throw error;
+  }
+
+  const merged = {
+    ...(config || {}),
+    source: fallback.source || 'env_path',
+    credentials_managed_by: 'server',
+    sheet_id: fallback.sheet_id,
+    sheet_name: config?.sheet_name || config?.default_sheet_name || fallback.sheet_name || 'Leads',
+    default_sheet_name: config?.default_sheet_name || fallback.sheet_name || 'Leads',
+    trader_sheet_name: config?.trader_sheet_name || null,
+    partner_sheet_name: config?.partner_sheet_name || null,
+    unknown_sheet_name: config?.unknown_sheet_name || null,
+    auto_create_missing_sheets: config?.auto_create_missing_sheets !== false,
+    category_sheet_routing_enabled: config?.category_sheet_routing_enabled !== false,
+    service_account_email: fallback.service_account_email || null,
+    key_path: fallback.key_path || null,
+  };
+
+  const { rows: [existing] } = await query(
+    `SELECT id
+       FROM integration_configs
+      WHERE kind = 'google_sheets' AND COALESCE(purpose, '') = ''
+      ORDER BY is_active DESC, updated_at DESC
+      LIMIT 1`,
+  );
+
+  if (existing?.id) {
+    await query(
+      `UPDATE integration_configs
+          SET label = $1,
+              config = $2,
+              is_active = TRUE,
+              updated_at = NOW()
+        WHERE id = $3`,
+      ['Server Google Sheets', JSON.stringify(merged), existing.id],
+    );
+    return existing.id;
+  }
+
+  const { rows: [created] } = await query(
+    `INSERT INTO integration_configs(kind, label, purpose, config, is_active)
+     VALUES ('google_sheets', $1, NULL, $2, TRUE)
+     RETURNING id`,
+    ['Server Google Sheets', JSON.stringify(merged)],
+  );
+  return created.id;
+}
+
 async function resolveConfigStatus(purpose = null) {
   try {
     const cfg = await loadActiveConfig(purpose);
@@ -791,8 +844,11 @@ async function getSheetRoutingSettings() {
 async function updateSheetRoutingSettings(patch = {}) {
   const base = await getRoutingBaseConfig();
   const fallback = await resolveConfigStatus();
-  if (!base?.id && !fallback.config_id) {
-    throw new Error('No active Google Sheets configuration found.');
+  const canUseEnvFallback = !base?.id && fallback?.configured && fallback?.source;
+  if (!base?.id && !fallback.config_id && !canUseEnvFallback) {
+    const error = new Error('Google Sheets is not configured on the server.');
+    error.code = 'GOOGLE_SHEETS_NOT_CONFIGURED';
+    throw error;
   }
 
   const baseConfig = getRoutingConfig(base?.config || {
@@ -832,7 +888,8 @@ async function updateSheetRoutingSettings(patch = {}) {
   };
   if (!merged.sheet_name) merged.sheet_name = next.default_sheet_name;
 
-  await query(`UPDATE integration_configs SET config = $1, updated_at = NOW() WHERE id = $2`, [JSON.stringify(merged), base?.id || fallback.config_id]);
+  const targetConfigId = base?.id || fallback.config_id || await ensureEnvBackedRoutingConfig({ fallback, config: merged });
+  await query(`UPDATE integration_configs SET config = $1, updated_at = NOW() WHERE id = $2`, [JSON.stringify(merged), targetConfigId]);
   resetClients();
   return getSheetRoutingSettings();
 }

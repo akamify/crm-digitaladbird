@@ -1815,8 +1815,11 @@ function SheetCredentialsModal({ open, onClose, target: _target, defaultPurpose:
 
   function handleTest() {
     testRouting.mutate(form, {
-      onSuccess: (result) => {
-        const rows = Object.values(result.results || {});
+      onSuccess: (response) => {
+        const payload = (response as { data?: unknown })?.data ?? response ?? {};
+        const results = (payload as { results?: Record<string, { exists?: boolean }> })?.results
+          ?? ((payload as { data?: { results?: Record<string, { exists?: boolean }> } })?.data?.results ?? {});
+        const rows = Object.values(results || {});
         const missing = rows.filter((row) => !row.exists);
         if (missing.length) {
           toast.success('Sheet test completed. Some tabs are missing.');
@@ -1838,7 +1841,19 @@ function SheetCredentialsModal({ open, onClose, target: _target, defaultPurpose:
     });
   }
 
-  const testResults = testRouting.data?.results || null;
+  const testPayload = (testRouting.data as { data?: unknown } | undefined)?.data ?? testRouting.data ?? null;
+  const testResults = (testPayload as { results?: {
+    default: { sheet_name: string; exists: boolean };
+    trader: { sheet_name: string; exists: boolean };
+    partner: { sheet_name: string; exists: boolean };
+    unknown: { sheet_name: string; exists: boolean };
+  } } | null)?.results
+    ?? ((testPayload as { data?: { results?: {
+      default: { sheet_name: string; exists: boolean };
+      trader: { sheet_name: string; exists: boolean };
+      partner: { sheet_name: string; exists: boolean };
+      unknown: { sheet_name: string; exists: boolean };
+    } } } | null)?.data?.results ?? null);
 
   return (
     <Modal
