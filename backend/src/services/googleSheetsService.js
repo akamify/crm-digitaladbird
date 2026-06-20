@@ -763,6 +763,8 @@ async function getSheetRoutingSettings() {
     sheet_name: fallback.sheet_name,
   });
   return {
+    connected: !!fallback.configured,
+    source: fallback.source || null,
     config_id: base?.id || fallback.config_id || null,
     spreadsheet_id: fallback.sheet_id || null,
     default_sheet_name: config.default_sheet_name,
@@ -771,17 +773,41 @@ async function getSheetRoutingSettings() {
     unknown_sheet_name: config.unknown_sheet_name || '',
     auto_create_missing_sheets: config.auto_create_missing_sheets,
     category_sheet_routing_enabled: config.category_sheet_routing_enabled,
+    service_account_email: fallback.service_account_email || null,
+    key_path: fallback.key_path || null,
+    credentials_managed_by: 'server',
+    editable_fields: [
+      'spreadsheet_id',
+      'default_sheet_name',
+      'trader_sheet_name',
+      'partner_sheet_name',
+      'unknown_sheet_name',
+      'category_sheet_routing_enabled',
+      'auto_create_missing_sheets',
+    ],
   };
 }
 
 async function updateSheetRoutingSettings(patch = {}) {
   const base = await getRoutingBaseConfig();
-  if (!base?.id) {
-    throw new Error('No active Google Sheets config found. Upload and activate a sheet first.');
+  const fallback = await resolveConfigStatus();
+  if (!base?.id && !fallback.config_id) {
+    throw new Error('No active Google Sheets configuration found.');
   }
-  const next = {
-    ...getRoutingConfig(base.config || {}),
-  };
+
+  const baseConfig = getRoutingConfig(base?.config || {
+    sheet_id: fallback.sheet_id,
+    sheet_name: fallback.sheet_name,
+  });
+  const next = { ...baseConfig };
+
+  if (patch.spreadsheet_id !== undefined) {
+    const nextSpreadsheetId = String(patch.spreadsheet_id || '').trim();
+    if (!nextSpreadsheetId) {
+      throw new Error('Spreadsheet ID is required.');
+    }
+    next.sheet_id = nextSpreadsheetId;
+  }
   if (patch.default_sheet_name !== undefined) next.default_sheet_name = sanitizeSheetName(patch.default_sheet_name) || 'Leads';
   if (patch.trader_sheet_name !== undefined) next.trader_sheet_name = sanitizeSheetName(patch.trader_sheet_name || '');
   if (patch.partner_sheet_name !== undefined) next.partner_sheet_name = sanitizeSheetName(patch.partner_sheet_name || '');
@@ -789,9 +815,18 @@ async function updateSheetRoutingSettings(patch = {}) {
   if (patch.auto_create_missing_sheets !== undefined) next.auto_create_missing_sheets = !!patch.auto_create_missing_sheets;
   if (patch.category_sheet_routing_enabled !== undefined) next.category_sheet_routing_enabled = !!patch.category_sheet_routing_enabled;
 
+  if (!next.default_sheet_name) {
+    throw new Error('Default Sheet Name is required.');
+  }
+  if (next.category_sheet_routing_enabled) {
+    if (!next.trader_sheet_name) throw new Error('Trader Lead Sheet Name is required when category routing is enabled.');
+    if (!next.partner_sheet_name) throw new Error('Partner Lead Sheet Name is required when category routing is enabled.');
+  }
+
   const merged = {
-    ...base.config,
+    ...(base?.config || {}),
     ...next,
+    sheet_id: next.sheet_id || fallback.sheet_id || null,
     default_sheet_name: next.default_sheet_name,
     trader_sheet_name: next.trader_sheet_name || null,
     partner_sheet_name: next.partner_sheet_name || null,
@@ -801,7 +836,7 @@ async function updateSheetRoutingSettings(patch = {}) {
   };
   if (!merged.sheet_name) merged.sheet_name = next.default_sheet_name;
 
-  await query(`UPDATE integration_configs SET config = $1, updated_at = NOW() WHERE id = $2`, [JSON.stringify(merged), base.id]);
+  await query(`UPDATE integration_configs SET config = $1, updated_at = NOW() WHERE id = $2`, [JSON.stringify(merged), base?.id || fallback.config_id]);
   resetClients();
   return getSheetRoutingSettings();
 }
@@ -852,7 +887,17 @@ async function createMissingTabs() {
     resolveLeadSheetName({ lead: { category: 'unknown' }, config }).sheetName,
   ];
   const uniqueTabs = [...new Set(tabs.filter(Boolean))];
+  const existing = [];
+  const created = [];
+  const failed = [];
+  const meta = await c.sheets.spreadsheets.get({
+    spreadsheetId: c.sheetId,
+    fields: 'sheets.properties.title',
+  });
+  const currentTabs = new Set((meta.data.sheets || []).map((sheet) => sheet.properties?.title).filter(Boolean));
+
   for (const tab of uniqueTabs) {
+    const alreadyExists = currentTabs.has(tab);
     await ensureSheetExists({
       sheets: c.sheets,
       spreadsheetId: c.sheetId,
@@ -860,8 +905,10 @@ async function createMissingTabs() {
       headers: HEADERS,
       autoCreate: true,
     });
+    if (alreadyExists) existing.push(tab);
+    else created.push(tab);
   }
-  return { created_or_verified: uniqueTabs };
+  return { created, existing, failed };
 }
 
 async function exportLeadsByCategory({ mode = 'dry_run', category = 'all', dateFrom = null, dateTo = null, skipDuplicates = true } = {}) {

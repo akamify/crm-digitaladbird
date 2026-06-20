@@ -3733,7 +3733,7 @@ router.get('/admin/google-sheets/settings', authenticate, requireRole('super_adm
 
 router.patch('/admin/google-sheets/settings', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
   const data = await sheetsSvc.updateSheetRoutingSettings(req.body || {});
-  res.json({ success: true, data });
+  res.json({ success: true, data, message: 'Google Sheet settings saved successfully.' });
 }));
 
 router.post('/admin/google-sheets/test-connection', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
@@ -3742,6 +3742,12 @@ router.post('/admin/google-sheets/test-connection', authenticate, requireRole('s
 }));
 
 router.post('/admin/google-sheets/test-sheet-routing', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const category = String(req.body?.category || 'unknown').toLowerCase();
+  const data = await sheetsSvc.testSheetRouting(category);
+  res.json({ success: true, data: { ...data, category_label: data.category === 'trader' ? 'Trader Lead' : data.category === 'partner' ? 'Partner Lead' : 'Unknown' } });
+}));
+
+router.post('/admin/google-sheets/test-routing', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
   const category = String(req.body?.category || 'unknown').toLowerCase();
   const data = await sheetsSvc.testSheetRouting(category);
   res.json({ success: true, data: { ...data, category_label: data.category === 'trader' ? 'Trader Lead' : data.category === 'partner' ? 'Partner Lead' : 'Unknown' } });

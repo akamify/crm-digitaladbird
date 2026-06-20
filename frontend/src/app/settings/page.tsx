@@ -1133,6 +1133,7 @@ function CampaignsTab() {
 /* ═══════════════════ SHEETS TAB ═══════════════════ */
 function SheetsTab() {
   const { data, isLoading } = useSheetsEnriched();
+  const routing = useGoogleSheetRoutingSettings();
   const qc = useQueryClient();
 
   const sheetSync = useMutation({
@@ -1158,17 +1159,19 @@ function SheetsTab() {
       </div>
 
       {/* Dynamic credentials management — admin can upload JSON, switch sheets, no SSH/.env needed */}
-      <SheetCredentialsManager />
       <GoogleSheetRoutingPanel />
 
       {isLoading ? <Skeleton className="h-64" /> : (
         <>
-          {/* Connection card */}
           <div className="rounded-xl border border-slate-200 bg-white p-5">
-            <div className="flex items-center justify-between mb-4">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-900">Connection Status</h2>
+                <p className="mt-1 text-xs text-slate-500">Credentials are managed on the server. Update only sheet names and category routing here.</p>
+              </div>
               <div className="flex items-center gap-2">
-                <div className={clsx('h-3 w-3 rounded-full', cfg?.configured ? 'bg-emerald-500 animate-pulse' : 'bg-red-400')} />
-                <span className="font-semibold text-slate-900">{cfg?.configured ? 'Connected' : 'Not Configured'}</span>
+                <div className={clsx('h-3 w-3 rounded-full', routing.data?.connected ? 'bg-emerald-500 animate-pulse' : 'bg-red-400')} />
+                <span className="font-semibold text-slate-900">{routing.data?.connected ? 'Connected' : 'Not connected'}</span>
               </div>
               {sheetUrl && (
                 <a href={sheetUrl} target="_blank" rel="noopener noreferrer"
@@ -1181,19 +1184,27 @@ function SheetsTab() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="rounded-lg bg-slate-50 p-3">
                 <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Sheet ID</div>
-                <div className="text-xs font-mono text-slate-700 truncate">{cfg?.sheet_id || 'Not set'}</div>
+                <div className="text-xs font-mono text-slate-700 truncate">{routing.data?.spreadsheet_id || cfg?.sheet_id || 'Not set'}</div>
               </div>
               <div className="rounded-lg bg-slate-50 p-3">
-                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Sheet Name</div>
-                <div className="text-xs text-slate-700">{cfg?.sheet_name || 'Sheet1'}</div>
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Default Sheet Name</div>
+                <div className="text-xs text-slate-700">{routing.data?.default_sheet_name || cfg?.sheet_name || 'Leads'}</div>
               </div>
               <div className="rounded-lg bg-slate-50 p-3">
                 <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Service Account</div>
-                <div className="text-xs font-mono text-slate-700 truncate">{cfg?.service_account_email || 'Not set'}</div>
+                <div className="text-xs font-mono text-slate-700 truncate">{routing.data?.service_account_email || cfg?.service_account_email || 'Not set'}</div>
               </div>
               <div className="rounded-lg bg-slate-50 p-3">
                 <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Key Path</div>
-                <div className="text-xs font-mono text-slate-700 truncate">{cfg?.key_path || 'Not set'}</div>
+                <div className="text-xs font-mono text-slate-700 truncate">{routing.data?.key_path || cfg?.key_path || 'Not set'}</div>
+              </div>
+              <div className="rounded-lg bg-slate-50 p-3">
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Source</div>
+                <div className="text-xs text-slate-700">{routing.data?.source || 'Not set'}</div>
+              </div>
+              <div className="rounded-lg bg-slate-50 p-3">
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Managed By</div>
+                <div className="text-xs text-slate-700">{routing.data?.credentials_managed_by || 'server'}</div>
               </div>
             </div>
 
@@ -1263,6 +1274,7 @@ function GoogleSheetRoutingPanel() {
   const createTabs = useCreateMissingGoogleSheetTabs();
   const exportByCategory = useExportLeadsByCategoryToSheets();
   const [form, setForm] = useState({
+    spreadsheet_id: '',
     default_sheet_name: 'Leads',
     trader_sheet_name: 'Trader Leads',
     partner_sheet_name: 'Partner Leads',
@@ -1274,6 +1286,7 @@ function GoogleSheetRoutingPanel() {
   useEffect(() => {
     if (!routing.data) return;
     setForm({
+      spreadsheet_id: routing.data.spreadsheet_id || '',
       default_sheet_name: routing.data.default_sheet_name || 'Leads',
       trader_sheet_name: routing.data.trader_sheet_name || '',
       partner_sheet_name: routing.data.partner_sheet_name || '',
@@ -1285,7 +1298,7 @@ function GoogleSheetRoutingPanel() {
 
   function save() {
     updateRouting.mutate(form, {
-      onSuccess: () => toast.success('Sheet routing settings saved'),
+      onSuccess: () => toast.success('Google Sheet settings saved successfully.'),
       onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Failed to save sheet routing'),
     });
   }
@@ -1301,14 +1314,14 @@ function GoogleSheetRoutingPanel() {
     <div className="rounded-xl border border-slate-200 bg-white p-5">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold text-slate-900">Google Sheet Lead Routing</h2>
-          <p className="mt-1 text-xs text-slate-500">Category-wise tab routing for trader, partner, and unknown leads. Existing rows are not moved automatically when tab names change.</p>
+          <h2 className="text-sm font-semibold text-slate-900">Lead Category Sheet Routing</h2>
+          <p className="mt-1 text-xs text-slate-500">Trader leads are routed to the configured Trader Lead sheet tab. Credentials are managed on the server.</p>
         </div>
-        <span className="chip-slate text-[10px]">Inactive pages are ignored</span>
+        <span className="chip-slate text-[10px]">Server-managed credentials</span>
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Input label="Spreadsheet ID" value={routing.data?.spreadsheet_id || 'No active config'} readOnly />
+        <Input label="Spreadsheet ID" value={form.spreadsheet_id} onChange={(e) => setForm((s) => ({ ...s, spreadsheet_id: e.target.value }))} />
         <Input label="Default Sheet Name" value={form.default_sheet_name} onChange={(e) => setForm((s) => ({ ...s, default_sheet_name: e.target.value }))} />
         <Input label="Trader Lead Sheet Name" value={form.trader_sheet_name} onChange={(e) => setForm((s) => ({ ...s, trader_sheet_name: e.target.value }))} />
         <Input label="Partner Lead Sheet Name" value={form.partner_sheet_name} onChange={(e) => setForm((s) => ({ ...s, partner_sheet_name: e.target.value }))} />
@@ -1341,7 +1354,11 @@ function GoogleSheetRoutingPanel() {
         <Button size="sm" variant="outline" onClick={() => testCategory('partner')} loading={testRouting.isPending}>Test Partner</Button>
         <Button size="sm" variant="outline" onClick={() => testCategory('unknown')} loading={testRouting.isPending}>Test Unknown</Button>
         <Button size="sm" variant="outline" onClick={() => createTabs.mutate(undefined, {
-          onSuccess: (r) => toast.success(`Verified tabs: ${r.created_or_verified.join(', ')}`),
+          onSuccess: (r) => {
+            const created = r.created?.length ? `Created: ${r.created.join(', ')}` : '';
+            const existing = r.existing?.length ? `Existing: ${r.existing.join(', ')}` : '';
+            toast.success([created, existing].filter(Boolean).join(' | ') || 'No tabs required changes');
+          },
           onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Tab creation failed'),
         })} loading={createTabs.isPending}>Create Missing Sheet Tabs</Button>
         <Button size="sm" variant="outline" onClick={() => exportByCategory.mutate({

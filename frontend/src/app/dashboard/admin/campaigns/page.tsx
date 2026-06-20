@@ -11,6 +11,15 @@ import { useAdminCampaigns, useUpdateCampaignCategory, useBackfillCampaignCatego
 import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
 import { clsx, humanize } from '@/lib/format';
 
+type ApiErrorLike = {
+  response?: {
+    data?: {
+      message?: string;
+      error?: { message?: string };
+    };
+  };
+};
+
 export default function CampaignsPage() {
   return (
     <AppShell title="Campaign Management" subtitle="Create, edit, pause and monitor all campaigns" roles={['super_admin']}>
@@ -20,7 +29,7 @@ export default function CampaignsPage() {
 }
 
 function CampaignsInner() {
-  const { data: campaigns, isLoading } = useAdminCampaigns();
+  const { data: campaigns, isLoading, refetch } = useAdminCampaigns();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'active' | 'paused' | 'attention'>('all');
   const [editItem, setEditItem] = useState<AdminCampaign | null>(null);
@@ -49,16 +58,51 @@ function CampaignsInner() {
     setEditItem(c);
   }
 
+  function errorMessage(error: unknown, fallback: string) {
+    return (error as ApiErrorLike)?.response?.data?.message
+      || (error as ApiErrorLike)?.response?.data?.error?.message
+      || fallback;
+  }
+
   async function handleSave() {
     if (editItem) {
       try {
+        if (process.env.NODE_ENV === 'development') {
+          console.debug('[CampaignSave] step=updateCategory:start', {
+            campaignId: editItem.campaign_id,
+            category: form.category,
+            backfill_mode: form.backfill_mode,
+          });
+        }
         await updateCategory.mutateAsync({ campaignId: editItem.campaign_id, category: form.category, notes: form.category_notes });
+
         if (form.backfill_mode !== 'none') {
+          if (process.env.NODE_ENV === 'development') {
+            console.debug('[CampaignSave] step=backfillCategory:start', {
+              campaignId: editItem.campaign_id,
+              mode: form.backfill_mode,
+            });
+          }
           const summary = await backfillCategory.mutateAsync({ campaignId: editItem.campaign_id, mode: form.backfill_mode });
-          toast.success(`${form.backfill_mode === 'dry_run' ? 'Dry run' : 'Backfill'}: ${summary.updated} updated, ${summary.skipped} skipped`);
-        } else toast.success('Campaign category saved for future leads');
+          if (process.env.NODE_ENV === 'development') {
+            console.debug('[CampaignSave] step=backfillCategory:success', summary);
+          }
+          toast.success(
+            form.backfill_mode === 'dry_run'
+              ? `Campaign category updated successfully. Dry run: ${summary.updated} update candidates, ${summary.skipped} skipped.`
+              : `Campaign category updated successfully. Backfill: ${summary.updated} updated, ${summary.skipped} skipped.`,
+          );
+        } else {
+          toast.success('Campaign category updated successfully.');
+        }
+        await refetch();
         setEditItem(null);
-      } catch { toast.error('Campaign category update failed'); }
+      } catch (error) {
+        if (process.env.NODE_ENV === 'development') {
+          console.error('[CampaignSave] step=failed', error);
+        }
+        toast.error(errorMessage(error, 'Campaign category update failed.'));
+      }
     }
   }
 

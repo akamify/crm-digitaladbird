@@ -187,6 +187,8 @@ export interface SheetsConnectivity {
 }
 
 export interface GoogleSheetRoutingSettings {
+  connected?: boolean;
+  source?: 'db' | 'env_path' | 'env_json' | null | string;
   config_id: string | null;
   spreadsheet_id: string | null;
   default_sheet_name: string;
@@ -195,6 +197,10 @@ export interface GoogleSheetRoutingSettings {
   unknown_sheet_name: string;
   auto_create_missing_sheets: boolean;
   category_sheet_routing_enabled: boolean;
+  service_account_email?: string | null;
+  key_path?: string | null;
+  credentials_managed_by?: string;
+  editable_fields?: string[];
 }
 
 export function useSheetConfigs() {
@@ -560,14 +566,14 @@ export function useUpdateGoogleSheetRoutingSettings() {
 export function useTestGoogleSheetRouting() {
   return useMutation({
     mutationFn: ({ category }: { category: 'trader' | 'partner' | 'unknown' }) =>
-      apiPost<{ category: string; category_label: string; sheet_name: string; sheet_exists: boolean; spreadsheet_id: string | null }>('/admin/google-sheets/test-sheet-routing', { category }),
+      apiPost<{ category: string; category_label: string; sheet_name: string; sheet_exists: boolean; spreadsheet_id: string | null }>('/admin/google-sheets/test-routing', { category }),
   });
 }
 
 export function useCreateMissingGoogleSheetTabs() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => apiPost<{ created_or_verified: string[] }>('/admin/google-sheets/create-missing-tabs', {}),
+    mutationFn: () => apiPost<{ created: string[]; existing: string[]; failed: string[] }>('/admin/google-sheets/create-missing-tabs', {}),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin', 'google-sheet-routing-settings'] });
       qc.invalidateQueries({ queryKey: ['admin', 'sheets-connectivity'] });
