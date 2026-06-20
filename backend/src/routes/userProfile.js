@@ -6,7 +6,7 @@ const userProfileService = require('../services/userProfileService');
 
 const router = express.Router();
 
-router.use('/admin/users', authenticate, requireRole('super_admin', 'admin', 'rm'));
+router.use('/admin/users', authenticate, requireRole('super_admin', 'admin', 'rm', 'member'));
 
 router.get('/admin/users/:userId/profile', asyncHandler(async (req, res) => {
   const data = await userProfileService.getProfile(req.user, req.params.userId);
@@ -29,12 +29,28 @@ router.get('/admin/users/:userId/requests', asyncHandler(async (req, res) => {
 }));
 
 router.get('/admin/users/:userId/assignment-history', asyncHandler(async (req, res) => {
-  const data = await userProfileService.getAssignmentHistory(req.user, req.params.userId);
+  const data = await userProfileService.getAssignmentHistory(req.user, req.params.userId, req.query);
   res.json({ success: true, data });
 }));
 
 router.get('/admin/users/:userId/activity', asyncHandler(async (req, res) => {
   const data = await userProfileService.getActivity(req.user, req.params.userId);
+  res.json({ success: true, data });
+}));
+
+router.get('/admin/users/:userId/email-history', asyncHandler(async (req, res) => {
+  const data = await userProfileService.getEmailHistory(req.user, req.params.userId, req.query);
+  res.json({ success: true, data });
+}));
+
+router.get('/admin/users/:userId/security', asyncHandler(async (req, res) => {
+  const data = await userProfileService.getSecurity(req.user, req.params.userId);
+  res.json({ success: true, data });
+}));
+
+router.post('/admin/users/:userId/force-logout', asyncHandler(async (req, res) => {
+  const data = await userProfileService.forceLogoutSessions(req.user, req.params.userId);
+  invalidateUser(req.params.userId);
   res.json({ success: true, data });
 }));
 

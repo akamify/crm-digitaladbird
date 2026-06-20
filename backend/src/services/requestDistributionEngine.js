@@ -212,6 +212,7 @@ async function fulfillMemberRequest(requestId) {
     const { rows: leads } = await client.query(leadSql, params);
 
     let assigned = 0;
+    const leadIds = [];
     for (const lead of leads) {
       const res = await client.query(
         `UPDATE leads SET assigned_to_user_id = $1, assigned_at = NOW(), updated_at = NOW()
@@ -224,6 +225,7 @@ async function fulfillMemberRequest(requestId) {
           [lead.id, req.user_id]
         );
         assigned++;
+        leadIds.push(lead.id);
       }
     }
 
@@ -239,7 +241,7 @@ async function fulfillMemberRequest(requestId) {
     );
 
     if (assigned > 0) {
-      await notifyLeadAssigned(req.user_id, assigned, { request_id: req.id, assignment_type: 'lead_request' }, client);
+      await notifyLeadAssigned(req.user_id, assigned, { request_id: req.id, assignment_type: 'lead_request', lead_ids: leadIds }, client);
       logger.info({ requestId, userId: req.user_id, assigned, totalAssigned, requested: req.quantity },
         '[RequestEngine] Member request auto-assigned from queue');
     }

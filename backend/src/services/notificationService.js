@@ -66,13 +66,117 @@ async function notifyAdmins(type, title, body, metadata = {}, runner = null) {
   }
 }
 
-async function notifyLeadAssigned(userId, count, metadata = {}, runner = null) {
+async function fetchLeadForNotification(leadId, runner = null) {
+  if (!leadId) return null;
+  try {
+    const { rows: [lead] } = await runnerQuery(
+      runner,
+      `SELECT l.id, l.full_name, l.phone, l.source, l.campaign_name,
+              l.meta_campaign_id, l.campaign_label, l.meta_form_id,
+              l.form_name, f.form_name AS meta_form_name
+         FROM leads l
+         LEFT JOIN meta_forms f ON f.form_id = l.meta_form_id
+        WHERE l.id = $1
+        LIMIT 1`,
+      [leadId],
+    );
+    return lead || null;
+  } catch (err) {
+    logger.warn({ err: err.message, leadId }, '[Notification] lead lookup skipped');
+    return null;
+  }
+}
+
+async function isDirectLeadAssignee(userId, runner = null) {
+  if (!userId) return false;
+  try {
+    const { rows: [user] } = await runnerQuery(
+      runner,
+      `SELECT role, status, deleted_at
+         FROM users
+        WHERE id = $1
+        LIMIT 1`,
+      [userId],
+    );
+    return !!user && ['member', 'partner'].includes(user.role) && user.status === 'active' && !user.deleted_at;
+  } catch (err) {
+    logger.warn({ err: err.message, userId }, '[Notification] assignee role check skipped');
+    return false;
+  }
+}
+
+function buildLeadAssignedMessage(lead) {
+  const bits = [];
+  if (lead?.full_name) bits.push(lead.full_name);
+  if (lead?.phone) bits.push(lead.phone);
+  if (lead?.campaign_name) bits.push(lead.campaign_name);
+  if (lead?.meta_form_name || lead?.form_name) bits.push(lead.meta_form_name || lead.form_name);
+  return bits.length
+    ? `A new lead has been assigned to you: ${bits.join(' | ')}.`
+    : 'A new lead has been assigned to you.';
+}
+
+async function notifyLeadAssignedDetailed(input, runner = null) {
+  const assignedToUserId = input.assignedToUserId || input.userId;
+  if (!(await isDirectLeadAssignee(assignedToUserId, runner))) return null;
+
+  const lead = input.lead || await fetchLeadForNotification(input.leadId || input.lead_id, runner);
+  const metadata = {
+    lead_id: lead?.id || input.leadId || input.lead_id || null,
+    lead_name: lead?.full_name || null,
+    lead_phone: lead?.phone || null,
+    campaign_name: lead?.campaign_name || lead?.campaign_label || null,
+    source: lead?.source || input.assignmentSource || null,
+    form_id: lead?.meta_form_id || null,
+    form_name: lead?.meta_form_name || lead?.form_name || null,
+    assigned_by: input.assignedBy || null,
+    assignment_source: input.assignmentSource || null,
+    ...(input.metadata || {}),
+  };
+
+  return notifyUser(
+    assignedToUserId,
+    'lead_assigned',
+    'New lead assigned',
+    buildLeadAssignedMessage(lead),
+    metadata,
+    runner,
+  );
+}
+
+async function notifyLeadAssigned(userIdOrInput, count, metadata = {}, runner = null) {
+  if (userIdOrInput && typeof userIdOrInput === 'object' && !Array.isArray(userIdOrInput)) {
+    return notifyLeadAssignedDetailed(userIdOrInput, count || runner);
+  }
+  const userId = userIdOrInput;
   const safeCount = Number(count || 0);
   if (!safeCount) return;
+  if (Array.isArray(metadata?.lead_ids) && metadata.lead_ids.length) {
+    for (const leadId of metadata.lead_ids) {
+      await notifyLeadAssignedDetailed({
+        leadId,
+        assignedToUserId: userId,
+        assignedBy: metadata.assigned_by || metadata.assignedBy || null,
+        assignmentSource: metadata.assignment_type || metadata.assignmentSource || null,
+        metadata: { ...metadata, lead_id: leadId },
+      }, runner);
+    }
+    return null;
+  }
+  if (safeCount === 1 && metadata?.lead_id) {
+    return notifyLeadAssignedDetailed({
+      leadId: metadata.lead_id,
+      assignedToUserId: userId,
+      assignedBy: metadata.assigned_by || metadata.assignedBy || null,
+      assignmentSource: metadata.assignment_type || metadata.assignmentSource || null,
+      metadata,
+    }, runner);
+  }
+  if (!(await isDirectLeadAssignee(userId, runner))) return null;
   const title = safeCount === 1 ? 'New lead assigned' : `${safeCount} leads assigned`;
   const body = safeCount === 1
-    ? '1 lead has been assigned to you. Please follow up from your lead dashboard.'
-    : `${safeCount} leads have been assigned to you. Please follow up from your lead dashboard.`;
+    ? 'A new lead has been assigned to you.'
+    : `${safeCount} new leads have been assigned to you.`;
   await notifyUser(userId, 'lead_assigned', title, body, { count: safeCount, ...metadata }, runner);
 }
 
@@ -117,6 +221,7 @@ module.exports = {
   notifyUsers,
   notifyAdmins,
   notifyLeadAssigned,
+  notifyLeadAssignedDetailed,
   notifyLeadRequestCreated,
   notifyLeadRequestResolved,
 };

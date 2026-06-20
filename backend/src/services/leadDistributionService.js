@@ -16,6 +16,7 @@
 const { withTransaction, query } = require('../config/database');
 const logger = require('../utils/logger');
 const { validateLeadAssignee } = require('./leadAssigneeValidator');
+const { notifyLeadAssigned } = require('./notificationService');
 
 const FALLBACK_RULE_NAME = '__default__';
 
@@ -212,6 +213,12 @@ async function assignLead(leadId) {
          VALUES ($1, $2, $3, 'auto')`,
       [leadId, pick.id, rule.id]
     );
+    await notifyLeadAssigned({
+      leadId,
+      assignedToUserId: pick.id,
+      assignmentSource: 'auto',
+      metadata: { rule_id: rule.id, strategy: rule.strategy },
+    }, client);
 
     logger.info({ leadId, userId: pick.id, ruleId: rule.id, strategy: rule.strategy }, 'Lead assigned');
     return { userId: pick.id, ruleId: rule.id, strategy: rule.strategy };
@@ -248,6 +255,15 @@ async function reassignLead(leadId, toUserId, byUserId, reason = 'reassign') {
          VALUES ($1, $2, $3, $4)`,
       [leadId, toUserId, byUserId, reason]
     );
+    if (prev.assigned_to_user_id !== toUserId) {
+      await notifyLeadAssigned({
+        leadId,
+        assignedToUserId: toUserId,
+        assignedBy: byUserId,
+        assignmentSource: reason,
+        metadata: { previous_user_id: prev.assigned_to_user_id || null },
+      }, client);
+    }
     return { previous: prev.assigned_to_user_id, current: toUserId };
   });
 }

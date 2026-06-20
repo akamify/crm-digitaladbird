@@ -20,6 +20,7 @@ const { onLeadCreated, findExistingByContact } = require('./leadEventService');
 const { validateLead } = require('./leadValidator');
 const graphClient = require('./metaGraphClient');
 const metaTokens = require('./metaTokenResolver');
+const { resolveCampaignName } = require('./leadCampaignResolver');
 
 
 
@@ -216,6 +217,24 @@ function parseMetaDate(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function isStaleMetaFormError(err) {
+  const message = String(err?.message || '');
+  return err?.metaCode === 2500 || err?.code === 2500 || /Unknown path components/i.test(message);
+}
+
+async function markFormStale(formId, errorMessage) {
+  await query(
+    `UPDATE meta_forms
+        SET is_active = FALSE,
+            stale_at = NOW(),
+            last_checked_at = NOW(),
+            last_error = $2,
+            last_sync_error = $2
+      WHERE form_id = $1`,
+    [String(formId), String(errorMessage || 'Meta form is stale or invalid').slice(0, 1000)],
+  ).catch(err => logger.warn({ formId, err: err.message }, 'Failed to mark Meta form stale'));
+}
+
 function normalizeAdAccountId(value) {
   return String(value || '').replace(/^act_/, '');
 }
@@ -276,6 +295,10 @@ async function syncFormLeads(formId, options = {}) {
       [fetched, created, duplicate, syncId]
     );
   } catch (err) {
+    if (isStaleMetaFormError(err)) {
+      await markFormStale(formId, err.message);
+      logger.warn({ formId, err: err.message, meta_code: err.metaCode || err.code }, 'Meta form marked stale after invalid form path');
+    }
     await query(
       `UPDATE meta_sync_log SET leads_fetched = $1, leads_created = $2, leads_duplicate = $3, error_message = $4, finished_at = NOW() WHERE id = $5`,
       [fetched, created, duplicate, err.message, syncId]
@@ -324,7 +347,7 @@ async function ingestGraphLead(lead, formId) {
   // Auto-register an unknown form so the leads.meta_form_id FK is satisfied —
   // see metaService.ingestLeadgenEvent for the same pattern + rationale.
   let { rows: [formRow] } = await query(
-    `SELECT campaign_label, product_tag, page_id FROM meta_forms WHERE form_id = $1`,
+    `SELECT campaign_label, campaign_name, product_tag, page_id, form_name FROM meta_forms WHERE form_id = $1`,
     [formId]
   );
   if (!formRow) {
@@ -333,18 +356,20 @@ async function ingestGraphLead(lead, formId) {
          VALUES($1, NULL, NULL, TRUE) ON CONFLICT (form_id) DO NOTHING`,
       [formId]
     );
-    formRow = { campaign_label: null, product_tag: null, page_id: null };
+    formRow = { campaign_label: null, campaign_name: null, product_tag: null, page_id: null, form_name: null };
   }
 
   // Resolve campaign label from meta_campaigns table if available
   let campaignLabel = formRow?.campaign_label || null;
+  let campaignRow = null;
   if (lead.campaign_id) {
     const { rows: [campRow] } = await query(
-      `SELECT internal_label, category FROM meta_campaigns WHERE campaign_id = $1`,
+      `SELECT internal_label, category, campaign_name FROM meta_campaigns WHERE campaign_id = $1`,
       [lead.campaign_id]
     );
     if (campRow) {
       campaignLabel = campRow.internal_label;
+      campaignRow = campRow;
     } else {
       // Auto-register campaign
       const label = deriveCampaignLabel(lead.campaign_name);
@@ -358,6 +383,7 @@ async function ingestGraphLead(lead, formId) {
   }
 
   const pageId = formRow?.page_id || config.meta.pageId || null;
+  const campaignName = resolveCampaignName({ payload: lead, fields, form: formRow, campaign: campaignRow });
   const metaCreatedTime = lead.created_time ? new Date(lead.created_time) : null;
 
   const inserted = await withTransaction(async (client) => {
@@ -366,8 +392,10 @@ async function ingestGraphLead(lead, formId) {
          full_name, phone, email, city, state,
          source, meta_lead_id, meta_form_id, meta_page_id,
          meta_campaign_id, meta_adset_id, meta_ad_id, meta_created_time,
-         campaign_label, product_tag, raw_payload
-       ) VALUES ($1, $2, $3, $4, $5, 'meta', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+         campaign_id, adset_id, ad_id, form_name, page_id,
+         campaign_label, product_tag, raw_payload,
+         campaign_name, adset_name, ad_name
+       ) VALUES ($1, $2, $3, $4, $5, 'meta', $6, $7, $8, $9, $10, $11, $12, $9, $10, $11, $16, $8, $13, $14, $15, $17, $18, $19)
        ON CONFLICT (meta_lead_id) DO NOTHING
        RETURNING id`,
       [
@@ -386,6 +414,10 @@ async function ingestGraphLead(lead, formId) {
         campaignLabel,
         formRow?.product_tag || null,
         lead,
+        formRow?.form_name || null,
+        campaignName,
+        lead.adset_name || null,
+        lead.ad_name || null,
       ]
     );
     return ins.rows[0]?.id || null;
@@ -425,7 +457,7 @@ function parseFieldData(fieldData = []) {
     else if (['phone_number', 'phone'].includes(key)) out.phone = v;
     else if (['city'].includes(key)) out.city = v;
     else if (['state'].includes(key)) out.state = v;
-    else { out.custom = out.custom || {}; out.custom[name] = v; }
+    else { out.custom = out.custom || {}; out.custom[name] = v; out[key] = v; }
   }
   if (out.full_name) out.full_name = out.full_name.trim();
   return out;
@@ -437,7 +469,7 @@ function parseFieldData(fieldData = []) {
  * Sync leads from all active forms.
  */
 async function syncAllFormLeads(options = {}) {
-  const { rows: forms } = await query(`SELECT form_id FROM meta_forms WHERE is_active = TRUE`);
+  const { rows: forms } = await query(`SELECT form_id FROM meta_forms WHERE is_active = TRUE AND stale_at IS NULL`);
   const results = {};
 
   for (const form of forms) {

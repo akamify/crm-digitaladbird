@@ -21,6 +21,7 @@ const { onLeadCreated, findExistingByContact } = require('./leadEventService');
 const { validateLead } = require('./leadValidator');
 const metaTokens = require('./metaTokenResolver');
 const { graphGet } = require('./metaGraphClient');
+const { resolveCampaignName } = require('./leadCampaignResolver');
 
 /** Constant-time HMAC compare of Meta webhook payloads. */
 function verifySignature(rawBody, signatureHeader) {
@@ -62,7 +63,7 @@ function parseFieldData(fieldData = []) {
     else if (['phone_number', 'phone'].includes(key))           out.phone     = v;
     else if (['city'].includes(key))                            out.city      = v;
     else if (['state'].includes(key))                           out.state     = v;
-    else { out.custom = out.custom || {}; out.custom[name] = v; }
+    else { out.custom = out.custom || {}; out.custom[name] = v; out[key] = v; }
   }
   if (out.full_name) out.full_name = out.full_name.trim();
   return out;
@@ -129,7 +130,7 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
   logger.info({ ...ctx, step: 'F.dedup_clear' }, '[meta-ingest]');
 
   let { rows: [formRow] } = await query(
-    `SELECT campaign_label, product_tag FROM meta_forms WHERE form_id = $1`,
+    `SELECT campaign_label, campaign_name, product_tag, form_name FROM meta_forms WHERE form_id = $1`,
     [form_id]
   );
   // FK on leads.meta_form_id requires the form row to exist. If Meta is
@@ -146,18 +147,20 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
          ON CONFLICT (form_id) DO NOTHING`,
       [form_id, page_id]
     );
-    formRow = { campaign_label: null, product_tag: null };
+    formRow = { campaign_label: null, campaign_name: null, product_tag: null, form_name: null };
   }
 
   // Resolve campaign label from meta_campaigns or derive from name
   let campaignLabel = formRow?.campaign_label || null;
+  let campaignRow = null;
   if (detail.campaign_id) {
     const { rows: [campRow] } = await query(
-      `SELECT internal_label FROM meta_campaigns WHERE campaign_id = $1`,
+      `SELECT internal_label, campaign_name FROM meta_campaigns WHERE campaign_id = $1`,
       [detail.campaign_id]
     );
     if (campRow) {
       campaignLabel = campRow.internal_label;
+      campaignRow = campRow;
     } else {
       // Auto-register unknown campaign
       const { deriveCampaignLabel } = require('./metaSyncService');
@@ -169,6 +172,7 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
       campaignLabel = label;
     }
   }
+  const campaignName = resolveCampaignName({ payload: detail, fields, form: formRow, campaign: campaignRow });
 
   const metaCreatedTime = created_time ? new Date(created_time * 1000) : null;
 
@@ -178,9 +182,10 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
          full_name, phone, email, city, state,
          source, meta_lead_id, meta_form_id, meta_page_id,
          meta_campaign_id, meta_adset_id, meta_ad_id, meta_created_time,
+         campaign_id, adset_id, ad_id, form_name, page_id,
          campaign_label, product_tag, raw_payload,
          campaign_name, adset_name, ad_name
-       ) VALUES ($1, $2, $3, $4, $5, 'meta', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+       ) VALUES ($1, $2, $3, $4, $5, 'meta', $6, $7, $8, $9, $10, $11, $12, $9, $10, $11, $19, $8, $13, $14, $15, $16, $17, $18)
        ON CONFLICT (meta_lead_id) DO NOTHING
        RETURNING id`,
       [
@@ -199,9 +204,10 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
         campaignLabel,
         formRow?.product_tag    || null,
         detail,
-        detail.campaign_name || null,
+        campaignName,
         detail.adset_name    || null,
         detail.ad_name       || null,
+        formRow?.form_name || null,
       ]
     );
     return ins.rows[0]?.id || null;

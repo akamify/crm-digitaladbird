@@ -1,6 +1,6 @@
 'use client';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiGet, apiPatch } from '@/lib/api';
+import { apiGet, apiPatch, apiPost } from '@/lib/api';
 
 export interface UserProfileUser {
   id: string;
@@ -28,26 +28,65 @@ export interface UserProfileUser {
 }
 
 export interface UserProfileCounts {
-  total_assigned_leads: number;
-  pending_leads: number;
-  worked_leads: number;
-  converted_leads: number;
-  lost_not_interested_leads: number;
-  followups_due: number;
-  assigned_today: number;
-  assigned_this_week: number;
-  assigned_this_month: number;
-  requests_pending: number;
-  requests_approved: number;
-  requests_fulfilled: number;
-  reassigned_in_count: number;
-  reassigned_out_count: number;
+  total_assigned_leads?: number;
+  pending_leads?: number;
+  worked_leads?: number;
+  converted_leads?: number;
+  lost_not_interested_leads?: number;
+  followups_due?: number;
+  assigned_today?: number;
+  assigned_this_week?: number;
+  assigned_this_month?: number;
+  requests_pending?: number;
+  requests_approved?: number;
+  requests_fulfilled?: number;
+  reassigned_in_count?: number;
+  reassigned_out_count?: number;
+  [key: string]: string | number | null | undefined;
+}
+
+export interface ProfileSecurity {
+  summary?: {
+    total_sessions?: number;
+    active_sessions?: number;
+    last_session_created_at?: string | null;
+    last_activity_at?: string | null;
+  };
+  sessions?: Array<{
+    id: string;
+    user_agent?: string | null;
+    ip_address?: string | null;
+    created_at?: string | null;
+    expires_at?: string | null;
+    revoked_at?: string | null;
+    last_activity_at?: string | null;
+  }>;
+}
+
+export interface EmailHistoryRow {
+  id: string;
+  email_to: string;
+  email_type: string;
+  provider: string;
+  status: string;
+  error_message?: string | null;
+  created_at: string;
+  sent_at?: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface UserProfileResponse {
   user: UserProfileUser;
+  role?: string;
+  profileType?: 'admin' | 'rm' | 'member' | 'deleted';
+  permissions?: Record<string, boolean>;
+  tabs?: string[];
+  actions?: string[];
   counts: UserProfileCounts;
+  metrics?: UserProfileCounts;
   reportees: UserProfileUser[];
+  security?: ProfileSecurity;
+  emailHistory?: EmailHistoryRow[];
 }
 
 export interface UserPerformanceResponse {
@@ -124,6 +163,10 @@ export interface AssignmentHistoryRow {
   id: string;
   lead_id: string;
   lead_name?: string | null;
+  campaign_name?: string | null;
+  source?: string | null;
+  meta_form_id?: string | null;
+  form_name?: string | null;
   assignment_type?: string | null;
   previous_user?: string | null;
   assigned_to?: string | null;
@@ -149,11 +192,11 @@ export function useAdminUserProfile(userId: string) {
   });
 }
 
-export function useAdminUserPerformance(userId: string, range: string) {
+export function useAdminUserPerformance(userId: string, range: string, enabled = true) {
   return useQuery({
     queryKey: ['admin', 'user-profile', userId, 'performance', range],
     queryFn: () => apiGet<UserPerformanceResponse>(`/admin/users/${userId}/performance`, { range }),
-    enabled: Boolean(userId),
+    enabled: Boolean(userId) && enabled,
     staleTime: 30_000,
   });
 }
@@ -174,10 +217,10 @@ export function useAdminUserRequests(userId: string) {
   });
 }
 
-export function useAdminUserAssignmentHistory(userId: string) {
+export function useAdminUserAssignmentHistory(userId: string, params: Record<string, unknown> = {}) {
   return useQuery({
-    queryKey: ['admin', 'user-profile', userId, 'assignment-history'],
-    queryFn: () => apiGet<AssignmentHistoryRow[]>(`/admin/users/${userId}/assignment-history`),
+    queryKey: ['admin', 'user-profile', userId, 'assignment-history', params],
+    queryFn: () => apiGet<AssignmentHistoryRow[]>(`/admin/users/${userId}/assignment-history`, params),
     enabled: Boolean(userId),
   });
 }
@@ -198,6 +241,16 @@ export function useUpdateAdminUserProfile(userId: string) {
       qc.invalidateQueries({ queryKey: ['admin', 'user-profile', userId] });
       qc.invalidateQueries({ queryKey: ['users'] });
       qc.invalidateQueries({ queryKey: ['admin'] });
+    },
+  });
+}
+
+export function useForceLogoutUser(userId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiPost<{ revoked_sessions: number }>(`/admin/users/${userId}/force-logout`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'user-profile', userId] });
     },
   });
 }

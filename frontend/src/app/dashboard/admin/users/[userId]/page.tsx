@@ -29,10 +29,25 @@ import {
   useAdminUserPerformance,
   useAdminUserProfile,
   useAdminUserRequests,
+  useForceLogoutUser,
   useUpdateAdminUserProfile,
 } from '@/hooks/useUserProfile';
 
-type TabKey = 'leads' | 'requests' | 'history' | 'activity';
+type TabKey =
+  | 'overview'
+  | 'security'
+  | 'admin_actions'
+  | 'email_history'
+  | 'permissions'
+  | 'team_members'
+  | 'team_leads'
+  | 'team_performance'
+  | 'settings'
+  | 'leads'
+  | 'requests'
+  | 'assignment_history'
+  | 'notifications'
+  | 'activity';
 type ApiErrorLike = { response?: { data?: { code?: string; message?: string; error?: { code?: string; message?: string } } } };
 type AssignResult = { assigned?: number };
 
@@ -52,7 +67,7 @@ export default function AdminUserProfilePage() {
   const userId = params.userId;
 
   return (
-    <AppShell title="User Profile" subtitle="Performance, assignments, requests, and activity" roles={['super_admin', 'admin', 'rm']}>
+    <AppShell title="User Profile" subtitle="Role-specific access, activity, and lifecycle details" roles={['super_admin', 'admin', 'rm', 'member']}>
       <UserProfileInner userId={userId} />
     </AppShell>
   );
@@ -62,14 +77,15 @@ function UserProfileInner({ userId }: { userId: string }) {
   const router = useRouter();
   const { user: currentUser } = useAuth();
   const [range, setRange] = useState('30d');
-  const [tab, setTab] = useState<TabKey>('leads');
+  const [tab, setTab] = useState<TabKey>('overview');
   const profile = useAdminUserProfile(userId);
-  const performance = useAdminUserPerformance(userId, range);
+  const performance = useAdminUserPerformance(userId, range, profile.data?.profileType === 'member');
   const canEdit = currentUser?.role === 'super_admin' || currentUser?.role === 'admin';
   const blockUser = useBlockUser();
   const unblockUser = useUnblockUser();
   const deleteUser = useDeleteUser();
   const sendResetLink = useSendPasswordResetLink();
+  const forceLogout = useForceLogoutUser(userId);
 
   if (profile.isLoading) {
     return <ProfileSkeleton />;
@@ -86,8 +102,14 @@ function UserProfileInner({ userId }: { userId: string }) {
     );
   }
 
-  const { user, counts, reportees } = profile.data;
+  const { user, counts = {}, reportees = [], profileType = 'member', metrics = {}, security, emailHistory = [], tabs = [] } = profile.data;
   const perf = performance.data;
+  const availableTabs = (tabs.length ? tabs : ['leads', 'requests', 'assignment_history', 'activity']) as TabKey[];
+  const activeTab = availableTabs.includes(tab) ? tab : availableTabs[0];
+  const isMemberProfile = profileType === 'member';
+  const isRmProfile = profileType === 'rm';
+  const isAdminProfile = profileType === 'admin';
+  const isReadOnlyProfile = profileType === 'deleted' || user.status === 'deleted';
 
   function handleBlock() {
     if (!confirm('Block this user? This user will no longer be able to login using email, phone, or CP ID. They will not receive new leads.')) return;
@@ -122,13 +144,23 @@ function UserProfileInner({ userId }: { userId: string }) {
     });
   }
 
+  function handleForceLogout() {
+    if (!confirm("Force logout this user's sessions? They will need to login again on every device.")) return;
+    forceLogout.mutate(undefined, {
+      onSuccess: data => toast.success(`${data.revoked_sessions} active session(s) revoked.`),
+      onError: (error: unknown) => toast.error(apiErrorMessage(error, 'Could not revoke sessions')),
+    });
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-2">
         <button onClick={() => router.back()} className="rounded-lg p-2 text-slate-500 hover:bg-white hover:text-slate-800">
           <ArrowLeft className="h-4 w-4" />
         </button>
-        <span className="chip-slate">Admin profile</span>
+        <span className="chip-slate">Users</span>
+        <span className="text-xs text-slate-400">/</span>
+        <span className="chip-blue">{humanize(profileType)} profile</span>
         <span className="text-xs text-slate-400">Updated {fmtRelative(user.updated_at)}</span>
       </div>
 
@@ -160,27 +192,35 @@ function UserProfileInner({ userId }: { userId: string }) {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Link href={`/dashboard/admin/leads-manager?assigned_to=${user.id}`} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
-              <Briefcase className="h-4 w-4" /> Leads
-            </Link>
-            {canEdit && user.status !== 'deleted' && (
+            {isMemberProfile && (
+              <Link href={`/dashboard/admin/leads-manager?assigned_to=${user.id}`} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
+                <Briefcase className="h-4 w-4" /> Leads
+              </Link>
+            )}
+            {canEdit && !isReadOnlyProfile && (
               <button onClick={handleSendResetLink} disabled={sendResetLink.isPending} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
                 {sendResetLink.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
                 Send reset link
               </button>
             )}
-            {canEdit && <EditProfileButton profile={profile.data} userId={userId} />}
-            {canEdit && user.role !== 'super_admin' && user.status === 'blocked' && (
+            {canEdit && !isReadOnlyProfile && <EditProfileButton profile={profile.data} userId={userId} />}
+            {canEdit && isAdminProfile && !isReadOnlyProfile && (
+              <button onClick={handleForceLogout} disabled={forceLogout.isPending} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
+                {forceLogout.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldBan className="h-4 w-4" />}
+                Force logout
+              </button>
+            )}
+            {canEdit && user.role !== 'super_admin' && user.status === 'blocked' && !isReadOnlyProfile && (
               <button onClick={handleUnblock} disabled={unblockUser.isPending} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
                 <ShieldCheck className="h-4 w-4" /> Unblock
               </button>
             )}
-            {canEdit && user.role !== 'super_admin' && user.status !== 'blocked' && user.status !== 'deleted' && (
+            {canEdit && user.role !== 'super_admin' && user.status !== 'blocked' && !isReadOnlyProfile && (
               <button onClick={handleBlock} disabled={blockUser.isPending} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-600">
                 <ShieldBan className="h-4 w-4" /> Block
               </button>
             )}
-            {canEdit && user.role !== 'super_admin' && user.status !== 'deleted' && (
+            {canEdit && user.role !== 'super_admin' && !isReadOnlyProfile && (
               <button onClick={handleDelete} disabled={deleteUser.isPending} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-700">
                 <Trash2 className="h-4 w-4" /> Disable
               </button>
@@ -189,18 +229,28 @@ function UserProfileInner({ userId }: { userId: string }) {
         </div>
       </section>
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Assigned leads" value={counts.total_assigned_leads} icon={<Briefcase className="h-5 w-5" />} />
-        <MetricCard label="Pending leads" value={counts.pending_leads} icon={<Clock className="h-5 w-5" />} tone="amber" />
-        <MetricCard label="Worked leads" value={counts.worked_leads} icon={<CheckCircle2 className="h-5 w-5" />} tone="blue" />
-        <MetricCard label="Converted" value={counts.converted_leads} suffix={`${Number(perf?.summary?.conversion_rate || 0).toFixed(1)}%`} icon={<Shield className="h-5 w-5" />} tone="green" />
-        <MetricCard label="Follow-ups due" value={counts.followups_due} icon={<CalendarClock className="h-5 w-5" />} tone="red" />
-        <MetricCard label="Assigned today" value={counts.assigned_today} icon={<Briefcase className="h-5 w-5" />} />
-        <MetricCard label="This week" value={counts.assigned_this_week} icon={<Briefcase className="h-5 w-5" />} />
-        <MetricCard label="Reassigned in/out" value={`${counts.reassigned_in_count}/${counts.reassigned_out_count}`} icon={<ArrowRightLeft className="h-5 w-5" />} />
-      </section>
+      {isReadOnlyProfile && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          This profile is read-only. Historical users remain visible for audit, but login, lead assignment, and lifecycle actions are disabled.
+        </div>
+      )}
 
-      <section className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
+      {isAdminProfile && <AdminProfileCards metrics={metrics} security={security} emailHistory={emailHistory} />}
+      {isRmProfile && <RmProfileCards metrics={metrics} reportees={reportees} />}
+      {isMemberProfile && (
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <MetricCard label="Assigned leads" value={counts.total_assigned_leads ?? 0} icon={<Briefcase className="h-5 w-5" />} />
+          <MetricCard label="Pending leads" value={counts.pending_leads ?? 0} icon={<Clock className="h-5 w-5" />} tone="amber" />
+          <MetricCard label="Worked leads" value={counts.worked_leads ?? 0} icon={<CheckCircle2 className="h-5 w-5" />} tone="blue" />
+          <MetricCard label="Converted" value={counts.converted_leads ?? 0} suffix={`${Number(perf?.summary?.conversion_rate || 0).toFixed(1)}%`} icon={<Shield className="h-5 w-5" />} tone="green" />
+          <MetricCard label="Follow-ups due" value={counts.followups_due ?? 0} icon={<CalendarClock className="h-5 w-5" />} tone="red" />
+          <MetricCard label="Assigned today" value={counts.assigned_today ?? 0} icon={<Briefcase className="h-5 w-5" />} />
+          <MetricCard label="This week" value={counts.assigned_this_week ?? 0} icon={<Briefcase className="h-5 w-5" />} />
+          <MetricCard label="Reassigned in/out" value={`${counts.reassigned_in_count ?? 0}/${counts.reassigned_out_count ?? 0}`} icon={<ArrowRightLeft className="h-5 w-5" />} />
+        </section>
+      )}
+
+      {isMemberProfile && <section className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between gap-3">
             <h2 className="text-sm font-semibold text-slate-900">Performance trend</h2>
@@ -243,9 +293,9 @@ function UserProfileInner({ userId }: { userId: string }) {
             </div>
           )}
         </div>
-      </section>
+      </section>}
 
-      <section className="grid gap-4 lg:grid-cols-[1fr_320px]">
+      {isMemberProfile && <section className="grid gap-4 lg:grid-cols-[1fr_320px]">
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <h2 className="mb-3 text-sm font-semibold text-slate-900">Lead source/form mix</h2>
           <div className="h-60">
@@ -284,28 +334,38 @@ function UserProfileInner({ userId }: { userId: string }) {
             </div>
           )}
         </div>
-      </section>
+      </section>}
 
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-wrap gap-2 border-b border-slate-100 px-4 pt-4">
-          {(['leads', 'requests', 'history', 'activity'] as TabKey[]).map(key => (
+          {availableTabs.map(key => (
             <button
               key={key}
               onClick={() => setTab(key)}
               className={clsx(
                 'rounded-t-lg px-3 py-2 text-sm font-medium',
-                tab === key ? 'bg-brand-50 text-brand-700' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800',
+                activeTab === key ? 'bg-brand-50 text-brand-700' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800',
               )}
             >
-              {key === 'history' ? 'Assignment history' : humanize(key)}
+              {humanize(key)}
             </button>
           ))}
         </div>
         <div className="p-4">
-          {tab === 'leads' && <AssignedLeadsTab userId={userId} canReassign={canEdit} />}
-          {tab === 'requests' && <RequestsTab userId={userId} />}
-          {tab === 'history' && <HistoryTab userId={userId} />}
-          {tab === 'activity' && <ActivityTab userId={userId} />}
+          {activeTab === 'overview' && <OverviewTab profile={profile.data} />}
+          {activeTab === 'security' && <SecurityTab security={security} />}
+          {activeTab === 'admin_actions' && <ActivityTab userId={userId} label="Admin actions" />}
+          {activeTab === 'email_history' && <EmailHistoryTab rows={emailHistory} />}
+          {activeTab === 'permissions' && <PermissionsTab profile={profile.data} />}
+          {activeTab === 'team_members' && <TeamMembersTab reportees={reportees} />}
+          {activeTab === 'team_leads' && <AssignedLeadsTab userId={userId} canReassign={false} />}
+          {activeTab === 'team_performance' && <RmTeamPerformanceTab metrics={metrics} />}
+          {activeTab === 'settings' && <SettingsTab profile={profile.data} />}
+          {activeTab === 'leads' && <AssignedLeadsTab userId={userId} canReassign={canEdit && isMemberProfile} />}
+          {activeTab === 'requests' && <RequestsTab userId={userId} />}
+          {activeTab === 'assignment_history' && <HistoryTab userId={userId} profileType={profileType} />}
+          {activeTab === 'notifications' && <EmptyState title="Notifications history" description="User notification history is visible from the notification audit endpoints when available." icon={<Mail className="h-6 w-6" />} />}
+          {activeTab === 'activity' && <ActivityTab userId={userId} />}
         </div>
       </section>
     </div>
@@ -579,34 +639,69 @@ function RequestRow({ row }: { row: ProfileRequest }) {
   );
 }
 
-function HistoryTab({ userId }: { userId: string }) {
-  const history = useAdminUserAssignmentHistory(userId);
+function HistoryTab({ userId, profileType }: { userId: string; profileType: UserProfileResponse['profileType'] }) {
+  const [direction, setDirection] = useState('all');
+  const [assignmentType, setAssignmentType] = useState('all');
+  const [search, setSearch] = useState('');
+  const history = useAdminUserAssignmentHistory(userId, {
+    direction: direction === 'all' ? undefined : direction,
+    type: assignmentType === 'all' ? undefined : assignmentType,
+    search: search || undefined,
+    page_size: 50,
+  });
   if (history.isLoading) return <Skeleton className="h-48" />;
   const rows = history.data || [];
-  if (!rows.length) return <EmptyState title="No assignment history" description="No assignment or reassignment records are available." icon={<History className="h-6 w-6" />} />;
   return (
-    <div className="divide-y divide-slate-100">
-      {rows.map((row: AssignmentHistoryRow) => (
-        <div key={row.id} className="py-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="font-medium text-slate-900">{row.lead_name || 'Lead'} <span className="text-slate-400">-</span> {humanize(row.assignment_type)}</div>
-              <div className="text-xs text-slate-500">From {row.previous_user || '-'} to {row.assigned_to || '-'} by {row.assigned_by || 'System'}</div>
-            </div>
-            <span className="text-xs text-slate-500">{fmtDate(row.created_at)}</span>
-          </div>
-          {row.reason && <p className="mt-1 text-sm text-slate-600">{row.reason}</p>}
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-3">
+        <div className="relative min-w-[220px] flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input className="input pl-10" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search lead or campaign..." />
         </div>
-      ))}
+        {profileType === 'member' && (
+          <select className="input w-48" value={direction} onChange={event => setDirection(event.target.value)}>
+            <option value="all">All involving user</option>
+            <option value="in">Assigned to user</option>
+            <option value="out">Reassigned away</option>
+          </select>
+        )}
+        <select className="input w-48" value={assignmentType} onChange={event => setAssignmentType(event.target.value)}>
+          <option value="all">All assignment types</option>
+          <option value="manual">Manual</option>
+          <option value="manual_reassign">Manual reassign</option>
+          <option value="auto">Auto</option>
+          <option value="auto_reassign">Auto reassign</option>
+          <option value="request_fulfillment">Request fulfillment</option>
+        </select>
+      </div>
+      {!rows.length ? (
+        <EmptyState title="No assignment history" description="No scoped assignment or reassignment records match these filters." icon={<History className="h-6 w-6" />} />
+      ) : (
+        <div className="divide-y divide-slate-100">
+          {rows.map((row: AssignmentHistoryRow) => (
+            <div key={row.id} className="py-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="font-medium text-slate-900">{row.lead_name || 'Lead'} <span className="text-slate-400">-</span> {humanize(row.assignment_type)}</div>
+                  <div className="text-xs text-slate-500">From {row.previous_user || '-'} to {row.assigned_to || '-'} by {row.assigned_by || 'System'}</div>
+                  <div className="mt-1 text-xs text-slate-500">{row.campaign_name || row.form_name || row.source || 'Source unavailable'}</div>
+                </div>
+                <span className="text-xs text-slate-500">{fmtDate(row.created_at)}</span>
+              </div>
+              {row.reason && <p className="mt-1 text-sm text-slate-600">{row.reason}</p>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function ActivityTab({ userId }: { userId: string }) {
+function ActivityTab({ userId, label = 'Activity' }: { userId: string; label?: string }) {
   const activity = useAdminUserActivity(userId);
   if (activity.isLoading) return <Skeleton className="h-48" />;
   const rows = activity.data || [];
-  if (!rows.length) return <EmptyState title="No activity found" description="No remarks, chat messages, or audit activity are available for this user." icon={<Clock className="h-6 w-6" />} />;
+  if (!rows.length) return <EmptyState title={`No ${label.toLowerCase()} found`} description="No scoped activity is available for this user." icon={<Clock className="h-6 w-6" />} />;
   return (
     <div className="divide-y divide-slate-100">
       {rows.map((row: ActivityRow, index) => (
@@ -618,6 +713,180 @@ function ActivityTab({ userId }: { userId: string }) {
           {row.metadata && <p className="mt-1 line-clamp-2 text-sm text-slate-600">{metadataPreview(row.metadata)}</p>}
         </div>
       ))}
+    </div>
+  );
+}
+
+function AdminProfileCards({ metrics, security, emailHistory }: { metrics: Record<string, string | number | null | undefined>; security?: UserProfileResponse['security']; emailHistory: UserProfileResponse['emailHistory'] }) {
+  return (
+    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <MetricCard label="Active sessions" value={security?.summary?.active_sessions ?? metrics.active_sessions ?? 0} icon={<ShieldCheck className="h-5 w-5" />} tone="green" />
+      <MetricCard label="Total sessions" value={security?.summary?.total_sessions ?? metrics.total_sessions ?? 0} icon={<Shield className="h-5 w-5" />} />
+      <MetricCard label="Admin actions" value={metrics.total_admin_actions ?? 0} icon={<History className="h-5 w-5" />} tone="blue" />
+      <MetricCard label="Actions last 7 days" value={metrics.actions_last_7_days ?? 0} icon={<Clock className="h-5 w-5" />} />
+      <MetricCard label="User actions" value={metrics.user_management_actions ?? 0} icon={<Users className="h-5 w-5" />} />
+      <MetricCard label="Meta/integration actions" value={metrics.integration_actions ?? 0} icon={<Briefcase className="h-5 w-5" />} tone="amber" />
+      <MetricCard label="Password reset emails" value={metrics.password_reset_emails ?? 0} icon={<KeyRound className="h-5 w-5" />} />
+      <MetricCard label="Recent emails" value={emailHistory?.length ?? 0} icon={<Mail className="h-5 w-5" />} />
+    </section>
+  );
+}
+
+function RmProfileCards({ metrics, reportees }: { metrics: Record<string, string | number | null | undefined>; reportees: UserProfileResponse['reportees'] }) {
+  return (
+    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <MetricCard label="Team members" value={metrics.team_members_count ?? reportees.length} icon={<Users className="h-5 w-5" />} />
+      <MetricCard label="Active members" value={metrics.active_members ?? reportees.filter(r => r.status === 'active').length} icon={<ShieldCheck className="h-5 w-5" />} tone="green" />
+      <MetricCard label="Team assigned leads" value={metrics.team_assigned_leads ?? 0} icon={<Briefcase className="h-5 w-5" />} />
+      <MetricCard label="Team pending leads" value={metrics.team_pending_leads ?? 0} icon={<Clock className="h-5 w-5" />} tone="amber" />
+      <MetricCard label="Team worked leads" value={metrics.team_worked_leads ?? 0} icon={<CheckCircle2 className="h-5 w-5" />} tone="blue" />
+      <MetricCard label="Team conversions" value={metrics.team_conversions ?? 0} icon={<Shield className="h-5 w-5" />} tone="green" />
+      <MetricCard label="Overdue follow-ups" value={metrics.overdue_followups ?? 0} icon={<CalendarClock className="h-5 w-5" />} tone="red" />
+      <MetricCard label="Pending requests" value={metrics.requests_pending ?? 0} icon={<Mail className="h-5 w-5" />} />
+    </section>
+  );
+}
+
+function OverviewTab({ profile }: { profile: UserProfileResponse }) {
+  const { user, profileType, security, emailHistory, reportees, metrics = {} } = profile;
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <div className="rounded-xl border border-slate-200 p-4">
+        <h3 className="text-sm font-semibold text-slate-900">Profile summary</h3>
+        <dl className="mt-4 space-y-3 text-sm">
+          <InfoRow label="Profile type" value={humanize(profileType || user.role)} />
+          <InfoRow label="Role" value={humanize(user.role)} />
+          <InfoRow label="Status" value={humanize(user.status)} />
+          <InfoRow label="CP ID" value={user.cp_id || '-'} />
+          <InfoRow label="Reporting RM" value={user.rm_name || '-'} />
+          <InfoRow label="Team" value={user.team_name || '-'} />
+        </dl>
+      </div>
+      <div className="rounded-xl border border-slate-200 p-4">
+        <h3 className="text-sm font-semibold text-slate-900">{profileType === 'rm' ? 'Team snapshot' : profileType === 'admin' ? 'Security snapshot' : 'Lifecycle snapshot'}</h3>
+        <dl className="mt-4 space-y-3 text-sm">
+          {profileType === 'rm' ? (
+            <>
+              <InfoRow label="Team members" value={reportees.length} />
+              <InfoRow label="Team assigned leads" value={metrics.team_assigned_leads ?? 0} />
+              <InfoRow label="Pending team requests" value={metrics.requests_pending ?? 0} />
+            </>
+          ) : (
+            <>
+              <InfoRow label="Active sessions" value={security?.summary?.active_sessions ?? 0} />
+              <InfoRow label="Last activity" value={fmtDate(security?.summary?.last_activity_at)} />
+              <InfoRow label="Recent email events" value={emailHistory?.length ?? 0} />
+            </>
+          )}
+        </dl>
+      </div>
+    </div>
+  );
+}
+
+function SecurityTab({ security }: { security?: UserProfileResponse['security'] }) {
+  const sessions = security?.sessions || [];
+  if (!sessions.length) return <EmptyState title="No sessions found" description="No auth session history is available for this user." icon={<Shield className="h-6 w-6" />} />;
+  return (
+    <div className="divide-y divide-slate-100">
+      {sessions.map(session => (
+        <div key={session.id} className="py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="font-medium text-slate-900">{session.revoked_at ? 'Revoked session' : 'Session'}</div>
+              <div className="text-xs text-slate-500">{session.ip_address || '-'} · {session.user_agent || 'Unknown device'}</div>
+            </div>
+            <span className="text-xs text-slate-500">{fmtDate(session.last_activity_at || session.created_at)}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EmailHistoryTab({ rows }: { rows?: UserProfileResponse['emailHistory'] }) {
+  const data = rows || [];
+  if (!data.length) return <EmptyState title="No email history" description="Password reset and onboarding email logs will appear here." icon={<Mail className="h-6 w-6" />} />;
+  return (
+    <div className="divide-y divide-slate-100">
+      {data.map(row => (
+        <div key={row.id} className="py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="font-medium text-slate-900">{humanize(row.email_type)}</div>
+              <div className="text-xs text-slate-500">{row.email_to} · {humanize(row.status)}</div>
+            </div>
+            <span className="text-xs text-slate-500">{fmtDate(row.sent_at || row.created_at)}</span>
+          </div>
+          {row.error_message && <p className="mt-1 text-sm text-rose-600">{row.error_message}</p>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PermissionsTab({ profile }: { profile: UserProfileResponse }) {
+  const permissions = profile.permissions || {};
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      {Object.entries(permissions).map(([key, value]) => (
+        <div key={key} className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-sm">
+          <span className="font-medium text-slate-800">{humanize(key)}</span>
+          <span className={value ? 'chip-green' : 'chip-slate'}>{value ? 'Allowed' : 'No'}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TeamMembersTab({ reportees }: { reportees: UserProfileResponse['reportees'] }) {
+  if (!reportees.length) return <EmptyState title="No team members" description="This RM does not currently have active members reporting to them." icon={<Users className="h-6 w-6" />} />;
+  return (
+    <div className="grid gap-3 md:grid-cols-2">
+      {reportees.map(member => (
+        <Link key={member.id} href={`/dashboard/admin/users/${member.id}`} className="rounded-xl border border-slate-200 p-4 hover:bg-slate-50">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="font-semibold text-slate-900">{member.full_name}</div>
+              <div className="text-xs text-slate-500">{member.email || member.phone || '-'}</div>
+            </div>
+            <span className={member.status === 'active' ? 'chip-green' : 'chip-slate'}>{humanize(member.status)}</span>
+          </div>
+          <div className="mt-2 text-xs text-slate-500">Team: {member.team_name || '-'}</div>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+function RmTeamPerformanceTab({ metrics }: { metrics: Record<string, string | number | null | undefined> }) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <MetricCard label="Team assigned leads" value={metrics.team_assigned_leads ?? 0} icon={<Briefcase className="h-5 w-5" />} />
+      <MetricCard label="Team worked leads" value={metrics.team_worked_leads ?? 0} icon={<CheckCircle2 className="h-5 w-5" />} tone="blue" />
+      <MetricCard label="Team conversions" value={metrics.team_conversions ?? 0} icon={<Shield className="h-5 w-5" />} tone="green" />
+      <MetricCard label="Team pending leads" value={metrics.team_pending_leads ?? 0} icon={<Clock className="h-5 w-5" />} tone="amber" />
+      <MetricCard label="Overdue follow-ups" value={metrics.overdue_followups ?? 0} icon={<CalendarClock className="h-5 w-5" />} tone="red" />
+      <MetricCard label="Approved requests" value={metrics.requests_approved ?? 0} icon={<Mail className="h-5 w-5" />} />
+    </div>
+  );
+}
+
+function SettingsTab({ profile }: { profile: UserProfileResponse }) {
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-slate-200 p-4">
+        <h3 className="text-sm font-semibold text-slate-900">Profile settings</h3>
+        <p className="mt-1 text-sm text-slate-500">
+          Use Edit profile from the header for safe profile changes. CP ID is system generated and read-only.
+        </p>
+        <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+          <InfoRow label="Daily lead cap" value={profile.user.role === 'member' ? profile.user.daily_lead_cap ?? 'Not set' : 'Not applicable'} />
+          <InfoRow label="Distribution weight" value={profile.user.role === 'member' ? profile.user.distribution_weight ?? 'Not set' : 'Not applicable'} />
+          <InfoRow label="Team name" value={profile.user.team_name || '-'} />
+          <InfoRow label="Availability" value={profile.user.is_available ? 'Available' : 'Unavailable'} />
+        </dl>
+      </div>
     </div>
   );
 }

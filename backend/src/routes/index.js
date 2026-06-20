@@ -756,19 +756,22 @@ router.post('/lead-requests/:id/approve', authenticate, requireRole('super_admin
   const { rows: availableLeads } = await query(leadSql, leadParams);
 
   let assigned = 0;
+  const assignedLeadIds = [];
   for (const lead of availableLeads) {
     try {
-      await query(
+      const updated = await query(
         `UPDATE leads SET assigned_to_user_id = $1, assigned_at = NOW(), updated_at = NOW()
           WHERE id = $2 AND assigned_to_user_id IS NULL`,
         [request.user_id, lead.id]
       );
+      if (!updated.rowCount) continue;
       await query(
         `INSERT INTO lead_assignments(lead_id, user_id, assigned_by, reason)
            VALUES ($1, $2, $3, 'lead_request')`,
         [lead.id, request.user_id, req.user.id]
       );
       assigned++;
+      assignedLeadIds.push(lead.id);
     } catch { /* skip on race condition */ }
   }
 
@@ -801,6 +804,8 @@ router.post('/lead-requests/:id/approve', authenticate, requireRole('super_admin
     await notifications.notifyLeadAssigned(request.user_id, assigned, {
       request_id: id,
       assignment_type: 'lead_request_approval',
+      lead_ids: assignedLeadIds,
+      assigned_by: req.user.id,
     });
   }
 

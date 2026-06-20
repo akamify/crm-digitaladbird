@@ -325,7 +325,14 @@ async function assignLeadsBulk({ leadIds, memberId, assignedBy = null, actor = n
     }
     const assigned = results.filter(r => r.assigned).length;
     const skipped = results.filter(r => !r.assigned);
-    if (assigned) await notifyAssigned(client, memberId, assigned, { assignment_type: assignmentType, count: assigned });
+    if (assigned) {
+      await notifyAssigned(client, memberId, assigned, {
+        assignment_type: assignmentType,
+        count: assigned,
+        lead_ids: results.filter(r => r.assigned).map(r => r.leadId),
+        assigned_by: assignedBy,
+      });
+    }
     return {
       requested_count: leadIds.length,
       assigned_count: assigned,
@@ -430,6 +437,7 @@ async function runApprovedRequestFulfillment({ limit = 100, actor = null } = {})
       if (need <= 0) continue;
       const leads = await pickAssignableLeads(client, { limit: need, category: req.category });
       let filled = 0;
+      const leadIds = [];
       for (const lead of leads) {
         const upd = await client.query(
           `UPDATE leads
@@ -447,9 +455,10 @@ async function runApprovedRequestFulfillment({ limit = 100, actor = null } = {})
           reason: 'approved_request_fulfillment',
         });
         filled++;
+        leadIds.push(lead.id);
       }
       if (filled) {
-        await notifyAssigned(client, req.user_id, filled, { request_id: req.id, assignment_type: 'request_fulfillment' });
+        await notifyAssigned(client, req.user_id, filled, { request_id: req.id, assignment_type: 'request_fulfillment', lead_ids: leadIds, assigned_by: actor?.id || req.approved_by || req.resolved_by || null });
       }
       const status = await markRequestAfterFulfillment(client, req, filled);
       if (filled || status.status === 'fulfilled') {
@@ -499,11 +508,12 @@ async function runAutoAssignment({ limit = 100, reason = 'auto_round_robin', act
         reason,
       });
       assigned++;
-      assignedByMember.set(member.id, (assignedByMember.get(member.id) || 0) + 1);
+      if (!assignedByMember.has(member.id)) assignedByMember.set(member.id, []);
+      assignedByMember.get(member.id).push(lead.id);
       results.push({ leadId: lead.id, assigned: true, memberId: member.id });
     }
-    for (const [memberId, count] of assignedByMember.entries()) {
-      await notifyAssigned(client, memberId, count, { assignment_type: 'auto', reason });
+    for (const [memberId, leadIds] of assignedByMember.entries()) {
+      await notifyAssigned(client, memberId, leadIds.length, { assignment_type: 'auto', reason, lead_ids: leadIds, assigned_by: actor?.id || null });
     }
     return { assigned, scanned: leads.length, results };
   });

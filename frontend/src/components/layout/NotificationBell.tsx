@@ -1,9 +1,12 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
 import { Bell, Check, CheckCheck, X } from 'lucide-react';
+import Link from 'next/link';
+import { useQueryClient } from '@tanstack/react-query';
 import { useNotifications, useMarkRead, useMarkAllRead, type UserNotification } from '@/hooks/useNotifications';
 import { fmtRelative } from '@/lib/format';
 import { clsx } from '@/lib/format';
+import { connectSocket } from '@/lib/socket';
 
 const TYPE_COLORS: Record<string, string> = {
   partner_request: 'bg-violet-100 text-violet-700',
@@ -26,6 +29,7 @@ function typeLabel(type: string) {
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const qc = useQueryClient();
   const { data, isLoading } = useNotifications();
   const markRead = useMarkRead();
   const markAll = useMarkAllRead();
@@ -41,6 +45,16 @@ export function NotificationBell() {
     window.addEventListener('mousedown', handler);
     return () => window.removeEventListener('mousedown', handler);
   }, [open]);
+
+  useEffect(() => {
+    let cleanup: (() => void) | null = null;
+    connectSocket().then((socket) => {
+      const handler = () => qc.invalidateQueries({ queryKey: ['notifications'] });
+      socket.on('notification:new', handler);
+      cleanup = () => socket.off('notification:new', handler);
+    }).catch(() => {});
+    return () => { cleanup?.(); };
+  }, [qc]);
 
   return (
     <div className="relative" ref={ref}>
@@ -94,41 +108,58 @@ export function NotificationBell() {
                 <p className="mt-2 text-sm text-slate-400">No notifications yet</p>
               </div>
             ) : (
-              items.map((n: UserNotification) => (
-                <div
-                  key={n.id}
-                  onClick={() => { if (!n.is_read) markRead.mutate(n.id); }}
-                  className={clsx(
-                    'flex gap-3 border-b border-slate-50 px-4 py-3 transition cursor-pointer',
-                    !n.is_read ? 'bg-blue-50/50 hover:bg-blue-50' : 'hover:bg-slate-50',
-                  )}
-                >
-                  <div className="shrink-0 mt-0.5">
-                    <div className={clsx(
-                      'grid h-8 w-8 place-items-center rounded-full text-xs font-bold',
-                      TYPE_COLORS[n.type] || 'bg-slate-100 text-slate-600'
-                    )}>
-                      {!n.is_read ? (
-                        <span className="h-2 w-2 rounded-full bg-blue-500" />
-                      ) : (
-                        <Check className="h-3.5 w-3.5" />
-                      )}
+              items.map((n: UserNotification) => {
+                const leadId = typeof n.metadata?.lead_id === 'string' ? n.metadata.lead_id : null;
+                const content = (
+                  <>
+                    <div className="shrink-0 mt-0.5">
+                      <div className={clsx(
+                        'grid h-8 w-8 place-items-center rounded-full text-xs font-bold',
+                        TYPE_COLORS[n.type] || 'bg-slate-100 text-slate-600'
+                      )}>
+                        {!n.is_read ? (
+                          <span className="h-2 w-2 rounded-full bg-blue-500" />
+                        ) : (
+                          <Check className="h-3.5 w-3.5" />
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-start justify-between gap-2">
-                      <span className={clsx('text-sm', !n.is_read ? 'font-semibold text-slate-900' : 'font-medium text-slate-700')}>
-                        {n.title}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-2">
+                        <span className={clsx('text-sm', !n.is_read ? 'font-semibold text-slate-900' : 'font-medium text-slate-700')}>
+                          {n.title}
+                        </span>
+                        <span className="shrink-0 text-[10px] text-slate-400">{fmtRelative(n.created_at)}</span>
+                      </div>
+                      {n.body && <p className="mt-0.5 text-xs text-slate-500 line-clamp-2">{n.body}</p>}
+                      <span className={clsx('mt-1 inline-block rounded-full px-2 py-0.5 text-[9px] font-medium uppercase tracking-wider', TYPE_COLORS[n.type] || 'bg-slate-100 text-slate-500')}>
+                        {typeLabel(n.type)}
                       </span>
-                      <span className="shrink-0 text-[10px] text-slate-400">{fmtRelative(n.created_at)}</span>
                     </div>
-                    {n.body && <p className="mt-0.5 text-xs text-slate-500 line-clamp-2">{n.body}</p>}
-                    <span className={clsx('mt-1 inline-block rounded-full px-2 py-0.5 text-[9px] font-medium uppercase tracking-wider', TYPE_COLORS[n.type] || 'bg-slate-100 text-slate-500')}>
-                      {typeLabel(n.type)}
-                    </span>
-                  </div>
+                  </>
+                );
+                const className = clsx(
+                  'flex gap-3 border-b border-slate-50 px-4 py-3 transition cursor-pointer',
+                  !n.is_read ? 'bg-blue-50/50 hover:bg-blue-50' : 'hover:bg-slate-50',
+                );
+                const onClick = () => {
+                  if (!n.is_read) markRead.mutate(n.id);
+                  if (leadId) setOpen(false);
+                };
+                return leadId ? (
+                  <Link key={n.id} href={`/leads/${leadId}`} onClick={onClick} className={className}>
+                    {content}
+                  </Link>
+                ) : (
+                  <div
+                  key={n.id}
+                  onClick={onClick}
+                  className={className}
+                >
+                  {content}
                 </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

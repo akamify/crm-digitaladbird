@@ -5,6 +5,27 @@ const { assertCpIdNotEditable, normalizeRole } = require('./userIdentityService'
 const ADMIN_ROLES = new Set(['super_admin', 'admin']);
 const CLOSED_CALL_STATUSES = ['converted', 'not_interested', 'wrong_number', 'invalid_number'];
 
+function normalizedRole(role) {
+  return role === 'partner' ? 'member' : role;
+}
+
+function profileTypeFor(user) {
+  if (!user || user.status === 'deleted' || user.deleted_at) return 'deleted';
+  const role = normalizedRole(user.role);
+  if (ADMIN_ROLES.has(role)) return 'admin';
+  if (role === 'rm') return 'rm';
+  return 'member';
+}
+
+async function safeQuery(sql, params = [], fallbackRows = []) {
+  try {
+    const result = await query(sql, params);
+    return result.rows;
+  } catch {
+    return fallbackRows;
+  }
+}
+
 function rangeToDates(range = '30d', startDate, endDate) {
   const end = endDate ? new Date(endDate) : new Date();
   const start = startDate ? new Date(startDate) : new Date(end);
@@ -21,6 +42,10 @@ function rangeToDates(range = '30d', startDate, endDate) {
 async function assertProfileAccess(actor, userId, { edit = false } = {}) {
   if (!actor) throw new AppError(401, 'NO_USER', 'Not authenticated');
   if (ADMIN_ROLES.has(actor.role)) return;
+  if (normalizedRole(actor.role) === 'member') {
+    if (actor.id !== userId || edit) throw new AppError(403, 'FORBIDDEN', 'You can only view your own profile');
+    return;
+  }
   if (actor.role !== 'rm') throw new AppError(403, 'FORBIDDEN', 'Insufficient permissions');
   if (edit) throw new AppError(403, 'FORBIDDEN', 'RM cannot edit user profiles');
   const { rows: [target] } = await query(
@@ -39,13 +64,15 @@ async function getSanitizedUser(userId) {
            u.role, u.member_type, u.status, u.report_to_id, u.team_name,
            u.daily_lead_cap, u.distribution_weight, u.is_available,
            u.distribution_blocked, u.distribution_blocked_reason,
-           u.distribution_blocked_at, u.last_login_at, u.created_at, u.updated_at,
+           u.distribution_blocked_at, u.blocked_at, u.blocked_by, u.deleted_at,
+           u.deleted_by, u.delete_reason, u.last_login_at, u.created_at, u.updated_at,
            rm.id AS rm_id, rm.full_name AS rm_name, rm.email AS rm_email
       FROM users u
       LEFT JOIN users rm ON rm.id = u.report_to_id
-     WHERE u.id = $1 AND u.deleted_at IS NULL AND COALESCE(u.is_hidden, FALSE) = FALSE
+     WHERE u.id = $1 AND COALESCE(u.is_hidden, FALSE) = FALSE
   `, [userId]);
   if (!user) throw new AppError(404, 'NOT_FOUND', 'User not found');
+  user.role = normalizedRole(user.role);
   return user;
 }
 
@@ -85,17 +112,120 @@ async function getBasicCounts(userId) {
   return { ...counts, ...requests, ...history };
 }
 
+async function getAdminMetrics(userId) {
+  const [sessions = {}, audit = {}, email = {}] = await Promise.all([
+    safeQuery(`
+      SELECT COUNT(*)::int AS total_sessions,
+             COUNT(*) FILTER (WHERE revoked_at IS NULL AND expires_at > NOW())::int AS active_sessions,
+             MAX(COALESCE(last_activity_at, created_at)) AS last_session_activity
+        FROM auth_sessions
+       WHERE user_id = $1
+    `, [userId], [{}]).then(rows => rows[0] || {}),
+    safeQuery(`
+      SELECT COUNT(*)::int AS total_admin_actions,
+             COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::int AS actions_last_7_days,
+             COUNT(*) FILTER (WHERE entity = 'meta')::int AS meta_actions,
+             COUNT(*) FILTER (WHERE entity = 'user')::int AS user_management_actions,
+             COUNT(*) FILTER (WHERE entity IN ('sheets','lead_ingestion','webhook'))::int AS integration_actions
+        FROM activity_logs
+       WHERE user_id = $1
+    `, [userId], [{}]).then(rows => rows[0] || {}),
+    safeQuery(`
+      SELECT COUNT(*)::int AS total_emails,
+             COUNT(*) FILTER (WHERE status = 'sent')::int AS sent_emails,
+             COUNT(*) FILTER (WHERE email_type = 'password_reset')::int AS password_reset_emails,
+             COUNT(*) FILTER (WHERE email_type = 'new_user_onboarding')::int AS onboarding_emails,
+             MAX(sent_at) AS last_email_sent_at
+        FROM email_delivery_logs
+       WHERE user_id = $1
+    `, [userId], [{}]).then(rows => rows[0] || {}),
+  ]);
+  return { ...sessions, ...audit, ...email };
+}
+
+async function getRmMetrics(userId) {
+  const { rows: [metrics] } = await query(`
+    WITH team AS (
+      SELECT id FROM users
+       WHERE report_to_id = $1
+         AND deleted_at IS NULL
+         AND COALESCE(status, 'active') <> 'deleted'
+         AND role = 'member'
+    )
+    SELECT
+      (SELECT COUNT(*)::int FROM team) AS team_members_count,
+      (SELECT COUNT(*)::int FROM users u JOIN team t ON t.id = u.id WHERE u.status = 'active') AS active_members,
+      COUNT(l.id)::int AS team_assigned_leads,
+      COUNT(l.id) FILTER (WHERE l.is_pending = TRUE)::int AS team_pending_leads,
+      COUNT(l.id) FILTER (WHERE l.call_status <> 'not_called')::int AS team_worked_leads,
+      COUNT(l.id) FILTER (WHERE l.call_status = 'converted')::int AS team_conversions,
+      COUNT(l.id) FILTER (WHERE l.next_followup_at IS NOT NULL AND l.next_followup_at <= NOW())::int AS overdue_followups,
+      (SELECT COUNT(*)::int FROM lead_requests lr JOIN team t ON t.id = lr.user_id WHERE lr.status = 'pending') AS requests_pending,
+      (SELECT COUNT(*)::int FROM lead_requests lr JOIN team t ON t.id = lr.user_id WHERE lr.status IN ('approved','partially_fulfilled')) AS requests_approved,
+      (SELECT COUNT(*)::int FROM lead_requests lr JOIN team t ON t.id = lr.user_id WHERE lr.status IN ('rejected','cancelled')) AS requests_rejected
+    FROM leads l
+    JOIN team t ON t.id = l.assigned_to_user_id
+    WHERE l.deleted_at IS NULL
+  `, [userId]);
+  return metrics || {};
+}
+
+function tabsFor(type) {
+  if (type === 'admin') return ['overview', 'security', 'admin_actions', 'email_history', 'activity', 'permissions'];
+  if (type === 'rm') return ['overview', 'team_members', 'team_leads', 'requests', 'team_performance', 'activity', 'settings'];
+  if (type === 'deleted') return ['overview', 'activity', 'email_history'];
+  return ['leads', 'requests', 'assignment_history', 'notifications', 'activity', 'settings'];
+}
+
+function actionsFor(actor, user, type) {
+  const isAdmin = ADMIN_ROLES.has(actor.role);
+  if (!isAdmin || type === 'deleted') return [];
+  const actions = ['edit_profile', 'send_reset_link', 'resend_onboarding_email'];
+  if (user.role !== 'super_admin') {
+    if (user.status === 'blocked') actions.push('unblock');
+    else actions.push('block');
+    actions.push('disable_delete');
+  }
+  if (type === 'admin') actions.push('force_logout_sessions', 'view_activity_logs');
+  if (type === 'member') actions.push('change_rm', 'change_distribution_settings');
+  if (type === 'rm') actions.push('edit_team_name');
+  return actions;
+}
+
 async function getProfile(actor, userId) {
   await assertProfileAccess(actor, userId);
   const user = await getSanitizedUser(userId);
-  const counts = await getBasicCounts(userId);
-  const { rows: reportees } = await query(`
+  const profileType = profileTypeFor(user);
+  const counts = profileType === 'member' ? await getBasicCounts(userId) : {};
+  const [reportees, adminMetrics, rmMetrics, security, emailHistory] = await Promise.all([
+    safeQuery(`
     SELECT id, full_name, email, phone, role, member_type, status, team_name, is_available
       FROM users
      WHERE report_to_id = $1 AND deleted_at IS NULL AND COALESCE(is_hidden, FALSE) = FALSE
      ORDER BY full_name
-  `, [userId]);
-  return { user, counts, reportees };
+  `, [userId]),
+    profileType === 'admin' ? getAdminMetrics(userId) : Promise.resolve(null),
+    profileType === 'rm' ? getRmMetrics(userId) : Promise.resolve(null),
+    getSecurity(actor, userId),
+    getEmailHistory(actor, userId, { limit: 5 }),
+  ]);
+  return {
+    user,
+    role: user.role,
+    profileType,
+    permissions: {
+      canEdit: ADMIN_ROLES.has(actor.role) && profileType !== 'deleted',
+      canManageLifecycle: ADMIN_ROLES.has(actor.role) && user.role !== 'super_admin' && profileType !== 'deleted',
+      readOnly: profileType === 'deleted' || user.status === 'blocked',
+    },
+    tabs: tabsFor(profileType),
+    actions: actionsFor(actor, user, profileType),
+    counts,
+    metrics: profileType === 'admin' ? adminMetrics : profileType === 'rm' ? rmMetrics : counts,
+    reportees,
+    security,
+    emailHistory,
+  };
 }
 
 async function getPerformance(actor, userId, opts = {}) {
@@ -194,10 +324,17 @@ async function getPerformance(actor, userId, opts = {}) {
 
 async function getUserLeads(actor, userId, opts = {}) {
   await assertProfileAccess(actor, userId);
+  const user = await getSanitizedUser(userId);
+  const profileType = profileTypeFor(user);
   const page = Math.max(1, Number.parseInt(opts.page || '1', 10));
   const pageSize = Math.min(100, Math.max(1, Number.parseInt(opts.page_size || '25', 10)));
   const offset = (page - 1) * pageSize;
-  const where = ['l.assigned_to_user_id = $1', 'l.deleted_at IS NULL'];
+  const where = [
+    profileType === 'rm'
+      ? 'l.assigned_to_user_id IN (SELECT id FROM users WHERE report_to_id = $1)'
+      : 'l.assigned_to_user_id = $1',
+    'l.deleted_at IS NULL',
+  ];
   const params = [userId];
 
   if (opts.call_status) { params.push(opts.call_status); where.push(`l.call_status = $${params.length}`); }
@@ -230,6 +367,30 @@ async function getUserLeads(actor, userId, opts = {}) {
 
 async function getRequests(actor, userId) {
   await assertProfileAccess(actor, userId);
+  const user = await getSanitizedUser(userId);
+  if (profileTypeFor(user) === 'rm') {
+    const { rows } = await query(`
+      SELECT lr.id, 'member' AS request_type, lr.quantity AS requested_quantity,
+             lr.approved_quantity, COALESCE(lr.fulfilled_quantity, lr.leads_assigned, 0) AS fulfilled_quantity,
+             GREATEST(COALESCE(lr.approved_quantity, lr.quantity) - COALESCE(lr.fulfilled_quantity, lr.leads_assigned, 0), 0) AS remaining_quantity,
+             lr.status, lr.created_at AS requested_at, lr.approved_by, lr.approved_at,
+             lr.note, lr.admin_notes
+        FROM lead_requests lr
+        JOIN users u ON u.id = lr.user_id
+       WHERE u.report_to_id = $1
+      UNION ALL
+      SELECT id, 'rm' AS request_type, quantity AS requested_quantity,
+             quantity AS approved_quantity, fulfilled_count AS fulfilled_quantity,
+             GREATEST(quantity - fulfilled_count, 0) AS remaining_quantity,
+             status, created_at AS requested_at, NULL::uuid AS approved_by,
+             NULL::timestamptz AS approved_at, note, NULL::text AS admin_notes
+        FROM rm_lead_requests
+       WHERE rm_id = $1
+       ORDER BY requested_at DESC
+       LIMIT 100
+    `, [userId]);
+    return rows;
+  }
   const { rows } = await query(`
     SELECT id, 'member' AS request_type, quantity AS requested_quantity,
            approved_quantity, COALESCE(fulfilled_quantity, leads_assigned, 0) AS fulfilled_quantity,
@@ -254,10 +415,46 @@ async function getRequests(actor, userId) {
   return rows;
 }
 
-async function getAssignmentHistory(actor, userId) {
+async function getAssignmentHistory(actor, userId, opts = {}) {
   await assertProfileAccess(actor, userId);
+  const user = await getSanitizedUser(userId);
+  const profileType = profileTypeFor(user);
+  const params = [userId];
+  let scopeSql = `(COALESCE(la.assigned_to_user_id, la.user_id) = $1 OR la.previous_user_id = $1)`;
+  if (profileType === 'admin') {
+    scopeSql = `COALESCE(la.assigned_by_user_id, la.assigned_by) = $1`;
+  } else if (profileType === 'rm') {
+    scopeSql = `(
+      COALESCE(la.assigned_to_user_id, la.user_id) IN (SELECT id FROM users WHERE report_to_id = $1)
+      OR la.previous_user_id IN (SELECT id FROM users WHERE report_to_id = $1)
+      OR COALESCE(la.assigned_by_user_id, la.assigned_by) = $1
+    )`;
+  }
+  const where = [scopeSql];
+  if (opts.direction === 'in') where.push(`COALESCE(la.assigned_to_user_id, la.user_id) = $1`);
+  if (opts.direction === 'out') where.push(`la.previous_user_id = $1`);
+  if (opts.type && opts.type !== 'all') {
+    params.push(opts.type);
+    where.push(`COALESCE(la.assignment_type, la.reason) = $${params.length}`);
+  }
+  if (opts.date_from) {
+    params.push(opts.date_from);
+    where.push(`COALESCE(la.created_at, la.assigned_at) >= $${params.length}`);
+  }
+  if (opts.date_to) {
+    params.push(opts.date_to);
+    where.push(`COALESCE(la.created_at, la.assigned_at) <= $${params.length}`);
+  }
+  if (opts.search) {
+    params.push(`%${String(opts.search).trim()}%`);
+    where.push(`(l.full_name ILIKE $${params.length} OR l.phone ILIKE $${params.length} OR l.campaign_name ILIKE $${params.length})`);
+  }
+  const pageSize = Math.min(100, Math.max(1, Number.parseInt(opts.page_size || '50', 10)));
+  const page = Math.max(1, Number.parseInt(opts.page || '1', 10));
+  params.push(pageSize, (page - 1) * pageSize);
   const { rows } = await query(`
-    SELECT la.id, la.lead_id, l.full_name AS lead_name,
+    SELECT la.id, la.lead_id, l.full_name AS lead_name, l.campaign_name, l.source,
+           l.meta_form_id, mf.form_name,
            COALESCE(la.assignment_type, la.reason) AS assignment_type,
            prev.full_name AS previous_user,
            assigned.full_name AS assigned_to,
@@ -266,36 +463,55 @@ async function getAssignmentHistory(actor, userId) {
            COALESCE(la.created_at, la.assigned_at) AS created_at
       FROM lead_assignments la
       LEFT JOIN leads l ON l.id = la.lead_id
+      LEFT JOIN meta_forms mf ON mf.form_id = l.meta_form_id
       LEFT JOIN users prev ON prev.id = la.previous_user_id
       LEFT JOIN users assigned ON assigned.id = COALESCE(la.assigned_to_user_id, la.user_id)
       LEFT JOIN users byu ON byu.id = COALESCE(la.assigned_by_user_id, la.assigned_by)
-     WHERE COALESCE(la.assigned_to_user_id, la.user_id) = $1 OR la.previous_user_id = $1
+     WHERE ${where.join(' AND ')}
      ORDER BY COALESCE(la.created_at, la.assigned_at) DESC
-     LIMIT 100
-  `, [userId]);
+     LIMIT $${params.length - 1} OFFSET $${params.length}
+  `, params);
   return rows;
 }
 
 async function getActivity(actor, userId) {
   await assertProfileAccess(actor, userId);
+  const user = await getSanitizedUser(userId);
+  const profileType = profileTypeFor(user);
+  if (profileType === 'admin') {
+    return safeQuery(`
+      SELECT 'activity_log' AS source, entity, entity_id, action, metadata, created_at
+        FROM activity_logs
+       WHERE user_id = $1
+      UNION ALL
+      SELECT 'audit_log' AS source, entity, entity_id::text, action, metadata, created_at
+        FROM audit_logs
+       WHERE user_id = $1
+       ORDER BY created_at DESC
+       LIMIT 100
+    `, [userId]);
+  }
+  const userScope = profileType === 'rm'
+    ? `(user_id = $1 OR user_id IN (SELECT id FROM users WHERE report_to_id = $1))`
+    : 'user_id = $1';
   const { rows } = await query(`
     SELECT 'activity_log' AS source, entity, entity_id, action, metadata, created_at
       FROM activity_logs
-     WHERE user_id = $1
+     WHERE ${userScope}
     UNION ALL
     SELECT 'lead_remark' AS source, 'lead' AS entity, lead_id::text AS entity_id,
            COALESCE(call_status::text, 'remark') AS action,
            jsonb_build_object('remark', remark) AS metadata,
            created_at
       FROM lead_remarks
-     WHERE user_id = $1
+     WHERE ${userScope}
     UNION ALL
     SELECT 'chat_message' AS source, 'chat' AS entity, conversation_id::text AS entity_id,
            message_type AS action,
            jsonb_build_object('body', LEFT(body, 160)) AS metadata,
            created_at
       FROM chat_messages
-     WHERE sender_id = $1
+     WHERE ${userScope.replaceAll('user_id', 'sender_id')}
      ORDER BY created_at DESC
      LIMIT 100
   `, [userId]).catch(async () => {
@@ -312,6 +528,66 @@ async function getActivity(actor, userId) {
     return fallback;
   });
   return rows;
+}
+
+async function getEmailHistory(actor, userId, opts = {}) {
+  await assertProfileAccess(actor, userId);
+  const limit = Math.min(100, Math.max(1, Number.parseInt(opts.limit || '50', 10)));
+  return safeQuery(`
+    SELECT id, email_to, email_type, provider, status, error_message, created_at, sent_at, metadata
+      FROM email_delivery_logs
+     WHERE user_id = $1
+     ORDER BY created_at DESC
+     LIMIT $2
+  `, [userId, limit]);
+}
+
+async function getSecurity(actor, userId) {
+  await assertProfileAccess(actor, userId);
+  const [summary = {}, sessions] = await Promise.all([
+    safeQuery(`
+      SELECT COUNT(*)::int AS total_sessions,
+             COUNT(*) FILTER (WHERE revoked_at IS NULL AND expires_at > NOW())::int AS active_sessions,
+             MAX(created_at) AS last_session_created_at,
+             MAX(COALESCE(last_activity_at, created_at)) AS last_activity_at
+        FROM auth_sessions
+       WHERE user_id = $1
+    `, [userId], [{}]).then(rows => rows[0] || {}),
+    safeQuery(`
+      SELECT id, user_agent, ip_address::text, created_at, expires_at, revoked_at,
+             COALESCE(last_activity_at, created_at) AS last_activity_at
+        FROM auth_sessions
+       WHERE user_id = $1
+       ORDER BY COALESCE(last_activity_at, created_at) DESC
+       LIMIT 20
+    `, [userId]),
+  ]);
+  return { summary, sessions };
+}
+
+async function forceLogoutSessions(actor, userId) {
+  if (!actor || !ADMIN_ROLES.has(actor.role)) {
+    throw new AppError(403, 'FORBIDDEN', 'Only administrators can revoke user sessions');
+  }
+  await getSanitizedUser(userId);
+  const result = await query(
+    `UPDATE auth_sessions
+        SET revoked_at = NOW()
+      WHERE user_id = $1
+        AND revoked_at IS NULL`,
+    [userId],
+  );
+  await safeQuery(`
+    INSERT INTO activity_logs(user_id, user_name, user_role, entity, entity_id, action, metadata)
+    VALUES($1, $2, $3, 'user', $4, 'force_logout_sessions', $5::jsonb)
+  `, [
+    actor.id,
+    actor.full_name || actor.name || null,
+    actor.role,
+    userId,
+    JSON.stringify({ target_user_id: userId, revoked_sessions: result.rowCount || 0 }),
+  ]);
+  return { revoked_sessions: result.rowCount || 0 };
 }
 
 async function updateProfile(actor, userId, body) {
@@ -387,5 +663,8 @@ module.exports = {
   getRequests,
   getAssignmentHistory,
   getActivity,
+  getEmailHistory,
+  getSecurity,
+  forceLogoutSessions,
   updateProfile,
 };
