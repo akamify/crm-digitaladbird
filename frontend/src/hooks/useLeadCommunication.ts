@@ -87,6 +87,7 @@ export function useLeadCommunication(leadId: string | null | undefined) {
       qc.invalidateQueries({ queryKey: ['lead-calls', leadId] });
       qc.invalidateQueries({ queryKey: ['lead-communication-thread', leadId] });
       qc.invalidateQueries({ queryKey: ['lead', leadId] });
+      qc.invalidateQueries({ queryKey: ['leads'] });
     },
   });
 
@@ -102,6 +103,8 @@ export function useLeadCommunication(leadId: string | null | undefined) {
       qc.invalidateQueries({ queryKey: ['lead-communication-thread', leadId] });
       qc.invalidateQueries({ queryKey: ['lead', leadId] });
       qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['reports'] });
+      qc.invalidateQueries({ queryKey: ['admin'] });
     },
   });
 

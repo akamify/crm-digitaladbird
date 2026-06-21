@@ -288,7 +288,7 @@ function DetailPanel({
   const pct = r.quantity > 0 ? Math.round((r.leads_assigned / r.quantity) * 100) : 0;
 
   return (
-    <div className="space-y-4 py-3">
+    <div className="space-y-4 pb-3">
       {/* Header */}
       <div className="card-padded">
         <div className="flex items-start justify-between">

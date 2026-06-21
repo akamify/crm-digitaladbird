@@ -1,51 +1,41 @@
 'use client';
-import { useState } from 'react';
+
+import { useMemo, useState } from 'react';
 import {
-  Trophy, Users, Crown, TrendingUp, Star, Award, Zap,
-  ChevronDown, RefreshCw, ArrowUpRight, ArrowDownRight,
+  Award, BarChart3, CheckCircle2, Clock, Loader2, Medal, RefreshCw,
+  Target, Trophy, Users,
 } from 'lucide-react';
-import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
-import { KpiCard } from '@/components/dashboard/KpiCard';
-import { Skeleton, EmptyState } from '@/components/ui/Modal';
-import { MovementIndicator, ScoreBadge, AppreciationBadges } from '@/components/rankings/RankBadge';
-import {
-  useRankings, useMyRank, useComputeRankings, useGiveAppreciation,
-  RANK_LABELS, BADGE_MAP,
-  type RankScope, type RankPeriod, type RankedEntry,
-} from '@/hooks/useRankings';
+import { EmptyState, Skeleton } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
-import { clsx, initials } from '@/lib/format';
+import { clsx, humanize, initials } from '@/lib/format';
+import { formatISTCompact, formatISTTooltip } from '@/lib/date';
+import {
+  useLeaderboard,
+  type LeaderboardEntry,
+  type LeaderboardPeriod,
+  type LeaderboardScope,
+} from '@/hooks/useRankings';
 
-const SCOPES: { key: RankScope; label: string; icon: typeof Users }[] = [
-  { key: 'overall',  label: 'Company',  icon: Crown },
-  { key: 'member',   label: 'Members',  icon: Users },
-  { key: 'rm',       label: 'RMs',      icon: Award },
-  { key: 'partner',  label: 'Partners', icon: Star },
-  { key: 'team',     label: 'Teams',    icon: Trophy },
-];
-
-const PERIODS: { key: RankPeriod; label: string }[] = [
+const PERIODS: { key: LeaderboardPeriod; label: string }[] = [
   { key: 'today', label: 'Today' },
-  { key: 'week',  label: 'This Week' },
-  { key: 'month', label: 'This Month' },
+  { key: 'this_week', label: 'This Week' },
+  { key: 'this_month', label: 'This Month' },
+  { key: 'all_time', label: 'All Time' },
 ];
 
-const PODIUM_SIZE = ['h-28', 'h-24', 'h-20'];
-const PODIUM_BG = [
-  'bg-gradient-to-b from-amber-400 to-yellow-500',
-  'bg-gradient-to-b from-slate-300 to-slate-400',
-  'bg-gradient-to-b from-amber-600 to-orange-500',
+const ADMIN_SCOPES: { key: LeaderboardScope; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'rms', label: 'RMs' },
+  { key: 'members', label: 'Members' },
+  { key: 'partners', label: 'Partners' },
 ];
-const PODIUM_RING = [
-  'ring-4 ring-amber-300 shadow-lg shadow-amber-200/50',
-  'ring-4 ring-slate-300 shadow-lg shadow-slate-200/50',
-  'ring-4 ring-orange-300 shadow-lg shadow-orange-200/50',
-];
+
+const PODIUM_ORDER = [1, 0, 2];
 
 export default function LeaderboardPage() {
   return (
-    <AppShell title="Leaderboard" subtitle="Top 10 Performance Rankings">
+    <AppShell title="Leaderboard" subtitle="Performance ranking from CRM activity">
       <LeaderboardInner />
     </AppShell>
   );
@@ -53,271 +43,281 @@ export default function LeaderboardPage() {
 
 function LeaderboardInner() {
   const { user } = useAuth();
-  const [scope, setScope] = useState<RankScope>('overall');
-  const [period, setPeriod] = useState<RankPeriod>('today');
-  const rankings = useRankings(scope, period);
-  const myRank = useMyRank();
-  const compute = useComputeRankings();
-
-  const data = rankings.data ?? [];
-  const top3 = data.slice(0, 3);
-  const rest = data.slice(3);
-  const isAdmin = user?.role === 'super_admin';
+  const isAdmin = user?.role === 'super_admin' || user?.role === 'admin';
   const isRm = user?.role === 'rm';
+  const scopes = useMemo(() => {
+    if (isAdmin) return ADMIN_SCOPES;
+    if (isRm) return [
+      { key: 'team' as LeaderboardScope, label: 'My Team' },
+      { key: 'rms' as LeaderboardScope, label: 'RM Ranking' },
+    ];
+    return [{ key: 'team' as LeaderboardScope, label: 'My Team' }];
+  }, [isAdmin, isRm]);
 
-  const myOverall = myRank.data?.ranks?.find(r => r.scope === 'overall');
-  const myScoped = myRank.data?.ranks?.find(r => r.scope === scope);
+  const [scope, setScope] = useState<LeaderboardScope>(isAdmin ? 'all' : 'team');
+  const [period, setPeriod] = useState<LeaderboardPeriod>('this_month');
+  const leaderboard = useLeaderboard(scope, period, 20);
+  const pages = leaderboard.data?.pages || [];
+  const entries = pages.flatMap((page) => page.data || []);
+  const summary = pages[0]?.summary;
+  const top3 = entries.slice(0, 3);
+  const rest = entries.slice(3);
+  const subtitle = isAdmin
+    ? 'Overall CRM performance ranking'
+    : isRm
+      ? 'Your team performance ranking'
+      : 'Your team leaderboard';
 
   return (
-    <div className="space-y-6">
-      {/* My Rank Banner */}
-      {myOverall && (
-        <div className="flex flex-wrap items-center gap-4 rounded-xl border border-brand-200 bg-gradient-to-r from-brand-50 to-violet-50 px-5 py-4">
-          <div className="flex items-center gap-3">
-            <div className="grid h-12 w-12 place-items-center rounded-full bg-brand-600 text-lg font-bold text-white shadow-glow">
-              #{myOverall.rank_position}
-            </div>
-            <div>
-              <div className="text-sm font-semibold text-slate-900">Your Overall Rank</div>
-              <div className="flex items-center gap-2 text-xs text-slate-500">
-                <span>{RANK_LABELS[myOverall.rank_position - 1]?.emoji} {RANK_LABELS[myOverall.rank_position - 1]?.label}</span>
-                <MovementIndicator movement={myOverall.movement} prev={myOverall.prev_position} current={myOverall.rank_position} />
-              </div>
-            </div>
+    <div className="space-y-5">
+      <header className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h1 className="font-display text-2xl font-semibold text-slate-900">Leaderboard</h1>
+            <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
           </div>
-          <div className="ml-auto flex items-center gap-3 text-sm">
-            <ScoreBadge score={myOverall.score} />
-            {myRank.data?.badges?.map(b => (
-              <span key={b.badge_type} className="text-lg" title={BADGE_MAP[b.badge_type]?.label}>
-                {BADGE_MAP[b.badge_type]?.emoji}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Controls */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex rounded-lg border border-slate-200 bg-white p-0.5">
-          {SCOPES.map(s => {
-            const Icon = s.icon;
-            return (
-              <button
-                key={s.key}
-                onClick={() => setScope(s.key)}
-                className={clsx(
-                  'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition',
-                  scope === s.key ? 'bg-brand-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50',
-                )}
-              >
-                <Icon className="h-3.5 w-3.5" /> {s.label}
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="flex rounded-lg border border-slate-200 bg-white p-0.5">
-          {PERIODS.map(p => (
-            <button
-              key={p.key}
-              onClick={() => setPeriod(p.key)}
-              className={clsx(
-                'rounded-md px-3 py-1.5 text-xs font-medium transition',
-                period === p.key ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-50',
-              )}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
-
-        {isAdmin && (
-          <button
-            onClick={() => compute.mutate(undefined, {
-              onSuccess: d => toast.success(`Rankings computed: ${d.computed} entries`),
-              onError: () => toast.error('Failed to compute rankings'),
-            })}
-            disabled={compute.isPending}
-            className="ml-auto flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition disabled:opacity-50"
-          >
-            <RefreshCw className={clsx('h-3.5 w-3.5', compute.isPending && 'animate-spin')} />
-            Refresh Rankings
-          </button>
-        )}
-      </div>
-
-      {/* KPIs from my rank */}
-      {myRank.data?.ranks && myRank.data.ranks.length > 0 && (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          {myRank.data.ranks.slice(0, 4).map(r => (
-            <KpiCard
-              key={r.scope}
-              label={`${r.scope.charAt(0).toUpperCase() + r.scope.slice(1)} Rank`}
-              value={`#${r.rank_position}`}
-              delta={`${Number(r.score).toLocaleString()} pts`}
-              trend={r.movement === 'up' ? 'up' : r.movement === 'down' ? 'down' : undefined}
-              accent={r.rank_position <= 3 ? 'green' : r.rank_position <= 7 ? 'pink' : 'amber'}
-              icon={<Trophy className="h-5 w-5" />}
+          <div className="flex flex-wrap items-center gap-2">
+            <SegmentedControl
+              items={scopes}
+              value={scope}
+              onChange={(next) => setScope(next as LeaderboardScope)}
             />
-          ))}
+            <SegmentedControl
+              items={PERIODS}
+              value={period}
+              onChange={(next) => setPeriod(next as LeaderboardPeriod)}
+            />
+            <button
+              type="button"
+              onClick={() => leaderboard.refetch()}
+              className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 hover:bg-slate-50"
+            >
+              <RefreshCw className={clsx('h-3.5 w-3.5', leaderboard.isFetching && 'animate-spin')} />
+              Refresh
+            </button>
+          </div>
         </div>
+        <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+          <MetricTile label="Ranked Users" value={summary?.total_ranked_users ?? entries.length} icon={<Users className="h-4 w-4" />} />
+          <MetricTile label="Scope" value={scopeLabel(scope)} icon={<Target className="h-4 w-4" />} />
+          <MetricTile label="Period" value={periodLabel(period)} icon={<Clock className="h-4 w-4" />} />
+          <MetricTile label="Formula" value="CRM performance" icon={<BarChart3 className="h-4 w-4" />} />
+        </div>
+      </header>
+
+      {leaderboard.isLoading ? (
+        <div className="space-y-4">
+          <Skeleton className="h-64" />
+          <Skeleton className="h-96" />
+        </div>
+      ) : leaderboard.isError ? (
+        <EmptyState
+          title="Could not load leaderboard"
+          description={leaderboardError(leaderboard.error)}
+          icon={<Trophy className="h-6 w-6" />}
+          action={<button className="btn-primary rounded-lg px-4 py-2 text-sm" onClick={() => leaderboard.refetch()}>Retry</button>}
+        />
+      ) : entries.length === 0 ? (
+        <EmptyState
+          title="No leaderboard data found for this period."
+          description="Performance rankings will appear after leads, calls, and follow-ups are recorded."
+          icon={<Trophy className="h-6 w-6" />}
+        />
+      ) : (
+        <>
+          <TopPerformers entries={top3} />
+          <LeaderboardList entries={rest} />
+          <div className="flex justify-center">
+            {leaderboard.hasNextPage ? (
+              <button
+                type="button"
+                onClick={() => leaderboard.fetchNextPage()}
+                disabled={leaderboard.isFetchingNextPage}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              >
+                {leaderboard.isFetchingNextPage ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                Load More
+              </button>
+            ) : (
+              <span className="text-xs text-slate-400">You are all caught up.</span>
+            )}
+          </div>
+        </>
       )}
-
-      {/* Podium — Top 3 */}
-      {rankings.isLoading ? (
-        <Skeleton className="h-72" />
-      ) : top3.length >= 3 ? (
-        <div className="card-padded">
-          <div className="flex items-center justify-center gap-4 pt-8 pb-4">
-            {[1, 0, 2].map(idx => {
-              const entry = top3[idx];
-              if (!entry) return null;
-              return (
-                <div key={entry.user_id} className="flex flex-col items-center">
-                  <div className={clsx(
-                    'relative grid h-16 w-16 place-items-center rounded-full bg-white text-lg font-bold',
-                    PODIUM_RING[idx],
-                  )}>
-                    {initials(entry.full_name)}
-                    <span className="absolute -top-2 -right-2 grid h-7 w-7 place-items-center rounded-full bg-white text-sm shadow-md">
-                      {entry.rank_label?.emoji}
-                    </span>
-                  </div>
-                  <div className="mt-3 text-center">
-                    <div className="text-sm font-semibold text-slate-900">{entry.full_name}</div>
-                    <div className="text-[10px] text-slate-500">{entry.rank_label?.label}</div>
-                    <ScoreBadge score={entry.score} />
-                    <div className="mt-1">
-                      <MovementIndicator movement={entry.movement} prev={entry.prev_position} current={entry.rank_position} />
-                    </div>
-                  </div>
-                  <div className={clsx('mt-3 w-20 rounded-t-lg', PODIUM_BG[idx], PODIUM_SIZE[idx])} />
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
-
-      {/* Full Ranking Table */}
-      <div className="card-padded">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-900">
-            Top 10 {SCOPES.find(s => s.key === scope)?.label} Rankings
-          </h2>
-          <span className="text-xs text-slate-500">{period === 'today' ? 'Today' : period === 'week' ? 'This Week' : 'This Month'}</span>
-        </div>
-
-        {rankings.isLoading ? (
-          <div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-16" />)}</div>
-        ) : data.length === 0 ? (
-          <EmptyState
-            title="No rankings yet"
-            description="Rankings are computed daily based on real CRM activity. Click 'Refresh Rankings' to generate."
-            icon={<Trophy className="h-6 w-6" />}
-          />
-        ) : (
-          <div className="space-y-2">
-            {data.map((entry, i) => (
-              <RankRow key={entry.user_id || entry.team_name || i} entry={entry} index={i} isAdmin={isAdmin} isRm={isRm} scope={scope} />
-            ))}
-          </div>
-        )}
-      </div>
     </div>
   );
 }
 
-function RankRow({ entry, index, isAdmin, isRm, scope }: { entry: RankedEntry; index: number; isAdmin: boolean; isRm: boolean; scope: RankScope }) {
-  const [showAppreciation, setShowAppreciation] = useState(false);
-  const give = useGiveAppreciation();
-  const pos = index + 1;
-  const label = RANK_LABELS[index] || null;
-
-  const bgCls = pos === 1 ? 'bg-gradient-to-r from-amber-50 to-yellow-50 border-amber-200'
-    : pos === 2 ? 'bg-gradient-to-r from-slate-50 to-gray-50 border-slate-200'
-    : pos === 3 ? 'bg-gradient-to-r from-orange-50 to-amber-50 border-orange-200'
-    : 'bg-white border-slate-200';
-
+function TopPerformers({ entries }: { entries: LeaderboardEntry[] }) {
+  if (!entries.length) return null;
   return (
-    <div className={clsx('relative flex items-center gap-4 rounded-xl border px-4 py-3 transition hover:shadow-md', bgCls)}>
-      {/* Rank number */}
-      <div className={clsx(
-        'grid h-10 w-10 shrink-0 place-items-center rounded-full text-sm font-bold',
-        pos <= 3 ? PODIUM_BG[pos - 1] + ' text-white shadow-sm' : 'bg-slate-100 text-slate-700',
-      )}>
-        {pos}
+    <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="mb-4 flex items-center gap-2">
+        <Trophy className="h-4 w-4 text-amber-500" />
+        <h2 className="text-sm font-semibold text-slate-900">Top Performers</h2>
       </div>
-
-      {/* Avatar */}
-      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-100 text-xs font-semibold text-brand-700">
-        {initials(entry.full_name)}
+      <div className="grid gap-3 md:grid-cols-3 md:items-end">
+        {PODIUM_ORDER.map((idx) => {
+          const entry = entries[idx];
+          if (!entry) return <div key={idx} />;
+          return <PodiumCard key={entry.user_id} entry={entry} featured={idx === 0} />;
+        })}
       </div>
+    </section>
+  );
+}
 
-      {/* Info */}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-slate-900 truncate">{scope === 'team' ? entry.team_name : entry.full_name}</span>
-          {label && <span className="text-sm">{label.emoji}</span>}
-          <span className="hidden sm:inline text-[10px] font-medium text-slate-500">{label?.label}</span>
-          <MovementIndicator movement={entry.movement} prev={entry.prev_position} current={entry.rank_position} />
-        </div>
-        <div className="flex items-center gap-3 text-xs text-slate-500 mt-0.5">
-          {scope !== 'team' && <span>{entry.role}</span>}
-          {entry.user_team && <span className="text-slate-400">{entry.user_team}</span>}
-          <span>Conv: {entry.leads_converted}</span>
-          <span>Calls: {entry.calls_made}</span>
-          <span>F/U: {entry.followups_done}</span>
-          <span className="text-emerald-600 font-medium">{entry.conv_rate}%</span>
-        </div>
+function PodiumCard({ entry, featured }: { entry: LeaderboardEntry; featured: boolean }) {
+  return (
+    <div className={clsx(
+      'rounded-xl border p-4 text-center',
+      featured ? 'border-amber-200 bg-amber-50 md:pb-8' : 'border-slate-200 bg-slate-50',
+    )}>
+      <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-white text-sm font-semibold text-slate-800 shadow-sm">
+        {initials(entry.name)}
       </div>
-
-      {/* Score + badges */}
-      <div className="flex items-center gap-3 shrink-0">
-        {entry.latest_badges && entry.latest_badges.length > 0 && (
-          <AppreciationBadges badges={entry.latest_badges.map(b => ({ badge_type: b.badge_type, count: '1' }))} />
-        )}
-        <ScoreBadge score={entry.score} />
-
-        {/* Appreciation button */}
-        {(isAdmin || isRm) && scope !== 'team' && (
-          <div className="relative">
-            <button
-              onClick={() => setShowAppreciation(!showAppreciation)}
-              className="grid h-8 w-8 place-items-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-brand-600 transition"
-              title="Give Appreciation"
-            >
-              <Star className="h-3.5 w-3.5" />
-            </button>
-            {showAppreciation && (
-              <div className="absolute right-0 top-10 z-50 w-48 rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
-                <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider px-2 py-1">Give Badge</div>
-                {Object.entries(BADGE_MAP).map(([key, val]) => (
-                  <button
-                    key={key}
-                    onClick={() => {
-                      give.mutate(
-                        { to_user_id: entry.user_id, badge_type: key, note: `Awarded to #${pos} performer` },
-                        {
-                          onSuccess: () => { toast.success(`${val.emoji} Badge given to ${entry.full_name}!`); setShowAppreciation(false); },
-                          onError: () => toast.error('Failed to give appreciation'),
-                        },
-                      );
-                    }}
-                    disabled={give.isPending}
-                    className={clsx(
-                      'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-medium transition hover:bg-slate-50',
-                      val.color,
-                    )}
-                  >
-                    <span className="text-sm">{val.emoji}</span> {val.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+      <div className="mt-3 flex items-center justify-center gap-1 text-xs font-semibold text-amber-700">
+        <Medal className="h-3.5 w-3.5" /> Rank #{entry.rank}
       </div>
+      <h3 className="mt-1 truncate text-sm font-semibold text-slate-900" title={entry.name}>{entry.name}</h3>
+      <p className="text-xs text-slate-500">{humanize(entry.role)}{entry.team_name ? ` - ${entry.team_name}` : ''}</p>
+      <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+        <MiniStat label="Score" value={entry.performance_score} />
+        <MiniStat label="Conv." value={entry.converted_leads} />
+        <MiniStat label="Rate" value={`${entry.conversion_rate}%`} />
+      </div>
+      <span className="mt-3 inline-flex rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 shadow-sm">
+        {entry.badge}
+      </span>
     </div>
   );
+}
+
+function LeaderboardList({ entries }: { entries: LeaderboardEntry[] }) {
+  return (
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="sticky top-0 z-10 grid grid-cols-[64px_1.4fr_repeat(5,minmax(90px,1fr))] gap-3 border-b border-slate-100 bg-slate-50 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500 max-lg:hidden">
+        <span>Rank</span>
+        <span>Name</span>
+        <span>Total</span>
+        <span>Converted</span>
+        <span>Completed</span>
+        <span>Contacted</span>
+        <span>Score</span>
+      </div>
+      <div className="divide-y divide-slate-100">
+        {entries.length === 0 ? (
+          <div className="px-4 py-8 text-center text-sm text-slate-500">Only top performers are available for this period.</div>
+        ) : entries.map((entry) => <LeaderboardRow key={entry.user_id} entry={entry} />)}
+      </div>
+    </section>
+  );
+}
+
+function LeaderboardRow({ entry }: { entry: LeaderboardEntry }) {
+  return (
+    <article className="grid gap-3 px-4 py-3 lg:grid-cols-[64px_1.4fr_repeat(5,minmax(90px,1fr))] lg:items-center">
+      <div className="flex items-center gap-3 lg:block">
+        <span className="grid h-9 w-9 place-items-center rounded-full bg-slate-100 text-sm font-bold text-slate-700">#{entry.rank}</span>
+        <div className="min-w-0 lg:hidden">
+          <h3 className="truncate text-sm font-semibold text-slate-900">{entry.name}</h3>
+          <p className="text-xs text-slate-500">{humanize(entry.role)}{entry.team_name ? ` - ${entry.team_name}` : ''}</p>
+        </div>
+      </div>
+      <div className="hidden min-w-0 lg:block">
+        <h3 className="truncate text-sm font-semibold text-slate-900" title={entry.name}>{entry.name}</h3>
+        <p className="text-xs text-slate-500">
+          {humanize(entry.role)}
+          {entry.team_name ? ` - ${entry.team_name}` : ''}
+          {entry.rm_name ? ` - RM: ${entry.rm_name}` : ''}
+        </p>
+      </div>
+      <MetricText value={entry.total_leads} label="Total" />
+      <MetricText value={entry.converted_leads} label="Converted" />
+      <MetricText value={entry.completed_leads} label="Completed" />
+      <MetricText value={entry.contacted_leads} label="Contacted" />
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-md bg-brand-50 px-2 py-1 text-xs font-bold text-brand-700">{entry.performance_score} pts</span>
+        <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-600">{entry.badge}</span>
+        {entry.last_activity_at && (
+          <span className="text-[11px] text-slate-400" title={formatISTTooltip(entry.last_activity_at)}>
+            {formatISTCompact(entry.last_activity_at)}
+          </span>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function SegmentedControl<T extends string>({
+  items,
+  value,
+  onChange,
+}: {
+  items: { key: T; label: string }[];
+  value: T;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+      {items.map((item) => (
+        <button
+          key={item.key}
+          type="button"
+          onClick={() => onChange(item.key)}
+          className={clsx(
+            'rounded-md px-3 py-1.5 text-xs font-medium transition',
+            value === item.key ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-500 hover:text-slate-800',
+          )}
+        >
+          {item.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function MetricTile({ label, value, icon }: { label: string; value: string | number; icon: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+      <div className="flex items-center gap-2 text-xs text-slate-500">{icon}{label}</div>
+      <div className="mt-1 truncate text-sm font-semibold text-slate-900">{value}</div>
+    </div>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="rounded-lg bg-white px-2 py-1.5">
+      <div className="font-semibold text-slate-900">{value}</div>
+      <div className="text-[10px] uppercase text-slate-400">{label}</div>
+    </div>
+  );
+}
+
+function MetricText({ label, value }: { label: string; value: number }) {
+  return (
+    <div>
+      <div className="text-xs text-slate-400 lg:hidden">{label}</div>
+      <div className="text-sm font-semibold tabular-nums text-slate-800">{value}</div>
+    </div>
+  );
+}
+
+function scopeLabel(scope: LeaderboardScope) {
+  if (scope === 'rms') return 'RMs';
+  if (scope === 'members') return 'Members';
+  if (scope === 'partners') return 'Partners';
+  if (scope === 'team') return 'Team';
+  return 'All';
+}
+
+function periodLabel(period: LeaderboardPeriod) {
+  return PERIODS.find((item) => item.key === period)?.label || 'This Month';
+}
+
+function leaderboardError(error: unknown) {
+  return (error as { response?: { data?: { message?: string; error?: { message?: string } } } })?.response?.data?.message
+    || (error as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
+    || 'Please try again.';
 }

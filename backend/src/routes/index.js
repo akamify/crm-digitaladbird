@@ -2602,6 +2602,216 @@ router.post('/notifications/read-all', authenticate, asyncHandler(async (req, re
   res.json({ success: true });
 }));
 
+// Live role-scoped leaderboard. It returns performance fields only: no email,
+// phone, or personal contact details.
+router.get('/leaderboard', authenticate, asyncHandler(async (req, res) => {
+  const actor = req.user;
+  const scope = normalizeLeaderboardScope(String(req.query.scope || ''), actor.role);
+  const period = String(req.query.period || 'this_month');
+  const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
+  const pageSize = Math.min(50, Math.max(1, Number.parseInt(req.query.page_size || '20', 10)));
+  const offset = (page - 1) * pageSize;
+
+  if (!isLeaderboardScopeAllowed(scope, actor.role)) {
+    throw new AppError(403, 'LEADERBOARD_FORBIDDEN', 'You are not allowed to view this leaderboard.');
+  }
+
+  const params = [];
+  const userWhere = ['u.deleted_at IS NULL', "COALESCE(u.status::text, 'active') = 'active'"];
+  const isAdmin = actor.role === 'super_admin' || actor.role === 'admin';
+
+  if (scope === 'rms') {
+    userWhere.push("u.role::text = 'rm'");
+  } else if (scope === 'members') {
+    userWhere.push("u.role::text = 'member'");
+  } else if (scope === 'partners') {
+    userWhere.push("u.role::text = 'partner'");
+  } else if (scope === 'team') {
+    userWhere.push("u.role::text IN ('member', 'partner')");
+    if (actor.role === 'rm') {
+      params.push(actor.id);
+      userWhere.push(`u.report_to_id = $${params.length}`);
+    } else if (actor.role === 'member' || actor.role === 'partner') {
+      const { rows: [me] } = await query(`SELECT report_to_id FROM users WHERE id = $1`, [actor.id]);
+      if (me?.report_to_id) {
+        params.push(me.report_to_id);
+        userWhere.push(`u.report_to_id = $${params.length}`);
+      } else {
+        params.push(actor.id);
+        userWhere.push(`u.id = $${params.length}`);
+      }
+    }
+  } else {
+    userWhere.push("u.role::text IN ('rm', 'member', 'partner')");
+  }
+
+  const leadDateFilter = leaderboardDateFilter('l.assigned_at', period);
+  const callDateFilter = leaderboardDateFilter('cl.created_at', period);
+  const remarkDateFilter = leaderboardDateFilter('lr.created_at', period);
+  const limitParam = params.length + 1;
+  const offsetParam = params.length + 2;
+
+  const { rows } = await query(`
+    WITH ranked AS (
+      SELECT
+        u.id AS user_id,
+        u.full_name AS name,
+        u.role::text AS role,
+        u.team_name,
+        rm.full_name AS rm_name,
+        COALESCE(leads.total_leads, 0)::int AS total_leads,
+        COALESCE(leads.converted_leads, 0)::int AS converted_leads,
+        COALESCE(leads.completed_leads, 0)::int AS completed_leads,
+        COALESCE(leads.contacted_leads, 0)::int AS contacted_leads,
+        COALESCE(remarks.followups_done, 0)::int AS followups_done,
+        COALESCE(calls.call_count, 0)::int AS call_count,
+        CASE WHEN COALESCE(leads.total_leads, 0) > 0
+          THEN ROUND(COALESCE(leads.converted_leads, 0)::numeric * 100 / leads.total_leads, 2)
+          ELSE 0 END AS conversion_rate,
+        CASE WHEN COALESCE(leads.total_leads, 0) > 0
+          THEN ROUND(COALESCE(leads.completed_leads, 0)::numeric * 100 / leads.total_leads, 2)
+          ELSE 0 END AS completion_rate,
+        (
+          COALESCE(leads.converted_leads, 0) * 50
+          + COALESCE(leads.completed_leads, 0) * 20
+          + COALESCE(leads.contacted_leads, 0) * 10
+          + COALESCE(remarks.followups_done, 0) * 5
+          + COALESCE(calls.call_count, 0) * 2
+          + CASE WHEN COALESCE(leads.total_leads, 0) > 0
+            THEN ROUND(COALESCE(leads.converted_leads, 0)::numeric * 100 / leads.total_leads)
+            ELSE 0 END
+        )::numeric AS performance_score,
+        GREATEST(
+          COALESCE(leads.last_lead_activity_at, 'epoch'::timestamptz),
+          COALESCE(calls.last_call_at, 'epoch'::timestamptz),
+          COALESCE(remarks.last_remark_at, 'epoch'::timestamptz)
+        ) AS last_activity_at
+      FROM users u
+      LEFT JOIN users rm ON rm.id = u.report_to_id
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(*) AS total_leads,
+          COUNT(*) FILTER (WHERE l.call_status::text = 'converted' OR l.stage::text = 'won') AS converted_leads,
+          COUNT(*) FILTER (WHERE l.stage::text IN ('won', 'lost', 'dropped') OR l.call_status::text IN ('converted', 'not_interested', 'wrong_number', 'invalid_number', 'ni')) AS completed_leads,
+          COUNT(*) FILTER (WHERE l.last_call_at IS NOT NULL OR l.call_status::text NOT IN ('not_called', 'rnr', 'cnr', 'busy', 'switched_off', 'so', 'nc', 'ccb', 'nn')) AS contacted_leads,
+          MAX(COALESCE(l.last_call_at, l.updated_at, l.assigned_at, l.created_at)) AS last_lead_activity_at
+        FROM leads l
+        WHERE l.assigned_to_user_id = u.id
+          AND l.deleted_at IS NULL
+          ${leadDateFilter}
+      ) leads ON true
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS call_count, MAX(cl.created_at) AS last_call_at
+        FROM lead_call_logs cl
+        WHERE cl.user_id = u.id
+          ${callDateFilter}
+      ) calls ON true
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) FILTER (WHERE lr.next_followup_at IS NOT NULL) AS followups_done,
+               MAX(lr.created_at) AS last_remark_at
+        FROM lead_remarks lr
+        WHERE lr.user_id = u.id
+          ${remarkDateFilter}
+      ) remarks ON true
+      WHERE ${userWhere.join(' AND ')}
+    ),
+    numbered AS (
+      SELECT *,
+             ROW_NUMBER() OVER (
+               ORDER BY performance_score DESC, converted_leads DESC, completed_leads DESC,
+                        contacted_leads DESC, total_leads DESC, name ASC
+             )::int AS rank
+      FROM ranked
+    )
+    SELECT *, COUNT(*) OVER()::int AS total_count
+    FROM numbered
+    ORDER BY rank ASC
+    LIMIT $${limitParam} OFFSET $${offsetParam}
+  `, [...params, pageSize, offset]);
+
+  const total = rows[0]?.total_count || 0;
+  const data = rows.map((row) => ({
+    rank: row.rank,
+    user_id: row.user_id,
+    name: row.name,
+    role: row.role,
+    team_name: row.team_name,
+    rm_name: row.rm_name,
+    total_leads: row.total_leads,
+    converted_leads: row.converted_leads,
+    completed_leads: row.completed_leads,
+    contacted_leads: row.contacted_leads,
+    followups_done: row.followups_done,
+    call_count: row.call_count,
+    conversion_rate: Number(row.conversion_rate || 0),
+    completion_rate: Number(row.completion_rate || 0),
+    performance_score: Number(row.performance_score || 0),
+    badge: leaderboardBadge(row),
+    last_activity_at: row.last_activity_at && String(row.last_activity_at).startsWith('1970') ? null : row.last_activity_at,
+  }));
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  res.json({
+    success: true,
+    data,
+    summary: {
+      period,
+      scope,
+      total_ranked_users: total,
+      visible_to_role: actor.role,
+      scope_note: isAdmin ? 'Admin can view CRM-wide leaderboard.' : 'Results are scoped to your role and team.',
+      score_formula: 'converted*50 + completed*20 + contacted*10 + followups*5 + calls*2 + conversion_rate_bonus',
+    },
+    pagination: {
+      page,
+      page_size: pageSize,
+      total,
+      total_pages: totalPages,
+      has_more: page < totalPages,
+    },
+  });
+}));
+
+function normalizeLeaderboardScope(scope, role) {
+  const mapped = {
+    all: 'all',
+    overall: 'all',
+    rms: 'rms',
+    rm: 'rms',
+    members: 'members',
+    member: 'members',
+    partners: 'partners',
+    partner: 'partners',
+    team: 'team',
+  }[scope] || null;
+  if (mapped) return mapped;
+  if (role === 'super_admin' || role === 'admin') return 'all';
+  return 'team';
+}
+
+function isLeaderboardScopeAllowed(scope, role) {
+  if (role === 'super_admin' || role === 'admin') return ['all', 'rms', 'members', 'partners', 'team'].includes(scope);
+  if (role === 'rm') return ['team', 'rms'].includes(scope);
+  if (role === 'member' || role === 'partner') return scope === 'team';
+  return false;
+}
+
+function leaderboardDateFilter(column, period) {
+  if (period === 'today') return `AND (${column} AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date`;
+  if (period === 'this_week' || period === 'week') return `AND ${column} >= date_trunc('week', NOW() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'`;
+  if (period === 'all_time' || period === 'all') return '';
+  return `AND ${column} >= date_trunc('month', NOW() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'`;
+}
+
+function leaderboardBadge(row) {
+  if (Number(row.rank) === 1) return 'Champion';
+  if (Number(row.rank) === 2) return 'Star Performer';
+  if (Number(row.rank) === 3) return 'High Achiever';
+  if (Number(row.total_leads) >= 10 && Number(row.conversion_rate) >= 50) return 'Conversion Pro';
+  if (Number(row.completed_leads) >= 20) return 'Task Finisher';
+  return 'Performer';
+}
+
 // ══════════════════════════════════════════════════════════════════════
 // PERFORMANCE RANKINGS — real-time scoring from actual CRM activity
 // ══════════════════════════════════════════════════════════════════════

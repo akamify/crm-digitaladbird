@@ -4,8 +4,15 @@ const { emitToConversation } = require('./socketService');
 const { assertLeadCommunicationAccess } = require('./leadCommunicationAccess');
 const { getOrCreateLeadConversation, insertLeadSystemMessage } = require('./leadConversationService');
 const { getCallProvider, getCallProviderMode } = require('./callProvider');
+const { updateLeadFromCallLog } = require('./leadCallStatusService');
 
-const VALID_LOG_STATUSES = new Set(['initiated', 'ringing', 'connected', 'completed', 'failed', 'missed', 'cancelled']);
+const VALID_LOG_STATUSES = new Set([
+  'initiated', 'ringing', 'connected', 'completed', 'failed', 'missed', 'cancelled',
+  'answered', 'interested', 'talk_response', 'not_answered', 'no_answer', 'rnr', 'cnr',
+  'busy', 'switched_off', 'so', 'callback_requested', 'callback', 'ccb', 'follow_up',
+  'converted', 'not_interested', 'ni', 'wrong_number', 'invalid_number',
+  'language_barrier', 'custom_remark',
+]);
 
 async function listLeadCalls({ leadId, user }) {
   await assertLeadCommunicationAccess(user, leadId);
@@ -125,15 +132,13 @@ async function logLeadCall({ leadId, user, input }) {
       input.next_followup_at || null,
     ]);
 
-    await client.query(`
-      UPDATE leads
-         SET last_call_at = NOW(),
-             call_attempts = call_attempts + 1,
-             call_status = COALESCE($2, call_status),
-             next_followup_at = COALESCE($3, next_followup_at),
-             updated_at = NOW()
-       WHERE id = $1
-    `, [leadId, mapCallStatusToLeadStatus(status), input.next_followup_at || null]);
+    const lead = await updateLeadFromCallLog(client, {
+      leadId,
+      userId: user.id,
+      status,
+      nextFollowupAt: input.next_followup_at || null,
+      note: notes,
+    });
 
     const { conversationId } = await getOrCreateLeadConversation({ leadId, user, runner: client });
     const text = notes ? `Call completed: ${status}. Notes: ${notes}` : `Call completed: ${status}.`;
@@ -153,9 +158,16 @@ async function logLeadCall({ leadId, user, input }) {
       reactions: [],
       is_starred: false,
     });
-    emitToConversation(conversationId, 'lead:call:updated', call);
+    emitToConversation(conversationId, 'lead:call:updated', { ...call, lead_id: leadId, lead });
 
-    return { call, conversationId };
+    return {
+      call,
+      call_log: call,
+      lead,
+      updated_lead: lead,
+      conversationId,
+      message: 'Call log added and lead call status updated.',
+    };
   });
 }
 
@@ -168,9 +180,20 @@ function normalizeCallStatus(status) {
 }
 
 function mapCallStatusToLeadStatus(status) {
-  if (status === 'connected' || status === 'completed') return 'interested';
-  if (status === 'missed') return 'rnr';
-  if (status === 'failed' || status === 'cancelled') return 'not_called';
+  if (status === 'connected' || status === 'completed' || status === 'answered') return 'interested';
+  if (status === 'talk_response') return 'talk_response';
+  if (status === 'missed' || status === 'not_answered' || status === 'no_answer') return 'rnr';
+  if (status === 'rnr' || status === 'cnr' || status === 'busy' || status === 'switched_off' || status === 'so') return status;
+  if (status === 'callback_requested' || status === 'callback') return 'callback_requested';
+  if (status === 'ccb') return 'ccb';
+  if (status === 'follow_up') return 'follow_up';
+  if (status === 'converted') return 'converted';
+  if (status === 'not_interested') return 'not_interested';
+  if (status === 'ni') return 'ni';
+  if (status === 'wrong_number') return 'wrong_number';
+  if (status === 'invalid_number') return 'invalid_number';
+  if (status === 'language_barrier') return 'language_barrier';
+  if (status === 'custom_remark') return 'custom_remark';
   return null;
 }
 

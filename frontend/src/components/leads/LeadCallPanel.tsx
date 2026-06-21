@@ -21,7 +21,7 @@ interface Props {
 
 export function LeadCallPanel({ phone, calls, loading, disabled, starting, logging, onStart, onLog }: Props) {
   const [open, setOpen] = useState(false);
-  const [status, setStatus] = useState('completed');
+  const [status, setStatus] = useState('connected');
   const [duration, setDuration] = useState('');
   const [notes, setNotes] = useState('');
   const [followup, setFollowup] = useState('');
@@ -45,14 +45,14 @@ export function LeadCallPanel({ phone, calls, loading, disabled, starting, loggi
     e.preventDefault();
     try {
       await onLog({ status, duration_seconds: duration || undefined, notes: notes || undefined, next_followup_at: followup || undefined });
-      toast.success('Call result logged');
+      toast.success('Call log added and lead status updated.');
       setOpen(false);
       setNotes('');
       setDuration('');
       setFollowup('');
-      setStatus('completed');
-    } catch {
-      toast.error('Could not log call');
+      setStatus('connected');
+    } catch (error) {
+      toast.error(callLogErrorMessage(error));
     }
   }
 
@@ -107,11 +107,18 @@ export function LeadCallPanel({ phone, calls, loading, disabled, starting, loggi
           <label className="space-y-1 text-sm">
             <span className="font-medium text-slate-700">Status</span>
             <select className="input" value={status} onChange={(e) => setStatus(e.target.value)}>
-              <option value="completed">Completed</option>
               <option value="connected">Connected</option>
-              <option value="missed">Missed</option>
-              <option value="failed">Failed</option>
-              <option value="cancelled">Cancelled</option>
+              <option value="interested">Interested</option>
+              <option value="not_answered">Not answered</option>
+              <option value="busy">Busy</option>
+              <option value="switched_off">Switched off</option>
+              <option value="callback_requested">Callback requested</option>
+              <option value="follow_up">Follow-up scheduled</option>
+              <option value="wrong_number">Wrong number</option>
+              <option value="not_interested">Not interested</option>
+              <option value="converted">Converted</option>
+              <option value="language_barrier">Language barrier</option>
+              <option value="custom_remark">Custom remark</option>
             </select>
           </label>
           <label className="space-y-1 text-sm">
@@ -134,4 +141,17 @@ export function LeadCallPanel({ phone, calls, loading, disabled, starting, loggi
       </Modal>
     </div>
   );
+}
+
+function callLogErrorMessage(error: unknown) {
+  const response = (error as {
+    response?: {
+      data?: {
+        message?: string;
+        error?: { message?: string };
+      };
+    };
+    message?: string;
+  })?.response?.data;
+  return response?.message || response?.error?.message || 'Could not log call';
 }

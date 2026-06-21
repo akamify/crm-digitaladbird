@@ -1,6 +1,6 @@
 'use client';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiGet, apiPost } from '@/lib/api';
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { api, apiGet, apiPost } from '@/lib/api';
 
 export interface RankLabel {
   pos: number;
@@ -77,6 +77,63 @@ export interface RmInsights {
 
 export type RankScope = 'member' | 'partner' | 'rm' | 'team' | 'overall';
 export type RankPeriod = 'today' | 'week' | 'month';
+export type LeaderboardScope = 'all' | 'rms' | 'members' | 'partners' | 'team';
+export type LeaderboardPeriod = 'today' | 'this_week' | 'this_month' | 'all_time';
+
+export interface LeaderboardEntry {
+  rank: number;
+  user_id: string;
+  name: string;
+  role: string;
+  team_name: string | null;
+  rm_name: string | null;
+  total_leads: number;
+  converted_leads: number;
+  completed_leads: number;
+  contacted_leads: number;
+  followups_done: number;
+  call_count: number;
+  conversion_rate: number;
+  completion_rate: number;
+  performance_score: number;
+  badge: string;
+  last_activity_at: string | null;
+}
+
+export interface LeaderboardResponse {
+  success: boolean;
+  data: LeaderboardEntry[];
+  summary: {
+    period: LeaderboardPeriod | string;
+    scope: LeaderboardScope | string;
+    total_ranked_users: number;
+    visible_to_role: string;
+    scope_note?: string;
+    score_formula?: string;
+  };
+  pagination: {
+    page: number;
+    page_size: number;
+    total: number;
+    total_pages: number;
+    has_more: boolean;
+  };
+}
+
+export function useLeaderboard(scope: LeaderboardScope, period: LeaderboardPeriod, pageSize = 20) {
+  return useInfiniteQuery({
+    queryKey: ['leaderboard', scope, period, pageSize],
+    queryFn: async ({ pageParam = 1 }) => {
+      const { data } = await api.get<LeaderboardResponse>('/leaderboard', {
+        params: { scope, period, page: pageParam, page_size: pageSize },
+      });
+      return data;
+    },
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) => lastPage.pagination?.has_more ? lastPage.pagination.page + 1 : undefined,
+    staleTime: 60_000,
+  });
+}
 
 export function useRankings(scope: RankScope, period: RankPeriod = 'today') {
   return useQuery({

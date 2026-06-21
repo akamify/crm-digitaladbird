@@ -30,12 +30,12 @@ export function Modal({ open, onClose, title, description, children, footer, siz
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 flex items-end sm:items-start justify-center px-2 pb-2 pt-0 sm:px-6 sm:pb-6 sm:pt-0 overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto p-0 sm:items-start"
     >
       <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
       <div className={clsx(
         'relative mt-0 w-full rounded-t-2xl sm:rounded-2xl border border-slate-200 bg-white shadow-2xl',
-        'flex flex-col max-h-[92vh] sm:max-h-[88vh]',
+        'flex flex-col max-h-[100dvh] sm:max-h-[100dvh]',
         sizeClass[size],
       )}>
         <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-4 sm:px-5 py-3 sm:py-4 shrink-0">
