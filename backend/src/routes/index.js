@@ -2558,7 +2558,7 @@ router.delete('/partner-requests/:id', authenticate, asyncHandler(async (req, re
 
 router.get('/notifications', authenticate, asyncHandler(async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page || '1', 10));
-  const pageSize = Math.min(50, parseInt(req.query.page_size || '20', 10));
+  const pageSize = Math.max(1, Math.min(50, parseInt(req.query.page_size || '20', 10)));
   const offset = (page - 1) * pageSize;
 
   const { rows } = await query(
@@ -2569,8 +2569,27 @@ router.get('/notifications', authenticate, asyncHandler(async (req, res) => {
     `SELECT COUNT(*) FROM user_notifications WHERE user_id = $1 AND is_read = FALSE`,
     [req.user.id]
   );
+  const { rows: [{ count: total }] } = await query(
+    `SELECT COUNT(*) FROM user_notifications WHERE user_id = $1`,
+    [req.user.id]
+  );
+  const totalCount = parseInt(total, 10);
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
 
-  res.json({ success: true, data: { notifications: rows, unread: parseInt(unread, 10) } });
+  res.json({
+    success: true,
+    data: {
+      notifications: rows,
+      unread: parseInt(unread, 10),
+      pagination: {
+        page,
+        page_size: pageSize,
+        total: totalCount,
+        total_pages: totalPages,
+        has_more: page < totalPages,
+      },
+    },
+  });
 }));
 
 router.post('/notifications/:id/read', authenticate, asyncHandler(async (req, res) => {

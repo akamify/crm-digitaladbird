@@ -8,9 +8,23 @@ export interface UserNotification {
   type: string;
   title: string;
   body: string | null;
+  message?: string | null;
   metadata: Record<string, unknown>;
   is_read: boolean;
   created_at: string;
+  read_at?: string | null;
+}
+
+export interface NotificationPage {
+  notifications: UserNotification[];
+  unread: number;
+  pagination?: {
+    page: number;
+    page_size: number;
+    total: number;
+    total_pages: number;
+    has_more: boolean;
+  };
 }
 
 export interface AdminNotification {
@@ -26,7 +40,7 @@ export interface AdminNotification {
 export function useNotifications(page = 1, pageSize = 20) {
   return useQuery({
     queryKey: ['notifications', page, pageSize],
-    queryFn: () => apiGet<{ notifications: UserNotification[]; unread: number }>(`/notifications?page=${page}&page_size=${pageSize}`),
+    queryFn: () => apiGet<NotificationPage>(`/notifications?page=${page}&page_size=${pageSize}`),
     staleTime: 30_000,
     refetchInterval: 60_000,
   });
@@ -37,8 +51,9 @@ export function useInfiniteNotifications(pageSize = 20) {
     queryKey: ['notifications', 'infinite', pageSize],
     initialPageParam: 1,
     queryFn: ({ pageParam }) =>
-      apiGet<{ notifications: UserNotification[]; unread: number }>(`/notifications?page=${pageParam}&page_size=${pageSize}`),
+      apiGet<NotificationPage>(`/notifications?page=${pageParam}&page_size=${pageSize}`),
     getNextPageParam: (lastPage, allPages) => {
+      if (lastPage.pagination) return lastPage.pagination.has_more ? allPages.length + 1 : undefined;
       if ((lastPage.notifications || []).length < pageSize) return undefined;
       return allPages.length + 1;
     },

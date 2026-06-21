@@ -25,6 +25,7 @@ const NAV: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', Icon: LayoutDashboard },
   { href: '/leads',     label: 'Leads',     Icon: Briefcase },
   { href: '/chat',      label: 'Messages',  Icon: MessageSquare },
+  { href: '/notifications', label: 'Notifications', Icon: Bell },
   { href: '/reports',   label: 'Reports',   Icon: BarChart3,  roles: ['super_admin', 'rm'] },
   { href: '/partner-requests', label: 'Partner Requests', Icon: HandMetal, roles: ['super_admin', 'rm', 'partner'] },
   { href: '/leaderboard', label: 'Leaderboard', Icon: Trophy },
@@ -40,7 +41,6 @@ const ADMIN_NAV = [
   { href: '/dashboard/admin/sources',      label: 'Lead Sources', Icon: Globe },
   { href: '/dashboard/admin/distribution', label: 'Distribution', Icon: GitBranch },
   { href: '/dashboard/admin/analytics',    label: 'Analytics',    Icon: PieChart },
-  { href: '/dashboard/admin/notifications', label: 'Notifications', Icon: Bell },
   { href: '/dashboard/admin/sheets',       label: 'Google Sheets', Icon: FileSpreadsheet },
   { href: '/dashboard/admin/activity',     label: 'Activity Logs', Icon: ScrollText },
 ];
