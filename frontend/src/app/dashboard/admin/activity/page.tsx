@@ -5,7 +5,8 @@ import { ScrollText, ArrowLeft, Search, Filter } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { Skeleton, EmptyState } from '@/components/ui/Modal';
 import { useActivityLogs } from '@/hooks/useAdmin';
-import { fmtDate, clsx, humanize } from '@/lib/format';
+import { clsx, humanize } from '@/lib/format';
+import { formatISTCompact, formatISTDateTime, formatISTTooltip } from '@/lib/date';
 
 /**
  * Parse a User-Agent header into:
@@ -105,9 +106,9 @@ function ActivityInner() {
   const [entity, setEntity] = useState('');
   const [action, setAction] = useState('');
   const [search, setSearch] = useState('');
-  const logs = useActivityLogs({ page, page_size: 25, entity: entity || undefined, action: action || undefined });
+  const logs = useActivityLogs({ page, page_size: 10, entity: entity || undefined, action: action || undefined });
 
-  const totalPages = Math.ceil((logs.data?.total ?? 0) / 25);
+  const totalPages = Math.ceil((logs.data?.total ?? 0) / 10);
 
   const filtered = logs.data?.rows.filter(l =>
     !search || l.user_name?.toLowerCase().includes(search.toLowerCase()) || l.action?.toLowerCase().includes(search.toLowerCase()) || l.entity?.toLowerCase().includes(search.toLowerCase())
@@ -182,7 +183,7 @@ function ActivityInner() {
             <tbody className="divide-y divide-slate-50">
               {filtered.map(log => (
                 <tr key={log.id} className="hover:bg-slate-50 align-top">
-                  <td className="py-3 pr-3 text-xs text-slate-500 whitespace-nowrap">{fmtDate(log.created_at, 'dd MMM HH:mm:ss')}</td>
+                  <td className="py-3 pr-3 text-xs text-slate-500 whitespace-nowrap" title={formatISTTooltip(log.created_at)}>{formatISTCompact(log.created_at)}</td>
                   <td className="py-3 pr-3 font-medium text-slate-900 whitespace-nowrap">{log.user_name || '—'}</td>
                   <td className="py-3 pr-3"><span className="chip-slate">{humanize(log.user_role || '')}</span></td>
                   <td className="py-3 pr-3 whitespace-nowrap"><span className={clsx('chip',
@@ -199,10 +200,10 @@ function ActivityInner() {
                   <td className="py-3 pr-3 text-xs text-slate-600 max-w-[220px] whitespace-nowrap">
                     {log.session_id ? (
                       <div className="space-y-0.5">
-                        {log.login_at  && <div><span className="text-slate-400">Login: </span>{fmtDate(log.login_at,  'dd MMM HH:mm:ss')}</div>}
-                        {log.logout_at && <div><span className="text-slate-400">Logout: </span>{fmtDate(log.logout_at, 'dd MMM HH:mm:ss')}</div>}
+                        {log.login_at  && <div><span className="text-slate-400">Login: </span>{formatISTDateTime(log.login_at)}</div>}
+                        {log.logout_at && <div><span className="text-slate-400">Logout: </span>{formatISTDateTime(log.logout_at)}</div>}
                         {log.last_activity_at && !log.logout_at && (
-                          <div><span className="text-slate-400">Last act: </span>{fmtDate(log.last_activity_at, 'dd MMM HH:mm:ss')}</div>
+                          <div><span className="text-slate-400">Last act: </span>{formatISTDateTime(log.last_activity_at)}</div>
                         )}
                         {typeof log.session_duration_secs === 'number' && (
                           <div className={clsx('font-medium', log.logout_at ? 'text-slate-700' : 'text-emerald-600')}>

@@ -80,6 +80,9 @@ router.get('/rules',  authenticate, requireRole('super_admin'), asyncHandler(asy
 router.post('/rules', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
   const { name, form_id, strategy, eligible_user_ids, priority } = req.body;
   if (!name || !strategy) throw new AppError(400, 'INVALID', 'name & strategy required');
+  if (strategy !== 'round_robin') {
+    throw new AppError(422, 'DISTRIBUTION_METHOD_DISABLED', 'Only round robin auto distribution is supported.');
+  }
   const { rows: [r] } = await query(
     `INSERT INTO distribution_rules(name, form_id, strategy, eligible_user_ids, priority)
        VALUES ($1, $2, $3, $4, COALESCE($5, 100)) RETURNING *`,
@@ -780,6 +783,64 @@ router.get('/lead-requests', authenticate, requireRole('super_admin', 'rm'), asy
 
 // RM/Admin: approve a request — assigns leads from queue
 router.post('/lead-requests/:id/approve', authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (req, res) => {
+  if (true) {
+    const result = await assignmentEngine.approveLeadRequest({
+      requestId: req.params.id,
+      approvedQuantity: req.body.approvedQuantity || req.body.approved_quantity,
+      adminNotes: req.body.adminNotes || req.body.admin_notes || req.body.note || null,
+      actor: req.user,
+    });
+
+    const thisRequest = result.fulfillment?.requests?.find(r => r.requestId === req.params.id);
+    const assignedNow = thisRequest?.assigned || 0;
+    const fulfilled = Number(result.request.fulfilled_quantity ?? result.request.leads_assigned ?? 0);
+    const approved = Number(result.request.approved_quantity ?? result.request.quantity ?? 0);
+    const requested = Number(result.request.requested_quantity ?? result.request.quantity ?? approved);
+    const status = result.request.status;
+
+    emitLeadRequest(
+      status === 'fulfilled'
+        ? 'approved'
+        : status === 'partially_fulfilled'
+          ? 'partially_approved'
+          : 'approved',
+      req.params.id,
+    );
+
+    const { logActivity } = require('../utils/auditLog');
+    await logActivity(req, {
+      entity: 'lead_request',
+      entity_id: req.params.id,
+      action: status === 'fulfilled' ? 'fulfilled' : status,
+      old_value: 'pending',
+      new_value: status,
+      metadata: {
+        requester_id: result.request.user_id,
+        requested,
+        approved_quantity: approved,
+        fulfilled_quantity: fulfilled,
+        assigned_now: assignedNow,
+        available_leads: result.available_count,
+        note: req.body.note || null,
+      },
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        approved: true,
+        leads_assigned: fulfilled,
+        fulfilled_quantity: fulfilled,
+        requested,
+        approved_quantity: approved,
+        assigned_now: assignedNow,
+        remaining: Math.max(0, approved - fulfilled),
+        available_leads: result.available_count,
+        status,
+        partial: status === 'approved' || status === 'partially_fulfilled',
+      },
+    });
+  }
   const { id } = req.params;
   const { rows: [request] } = await query(
     `SELECT lr.*, u.full_name, u.role AS user_role, u.status AS user_status,
@@ -1033,7 +1094,7 @@ router.get('/lead-requests/stats', authenticate, asyncHandler(async (req, res) =
   }
 
   // Distribution status
-  const distEnabled = await getSetting('auto_distribution_enabled', 'true');
+  const distEnabled = await getSetting('auto_distribution_enabled', 'false');
 
   // RM pool stats (for RMs)
   let rmPoolCount = 0;
@@ -1559,7 +1620,7 @@ router.post('/admin/unblock-user/:userId', authenticate, requireRole('super_admi
 }));
 
 // --- 8. Notifications ---
-router.get('/admin/notifications', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+router.get('/admin/notifications', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
   const unreadOnly = req.query.unread === 'true';
   const limit = Math.min(50, parseInt(req.query.limit || '20', 10));
   const where = unreadOnly ? 'WHERE is_read = FALSE' : '';
@@ -1573,12 +1634,12 @@ router.get('/admin/notifications', authenticate, requireRole('super_admin'), asy
   res.json({ success: true, data: { rows, unread_count: parseInt(unread_count, 10) } });
 }));
 
-router.post('/admin/notifications/:id/read', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+router.post('/admin/notifications/:id/read', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
   await query(`UPDATE admin_notifications SET is_read = TRUE WHERE id = $1`, [req.params.id]);
   res.json({ success: true });
 }));
 
-router.post('/admin/notifications/read-all', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+router.post('/admin/notifications/read-all', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (_req, res) => {
   await query(`UPDATE admin_notifications SET is_read = TRUE WHERE is_read = FALSE`);
   res.json({ success: true });
 }));
@@ -3846,6 +3907,9 @@ router.patch('/admin/sheets/configs/:id/auto-import', authenticate, requireRole(
 router.patch('/admin/rules/:id', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { name, strategy, is_active, eligible_user_ids, priority, form_id } = req.body;
+  if (strategy !== undefined && strategy !== 'round_robin') {
+    throw new AppError(422, 'DISTRIBUTION_METHOD_DISABLED', 'Only round robin auto distribution is supported.');
+  }
   const sets = []; const vals = []; let idx = 0;
   if (name !== undefined) { sets.push(`name = $${++idx}`); vals.push(name); }
   if (strategy !== undefined) { sets.push(`strategy = $${++idx}`); vals.push(strategy); }

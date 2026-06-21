@@ -17,6 +17,7 @@ const { withTransaction, query } = require('../config/database');
 const logger = require('../utils/logger');
 const { validateLeadAssignee } = require('./leadAssigneeValidator');
 const { notifyLeadAssigned } = require('./notificationService');
+const { getAssignmentSettings, isInsideAssignmentWindow } = require('./leadAssignmentEngine');
 
 const FALLBACK_RULE_NAME = '__default__';
 
@@ -40,7 +41,7 @@ async function getEligibleMembers(client, rule) {
   //   - belong to rule.eligible_user_ids if specified
   //   - have not exceeded daily_lead_cap today
   const params = [];
-  let where = `u.role = 'member' AND u.status = 'active' AND u.is_available = TRUE
+  let where = `u.role IN ('member', 'partner') AND u.status = 'active' AND u.is_available = TRUE
                AND u.distribution_blocked = FALSE AND u.deleted_at IS NULL`;
 
   if (rule.eligible_user_ids && rule.eligible_user_ids.length > 0) {
@@ -170,6 +171,14 @@ function pickPriorityQueue(members) {
  */
 async function assignLead(leadId) {
   return withTransaction(async (client) => {
+    const settings = await getAssignmentSettings(client);
+    if (!settings.autoAssignEnabled) {
+      return { success: true, skipped: true, reason: 'AUTO_DISTRIBUTION_DISABLED', assigned: 0 };
+    }
+    if (!isInsideAssignmentWindow(new Date(), settings)) {
+      return { success: true, skipped: true, reason: 'OUTSIDE_DISTRIBUTION_WINDOW', assigned: 0 };
+    }
+
     const { rows: leadRows } = await client.query(
       `SELECT id, meta_form_id, assigned_to_user_id FROM leads WHERE id = $1 FOR UPDATE`,
       [leadId]
@@ -184,7 +193,9 @@ async function assignLead(leadId) {
       return { reason: 'NO_RULE' };
     }
 
-    if (rule.strategy === 'manual') return { reason: 'MANUAL_RULE', ruleId: rule.id };
+    if (rule.strategy !== 'round_robin') {
+      return { reason: 'DISTRIBUTION_METHOD_DISABLED', ruleId: rule.id, strategy: rule.strategy };
+    }
 
     const members = await getEligibleMembers(client, rule);
     if (members.length === 0) {
@@ -192,11 +203,7 @@ async function assignLead(leadId) {
       return { reason: 'NO_ELIGIBLE_MEMBERS', ruleId: rule.id };
     }
 
-    let pick;
-    if (rule.strategy === 'round_robin')          pick = await pickRoundRobin(client, rule, members);
-    else if (rule.strategy === 'weighted')        pick = pickWeighted(members);
-    else if (rule.strategy === 'priority_queue')  pick = pickPriorityQueue(members);
-    else                                          pick = members[0];
+    const pick = await pickRoundRobin(client, rule, members);
 
     await client.query(
       `UPDATE leads

@@ -2,9 +2,11 @@
 import { useState, useRef, useEffect } from 'react';
 import { Bell, Check, CheckCheck, X } from 'lucide-react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { useNotifications, useMarkRead, useMarkAllRead, type UserNotification } from '@/hooks/useNotifications';
+import { useAuth } from '@/lib/auth';
 import { fmtRelative } from '@/lib/format';
 import { clsx } from '@/lib/format';
 import { connectSocket } from '@/lib/socket';
@@ -55,6 +57,8 @@ function notificationTarget(n: UserNotification) {
 }
 
 export function NotificationBell() {
+  const router = useRouter();
+  const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const qc = useQueryClient();
@@ -88,6 +92,18 @@ export function NotificationBell() {
     }).catch(() => {});
     return () => { cleanup?.(); };
   }, [qc]);
+
+  const notificationsPage = user?.role === 'super_admin' || user?.role === 'admin'
+    ? '/dashboard/admin/notifications'
+    : '/notifications';
+
+  function handleNotificationClick(notification: UserNotification) {
+    if (!notification.is_read) {
+      markRead.mutate(notification.id);
+    }
+    setOpen(false);
+    router.push(`${notificationsPage}?notificationId=${notification.id}`);
+  }
 
   return (
     <div className="relative" ref={ref}>
@@ -142,7 +158,6 @@ export function NotificationBell() {
               </div>
             ) : (
               items.map((n: UserNotification) => {
-                const target = notificationTarget(n);
                 const content = (
                   <>
                     <div className="shrink-0 mt-0.5">
@@ -175,25 +190,30 @@ export function NotificationBell() {
                   'flex gap-3 border-b border-slate-50 px-4 py-3 transition cursor-pointer',
                   !n.is_read ? 'bg-blue-50/50 hover:bg-blue-50' : 'hover:bg-slate-50',
                 );
-                const onClick = () => {
-                  if (!n.is_read) markRead.mutate(n.id);
-                  if (target) setOpen(false);
-                };
-                return target ? (
-                  <Link key={n.id} href={target} onClick={onClick} className={className}>
-                    {content}
-                  </Link>
-                ) : (
-                  <div
+                return (
+                  <button
                   key={n.id}
-                  onClick={onClick}
+                  type="button"
+                  onClick={() => handleNotificationClick(n)}
                   className={className}
+                  title={notificationTarget(n) || undefined}
                 >
                   {content}
-                </div>
+                </button>
                 );
               })
             )}
+          </div>
+
+          <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3">
+            <span className="text-xs text-slate-500">Latest {items.length} notifications</span>
+            <Link
+              href={notificationsPage}
+              onClick={() => setOpen(false)}
+              className="text-xs font-medium text-brand-700 hover:text-brand-800"
+            >
+              View all
+            </Link>
           </div>
         </div>
       )}

@@ -1,9 +1,9 @@
 const { AppError } = require('../utils/errors');
 
-const VALID_LEAD_ASSIGNEE_ROLES = ['member'];
+const VALID_LEAD_ASSIGNEE_ROLES = ['member', 'partner'];
 const INVALID_LEAD_ASSIGNEE_ROLE = 'INVALID_LEAD_ASSIGNEE_ROLE';
 const INVALID_LEAD_ASSIGNEE_MESSAGE =
-  'Leads can only be assigned to members. RM users cannot receive direct lead assignments.';
+  'Leads can only be assigned to members or partners. RM users cannot receive direct lead assignments.';
 
 function isValidLeadAssigneeRole(role) {
   return VALID_LEAD_ASSIGNEE_ROLES.includes(String(role || '').toLowerCase());

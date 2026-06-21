@@ -27,7 +27,7 @@ const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 async function isDistributionActive() {
   try {
     const { rows: [enabled] } = await query(`SELECT value FROM distribution_settings WHERE key = 'auto_distribution_enabled'`);
-    if ((enabled?.value || 'true') !== 'true') return false;
+    if ((enabled?.value || 'false') !== 'true') return false;
     const { rows: [start] } = await query(`SELECT value FROM distribution_settings WHERE key = 'distribution_start_hour'`);
     const { rows: [end] } = await query(`SELECT value FROM distribution_settings WHERE key = 'distribution_end_hour'`);
     const startHour = parseInt(start?.value || '8', 10);

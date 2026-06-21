@@ -1,5 +1,5 @@
 'use client';
-import { memo, useEffect } from 'react';
+import { memo, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   Activity, CheckCircle2, Clock, TrendingDown,
@@ -18,10 +18,10 @@ import { connectSocket } from '@/lib/socket';
 import { format } from 'date-fns';
 import { AppShell } from '@/components/layout/AppShell';
 import { KpiCard } from '@/components/dashboard/KpiCard';
-import { Skeleton, EmptyState, PageLoader } from '@/components/ui/Modal';
+import { Modal, Skeleton, EmptyState, PageLoader } from '@/components/ui/Modal';
 import { useSummary, useDaily, useByUser } from '@/hooks/useReports';
 import { useLeadList } from '@/hooks/useLeads';
-import { useLeadRequestStats, usePendingLeadRequests, useApproveLeadRequest, useRejectLeadRequest } from '@/hooks/useLeadRequests';
+import { useLeadRequestStats, usePendingLeadRequests, useApproveLeadRequest, useRejectLeadRequest, type LeadRequest } from '@/hooks/useLeadRequests';
 import { useRankings, RANK_LABELS, type RankedEntry } from '@/hooks/useRankings';
 import { useCampaignsEnriched, useFreshLeads } from '@/hooks/useAdminEnterprise';
 import { MovementIndicator } from '@/components/rankings/RankBadge';
@@ -89,6 +89,8 @@ function AdminDashboardInner() {
   const rejectReq   = useRejectLeadRequest();
   const freshToday  = useFreshLeads('today', 1);  // we only need the .counts here, not rows
   const qc          = useQueryClient();
+  const [selectedRequest, setSelectedRequest] = useState<LeadRequest | null>(null);
+  const [approvedQuantity, setApprovedQuantity] = useState(1);
 
   // ── Live: whenever a new lead lands or a request lifecycle event fires,
   //    invalidate the cached queries so the headline counters & lists
@@ -133,6 +135,10 @@ function AdminDashboardInner() {
   const convRate   = totalLeads > 0 ? Math.round((conv / totalLeads) * 1000) / 10 : 0;
   const ds = distStats.data;
   const lrs = lrStats.data;
+  const availableForApproval = Number(lrs?.available_leads ?? 0);
+  const approvalMax = selectedRequest
+    ? Math.max(1, Math.min(selectedRequest.quantity, availableForApproval || selectedRequest.quantity))
+    : 1;
 
   return (
     <div className="space-y-6">
@@ -232,13 +238,8 @@ function AdminDashboardInner() {
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       onClick={() => {
-                        const raw = window.prompt('Approved quantity', String(r.quantity));
-                        if (raw === null) return;
-                        const approvedQuantity = Math.max(1, Number.parseInt(raw, 10) || r.quantity);
-                        approveReq.mutate({ id: r.id, approvedQuantity }, {
-                        onSuccess: (data: any) => toast.success(`Approved! ${data.leads_assigned} lead(s) assigned`),
-                        onError: () => toast.error('Approval failed'),
-                        });
+                        setSelectedRequest(r);
+                        setApprovedQuantity(Math.max(1, Math.min(r.quantity, availableForApproval || r.quantity)));
                       }}
                       disabled={approveReq.isPending}
                       className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition"
@@ -262,6 +263,83 @@ function AdminDashboardInner() {
           )}
         </div>
       )}
+
+      <Modal
+        open={!!selectedRequest}
+        onClose={() => setSelectedRequest(null)}
+        title="Approve Lead Request"
+        size="md"
+      >
+        {selectedRequest ? (
+          <div className="space-y-4">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-semibold text-slate-900">{selectedRequest.full_name || 'Member Request'}</div>
+              <div className="mt-1 text-xs text-slate-500">
+                Requested {selectedRequest.quantity} lead{selectedRequest.quantity > 1 ? 's' : ''}
+                {selectedRequest.category ? ` • ${humanize(selectedRequest.category)}` : ''}
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                <div className="rounded-lg border border-slate-200 bg-white p-3">
+                  <div className="text-xs uppercase tracking-wide text-slate-500">Requested Quantity</div>
+                  <div className="mt-1 font-semibold text-slate-900">{selectedRequest.quantity}</div>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-white p-3">
+                  <div className="text-xs uppercase tracking-wide text-slate-500">Available Leads</div>
+                  <div className="mt-1 font-semibold text-slate-900">{availableForApproval}</div>
+                </div>
+              </div>
+            </div>
+
+            {availableForApproval <= 0 ? (
+              <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                No available leads are currently available for this request.
+              </div>
+            ) : null}
+
+            {availableForApproval > 0 && availableForApproval < selectedRequest.quantity ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                Only {availableForApproval} leads are currently available. You can approve a partial quantity or keep this request pending.
+              </div>
+            ) : null}
+
+            <label className="block">
+              <span className="text-xs font-medium text-slate-500">Approved Quantity</span>
+              <input
+                type="number"
+                min={1}
+                max={approvalMax}
+                value={approvedQuantity}
+                onChange={(e) => setApprovedQuantity(Math.max(1, Math.min(approvalMax, Number(e.target.value) || 1)))}
+                className="input mt-1 h-10"
+                disabled={availableForApproval <= 0}
+              />
+            </label>
+
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setSelectedRequest(null)} className="btn-ghost rounded-lg px-4 py-2 text-sm">
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (!selectedRequest) return;
+                  approveReq.mutate({ id: selectedRequest.id, approvedQuantity }, {
+                    onSuccess: (data: any) => {
+                      toast.success(`Approved. ${Number(data?.data?.assigned_now ?? data?.data?.leads_assigned ?? 0)} lead(s) assigned now.`);
+                      setSelectedRequest(null);
+                    },
+                    onError: (error: any) => toast.error(error?.response?.data?.error?.message || 'Approval failed'),
+                  });
+                }}
+                disabled={approveReq.isPending || availableForApproval <= 0}
+                className="btn-primary inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"
+              >
+                {approveReq.isPending ? <Check className="h-4 w-4" /> : <Check className="h-4 w-4" />}
+                Approve Request
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
 
       {/* Admin Tools Panel */}
       <AdminToolsPanel />

@@ -40,7 +40,7 @@ async function getSetting(key, fallback) {
 
 /** Returns true if auto-distribution is currently active (enabled + within hours). */
 async function isDistributionActive() {
-  const enabled = await getSetting('auto_distribution_enabled', 'true');
+  const enabled = await getSetting('auto_distribution_enabled', 'false');
   if (enabled !== 'true') return false;
 
   const startHour = parseInt(await getSetting('distribution_start_hour', '8'),  10);
@@ -100,7 +100,7 @@ let lastDistributionDay = -1;
 
 async function tick() {
   try {
-    const enabled = await getSetting('auto_distribution_enabled', 'true');
+    const enabled = await getSetting('auto_distribution_enabled', 'false');
     if (enabled !== 'true') return;
 
     const startHour = parseInt(await getSetting('distribution_start_hour', '8'), 10);

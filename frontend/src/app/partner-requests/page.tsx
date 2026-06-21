@@ -1,15 +1,16 @@
 'use client';
 import { useState } from 'react';
 import {
-  HandMetal, Clock, CheckCircle2, XCircle, Truck, Package, Users, Eye,
-  ChevronRight, Loader2, ArrowRight, Send, X, History, AlertCircle,
+  HandMetal, Clock, CheckCircle2, XCircle, Truck, Package, Users,
+  ChevronRight, Loader2, Send, X, History,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { KpiCard } from '@/components/dashboard/KpiCard';
-import { Skeleton } from '@/components/ui/Modal';
+import { EmptyState, Modal, Skeleton } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
-import { fmtDate, fmtRelative, clsx, humanize } from '@/lib/format';
+import { fmtRelative, clsx, humanize } from '@/lib/format';
+import { formatISTCompact, formatISTDateTime, formatISTTooltip } from '@/lib/date';
 import {
   usePartnerRequests, usePartnerRequestDetail, usePartnerRequestStats,
   useSubmitPartnerRequest, useApprovePartnerRequest, useRejectPartnerRequest,
@@ -119,10 +120,9 @@ function PartnerRequestsInner() {
         <NewRequestForm onClose={() => setShowNewForm(false)} />
       )}
 
-      {/* Main Content: Table + Detail Side Panel */}
+      {/* Main Content */}
       <div className="flex gap-6">
-        {/* Request Table */}
-        <div className={clsx('flex-1 min-w-0', selectedId && 'hidden lg:block')}>
+        <div className="flex-1 min-w-0">
           <div className="card overflow-hidden">
             <table className="w-full text-sm">
               <thead>
@@ -143,9 +143,8 @@ function PartnerRequestsInner() {
                   ))
                 ) : rows.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-12 text-center text-slate-400">
-                      <HandMetal className="mx-auto h-8 w-8 text-slate-300" />
-                      <p className="mt-2 text-sm">No partner requests found</p>
+                    <td colSpan={7} className="px-4 py-10">
+                      <EmptyState title="No partner requests found" description="Try a different status filter or submit a new request." icon={<HandMetal className="h-6 w-6" />} />
                     </td>
                   </tr>
                 ) : rows.map(r => (
@@ -177,7 +176,9 @@ function PartnerRequestsInner() {
           </div>
         </div>
 
-        {/* Detail Side Panel */}
+      </div>
+
+      <Modal open={!!selectedId} onClose={() => setSelectedId(null)} title="Request Details" size="xl">
         {selectedId && (
           <DetailPanel
             id={selectedId}
@@ -186,15 +187,15 @@ function PartnerRequestsInner() {
             canManage={canManage}
             onClose={() => setSelectedId(null)}
             onApprove={(note) => approve.mutate({ id: selectedId, note }, {
-              onSuccess: () => toast.success('Request approved'),
+              onSuccess: () => { toast.success('Request approved'); setSelectedId(null); },
               onError: (e: any) => toast.error(e?.response?.data?.error?.message || 'Failed'),
             })}
             onReject={(note) => reject.mutate({ id: selectedId, note }, {
-              onSuccess: () => toast.success('Request rejected'),
+              onSuccess: () => { toast.success('Request rejected'); setSelectedId(null); },
               onError: (e: any) => toast.error(e?.response?.data?.error?.message || 'Failed'),
             })}
             onAutoAssign={() => autoAssign.mutate(selectedId, {
-              onSuccess: (d: any) => toast.success(`${d.assigned} leads assigned`),
+              onSuccess: (d: any) => { toast.success(`${d.assigned} leads assigned`); setSelectedId(null); },
               onError: (e: any) => toast.error(e?.response?.data?.error?.message || 'Failed'),
             })}
             onCancel={() => cancel.mutate(selectedId, {
@@ -204,7 +205,7 @@ function PartnerRequestsInner() {
             isPending={approve.isPending || reject.isPending || autoAssign.isPending}
           />
         )}
-      </div>
+      </Modal>
     </div>
   );
 }
@@ -244,7 +245,7 @@ function RequestRow({ req: r, selected, onSelect }: { req: PartnerRequest; selec
           <span className="text-xs tabular-nums text-slate-500">{r.leads_assigned}/{r.quantity}</span>
         </div>
       </td>
-      <td className="px-4 py-3 text-xs text-slate-500">{fmtRelative(r.created_at)}</td>
+      <td className="px-4 py-3 text-xs text-slate-500" title={formatISTTooltip(r.created_at)}>{formatISTCompact(r.created_at)}</td>
       <td className="px-4 py-3">
         <ChevronRight className="h-4 w-4 text-slate-400" />
       </td>
@@ -253,7 +254,7 @@ function RequestRow({ req: r, selected, onSelect }: { req: PartnerRequest; selec
 }
 
 function DetailPanel({
-  id, detail, loading, canManage, onClose, onApprove, onReject, onAutoAssign, onCancel, isPending,
+  id: _id, detail, loading, canManage, onClose: _onClose, onApprove, onReject, onAutoAssign, onCancel, isPending,
 }: {
   id: string;
   detail: (PartnerRequest & { timeline?: any[] }) | null;
@@ -272,7 +273,7 @@ function DetailPanel({
 
   if (loading || !r) {
     return (
-      <div className="w-full lg:w-96 shrink-0">
+      <div className="w-full">
         <div className="card-padded space-y-4">
           <Skeleton className="h-8" />
           <Skeleton className="h-32" />
@@ -287,7 +288,7 @@ function DetailPanel({
   const pct = r.quantity > 0 ? Math.round((r.leads_assigned / r.quantity) * 100) : 0;
 
   return (
-    <div className="w-full lg:w-96 shrink-0 space-y-4">
+    <div className="space-y-4 py-3">
       {/* Header */}
       <div className="card-padded">
         <div className="flex items-start justify-between">
@@ -296,9 +297,6 @@ function DetailPanel({
             <p className="text-xs text-slate-500">{r.partner_email} · {r.partner_phone}</p>
             {r.partner_cp_id && <p className="text-xs text-slate-500">CP ID: {r.partner_cp_id}</p>}
           </div>
-          <button onClick={onClose} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 lg:hidden">
-            <X className="h-5 w-5" />
-          </button>
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-3">
@@ -354,10 +352,10 @@ function DetailPanel({
         )}
 
         <div className="mt-3 space-y-1 text-xs text-slate-500">
-          <div>Created: {fmtDate(r.created_at)}</div>
+          <div>Created: {formatISTDateTime(r.created_at)}</div>
           {r.rm_name && <div>Assigned RM: <span className="font-medium text-slate-700">{r.rm_name}</span></div>}
           {r.resolved_by_name && <div>Resolved by: <span className="font-medium text-slate-700">{r.resolved_by_name}</span></div>}
-          {r.resolved_at && <div>Resolved: {fmtDate(r.resolved_at)}</div>}
+          {r.resolved_at && <div>Resolved: {formatISTDateTime(r.resolved_at)}</div>}
         </div>
       </div>
 
