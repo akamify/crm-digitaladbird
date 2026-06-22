@@ -4083,7 +4083,7 @@ router.post('/admin/google-sheets/export-leads-by-category', authenticate, requi
     dateTo: body.date_to || null,
     skipDuplicates: body.skip_duplicates !== false,
   });
-  res.json({ success: true, data });
+  res.json({ success: true, data, ...data });
 }));
 
 // ── Sheet → CRM import ────────────────────────────────────────────────

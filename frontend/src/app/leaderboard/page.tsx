@@ -1,8 +1,9 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import { useMemo, useState } from 'react';
 import {
-  Award, BarChart3, CheckCircle2, Clock, Loader2, Medal, RefreshCw,
+  BarChart3, Clock, Loader2, Medal, RefreshCw,
   Target, Trophy, Users,
 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
@@ -70,8 +71,8 @@ function LeaderboardInner() {
 
   return (
     <div className="space-y-5">
-      <header className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+      <header className="rounded-xl border border-slate-200 bg-white px-2 py-4 shadow-sm">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h1 className="font-display text-2xl font-semibold text-slate-900">Leaderboard</h1>
             <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
@@ -277,7 +278,7 @@ function SegmentedControl<T extends string>({
   );
 }
 
-function MetricTile({ label, value, icon }: { label: string; value: string | number; icon: React.ReactNode }) {
+function MetricTile({ label, value, icon }: { label: string; value: string | number; icon: ReactNode }) {
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
       <div className="flex items-center gap-2 text-xs text-slate-500">{icon}{label}</div>

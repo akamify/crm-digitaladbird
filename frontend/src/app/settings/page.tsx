@@ -1276,8 +1276,8 @@ function GoogleSheetRoutingPanel() {
   const [form, setForm] = useState({
     spreadsheet_id: '',
     default_sheet_name: 'Leads',
-    trader_sheet_name: 'Trader Leads',
-    partner_sheet_name: 'Partner Leads',
+    trader_sheet_name: 'Traders',
+    partner_sheet_name: 'Partners',
     unknown_sheet_name: 'Unknown Leads',
     auto_create_missing_sheets: true,
     category_sheet_routing_enabled: true,
@@ -1288,9 +1288,9 @@ function GoogleSheetRoutingPanel() {
     setForm({
       spreadsheet_id: routing.data.spreadsheet_id || '',
       default_sheet_name: routing.data.default_sheet_name || 'Leads',
-      trader_sheet_name: routing.data.trader_sheet_name || '',
-      partner_sheet_name: routing.data.partner_sheet_name || '',
-      unknown_sheet_name: routing.data.unknown_sheet_name || '',
+      trader_sheet_name: routing.data.trader_sheet_name || 'Traders',
+      partner_sheet_name: routing.data.partner_sheet_name || 'Partners',
+      unknown_sheet_name: routing.data.unknown_sheet_name || 'Unknown Leads',
       auto_create_missing_sheets: routing.data.auto_create_missing_sheets,
       category_sheet_routing_enabled: routing.data.category_sheet_routing_enabled,
     });
@@ -1674,6 +1674,8 @@ function LegacySheetCredentialsManager() {
 
 function SheetCredentialsManager() {
   const routing = useGoogleSheetRoutingSettings();
+  const createTabs = useCreateMissingGoogleSheetTabs();
+  const exportByCategory = useExportLeadsByCategoryToSheets();
   const [open, setOpen] = useState(false);
 
   return (
@@ -1685,6 +1687,40 @@ function SheetCredentialsManager() {
           {routing.data?.connected ? `Live · source: ${routing.data?.source || '-'}` : routing.isLoading ? 'Checking...' : 'Not connected'}
         </span>
         <div className="ml-auto flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => createTabs.mutate(undefined, {
+              onSuccess: (result) => {
+                const created = result.created?.length ? `Created: ${result.created.join(', ')}` : '';
+                const existing = result.existing?.length ? `Existing: ${result.existing.join(', ')}` : '';
+                toast.success([created, existing].filter(Boolean).join(' | ') || 'All configured tabs are ready');
+              },
+              onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to create missing tabs'),
+            })}
+            loading={createTabs.isPending}
+          >
+            Create Missing Tabs
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => exportByCategory.mutate({
+              mode: 'export_all',
+              category: 'all',
+              skip_duplicates: true,
+            }, {
+              onSuccess: (result) => {
+                const summary = result.summary || {};
+                const total = Object.values(summary).reduce((sum, item) => sum + Number(item.upserted || item.count || 0), 0);
+                toast.success(total ? `Backfill complete: ${total} sheet rows processed` : 'No leads matched for export');
+              },
+              onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Backfill export failed'),
+            })}
+            loading={exportByCategory.isPending}
+          >
+            Export Existing Leads
+          </Button>
           <Button size="sm" leftIcon={<Pencil className="h-3.5 w-3.5" />} onClick={() => setOpen(true)}>
             Update Sheet Names
           </Button>
@@ -1798,33 +1834,43 @@ function SheetCredentialsModal({ open, onClose, target: _target, defaultPurpose:
   const testRouting = useTestGoogleSheetRouting();
   const [form, setForm] = useState({
     default_sheet_name: 'Leads',
-    trader_sheet_name: 'Trader Leads',
-    partner_sheet_name: 'Partner Leads',
+    trader_sheet_name: 'Traders',
+    partner_sheet_name: 'Partners',
     unknown_sheet_name: 'Unknown Leads',
   });
+  const formKey = JSON.stringify(form);
+  const [lastPassedTestKey, setLastPassedTestKey] = useState<string | null>(null);
 
   React.useEffect(() => {
     if (!open || !routing.data) return;
     setForm({
       default_sheet_name: routing.data.default_sheet_name || 'Leads',
-      trader_sheet_name: routing.data.trader_sheet_name || '',
-      partner_sheet_name: routing.data.partner_sheet_name || '',
-      unknown_sheet_name: routing.data.unknown_sheet_name || routing.data.default_sheet_name || 'Leads',
+      trader_sheet_name: routing.data.trader_sheet_name || 'Traders',
+      partner_sheet_name: routing.data.partner_sheet_name || 'Partners',
+      unknown_sheet_name: routing.data.unknown_sheet_name || 'Unknown Leads',
     });
+    setLastPassedTestKey(null);
   }, [open, routing.data]);
 
   function handleTest() {
     testRouting.mutate(form, {
       onSuccess: (response) => {
         const payload = (response as { data?: unknown })?.data ?? response ?? {};
-        const results = (payload as { results?: Record<string, { exists?: boolean }> })?.results
-          ?? ((payload as { data?: { results?: Record<string, { exists?: boolean }> } })?.data?.results ?? {});
+        const results = (payload as { results?: Record<string, { exists?: boolean; header_valid?: boolean }> })?.results
+          ?? ((payload as { data?: { results?: Record<string, { exists?: boolean; header_valid?: boolean }> } })?.data?.results ?? {});
         const rows = Object.values(results || {});
-        const missing = rows.filter((row) => !row.exists);
+        const missing = rows.filter((row) => !row.exists || row.header_valid === false);
+        const demoWritten = Boolean((payload as { demo_written?: boolean })?.demo_written
+          ?? (payload as { data?: { demo_written?: boolean } })?.data?.demo_written);
         if (missing.length) {
-          toast.success('Sheet test completed. Some tabs are missing.');
+          setLastPassedTestKey(null);
+          toast.success('Sheet test completed. Some tabs are missing or need header repair.');
+        } else if (!demoWritten) {
+          setLastPassedTestKey(null);
+          toast.error('Sheet tabs are valid, but demo row could not be saved.');
         } else {
-          toast.success('All sheet tabs found.');
+          setLastPassedTestKey(formKey);
+          toast.success('All sheet tabs found. Demo rows saved successfully.');
         }
       },
       onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string }, message?: string } } })?.response?.data?.error?.message || (e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Sheet test failed'),
@@ -1832,6 +1878,10 @@ function SheetCredentialsModal({ open, onClose, target: _target, defaultPurpose:
   }
 
   function handleSave() {
+    if (lastPassedTestKey !== formKey) {
+      toast.error('Please test these sheet names before saving.');
+      return;
+    }
     updateRouting.mutate(form, {
       onSuccess: () => {
         toast.success('Google Sheet names saved successfully.');
@@ -1843,17 +1893,22 @@ function SheetCredentialsModal({ open, onClose, target: _target, defaultPurpose:
 
   const testPayload = (testRouting.data as { data?: unknown } | undefined)?.data ?? testRouting.data ?? null;
   const testResults = (testPayload as { results?: {
-    default: { sheet_name: string; exists: boolean };
-    trader: { sheet_name: string; exists: boolean };
-    partner: { sheet_name: string; exists: boolean };
-    unknown: { sheet_name: string; exists: boolean };
+    default: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
+    trader: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
+    partner: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
+    unknown: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
   } } | null)?.results
     ?? ((testPayload as { data?: { results?: {
-      default: { sheet_name: string; exists: boolean };
-      trader: { sheet_name: string; exists: boolean };
-      partner: { sheet_name: string; exists: boolean };
-      unknown: { sheet_name: string; exists: boolean };
+      default: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
+      trader: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
+      partner: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
+      unknown: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
     } } } | null)?.data?.results ?? null);
+  const canSave = lastPassedTestKey === formKey;
+  const updateField = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    setForm((s) => ({ ...s, [key]: e.target.value }));
+    setLastPassedTestKey(null);
+  };
 
   return (
     <Modal
@@ -1865,33 +1920,49 @@ function SheetCredentialsModal({ open, onClose, target: _target, defaultPurpose:
         <>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button variant="outline" onClick={handleTest} loading={testRouting.isPending}>Test</Button>
-          <Button onClick={handleSave} loading={updateRouting.isPending}>Save</Button>
+          <Button onClick={handleSave} loading={updateRouting.isPending} disabled={!canSave}>Save</Button>
         </>
       }
     >
       <div className="space-y-4">
-        <Input label="Default Sheet Name" value={form.default_sheet_name} onChange={(e) => setForm((s) => ({ ...s, default_sheet_name: e.target.value }))} />
-        <Input label="Trader Leads Sheet Name" value={form.trader_sheet_name} onChange={(e) => setForm((s) => ({ ...s, trader_sheet_name: e.target.value }))} />
-        <Input label="Partner Leads Sheet Name" value={form.partner_sheet_name} onChange={(e) => setForm((s) => ({ ...s, partner_sheet_name: e.target.value }))} />
-        <Input label="Unknown Leads Sheet Name" value={form.unknown_sheet_name} onChange={(e) => setForm((s) => ({ ...s, unknown_sheet_name: e.target.value }))} />
+        <Input label="Default Sheet Name" value={form.default_sheet_name} onChange={updateField('default_sheet_name')} />
+        <Input label="Trader Leads Sheet Name" value={form.trader_sheet_name} onChange={updateField('trader_sheet_name')} />
+        <Input label="Partner Leads Sheet Name" value={form.partner_sheet_name} onChange={updateField('partner_sheet_name')} />
+        <Input label="Unknown Leads Sheet Name" value={form.unknown_sheet_name} onChange={updateField('unknown_sheet_name')} />
+        <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+          <div>All leads are written to {form.default_sheet_name || 'Leads'}.</div>
+          <div>Trader leads are also written to {form.trader_sheet_name || 'Traders'}.</div>
+          <div>Partner leads are also written to {form.partner_sheet_name || 'Partners'}.</div>
+          <div>Unknown leads are also written to {form.unknown_sheet_name || form.default_sheet_name || 'Unknown Leads'}.</div>
+        </div>
+        {!canSave && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            Test is required before saving. The test writes demo rows using these sheet names.
+          </div>
+        )}
 
         {testResults && (
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
             <div className="text-xs font-semibold text-slate-900">Sheet Test Results</div>
             <div className="mt-2 space-y-2 text-xs">
               {([
-                ['Default', testResults.default],
-                ['Trader', testResults.trader],
-                ['Partner', testResults.partner],
-                ['Unknown', testResults.unknown],
+                ['Leads', testResults.default],
+                ['Traders', testResults.trader],
+                ['Partners', testResults.partner],
+                ['Unknown Leads', testResults.unknown],
               ] as const).map(([label, result]) => (
                 <div key={label} className="flex items-center justify-between rounded-md bg-white px-3 py-2">
                   <div>
                     <div className="font-medium text-slate-900">{label}</div>
                     <div className="text-slate-500">{result.sheet_name}</div>
+                    {result.header_missing_columns?.length ? (
+                      <div className="mt-1 text-[10px] text-amber-700">
+                        Missing header columns: {result.header_missing_columns.join(', ')}
+                      </div>
+                    ) : null}
                   </div>
-                  <span className={clsx('chip text-[10px]', result.exists ? 'chip-emerald' : 'chip-amber')}>
-                    {result.exists ? 'Found' : 'Missing'}
+                  <span className={clsx('chip text-[10px]', result.exists && result.header_valid !== false ? 'chip-emerald' : 'chip-amber')}>
+                    {!result.exists ? 'Missing' : result.header_valid === false ? 'Header needs fix' : 'Ready'}
                   </span>
                 </div>
               ))}

@@ -18,15 +18,31 @@ function cleanedName(value) {
   return name || null;
 }
 
-function resolveLeadSheetName({ lead, config }) {
+function resolveConfiguredSheetNames(config) {
   const cfg = config || {};
-  const category = normalizeCategory(lead?.category);
   const defaultSheetName = cleanedName(cfg.default_sheet_name || cfg.sheet_name || 'Leads');
-  const routingEnabled = cfg.category_sheet_routing_enabled !== false;
-
   if (!defaultSheetName) {
     throw new Error('Default Google Sheet tab name is missing.');
   }
+
+  return {
+    defaultSheetName,
+    traderSheetName: cleanedName(cfg.trader_sheet_name || 'Traders') || defaultSheetName,
+    partnerSheetName: cleanedName(cfg.partner_sheet_name || 'Partners') || defaultSheetName,
+    unknownSheetName: cleanedName(cfg.unknown_sheet_name || 'Unknown Leads') || defaultSheetName,
+  };
+}
+
+function resolveLeadSheetName({ lead, config }) {
+  const cfg = config || {};
+  const category = normalizeCategory(lead?.lead_type || lead?.category || lead?.type || lead?.lead_category);
+  const {
+    defaultSheetName,
+    traderSheetName,
+    partnerSheetName,
+    unknownSheetName,
+  } = resolveConfiguredSheetNames(cfg);
+  const routingEnabled = cfg.category_sheet_routing_enabled !== false;
 
   if (!routingEnabled) {
     return { sheetName: defaultSheetName, category, source: 'default_sheet' };
@@ -34,29 +50,62 @@ function resolveLeadSheetName({ lead, config }) {
 
   if (category === 'trader') {
     return {
-      sheetName: cleanedName(cfg.trader_sheet_name) || defaultSheetName,
+      sheetName: traderSheetName,
       category,
-      source: cleanedName(cfg.trader_sheet_name) ? 'category_routing' : 'default_sheet',
+      source: traderSheetName === defaultSheetName ? 'default_sheet' : 'category_routing',
     };
   }
 
   if (category === 'partner') {
     return {
-      sheetName: cleanedName(cfg.partner_sheet_name) || defaultSheetName,
+      sheetName: partnerSheetName,
       category,
-      source: cleanedName(cfg.partner_sheet_name) ? 'category_routing' : 'default_sheet',
+      source: partnerSheetName === defaultSheetName ? 'default_sheet' : 'category_routing',
     };
   }
 
   return {
-    sheetName: cleanedName(cfg.unknown_sheet_name) || defaultSheetName,
+    sheetName: unknownSheetName,
     category,
-    source: cleanedName(cfg.unknown_sheet_name) ? 'category_routing' : 'default_sheet',
+    source: unknownSheetName === defaultSheetName ? 'default_sheet' : 'category_routing',
   };
+}
+
+function resolveLeadSheetTargets({ lead, config }) {
+  const cfg = config || {};
+  const category = normalizeCategory(lead?.lead_type || lead?.category || lead?.type || lead?.lead_category);
+  const {
+    defaultSheetName,
+    traderSheetName,
+    partnerSheetName,
+    unknownSheetName,
+  } = resolveConfiguredSheetNames(cfg);
+  const routingEnabled = cfg.category_sheet_routing_enabled !== false;
+  const targets = [{ key: 'master', sheetName: defaultSheetName, category, source: 'master_sheet' }];
+
+  if (routingEnabled) {
+    if (category === 'trader') {
+      targets.push({ key: 'trader', sheetName: traderSheetName, category, source: 'category_routing' });
+    } else if (category === 'partner') {
+      targets.push({ key: 'partner', sheetName: partnerSheetName, category, source: 'category_routing' });
+    } else if (unknownSheetName) {
+      targets.push({ key: 'unknown', sheetName: unknownSheetName, category, source: 'category_routing' });
+    }
+  }
+
+  const seen = new Set();
+  return targets.filter((target) => {
+    const key = target.sheetName.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 module.exports = {
   normalizeCategory,
   sanitizeSheetName,
   resolveLeadSheetName,
+  resolveLeadSheetTargets,
+  resolveConfiguredSheetNames,
 };

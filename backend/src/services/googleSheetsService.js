@@ -27,7 +27,12 @@ const { google } = require('googleapis');
 const { query }  = require('../config/database');
 const logger     = require('../utils/logger');
 const { decrypt } = require('../utils/secretsCrypto');
-const { resolveLeadSheetName, sanitizeSheetName, normalizeCategory } = require('./googleSheets/googleSheetNameResolver');
+const {
+  resolveLeadSheetTargets,
+  resolveConfiguredSheetNames,
+  sanitizeSheetName,
+  normalizeCategory,
+} = require('./googleSheets/googleSheetNameResolver');
 const notificationService = require('./notifications/notificationService');
 
 const SCOPES = [
@@ -84,9 +89,9 @@ function getRoutingConfig(config = {}) {
   return {
     ...config,
     default_sheet_name: sanitizeSheetName(config.default_sheet_name || config.sheet_name || 'Leads') || 'Leads',
-    trader_sheet_name: sanitizeSheetName(config.trader_sheet_name || ''),
-    partner_sheet_name: sanitizeSheetName(config.partner_sheet_name || ''),
-    unknown_sheet_name: sanitizeSheetName(config.unknown_sheet_name || ''),
+    trader_sheet_name: sanitizeSheetName(config.trader_sheet_name || 'Traders') || 'Traders',
+    partner_sheet_name: sanitizeSheetName(config.partner_sheet_name || 'Partners') || 'Partners',
+    unknown_sheet_name: sanitizeSheetName(config.unknown_sheet_name || 'Unknown Leads') || 'Unknown Leads',
     auto_create_missing_sheets: config.auto_create_missing_sheets !== false,
     category_sheet_routing_enabled: config.category_sheet_routing_enabled !== false,
   };
@@ -379,7 +384,9 @@ async function ensureSheetExists({ sheets, spreadsheetId, sheetName, headers = H
     range: `${targetName}!A1:R1`,
   }).catch(() => ({ data: { values: [] } }));
 
-  if (!current.data.values || current.data.values.length === 0) {
+  const headerRow = current.data.values?.[0] || [];
+  const missingColumns = getMissingHeaderColumns(headerRow, headers);
+  if (!current.data.values || current.data.values.length === 0 || missingColumns.length > 0 || !headersMatchExactly(headerRow, headers)) {
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range: `${targetName}!A1`,
@@ -433,31 +440,194 @@ const HEADERS = [
 ];
 
 function leadToRow(l) {
+  const category = normalizeCategory(l.lead_type || l.category || l.type || l.lead_category);
+  const campaignName = firstValue(
+    l.campaign_name,
+    l.meta_campaign_name,
+    l.meta_campaign_table_name,
+    l.meta_campaign_label,
+    l.campaign_label,
+    l.campaign,
+    l.campaign_code,
+  );
+  const campaign = firstValue(l.campaign, l.campaign_code, l.campaign_label, l.meta_campaign_label, campaignName);
+  const rmName = firstValue(l.rm_name, l.report_to_name, l.team_rm_name);
+  const assignedName = firstValue(l.assigned_to_name, l.assigned_user_name);
+  const teamName = firstValue(l.team_name, l.rm_team_name, rmName ? `Team ${rmName}` : '');
+  const status = firstValue(l.status, '');
+  const callStatus = firstValue(l.call_status, 'not_called');
+  const stage = firstValue(l.stage, status, 'new');
+
   return [
-    l.id || '',
-    l.full_name || '',
-    l.phone || '',
-    l.email || '',
-    l.campaign_label || l.meta_campaign_label || '',
-    l.campaign_name || '',
-    l.adset_name || '',
-    l.ad_name || '',
-    l.rm_name || '',
-    l.category || '',
-    l.call_status || 'pending',
-    l.call_status || 'pending',
-    l.stage || 'new',
-    l.source || 'manual',
-    l.assigned_to_name || '',
-    l.team_name || '',
+    firstValue(l.id, l.lead_id),
+    firstValue(l.full_name, l.name, l.customer_name),
+    firstValue(l.normalized_phone, l.phone),
+    firstValue(l.email, l.meta_email),
+    campaign,
+    campaignName,
+    firstValue(l.adset_name, l.ad_set_name, l.meta_adset_name),
+    firstValue(l.ad_name, l.meta_ad_name),
+    rmName,
+    category,
+    status,
+    callStatus,
+    stage,
+    firstValue(l.source, 'manual'),
+    assignedName,
+    teamName,
     l.created_at ? formatIST(l.created_at) : '',
     l.updated_at ? formatIST(l.updated_at) : '',
   ];
 }
 
+function firstValue(...values) {
+  for (const value of values) {
+    if (value !== null && value !== undefined && String(value).trim() !== '') {
+      return String(value).trim();
+    }
+  }
+  return '';
+}
+
+function getMissingHeaderColumns(currentHeader = [], requiredHeader = HEADERS) {
+  const current = new Set((currentHeader || []).map((value) => String(value || '').trim()));
+  return requiredHeader.filter((header) => !current.has(header));
+}
+
+function headersMatchExactly(currentHeader = [], requiredHeader = HEADERS) {
+  return requiredHeader.every((header, index) => String(currentHeader[index] || '').trim() === header)
+    && currentHeader.length === requiredHeader.length;
+}
+
+async function getSheetHeaderStatus({ sheets, spreadsheetId, sheetName }) {
+  const targetName = sanitizeSheetName(sheetName);
+  if (!targetName) {
+    return { sheet_name: '', exists: false, missing: true, header_valid: false, header_missing_columns: HEADERS };
+  }
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: 'sheets.properties.title',
+  });
+  const exists = (meta.data.sheets || []).some((sheet) => sheet.properties?.title === targetName);
+  if (!exists) {
+    return {
+      sheet_name: targetName,
+      exists: false,
+      missing: true,
+      header_valid: false,
+      header_missing_columns: HEADERS,
+      message: 'Sheet tab not found.',
+    };
+  }
+  const current = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${targetName}!A1:R1`,
+  }).catch(() => ({ data: { values: [] } }));
+  const header = current.data.values?.[0] || [];
+  const missingColumns = getMissingHeaderColumns(header);
+  return {
+    sheet_name: targetName,
+    exists: true,
+    missing: false,
+    header_valid: missingColumns.length === 0 && headersMatchExactly(header),
+    header_missing_columns: missingColumns,
+  };
+}
+
+async function upsertLeadToSheet({ sheets, spreadsheetId, sheetName, lead, autoCreate }) {
+  const targetSheet = await ensureSheetExists({
+    sheets,
+    spreadsheetId,
+    sheetName,
+    headers: HEADERS,
+    autoCreate,
+  });
+  const leadId = String(lead.id || lead.lead_id || '').trim();
+  if (!leadId) throw new Error('Lead ID is required for Google Sheet upsert.');
+
+  const existingData = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${targetSheet}!A:A`,
+  }).catch(() => ({ data: { values: [] } }));
+  const rows = existingData.data.values || [];
+  const rowIndex = rows.findIndex((row) => String(row[0] || '').trim() === leadId);
+  const values = [leadToRow(lead)];
+
+  if (rowIndex >= 0) {
+    const rowNum = rowIndex + 1;
+    await withRetry(async () => {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${targetSheet}!A${rowNum}:R${rowNum}`,
+        valueInputOption: 'RAW',
+        requestBody: { values },
+      });
+    }, `upsertUpdate:${targetSheet}`);
+    return { sheetName: targetSheet, action: 'updated', row: rowNum };
+  }
+
+  await withRetry(async () => {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${targetSheet}!A:R`,
+      valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: { values },
+    });
+  }, `upsertAppend:${targetSheet}`);
+  return { sheetName: targetSheet, action: 'appended', row: null };
+}
+
+function buildRoutingDemoLead(category) {
+  const normalized = normalizeCategory(category);
+  const now = new Date();
+  const label = normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  return {
+    id: `DEMO-${normalized.toUpperCase()}-ROUTING`,
+    full_name: `${label} Demo Lead`,
+    phone: '+910000000000',
+    email: `${normalized}.demo@digitaladbird.test`,
+    campaign: 'DEMO',
+    campaign_name: `${label} Google Sheet Routing Test`,
+    adset_name: 'Demo Ad Set',
+    ad_name: 'Demo Ad',
+    rm_name: 'Demo RM',
+    category: normalized,
+    status: 'test',
+    call_status: 'not_called',
+    stage: 'new',
+    source: 'google_sheet_test',
+    assigned_to_name: 'Demo Member',
+    team_name: 'Demo Team',
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+async function writeRoutingDemoRows({ sheets, spreadsheetId, config }) {
+  const writes = {};
+  for (const category of ['trader', 'partner', 'unknown']) {
+    const lead = buildRoutingDemoLead(category);
+    const targets = resolveLeadSheetTargets({ lead, config });
+    writes[category] = [];
+    for (const target of targets) {
+      const result = await upsertLeadToSheet({
+        sheets,
+        spreadsheetId,
+        sheetName: target.sheetName,
+        lead,
+        autoCreate: false,
+      });
+      writes[category].push({ ...target, ...result });
+    }
+  }
+  return writes;
+}
+
 function formatIST(dateStr) {
   try {
     const d = new Date(dateStr);
+    if (Number.isNaN(d.getTime())) return '';
     return d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true });
   } catch { return String(dateStr); }
 }
@@ -469,7 +639,9 @@ const LEAD_SELECT_SQL = `
          u.full_name AS assigned_to_name,
          u.team_name,
          rm.full_name AS rm_name,
-         mc.internal_label AS meta_campaign_label
+         rm.team_name AS rm_team_name,
+         mc.internal_label AS meta_campaign_label,
+         mc.campaign_name AS meta_campaign_name
     FROM leads l
     LEFT JOIN users u  ON u.id = l.assigned_to_user_id
     LEFT JOIN users rm ON rm.id = u.report_to_id
@@ -493,9 +665,10 @@ async function syncAllLeads() {
 
   const grouped = new Map();
   for (const lead of rows) {
-    const resolved = resolveLeadSheetName({ lead, config: routingConfig });
-    if (!grouped.has(resolved.sheetName)) grouped.set(resolved.sheetName, []);
-    grouped.get(resolved.sheetName).push(lead);
+    for (const target of resolveLeadSheetTargets({ lead, config: routingConfig })) {
+      if (!grouped.has(target.sheetName)) grouped.set(target.sheetName, []);
+      grouped.get(target.sheetName).push(lead);
+    }
   }
 
   for (const [sheetName, leads] of grouped.entries()) {
@@ -561,53 +734,47 @@ async function appendLead(leadId) {
     return { appended: false, reason: 'not_found' };
   }
 
-  const resolved = resolveLeadSheetName({ lead: l, config: routingConfig });
-  const SHEET_NAME = await ensureSheetExists({
-    sheets,
-    spreadsheetId: SHEET_ID,
-    sheetName: resolved.sheetName,
-    headers: HEADERS,
-    autoCreate: routingConfig.auto_create_missing_sheets,
-  });
-
-  const existingData = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID,
-    range: `${SHEET_NAME}!A:A`,
-  }).catch(() => ({ data: { values: [] } }));
-  const rowIndex = (existingData.data.values || []).findIndex(row => row[0] === leadId);
-  if (rowIndex >= 0) {
-    return updateLeadRow(leadId);
-  }
-
+  const targets = resolveLeadSheetTargets({ lead: l, config: routingConfig });
+  const results = [];
   try {
-    await withRetry(async () => {
-      await sheets.spreadsheets.values.append({
+    for (const target of targets) {
+      const result = await upsertLeadToSheet({
+        sheets,
         spreadsheetId: SHEET_ID,
-        range: `${SHEET_NAME}!A:R`,
-        valueInputOption: 'RAW',
-        insertDataOption: 'INSERT_ROWS',
-        requestBody: { values: [leadToRow(l)] },
+        sheetName: target.sheetName,
+        lead: l,
+        autoCreate: routingConfig.auto_create_missing_sheets,
       });
-    }, 'appendLead');
+      results.push({ ...target, ...result });
+    }
     await updateLeadSheetSyncMeta(leadId, {
       ok: true,
       spreadsheetId: SHEET_ID,
-      sheetName: SHEET_NAME,
+      sheetName: results.map((result) => result.sheetName).join(', '),
       error: null,
     });
   } catch (err) {
     await updateLeadSheetSyncMeta(leadId, {
       ok: false,
       spreadsheetId: SHEET_ID,
-      sheetName: SHEET_NAME,
+      sheetName: results.map((result) => result.sheetName).join(', ') || null,
       error: err.message,
     });
-    await notifySheetSyncFailure({ lead: l, sheetName: SHEET_NAME, spreadsheetId: SHEET_ID, error: err.message });
+    await notifySheetSyncFailure({
+      lead: l,
+      sheetName: results.map((result) => result.sheetName).join(', ') || 'Google Sheets',
+      spreadsheetId: SHEET_ID,
+      error: err.message,
+    });
     throw err;
   }
 
-  logger.info({ leadId, name: l.full_name }, '[Sheets] Lead appended');
-  return { appended: true };
+  logger.info({ leadId, name: l.full_name, sheets: results.map((result) => result.sheetName) }, '[Sheets] Lead upserted');
+  return {
+    appended: results.some((result) => result.action === 'appended'),
+    updated: results.some((result) => result.action === 'updated'),
+    targets: results,
+  };
 }
 
 // ─── Update existing lead row ───────────────────────────────────────
@@ -622,62 +789,43 @@ async function updateLeadRow(leadId) {
   const { rows: [l] } = await query(LEAD_SELECT_SQL + ' AND l.id = $1', [leadId]);
   if (!l) return { updated: false, reason: 'not_found' };
 
-  const resolved = resolveLeadSheetName({ lead: l, config: routingConfig });
-  const SHEET_NAME = await ensureSheetExists({
-    sheets,
-    spreadsheetId: SHEET_ID,
-    sheetName: resolved.sheetName,
-    headers: HEADERS,
-    autoCreate: routingConfig.auto_create_missing_sheets,
-  });
-
-  // Find the row with this lead ID
-  let existingData;
+  const targets = resolveLeadSheetTargets({ lead: l, config: routingConfig });
+  const results = [];
   try {
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `${SHEET_NAME}!A:A`,
-    });
-    existingData = res.data.values || [];
-  } catch {
-    return { updated: false, reason: 'read_failed' };
-  }
-
-  const rowIndex = existingData.findIndex(row => row[0] === leadId);
-  if (rowIndex < 0) {
-    // Not in sheet yet — append instead
-    return appendLead(leadId);
-  }
-
-  const rowNum = rowIndex + 1; // 1-based
-  try {
-    await withRetry(async () => {
-      await sheets.spreadsheets.values.update({
+    for (const target of targets) {
+      const result = await upsertLeadToSheet({
+        sheets,
         spreadsheetId: SHEET_ID,
-        range: `${SHEET_NAME}!A${rowNum}:R${rowNum}`,
-        valueInputOption: 'RAW',
-        requestBody: { values: [leadToRow(l)] },
+        sheetName: target.sheetName,
+        lead: l,
+        autoCreate: routingConfig.auto_create_missing_sheets,
       });
-    }, 'updateRow');
+      results.push({ ...target, ...result });
+    }
     await updateLeadSheetSyncMeta(leadId, {
       ok: true,
       spreadsheetId: SHEET_ID,
-      sheetName: SHEET_NAME,
+      sheetName: results.map((result) => result.sheetName).join(', '),
       error: null,
     });
   } catch (err) {
     await updateLeadSheetSyncMeta(leadId, {
       ok: false,
       spreadsheetId: SHEET_ID,
-      sheetName: SHEET_NAME,
+      sheetName: results.map((result) => result.sheetName).join(', ') || null,
       error: err.message,
     });
-    await notifySheetSyncFailure({ lead: l, sheetName: SHEET_NAME, spreadsheetId: SHEET_ID, error: err.message });
+    await notifySheetSyncFailure({
+      lead: l,
+      sheetName: results.map((result) => result.sheetName).join(', ') || 'Google Sheets',
+      spreadsheetId: SHEET_ID,
+      error: err.message,
+    });
     throw err;
   }
 
-  logger.info({ leadId, row: rowNum }, '[Sheets] Lead row updated');
-  return { updated: true, row: rowNum };
+  logger.info({ leadId, sheets: results.map((result) => result.sheetName) }, '[Sheets] Lead rows upserted');
+  return { updated: true, targets: results };
 }
 
 // ─── Connectivity check ─────────────────────────────────────────────
@@ -896,49 +1044,63 @@ async function updateSheetRoutingSettings(patch = {}) {
 
 async function testSheetRouting(input = 'unknown') {
   const c = await initClients();
-  const meta = await c.sheets.spreadsheets.get({
-    spreadsheetId: c.sheetId,
-    fields: 'sheets.properties.title',
+  const settings = typeof input === 'string'
+    ? await getSheetRoutingSettings()
+    : { ...(await getSheetRoutingSettings()), ...(input || {}) };
+  const config = getRoutingConfig({
+    sheet_name: settings.default_sheet_name,
+    default_sheet_name: settings.default_sheet_name,
+    trader_sheet_name: settings.trader_sheet_name,
+    partner_sheet_name: settings.partner_sheet_name,
+    unknown_sheet_name: settings.unknown_sheet_name,
+    auto_create_missing_sheets: settings.auto_create_missing_sheets,
+    category_sheet_routing_enabled: settings.category_sheet_routing_enabled,
   });
-  const existingTitles = new Set((meta.data.sheets || []).map((sheet) => sheet.properties?.title).filter(Boolean));
-
-  if (typeof input === 'string') {
-    const settings = await getSheetRoutingSettings();
-    const resolved = resolveLeadSheetName({
-      lead: { category: input },
-      config: {
-        sheet_name: settings.default_sheet_name,
-        default_sheet_name: settings.default_sheet_name,
-        trader_sheet_name: settings.trader_sheet_name,
-        partner_sheet_name: settings.partner_sheet_name,
-        unknown_sheet_name: settings.unknown_sheet_name,
-        auto_create_missing_sheets: settings.auto_create_missing_sheets,
-        category_sheet_routing_enabled: settings.category_sheet_routing_enabled,
-      },
-    });
-    const exists = existingTitles.has(resolved.sheetName);
-    return {
-      category: normalizeCategory(input),
-      sheet_name: resolved.sheetName,
-      sheet_exists: exists,
-      spreadsheet_id: c.sheetId,
-    };
+  const names = resolveConfiguredSheetNames(config);
+  let [master, trader, partner, unknown] = await Promise.all([
+    getSheetHeaderStatus({ sheets: c.sheets, spreadsheetId: c.sheetId, sheetName: names.defaultSheetName }),
+    getSheetHeaderStatus({ sheets: c.sheets, spreadsheetId: c.sheetId, sheetName: names.traderSheetName }),
+    getSheetHeaderStatus({ sheets: c.sheets, spreadsheetId: c.sheetId, sheetName: names.partnerSheetName }),
+    getSheetHeaderStatus({ sheets: c.sheets, spreadsheetId: c.sheetId, sheetName: names.unknownSheetName }),
+  ]);
+  if ([master, trader, partner, unknown].every((status) => status.exists)) {
+    await Promise.all([
+      ensureSheetExists({ sheets: c.sheets, spreadsheetId: c.sheetId, sheetName: names.defaultSheetName, headers: HEADERS, autoCreate: false }),
+      ensureSheetExists({ sheets: c.sheets, spreadsheetId: c.sheetId, sheetName: names.traderSheetName, headers: HEADERS, autoCreate: false }),
+      ensureSheetExists({ sheets: c.sheets, spreadsheetId: c.sheetId, sheetName: names.partnerSheetName, headers: HEADERS, autoCreate: false }),
+      ensureSheetExists({ sheets: c.sheets, spreadsheetId: c.sheetId, sheetName: names.unknownSheetName, headers: HEADERS, autoCreate: false }),
+    ]);
+    [master, trader, partner, unknown] = await Promise.all([
+      getSheetHeaderStatus({ sheets: c.sheets, spreadsheetId: c.sheetId, sheetName: names.defaultSheetName }),
+      getSheetHeaderStatus({ sheets: c.sheets, spreadsheetId: c.sheetId, sheetName: names.traderSheetName }),
+      getSheetHeaderStatus({ sheets: c.sheets, spreadsheetId: c.sheetId, sheetName: names.partnerSheetName }),
+      getSheetHeaderStatus({ sheets: c.sheets, spreadsheetId: c.sheetId, sheetName: names.unknownSheetName }),
+    ]);
   }
-
-  const defaultSheet = sanitizeSheetName(input.default_sheet_name || '') || 'Leads';
-  const traderSheet = sanitizeSheetName(input.trader_sheet_name || '') || defaultSheet;
-  const partnerSheet = sanitizeSheetName(input.partner_sheet_name || '') || defaultSheet;
-  const unknownSheet = sanitizeSheetName(input.unknown_sheet_name || '') || defaultSheet;
+  const sheets = { master, trader, partner, unknown };
+  const results = { default: master, trader, partner, unknown };
+  const routing = {
+    trader: resolveLeadSheetTargets({ lead: { category: 'trader' }, config }).map((target) => target.sheetName),
+    partner: resolveLeadSheetTargets({ lead: { category: 'partner' }, config }).map((target) => target.sheetName),
+    unknown: resolveLeadSheetTargets({ lead: { category: 'unknown' }, config }).map((target) => target.sheetName),
+  };
+  const allReady = Object.values(results).every((result) => result.exists && result.header_valid);
+  const demoWrites = input?.write_demo === false
+    ? null
+    : allReady
+      ? await writeRoutingDemoRows({ sheets: c.sheets, spreadsheetId: c.sheetId, config })
+      : null;
 
   return {
     spreadsheet_id: c.sheetId,
-    results: {
-      default: { sheet_name: defaultSheet, exists: existingTitles.has(defaultSheet) },
-      trader: { sheet_name: traderSheet, exists: existingTitles.has(traderSheet) },
-      partner: { sheet_name: partnerSheet, exists: existingTitles.has(partnerSheet) },
-      unknown: { sheet_name: unknownSheet, exists: existingTitles.has(unknownSheet) },
-    },
-    message: 'Sheet name test completed.',
+    sheets,
+    results,
+    routing,
+    demo_writes: demoWrites,
+    demo_written: !!demoWrites,
+    message: demoWrites
+      ? 'Sheet name test completed and demo rows were saved.'
+      : 'Sheet name test completed.',
   };
 }
 
@@ -954,10 +1116,12 @@ async function createMissingTabs() {
     auto_create_missing_sheets: true,
     category_sheet_routing_enabled: settings.category_sheet_routing_enabled,
   };
+  const names = resolveConfiguredSheetNames(config);
   const tabs = [
-    resolveLeadSheetName({ lead: { category: 'trader' }, config }).sheetName,
-    resolveLeadSheetName({ lead: { category: 'partner' }, config }).sheetName,
-    resolveLeadSheetName({ lead: { category: 'unknown' }, config }).sheetName,
+    names.defaultSheetName,
+    names.traderSheetName,
+    names.partnerSheetName,
+    names.unknownSheetName,
   ];
   const uniqueTabs = [...new Set(tabs.filter(Boolean))];
   const existing = [];
@@ -1016,48 +1180,47 @@ async function exportLeadsByCategory({ mode = 'dry_run', category = 'all', dateF
   }
 
   const { rows } = await query(`${LEAD_SELECT_SQL} AND ${where.join(' AND ')} ORDER BY l.created_at DESC`, params);
-  const summary = {};
-  const groups = new Map();
+  const summary = {
+    master: { sheet_name: resolveConfiguredSheetNames(config).defaultSheetName, count: 0, upserted: 0, updated: 0, appended: 0 },
+    trader: { sheet_name: resolveConfiguredSheetNames(config).traderSheetName, count: 0, upserted: 0, updated: 0, appended: 0 },
+    partner: { sheet_name: resolveConfiguredSheetNames(config).partnerSheetName, count: 0, upserted: 0, updated: 0, appended: 0 },
+    unknown: { sheet_name: resolveConfiguredSheetNames(config).unknownSheetName, count: 0, upserted: 0, updated: 0, appended: 0 },
+  };
   for (const lead of rows) {
-    const resolved = resolveLeadSheetName({ lead, config });
-    if (!groups.has(resolved.sheetName)) groups.set(resolved.sheetName, []);
-    groups.get(resolved.sheetName).push(lead);
-  }
-
-  for (const [sheetName, leads] of groups.entries()) {
-    const key = normalizeCategory(leads[0]?.category);
-    summary[key] = { sheet_name: sheetName, count: leads.length };
-    if (mode === 'dry_run') continue;
-    const targetSheet = await ensureSheetExists({
-      sheets: c.sheets,
-      spreadsheetId: c.sheetId,
-      sheetName,
-      headers: HEADERS,
-      autoCreate: settings.auto_create_missing_sheets,
-    });
-    const columnA = await c.sheets.spreadsheets.values.get({
-      spreadsheetId: c.sheetId,
-      range: `${targetSheet}!A:A`,
-    }).catch(() => ({ data: { values: [] } }));
-    const existingIds = new Set((columnA.data.values || []).map((row) => row[0]).filter(Boolean));
-    const exportRows = skipDuplicates
-      ? leads.filter((lead) => !existingIds.has(lead.id))
-      : leads;
-    if (exportRows.length) {
-      await c.sheets.spreadsheets.values.append({
-        spreadsheetId: c.sheetId,
-        range: `${targetSheet}!A:R`,
-        valueInputOption: 'RAW',
-        insertDataOption: 'INSERT_ROWS',
-        requestBody: { values: exportRows.map(leadToRow) },
-      });
-      for (const lead of exportRows) {
-        await updateLeadSheetSyncMeta(lead.id, { ok: true, spreadsheetId: c.sheetId, sheetName: targetSheet, error: null });
+    const targets = resolveLeadSheetTargets({ lead, config });
+    for (const target of targets) {
+      if (!summary[target.key]) {
+        summary[target.key] = { sheet_name: target.sheetName, count: 0, upserted: 0, updated: 0, appended: 0 };
       }
+      summary[target.key].count += 1;
     }
   }
 
-  return { mode, summary };
+  if (mode !== 'dry_run') {
+    for (const lead of rows) {
+      const targets = resolveLeadSheetTargets({ lead, config });
+      for (const target of targets) {
+        const result = await upsertLeadToSheet({
+          sheets: c.sheets,
+          spreadsheetId: c.sheetId,
+          sheetName: target.sheetName,
+          lead,
+          autoCreate: settings.auto_create_missing_sheets,
+        });
+        summary[target.key].upserted += 1;
+        if (result.action === 'updated') summary[target.key].updated += 1;
+        if (result.action === 'appended') summary[target.key].appended += 1;
+      }
+      await updateLeadSheetSyncMeta(lead.id, {
+        ok: true,
+        spreadsheetId: c.sheetId,
+        sheetName: targets.map((target) => target.sheetName).join(', '),
+        error: null,
+      });
+    }
+  }
+
+  return { mode, summary, data: summary };
 }
 
 module.exports = {

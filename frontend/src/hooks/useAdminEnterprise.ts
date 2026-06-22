@@ -574,13 +574,23 @@ export function useTestGoogleSheetRouting() {
       apiPost<{
         spreadsheet_id: string | null;
         results: {
-          default: { sheet_name: string; exists: boolean };
-          trader: { sheet_name: string; exists: boolean };
-          partner: { sheet_name: string; exists: boolean };
-          unknown: { sheet_name: string; exists: boolean };
+          default: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
+          trader: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
+          partner: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
+          unknown: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
         };
+        data?: {
+          results?: {
+            default: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
+            trader: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
+            partner: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
+            unknown: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
+          };
+        };
+        demo_written?: boolean;
+        demo_writes?: Record<string, Array<{ sheetName: string; action: string; row?: number | null }>> | null;
         message: string;
-      }>('/admin/google-sheets/test-sheet-routing', body),
+      }>('/admin/google-sheets/test-sheet-routing', { ...body, write_demo: true }),
   });
 }
 
@@ -603,7 +613,7 @@ export function useExportLeadsByCategoryToSheets() {
       date_from?: string | null;
       date_to?: string | null;
       skip_duplicates?: boolean;
-    }) => apiPost<{ mode: string; summary: Record<string, { sheet_name: string; count: number }> }>('/admin/google-sheets/export-leads-by-category', body),
+    }) => apiPost<{ mode: string; summary: Record<string, { sheet_name: string; count: number; upserted?: number; updated?: number; appended?: number }> }>('/admin/google-sheets/export-leads-by-category', body),
   });
 }
 
