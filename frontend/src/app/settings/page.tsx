@@ -1452,17 +1452,6 @@ function SheetCredentialsModal({ open, onClose }: { open: boolean; onClose: () =
         <Input label="Trader Leads Sheet Name" value={form.trader_sheet_name} onChange={updateField('trader_sheet_name')} />
         <Input label="Partner Leads Sheet Name" value={form.partner_sheet_name} onChange={updateField('partner_sheet_name')} />
         <Input label="Unknown Leads Sheet Name" value={form.unknown_sheet_name} onChange={updateField('unknown_sheet_name')} />
-        <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
-          <div>All leads are written to {form.default_sheet_name || 'the configured default sheet'}.</div>
-          <div>Trader leads are also written to {form.trader_sheet_name || 'the configured trader sheet'}.</div>
-          <div>Partner leads are also written to {form.partner_sheet_name || 'the configured partner sheet'}.</div>
-          <div>Unknown leads are also written to {form.unknown_sheet_name || form.default_sheet_name || 'the configured unknown sheet'}.</div>
-        </div>
-        {!canSave && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            Test is required before saving. The test writes demo rows using these sheet names.
-          </div>
-        )}
 
         {testResults && (
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
