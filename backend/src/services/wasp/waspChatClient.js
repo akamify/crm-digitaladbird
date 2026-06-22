@@ -22,8 +22,11 @@ function buildUrl(path) {
 
 function authHeaders() {
   const header = config.wasp.apiKeyHeader || 'X-API-Key';
-  if (/^authorization$/i.test(header)) return { Authorization: `Bearer ${config.wasp.apiKey}` };
-  return { [header]: config.wasp.apiKey };
+  const headers = /^authorization$/i.test(header)
+    ? { Authorization: `Bearer ${config.wasp.apiKey}` }
+    : { [header]: config.wasp.apiKey };
+  if (config.wasp.workspaceId) headers['x-workspace-id'] = config.wasp.workspaceId;
+  return headers;
 }
 
 function verifyWebhook(req) {
@@ -35,29 +38,29 @@ function verifyWebhook(req) {
     if (a.length === b.length && crypto.timingSafeEqual(a, b)) return true;
   }
 
-  const signature = req.get('x-wasp-signature') || req.get('x-hub-signature-256');
-  const raw = req.rawBody || JSON.stringify(req.body || {});
+  const signature = req.get('x-waspakamify-signature') || req.get('x-wasp-signature') || req.get('x-hub-signature-256');
+  const timestamp = req.get('x-waspakamify-timestamp');
+  const rawBuffer = Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(String(req.rawBody || JSON.stringify(req.body || {})));
+  const raw = rawBuffer.toString('utf8');
   if (!signature) return false;
-  const digest = `sha256=${crypto.createHmac('sha256', config.wasp.webhookSecret).update(raw).digest('hex')}`;
+  const signedPayload = timestamp ? `${timestamp}.${raw}` : raw;
+  const digest = `sha256=${crypto.createHmac('sha256', config.wasp.webhookSecret).update(signedPayload).digest('hex')}`;
+  const received = /^sha256=/i.test(signature) ? signature : `sha256=${signature}`;
   try {
-    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(digest));
+    return Buffer.byteLength(received) === Buffer.byteLength(digest)
+      && crypto.timingSafeEqual(Buffer.from(received), Buffer.from(digest));
   } catch {
     return false;
   }
 }
 
-async function sendTextMessage({ to, waId, text, conversationId, metadata }) {
+async function sendTextMessage({ to, waId, text, contact, metadata }) {
   ensureConfigured();
   const body = {
-    to,
-    wa_id: waId,
-    message: text,
-    type: 'text',
-    conversation_id: conversationId || null,
-    metadata: {
-      crm: 'digitaladbird',
-      ...(metadata || {}),
-    },
+    to: mapper.normalizeWaId(to || waId),
+    text,
+    contact: contact || undefined,
+    metadata: { crm: 'digitaladbird', ...(metadata || {}) },
   };
   const response = await fetch(buildUrl(config.wasp.sendMessagePath), {
     method: 'POST',
@@ -81,4 +84,5 @@ async function sendTextMessage({ to, waId, text, conversationId, metadata }) {
 module.exports = {
   verifyWebhook,
   sendTextMessage,
+  buildUrl,
 };

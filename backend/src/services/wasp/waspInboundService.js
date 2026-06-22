@@ -172,6 +172,14 @@ async function notifyInbound({ normalized, lead, conversation, message, particip
 }
 
 async function handleInboundWaspMessage(payload) {
+  const event = mapper.eventType(payload);
+  if (event === 'message.status_updated') {
+    return handleWaspStatusUpdate(payload);
+  }
+  if (event && event !== 'message.created') {
+    return logNonMessageEvent(payload, event);
+  }
+
   const normalized = mapper.normalizeInbound(payload);
   if (!normalized.customer_phone && !normalized.customer_wa_id) {
     throw Object.assign(new Error('Inbound payload missing customer phone/wa_id'), { code: 'WASP_PAYLOAD_INVALID' });
@@ -273,7 +281,68 @@ async function handleInboundWaspMessage(payload) {
   });
 }
 
+async function handleWaspStatusUpdate(payload) {
+  const normalized = mapper.normalizeStatusUpdate(payload);
+  if (!normalized.external_message_id) {
+    throw Object.assign(new Error('Status webhook missing message id'), { code: 'WASP_STATUS_PAYLOAD_INVALID' });
+  }
+  return withTransaction(async (client) => {
+    const { rows: [log] } = await client.query(
+      `INSERT INTO wasp_webhook_logs(event_type, external_message_id, external_conversation_id, customer_phone, payload)
+       VALUES ($1,$2,$3,$4,$5)
+       RETURNING id`,
+      [normalized.event_type || 'message.status_updated', normalized.external_message_id, normalized.external_conversation_id || null, normalized.customer_phone || null, JSON.stringify(payload || {})],
+    );
+    const { rows: [message] } = await client.query(
+      `UPDATE chat_messages
+          SET delivery_status = COALESCE(NULLIF($2, ''), delivery_status),
+              external_conversation_id = COALESCE(NULLIF($3, ''), external_conversation_id),
+              provider_payload = COALESCE(provider_payload, '{}'::jsonb) || $4::jsonb,
+              status_updated_at = NOW()
+        WHERE provider = 'wasp'
+          AND external_message_id = $1
+        RETURNING *`,
+      [
+        normalized.external_message_id,
+        normalized.status || null,
+        normalized.external_conversation_id || null,
+        JSON.stringify({ last_status_webhook: payload || {} }),
+      ],
+    );
+    await client.query(
+      `UPDATE wasp_webhook_logs
+          SET processing_status = $1,
+              matched_conversation_id = $2
+        WHERE id = $3`,
+      [message ? 'processed' : 'unmatched', message?.conversation_id || null, log.id],
+    );
+    if (message?.conversation_id) {
+      setImmediate(() => {
+        emitToConversation(message.conversation_id, 'message:delivered', {
+          message_id: message.id,
+          delivery_status: message.delivery_status,
+          provider: 'wasp',
+        });
+        emitToConversation(message.conversation_id, 'message:status_updated', message);
+      });
+    }
+    return { status: message ? 'processed' : 'unmatched', messageId: message?.id || null, conversationId: message?.conversation_id || null };
+  });
+}
+
+async function logNonMessageEvent(payload, event) {
+  const normalized = mapper.normalizeStatusUpdate(payload);
+  const { rows: [log] } = await query(
+    `INSERT INTO wasp_webhook_logs(event_type, external_message_id, external_conversation_id, customer_phone, customer_wa_id, payload, processing_status)
+     VALUES ($1,$2,$3,$4,$5,$6,'ignored')
+     RETURNING id`,
+    [event, normalized.external_message_id || null, normalized.external_conversation_id || null, normalized.customer_phone || null, null, JSON.stringify(payload || {})],
+  );
+  return { status: 'ignored', event, logId: log.id };
+}
+
 module.exports = {
   handleInboundWaspMessage,
+  handleWaspStatusUpdate,
   findLead,
 };

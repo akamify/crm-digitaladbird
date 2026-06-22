@@ -59,7 +59,15 @@ async function sendWaspTextMessage({ conversationId, user, text }) {
       to: conversation.customer_phone || conversation.lead_phone,
       waId: conversation.customer_wa_id,
       text: body,
-      conversationId: conversation.external_conversation_id,
+      contact: {
+        name: conversation.lead_name || undefined,
+        tags: ['crm', 'digitaladbird'],
+        attributes: {
+          crm_conversation_id: conversationId,
+          crm_lead_id: conversation.lead_id || undefined,
+          crm_owner_id: conversation.assigned_to_user_id || undefined,
+        },
+      },
       metadata: {
         lead_id: conversation.lead_id,
         conversation_id: conversationId,
@@ -116,4 +124,3 @@ module.exports = {
   sendWaspTextMessage,
   loadConversation,
 };
-

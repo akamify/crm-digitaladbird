@@ -101,11 +101,12 @@ const config = {
 
   wasp: {
     enabled: String(process.env.WASP_CHAT_ENABLED || 'false').toLowerCase() === 'true',
-    baseUrl: (process.env.WASP_BASE_URL || 'https://wasp.akamify.com').replace(/\/+$/, ''),
+    baseUrl: (process.env.WASP_BASE_URL || 'https://api.wasp.akamify.com/api').replace(/\/+$/, ''),
     apiKey: process.env.WASP_API_KEY || '',
     apiKeyHeader: process.env.WASP_API_KEY_HEADER || 'X-API-Key',
-    sendMessagePath: process.env.WASP_SEND_MESSAGE_PATH || '/api/chat/messages/send',
-    fetchMessagesPath: process.env.WASP_FETCH_MESSAGES_PATH || '/api/chat/messages',
+    workspaceId: process.env.WASP_WORKSPACE_ID || process.env.WASPAKAMIFY_WORKSPACE_ID || '',
+    sendMessagePath: process.env.WASP_SEND_MESSAGE_PATH || '/external/chat/messages/send-text',
+    fetchMessagesPath: process.env.WASP_FETCH_MESSAGES_PATH || '/external/chat/conversations',
     webhookSecret: process.env.WASP_WEBHOOK_SECRET || '',
     webhookPath: process.env.WASP_WEBHOOK_PATH || '/api/integrations/wasp/webhook',
     defaultCountryCode: process.env.WASP_DEFAULT_COUNTRY_CODE || '91',
