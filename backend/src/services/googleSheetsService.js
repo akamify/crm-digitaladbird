@@ -1243,4 +1243,9 @@ module.exports = {
   testSheetRouting,
   createMissingTabs,
   exportLeadsByCategory,
+  LEAD_SHEET_HEADERS: HEADERS,
+  buildLeadSheetRow: leadToRow,
+  ensureLeadSheetExists: ensureSheetExists,
+  upsertLeadToSheet,
+  getLeadSelectSql: () => LEAD_SELECT_SQL,
 };

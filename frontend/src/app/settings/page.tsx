@@ -25,7 +25,7 @@ import {
   useTestPageToken, useUpdatePageToken, useSyncMetaPageForms, useSetMetaPageActivation,
   // Dynamic Google Sheets credential management
   useGoogleSheetRoutingSettings, useUpdateGoogleSheetRoutingSettings,
-  useTestGoogleSheetRouting, useCreateMissingGoogleSheetTabs, useExportLeadsByCategoryToSheets,
+  useTestGoogleSheetRouting, useCreateMissingGoogleSheetTabs,
   // Sheet → CRM import
 } from '@/hooks/useAdminEnterprise';
 
@@ -1141,14 +1141,14 @@ function CampaignsTab() {
                 </div>
                 <span className={c.is_active ? 'chip-green' : 'chip-slate'}>{c.effective_status || (c.is_active ? 'ACTIVE' : 'INACTIVE')}</span>
               </div>
-              <div className="mb-2 flex flex-wrap gap-1">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
                 {c.internal_label && <span className="chip-blue text-[10px]">{c.internal_label}</span>}
                 {c.category && <span className="chip-slate text-[10px]">{c.category}</span>}
-                <span className={clsx('text-[10px]', c.source === 'meta_api' ? 'chip-emerald' : 'chip-amber')}>{c.source === 'meta_api' ? 'Meta API' : 'Lead-derived legacy'}</span>
+                <span className={clsx('chip-blue text-[10px]', c.source === 'meta_api' ? 'chip-blue' : 'chip-red')}>{c.source === 'meta_api' ? 'Meta API' : 'Lead-derived legacy'}</span>
                 {c.ad_account_id && <span className="chip-slate text-[10px]">Ad account {c.ad_account_id}</span>}
               </div>
 
-              <div className="grid grid-cols-4 gap-2 mb-3">
+              <div className="grid grid-cols-4 gap-4 mb-3">
                 <MiniStat label="Leads" value={c.lead_count} color="text-slate-900" />
                 <MiniStat label="Today" value={c.today_leads} color="text-brand-700" />
                 <MiniStat label="Converted" value={c.conversions} color="text-emerald-700" />
@@ -1174,23 +1174,7 @@ function CampaignsTab() {
 /* ═══════════════════ SHEETS TAB ═══════════════════ */
 function SheetsTab() {
   const { data, isLoading } = useSheetsEnriched();
-  const routing = useGoogleSheetRoutingSettings();
-  const qc = useQueryClient();
 
-  const sheetSync = useMutation({
-    mutationFn: () => apiPost<{ synced: number }>('/sheets/sync', {}),
-    onSuccess: (r) => { toast.success(`Synced ${r.synced} leads`); qc.invalidateQueries({ queryKey: ['admin'] }); },
-    onError: () => toast.error('Sync failed'),
-  });
-
-  const triggerSync = useMutation({
-    mutationFn: () => apiPost('/admin/sheets/trigger-sync', {}),
-    onSuccess: () => { toast.success('Manual sync triggered'); qc.invalidateQueries({ queryKey: ['admin'] }); },
-    onError: () => toast.error('Trigger failed'),
-  });
-
-  const cfg = data?.config;
-  const sheetUrl = cfg?.sheet_id ? `https://docs.google.com/spreadsheets/d/${cfg.sheet_id}` : null;
 
   return (
     <div className="space-y-6">
@@ -1238,13 +1222,12 @@ function SheetsTab() {
 }
 
 function SheetCredentialsManager() {
-  const { data, isLoading } = useSheetsEnriched();
+  const { data } = useSheetsEnriched();
   const qc = useQueryClient();
 
 
   const routing = useGoogleSheetRoutingSettings();
   const createTabs = useCreateMissingGoogleSheetTabs();
-  const exportByCategory = useExportLeadsByCategoryToSheets();
   const [open, setOpen] = useState(false);
   const cfg = data?.config;
   const sheetSync = useMutation({
@@ -1533,12 +1516,6 @@ function AdminToolsTab() {
               <TokenBadge label={`Campaign Sync: ${ts.campaignSync?.status || 'degraded'}`} ok={ts.campaignSync?.status === 'available'} />
             </div>
             {ts.warning && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">Page webhook is active. User token is expired or missing, so page refresh and ad account sync may need a new token.</div>}
-            {ts.connectivity && (
-              <div className="rounded-lg bg-slate-50 p-3">
-                <div className="text-xs font-semibold text-slate-700 mb-1">Connectivity</div>
-                <div className="text-xs text-slate-600">{typeof ts.connectivity === 'object' ? JSON.stringify(ts.connectivity, null, 2) : String(ts.connectivity)}</div>
-              </div>
-            )}
             {ts.error && <div className="rounded-lg bg-red-50 p-3 text-xs text-red-700">{ts.error}</div>}
           </div>
         ) : <div className="text-sm text-slate-500">Could not load status</div>}

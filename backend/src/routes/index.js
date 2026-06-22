@@ -3623,6 +3623,8 @@ router.post('/admin/sheets/trigger-sync', authenticate, requireRole('super_admin
 // ══════════════════════════════════════════════════════════════════════
 const multer = require('multer');
 const sheetsSvc = require('../services/googleSheetsService');
+const googleUserOAuth = require('../services/googleUserOAuthService');
+const userGoogleSheets = require('../services/userGoogleSheetsService');
 const secretsCrypto = require('../utils/secretsCrypto');
 
 // Memory storage — the JSON never touches disk. Max 64KB (service-account JSONs are ~2KB).
@@ -4016,6 +4018,112 @@ router.get('/admin/sheets/connectivity', authenticate, requireRole('super_admin'
   res.json({ success: true, data: result });
 }));
 
+function googleSheetsError(res, error) {
+  const code = error?.code || 'GOOGLE_SHEETS_SYNC_FAILED';
+  const status = [
+    'GOOGLE_OAUTH_NOT_CONFIGURED',
+    'GOOGLE_SHEETS_NOT_CONNECTED',
+    'GOOGLE_SHEETS_SPREADSHEET_NOT_FOUND',
+    'GOOGLE_SHEETS_HEADER_INVALID',
+    'INVALID_SPREADSHEET_ID',
+  ].includes(code) ? 400 : code === 'GOOGLE_SHEETS_ACCESS_DENIED' ? 403 : 500;
+  return res.status(status).json({
+    success: false,
+    code,
+    message: error?.message || 'Google Sheets request failed.',
+  });
+}
+
+router.get('/my/google-sheets/status', authenticate, asyncHandler(async (req, res) => {
+  const data = await userGoogleSheets.getStatus(req.user);
+  res.json({ success: true, data });
+}));
+
+router.get('/my/google-sheets/oauth/start', authenticate, asyncHandler(async (req, res) => {
+  try {
+    const url = await googleUserOAuth.generateAuthUrl({ userId: req.user.id });
+    res.json({ success: true, data: { url } });
+  } catch (error) {
+    return googleSheetsError(res, error);
+  }
+}));
+
+router.get('/my/google-sheets/oauth/callback', asyncHandler(async (req, res) => {
+  const frontend = process.env.FRONTEND_URL || process.env.APP_FRONTEND_URL || 'https://www.crm.digitaladbird.com';
+  try {
+    await googleUserOAuth.exchangeCallback({
+      code: req.query.code,
+      state: req.query.state,
+    });
+    res.redirect(`${frontend.replace(/\/$/, '')}/my-google-sheet?googleSheets=connected`);
+  } catch (error) {
+    const code = encodeURIComponent(error?.code || 'GOOGLE_OAUTH_FAILED');
+    res.redirect(`${frontend.replace(/\/$/, '')}/my-google-sheet?googleSheets=error&code=${code}`);
+  }
+}));
+
+router.post('/my/google-sheets/create', authenticate, asyncHandler(async (req, res) => {
+  try {
+    const data = await userGoogleSheets.createSpreadsheet(req.user, req.body?.spreadsheet_name);
+    res.json({ success: true, data, message: 'Google Sheet created successfully.' });
+  } catch (error) {
+    return googleSheetsError(res, error);
+  }
+}));
+
+router.post('/my/google-sheets/connect-existing', authenticate, asyncHandler(async (req, res) => {
+  try {
+    const data = await userGoogleSheets.connectExisting(req.user, req.body?.spreadsheet_url_or_id);
+    res.json({ success: true, data, message: 'Google Sheet connected successfully.' });
+  } catch (error) {
+    return googleSheetsError(res, error);
+  }
+}));
+
+router.patch('/my/google-sheets/settings', authenticate, asyncHandler(async (req, res) => {
+  try {
+    const data = await userGoogleSheets.updateSettings(req.user, req.body || {});
+    res.json({ success: true, data, message: 'My Google Sheet settings saved successfully.' });
+  } catch (error) {
+    return googleSheetsError(res, error);
+  }
+}));
+
+router.post('/my/google-sheets/test', authenticate, asyncHandler(async (req, res) => {
+  try {
+    const data = await userGoogleSheets.testConnection(req.user);
+    res.json({ success: true, data, ...data, message: 'Google Sheet test completed.' });
+  } catch (error) {
+    return googleSheetsError(res, error);
+  }
+}));
+
+router.post('/my/google-sheets/sync-now', authenticate, asyncHandler(async (req, res) => {
+  try {
+    const data = await userGoogleSheets.syncNow(req.user);
+    res.json({ success: true, data, message: 'My leads synced to Google Sheets.' });
+  } catch (error) {
+    return googleSheetsError(res, error);
+  }
+}));
+
+router.post('/my/google-sheets/disconnect', authenticate, asyncHandler(async (req, res) => {
+  try {
+    const data = await userGoogleSheets.disconnect(req.user);
+    res.json({ success: true, data, message: 'Google Sheet disconnected.' });
+  } catch (error) {
+    return googleSheetsError(res, error);
+  }
+}));
+
+router.get('/my/google-sheets/sync-logs', authenticate, asyncHandler(async (req, res) => {
+  const data = await userGoogleSheets.getLogs(req.user, {
+    page: req.query.page,
+    pageSize: req.query.page_size,
+  });
+  res.json({ success: true, data });
+}));
+
 router.get('/admin/google-sheets/settings', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
   const data = await sheetsSvc.getSheetRoutingSettings();
   res.json({ success: true, data });
@@ -4087,6 +4195,51 @@ router.post('/admin/google-sheets/export-leads-by-category', authenticate, requi
 }));
 
 // ── Sheet → CRM import ────────────────────────────────────────────────
+router.get('/admin/google-sheets/master/status', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const data = await sheetsSvc.checkConnectivity();
+  res.json({ success: true, data });
+}));
+
+router.post('/admin/google-sheets/master/test', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const data = await sheetsSvc.testSheetRouting(req.body || {});
+  res.json({ success: true, data, ...data });
+}));
+
+router.post('/admin/google-sheets/master/sync-now', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const data = await sheetsSvc.exportLeadsByCategory({
+    mode: req.body?.mode || 'export',
+    category: req.body?.category || 'all',
+  });
+  res.json({ success: true, data, ...data, message: 'Company master sheet sync completed.' });
+}));
+
+router.post('/admin/google-sheets/master/create-missing-tabs', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  const data = await sheetsSvc.createMissingTabs();
+  res.json({ success: true, data });
+}));
+
+router.get('/admin/google-sheets/master/read', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const limit = Math.min(50, Math.max(1, Number(req.query.page_size || req.query.limit) || 20));
+  const data = await sheetsSvc.previewRows(limit);
+  res.json({ success: true, data });
+}));
+
+router.get('/admin/user-google-sheets/connections', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const data = await userGoogleSheets.listConnections({
+    page: req.query.page,
+    pageSize: req.query.page_size,
+  });
+  res.json({ success: true, ...data });
+}));
+
+router.get('/admin/user-google-sheets/sync-logs', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const data = await userGoogleSheets.listAllLogs({
+    page: req.query.page,
+    pageSize: req.query.page_size,
+  });
+  res.json({ success: true, ...data });
+}));
+
 const sheetImport = require('../services/sheetImportService');
 
 // Trigger an import from a specific config (must have credentials).
