@@ -158,6 +158,7 @@ app.use('/api', waspRoutes);
 
 // Everything else uses JSON body parser.
 app.use(express.json({ limit: '10mb' }));
+app.use('/api', apiRoutes);
 
 app.get('/health',         (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
 app.get('/health/db',      async (_req, res) => {
@@ -193,7 +194,6 @@ app.use('/api', userProfileRoutes);
 app.use('/api', passwordResetRoutes);
 app.use('/api', leadCategoryRoutes);
 app.use('/api', leadCallRoutes);
-app.use('/api', apiRoutes);
 app.use('/api/chat', chatRoutes);
 
 // Final routing: backend prefixes that fell through return JSON 404;

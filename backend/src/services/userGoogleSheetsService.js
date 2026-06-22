@@ -28,6 +28,17 @@ function connectionData(connection) {
     last_sync_at: connection.last_sync_at || null,
     last_error: connection.last_error || null,
     open_url: connection.spreadsheet_id ? `https://docs.google.com/spreadsheets/d/${connection.spreadsheet_id}` : null,
+    status: connection.disconnected_at
+      ? 'disconnected'
+      : (/refresh|reconnect|expired/i.test(connection.last_error || '') ? 'needs_reconnect' : 'connected'),
+  };
+}
+
+function safeConnectionData(connection) {
+  return {
+    id: connection.id,
+    user_id: connection.user_id,
+    ...connectionData(connection),
   };
 }
 
@@ -48,6 +59,30 @@ async function clientBundle(connection) {
     sheets: google.sheets({ version: 'v4', auth }),
     drive: google.drive({ version: 'v3', auth }),
   };
+}
+
+async function getConnectionOwner(connection) {
+  const { rows: [owner] } = await query(
+    `SELECT id, full_name, role, report_to_id, team_name
+       FROM users WHERE id = $1 LIMIT 1`,
+    [connection.user_id],
+  );
+  if (!owner) {
+    const err = new Error('Google Sheet connection owner was not found.');
+    err.code = 'GOOGLE_SHEETS_ACCESS_DENIED';
+    throw err;
+  }
+  return owner;
+}
+
+async function getAdminConnectionOrThrow(connectionId) {
+  const connection = await oauth.getConnectionById(connectionId);
+  if (!connection) {
+    const err = new Error('Google Sheet connection was not found.');
+    err.code = 'GOOGLE_SHEETS_NOT_CONNECTED';
+    throw err;
+  }
+  return connection;
 }
 
 function configFromConnection(connection, overrides = {}) {
@@ -229,8 +264,7 @@ async function finishLog(id, patch) {
   ).catch(() => {});
 }
 
-async function syncNow(user) {
-  const connection = await getConnectionOrThrow(user.id);
+async function syncConnection(connection, owner, syncType = 'manual') {
   if (!connection.spreadsheet_id) {
     const err = new Error('Create or connect a Google Sheet first.');
     err.code = 'GOOGLE_SHEETS_SPREADSHEET_NOT_FOUND';
@@ -241,12 +275,12 @@ async function syncNow(user) {
     err.code = 'GOOGLE_SHEETS_SYNC_FAILED';
     throw err;
   }
-  const log = await createLog({ connectionId: connection.id, userId: user.id, syncType: 'manual' });
+  const log = await createLog({ connectionId: connection.id, userId: owner.id, syncType });
   try {
     const { sheets } = await clientBundle(connection);
     const config = configFromConnection(connection);
     await ensureTabs({ sheets, spreadsheetId: connection.spreadsheet_id, config });
-    const scope = scopedLeadWhere(user);
+    const scope = scopedLeadWhere(owner);
     const { rows } = await query(`${getLeadSelectSql()}${scope.sql} ORDER BY l.created_at DESC`, scope.params);
     const summary = { attempted: rows.length, synced: 0, failed: 0, targets: {} };
     for (const lead of rows) {
@@ -294,6 +328,86 @@ async function syncNow(user) {
   }
 }
 
+async function syncNow(user) {
+  const connection = await getConnectionOrThrow(user.id);
+  return syncConnection(connection, user, 'manual');
+}
+
+async function adminSyncNow(connectionId) {
+  const connection = await getAdminConnectionOrThrow(connectionId);
+  if (connection.disconnected_at) {
+    const err = new Error('This Google Sheet connection is disconnected.');
+    err.code = 'GOOGLE_SHEETS_NOT_CONNECTED';
+    throw err;
+  }
+  const owner = await getConnectionOwner(connection);
+  return syncConnection(connection, owner, 'admin_manual');
+}
+
+async function adminTestConnection(connectionId) {
+  const connection = await getAdminConnectionOrThrow(connectionId);
+  const owner = await getConnectionOwner(connection);
+  if (!connection.spreadsheet_id) {
+    const err = new Error('No spreadsheet is connected for this user.');
+    err.code = 'GOOGLE_SHEETS_SPREADSHEET_NOT_FOUND';
+    throw err;
+  }
+  const { sheets } = await clientBundle(connection);
+  const tabs = await ensureTabs({ sheets, spreadsheetId: connection.spreadsheet_id, config: configFromConnection(connection) });
+  return { connection: { ...safeConnectionData(connection), user_name: owner.full_name, role: owner.role }, tabs };
+}
+
+function rowObject(headers, values) {
+  return headers.reduce((row, header, index) => ({ ...row, [header]: values[index] ?? '' }), {});
+}
+
+async function adminPreview(connectionId, { sheetName, page = 1, pageSize = 20, search = '' } = {}) {
+  const connection = await getAdminConnectionOrThrow(connectionId);
+  const owner = await getConnectionOwner(connection);
+  if (!connection.spreadsheet_id) {
+    const err = new Error('No spreadsheet is connected for this user.');
+    err.code = 'GOOGLE_SHEETS_SPREADSHEET_NOT_FOUND';
+    throw err;
+  }
+  const safePage = Math.max(1, Number(page) || 1);
+  const safeSize = Math.min(50, Math.max(1, Number(pageSize) || 20));
+  const selectedSheet = sanitizeSheetName(sheetName || connection.default_sheet_name || 'Leads') || 'Leads';
+  const { sheets } = await clientBundle(connection);
+  let values;
+  const offset = (safePage - 1) * safeSize;
+  const lastRow = offset + safeSize + 2;
+  try {
+    const result = await sheets.spreadsheets.values.get({
+      spreadsheetId: connection.spreadsheet_id,
+      range: `'${selectedSheet.replace(/'/g, "''")}'!A1:R${lastRow}`,
+    });
+    values = result.data.values || [];
+  } catch (_) {
+    const err = new Error('The selected sheet tab could not be read.');
+    err.code = 'GOOGLE_SHEETS_ACCESS_DENIED';
+    throw err;
+  }
+  const headers = (values[0] || LEAD_SHEET_HEADERS).slice(0, LEAD_SHEET_HEADERS.length);
+  const needle = String(search || '').trim().toLowerCase();
+  const filtered = values.slice(1).filter(row => !needle || row.some(value => String(value || '').toLowerCase().includes(needle)));
+  const pageRows = filtered.slice(offset, offset + safeSize).map(row => rowObject(headers, row));
+  return {
+    connection: {
+      id: connection.id,
+      user_id: owner.id,
+      user_name: owner.full_name,
+      role: owner.role,
+      google_email: connection.google_email,
+      spreadsheet_id: connection.spreadsheet_id,
+      spreadsheet_name: connection.spreadsheet_name,
+    },
+    sheet_name: selectedSheet,
+    headers,
+    rows: pageRows,
+    pagination: { page: safePage, page_size: safeSize, has_more: filtered.length > offset + pageRows.length },
+  };
+}
+
 async function disconnect(user) {
   return oauth.disconnect(user.id);
 }
@@ -316,42 +430,65 @@ async function getLogs(user, { page = 1, pageSize = 20 } = {}) {
   return { data: rows, pagination: { page: safePage, page_size: safeSize, total, total_pages: Math.ceil(total / safeSize), has_more: offset + rows.length < total } };
 }
 
-async function listConnections({ page = 1, pageSize = 20 } = {}) {
+async function listConnections({ page = 1, pageSize = 20, search = '', role = '', status = '', userId = '' } = {}) {
   const safePage = Math.max(1, Number(page) || 1);
   const safeSize = Math.min(50, Math.max(1, Number(pageSize) || 20));
   const offset = (safePage - 1) * safeSize;
+  const filters = [];
+  const params = [];
+  const add = (sql, value) => { params.push(value); filters.push(sql.replace('?', `$${params.length}`)); };
+  if (search) add(`(u.full_name ILIKE ? OR c.google_email ILIKE ? OR c.spreadsheet_name ILIKE ?)`, `%${search}%`);
+  if (search) { params.push(`%${search}%`, `%${search}%`); filters[filters.length - 1] = `(u.full_name ILIKE $${params.length - 2} OR c.google_email ILIKE $${params.length - 1} OR c.spreadsheet_name ILIKE $${params.length})`; }
+  if (role) add('u.role = ?', role);
+  if (userId) add('u.id = ?', userId);
+  if (status === 'connected') filters.push(`c.disconnected_at IS NULL AND COALESCE(c.last_error, '') !~* 'refresh|reconnect|expired'`);
+  if (status === 'disconnected') filters.push('c.disconnected_at IS NOT NULL');
+  if (status === 'needs_reconnect') filters.push(`c.disconnected_at IS NULL AND COALESCE(c.last_error, '') ~* 'refresh|reconnect|expired'`);
+  const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+  const listParams = [...params, safeSize, offset];
   const [{ rows }, { rows: countRows }] = await Promise.all([
     query(
       `SELECT c.id, c.user_id, c.google_email, c.spreadsheet_id, c.spreadsheet_name,
-              c.sync_enabled, c.last_sync_at, c.last_error, c.created_at, c.updated_at,
-              u.full_name AS user_name, u.role
+              c.default_sheet_name, c.trader_sheet_name, c.partner_sheet_name, c.unknown_sheet_name,
+              c.sync_enabled, c.last_sync_at, c.last_error, c.disconnected_at, c.created_at, c.updated_at,
+              u.full_name AS user_name, u.role, u.team_name, rm.full_name AS rm_name,
+              CASE WHEN c.disconnected_at IS NOT NULL THEN 'disconnected'
+                   WHEN COALESCE(c.last_error, '') ~* 'refresh|reconnect|expired' THEN 'needs_reconnect'
+                   ELSE 'connected' END AS status
          FROM user_google_sheet_connections c
          JOIN users u ON u.id = c.user_id
-        WHERE c.disconnected_at IS NULL
+         LEFT JOIN users rm ON rm.id = u.report_to_id
+        ${where}
         ORDER BY c.updated_at DESC
-        LIMIT $1 OFFSET $2`,
-      [safeSize, offset],
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      listParams,
     ),
-    query(`SELECT COUNT(*)::int AS total FROM user_google_sheet_connections WHERE disconnected_at IS NULL`),
+    query(`SELECT COUNT(*)::int AS total FROM user_google_sheet_connections c JOIN users u ON u.id = c.user_id ${where}`, params),
   ]);
   const total = countRows[0]?.total || 0;
   return { data: rows, pagination: { page: safePage, page_size: safeSize, total, total_pages: Math.ceil(total / safeSize), has_more: offset + rows.length < total } };
 }
 
-async function listAllLogs({ page = 1, pageSize = 20 } = {}) {
+async function listAllLogs({ page = 1, pageSize = 20, userId = '', status = '' } = {}) {
   const safePage = Math.max(1, Number(page) || 1);
   const safeSize = Math.min(50, Math.max(1, Number(pageSize) || 20));
   const offset = (safePage - 1) * safeSize;
+  const filters = [];
+  const params = [];
+  if (userId) { params.push(userId); filters.push(`l.user_id = $${params.length}`); }
+  if (status) { params.push(status); filters.push(`l.status = $${params.length}`); }
+  const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
   const [{ rows }, { rows: countRows }] = await Promise.all([
     query(
       `SELECT l.*, u.full_name AS user_name, u.role
          FROM user_google_sheet_sync_logs l
          LEFT JOIN users u ON u.id = l.user_id
+        ${where}
         ORDER BY l.started_at DESC
-        LIMIT $1 OFFSET $2`,
-      [safeSize, offset],
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, safeSize, offset],
     ),
-    query(`SELECT COUNT(*)::int AS total FROM user_google_sheet_sync_logs`),
+    query(`SELECT COUNT(*)::int AS total FROM user_google_sheet_sync_logs l ${where}`, params),
   ]);
   const total = countRows[0]?.total || 0;
   return { data: rows, pagination: { page: safePage, page_size: safeSize, total, total_pages: Math.ceil(total / safeSize), has_more: offset + rows.length < total } };
@@ -368,4 +505,7 @@ module.exports = {
   getLogs,
   listConnections,
   listAllLogs,
+  adminPreview,
+  adminTestConnection,
+  adminSyncNow,
 };

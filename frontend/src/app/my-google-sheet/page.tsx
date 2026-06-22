@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { CheckCircle2, ExternalLink, FileSpreadsheet, Loader2, PlugZap, RefreshCw, Unplug, XCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
@@ -37,6 +38,7 @@ export default function MyGoogleSheetPage() {
 }
 
 function MyGoogleSheetInner() {
+  const searchParams = useSearchParams();
   const { user } = useAuth();
   const status = useMyGoogleSheetStatus();
   const logs = useMyGoogleSheetLogs();
@@ -55,6 +57,8 @@ function MyGoogleSheetInner() {
     unknown_sheet_name: 'Unknown Leads',
     sync_enabled: true,
   });
+
+  const oauthError = searchParams.get('googleSheets') === 'error' ? searchParams.get('code') : null;
 
   useEffect(() => {
     const data = status.data;
@@ -99,6 +103,12 @@ function MyGoogleSheetInner() {
 
   return (
     <div className="space-y-6">
+      {oauthError && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+          <div className="font-semibold">Google account connection was blocked</div>
+          <p className="mt-1">Google blocked access because this OAuth app is still in testing or not verified. Ask admin to add your Gmail as a Google OAuth test user, or complete Google app verification for production use.</p>
+        </div>
+      )}
       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>

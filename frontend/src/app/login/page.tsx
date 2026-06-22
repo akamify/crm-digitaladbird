@@ -215,6 +215,12 @@ function LoginInner() {
                 {loading ? 'Signing in...' : 'Sign in'}
               </button>
             </form>
+
+            <div className="mt-6 flex items-center justify-center gap-4 text-xs text-slate-500">
+              <Link href="/privacy-policy" className="hover:text-blue-600">Privacy Policy</Link>
+              <span aria-hidden="true">|</span>
+              <Link href="/terms" className="hover:text-blue-600">Terms and Conditions</Link>
+            </div>
           </div>
         </section>
       </div>

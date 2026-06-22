@@ -182,11 +182,24 @@ async function resolveGoogleEmail(tokens) {
 }
 
 async function exchangeCallback({ code, state }) {
+  if (!code) {
+    const err = new Error('Google account access was not granted.');
+    err.code = 'access_denied';
+    throw err;
+  }
   const verified = verifyState(state);
   const client = oauthClient();
   const { tokens } = await client.getToken(code);
   await saveTokens({ userId: verified.user_id, tokens });
   return { user_id: verified.user_id };
+}
+
+async function getConnectionById(connectionId) {
+  const { rows: [connection] } = await query(
+    `SELECT * FROM user_google_sheet_connections WHERE id = $1 LIMIT 1`,
+    [connectionId],
+  );
+  return connection || null;
 }
 
 async function getActiveConnection(userId) {
@@ -277,6 +290,7 @@ module.exports = {
   generateAuthUrl,
   exchangeCallback,
   getActiveConnection,
+  getConnectionById,
   authorizedClientForConnection,
   disconnect,
 };

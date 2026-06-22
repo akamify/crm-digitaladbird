@@ -12,6 +12,7 @@ import {
   BarChart, Bar,
 } from 'recharts';
 import { AppShell } from '@/components/layout/AppShell';
+import { AdminUserGoogleSheets, MyGoogleSheetProfileCard } from '@/components/googleSheets/AdminUserGoogleSheets';
 import { EmptyState, Modal, Skeleton, StatusChip } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import { clsx, fmtDate, fmtPhone, fmtRelative, humanize, initials } from '@/lib/format';
@@ -234,6 +235,9 @@ function UserProfileInner({ userId }: { userId: string }) {
           This profile is read-only. Historical users remain visible for audit, but login, lead assignment, and lifecycle actions are disabled.
         </div>
       )}
+
+      {canEdit && ['rm', 'member', 'partner'].includes(user.role) && <AdminUserGoogleSheets userId={user.id} />}
+      {!canEdit && currentUser?.id === user.id && ['rm', 'member', 'partner'].includes(user.role) && <MyGoogleSheetProfileCard />}
 
       {isAdminProfile && <AdminProfileCards metrics={metrics} security={security} emailHistory={emailHistory} />}
       {isRmProfile && <RmProfileCards metrics={metrics} reportees={reportees} />}

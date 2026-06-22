@@ -4051,6 +4051,11 @@ router.get('/my/google-sheets/oauth/start', authenticate, asyncHandler(async (re
 router.get('/my/google-sheets/oauth/callback', asyncHandler(async (req, res) => {
   const frontend = process.env.FRONTEND_URL || process.env.APP_FRONTEND_URL || 'https://www.crm.digitaladbird.com';
   try {
+    if (req.query.error) {
+      const oauthError = new Error('Google account access was not granted.');
+      oauthError.code = req.query.error === 'access_denied' ? 'access_denied' : 'GOOGLE_OAUTH_FAILED';
+      throw oauthError;
+    }
     await googleUserOAuth.exchangeCallback({
       code: req.query.code,
       state: req.query.state,
@@ -4224,20 +4229,65 @@ router.get('/admin/google-sheets/master/read', authenticate, requireRole('super_
   res.json({ success: true, data });
 }));
 
-router.get('/admin/user-google-sheets/connections', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+router.get('/admin/user-google-sheets/connections', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
   const data = await userGoogleSheets.listConnections({
     page: req.query.page,
     pageSize: req.query.page_size,
+    search: req.query.search,
+    role: req.query.role,
+    status: req.query.status,
+    userId: req.query.user_id,
   });
-  res.json({ success: true, ...data });
+  res.json({ success: true, data, connections: data.data, pagination: data.pagination });
 }));
 
-router.get('/admin/user-google-sheets/sync-logs', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+router.get('/admin/user-google-sheets/sync-logs', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
   const data = await userGoogleSheets.listAllLogs({
     page: req.query.page,
     pageSize: req.query.page_size,
+    userId: req.query.user_id,
+    status: req.query.status,
   });
-  res.json({ success: true, ...data });
+  res.json({ success: true, data, logs: data.data, pagination: data.pagination });
+}));
+
+router.get('/admin/user-google-sheets/connections/:connectionId/preview', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  try {
+    const data = await userGoogleSheets.adminPreview(req.params.connectionId, {
+      sheetName: req.query.sheet_name,
+      page: req.query.page,
+      pageSize: req.query.page_size,
+      search: req.query.search,
+    });
+    res.json({ success: true, data });
+  } catch (error) {
+    return googleSheetsError(res, error);
+  }
+}));
+
+router.post('/admin/user-google-sheets/connections/:connectionId/test', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  try {
+    const data = await userGoogleSheets.adminTestConnection(req.params.connectionId);
+    res.json({ success: true, data, message: 'User Google Sheet connection test completed.' });
+  } catch (error) {
+    return googleSheetsError(res, error);
+  }
+}));
+
+router.post('/admin/user-google-sheets/connections/:connectionId/sync-now', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  try {
+    const data = await userGoogleSheets.adminSyncNow(req.params.connectionId);
+    const { logActivity } = require('../utils/auditLog');
+    logActivity(req, {
+      action: 'user_google_sheet_sync',
+      entity: 'google_sheet_connection',
+      entity_id: req.params.connectionId,
+      metadata: { records_attempted: data.attempted, records_synced: data.synced, records_failed: data.failed },
+    }).catch(error => logger.warn({ err: error.message }, '[Google Sheets] admin sync audit failed'));
+    res.json({ success: true, data, message: 'User Google Sheet sync completed.' });
+  } catch (error) {
+    return googleSheetsError(res, error);
+  }
 }));
 
 const sheetImport = require('../services/sheetImportService');

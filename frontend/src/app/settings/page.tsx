@@ -12,6 +12,7 @@ import {
   ChevronLeft, Download, Pencil, Power,
 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
+import { AdminUserGoogleSheets } from '@/components/googleSheets/AdminUserGoogleSheets';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal, Skeleton, EmptyState } from '@/components/ui/Modal';
@@ -1185,6 +1186,8 @@ function SheetsTab() {
 
       {/* Dynamic credentials management — admin can upload JSON, switch sheets, no SSH/.env needed */}
       <SheetCredentialsManager />
+
+      <AdminUserGoogleSheets />
 
       {isLoading ? <Skeleton className="h-64" /> : (
         <>
