@@ -381,7 +381,7 @@ async function ensureSheetExists({ sheets, spreadsheetId, sheetName, headers = H
 
   const current = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${targetName}!A1:R1`,
+    range: `${targetName}!A1:AB1`,
   }).catch(() => ({ data: { values: [] } }));
 
   const headerRow = current.data.values?.[0] || [];
@@ -437,6 +437,9 @@ const HEADERS = [
   'Lead ID', 'Name', 'Phone', 'Email', 'Campaign', 'Campaign Name', 'Ad Set', 'Ad Name', 'RM',
   'Lead Type', 'Status', 'Call Status', 'Stage', 'Source',
   'Assigned To', 'Team', 'Created Time', 'Last Updated',
+  'Assignment Status', 'Reassigned From', 'Reassigned To', 'Reassigned At',
+  'Last Contacted', 'Last Contacted By', 'Sync Status', 'CRM Updated At',
+  'Sheet Updated At', 'Notes',
 ];
 
 function leadToRow(l) {
@@ -477,6 +480,16 @@ function leadToRow(l) {
     teamName,
     l.created_at ? formatIST(l.created_at) : '',
     l.updated_at ? formatIST(l.updated_at) : '',
+    firstValue(l.assignment_status, l.assigned_to_user_id ? 'Assigned' : 'Unassigned'),
+    firstValue(l.reassigned_from_name),
+    firstValue(l.reassigned_to_name),
+    l.reassigned_at ? formatIST(l.reassigned_at) : '',
+    l.last_contacted_at ? formatIST(l.last_contacted_at) : (l.last_call_at ? formatIST(l.last_call_at) : ''),
+    firstValue(l.last_contacted_by_name),
+    firstValue(l.sync_status, 'Synced'),
+    l.updated_at ? formatIST(l.updated_at) : '',
+    firstValue(l.sheet_updated_at),
+    firstValue(l.latest_note, l.last_call_note),
   ];
 }
 
@@ -521,7 +534,7 @@ async function getSheetHeaderStatus({ sheets, spreadsheetId, sheetName }) {
   }
   const current = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${targetName}!A1:R1`,
+    range: `${targetName}!A1:AB1`,
   }).catch(() => ({ data: { values: [] } }));
   const header = current.data.values?.[0] || [];
   const missingColumns = getMissingHeaderColumns(header);
@@ -558,7 +571,7 @@ async function upsertLeadToSheet({ sheets, spreadsheetId, sheetName, lead, autoC
     await withRetry(async () => {
       await sheets.spreadsheets.values.update({
         spreadsheetId,
-        range: `${targetSheet}!A${rowNum}:R${rowNum}`,
+        range: `${targetSheet}!A${rowNum}:AB${rowNum}`,
         valueInputOption: 'RAW',
         requestBody: { values },
       });
@@ -569,7 +582,7 @@ async function upsertLeadToSheet({ sheets, spreadsheetId, sheetName, lead, autoC
   await withRetry(async () => {
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: `${targetSheet}!A:R`,
+      range: `${targetSheet}!A:AB`,
       valueInputOption: 'RAW',
       insertDataOption: 'INSERT_ROWS',
       requestBody: { values },
@@ -642,10 +655,33 @@ const LEAD_SELECT_SQL = `
          rm.team_name AS rm_team_name,
          mc.internal_label AS meta_campaign_label,
          mc.campaign_name AS meta_campaign_name
+         ,CASE WHEN assignment.previous_user_id IS NOT NULL THEN 'Reassigned'
+               WHEN l.assigned_to_user_id IS NOT NULL THEN 'Assigned' ELSE 'Unassigned' END AS assignment_status
+         ,previous_user.full_name AS reassigned_from_name
+         ,assignment_user.full_name AS reassigned_to_name
+         ,assignment.created_at AS reassigned_at
+         ,COALESCE(l.last_call_at, latest_remark.created_at) AS last_contacted_at
+         ,remark_user.full_name AS last_contacted_by_name
+         ,latest_remark.remark AS latest_note
     FROM leads l
     LEFT JOIN users u  ON u.id = l.assigned_to_user_id
     LEFT JOIN users rm ON rm.id = u.report_to_id
     LEFT JOIN meta_campaigns mc ON mc.campaign_id = l.meta_campaign_id
+    LEFT JOIN LATERAL (
+      SELECT la.previous_user_id, la.assigned_to_user_id, COALESCE(la.created_at, la.assigned_at) AS created_at
+        FROM lead_assignments la
+       WHERE la.lead_id = l.id
+       ORDER BY COALESCE(la.created_at, la.assigned_at) DESC
+       LIMIT 1
+    ) assignment ON TRUE
+    LEFT JOIN users previous_user ON previous_user.id = assignment.previous_user_id
+    LEFT JOIN users assignment_user ON assignment_user.id = assignment.assigned_to_user_id
+    LEFT JOIN LATERAL (
+      SELECT lr.remark, lr.created_at, lr.user_id
+        FROM lead_remarks lr WHERE lr.lead_id = l.id
+       ORDER BY lr.created_at DESC LIMIT 1
+    ) latest_remark ON TRUE
+    LEFT JOIN users remark_user ON remark_user.id = latest_remark.user_id
    WHERE l.deleted_at IS NULL
 `;
 
@@ -682,7 +718,7 @@ async function syncAllLeads() {
     await withRetry(async () => {
       await sheets.spreadsheets.values.clear({
         spreadsheetId: SHEET_ID,
-        range: `${targetSheet}!A:R`,
+        range: `${targetSheet}!A:AB`,
       });
     }, `clear:${targetSheet}`);
 
@@ -943,7 +979,7 @@ async function previewRows(limit = 10, purpose = null) {
   const c = await initClients(purpose);
   const res = await c.sheets.spreadsheets.values.get({
     spreadsheetId: c.sheetId,
-    range: `${c.sheetName}!A1:R${Math.max(2, limit + 1)}`,
+    range: `${c.sheetName}!A1:AB${Math.max(2, limit + 1)}`,
   });
   const values = res.data.values || [];
   const header = values[0] || [];

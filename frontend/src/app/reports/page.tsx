@@ -9,12 +9,15 @@ import { useDaily, useByUser, useFunnel, useSources, useCategories } from '@/hoo
 import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
 import { humanize } from '@/lib/format';
 import { format } from 'date-fns';
+import { useAuth } from '@/lib/auth';
 
 const PIE_COLORS = ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd', '#bfdbfe', '#1d4ed8', '#1e40af'];
 
 export default function ReportsPage() {
+  const { user } = useAuth();
+  const isRm = user?.role === 'rm';
   return (
-    <AppShell title="Reports" subtitle="Conversion funnel, source mix, and team performance" roles={['super_admin', 'rm']}>
+    <AppShell title={isRm ? 'Team Reports' : 'Reports'} subtitle={isRm ? 'Performance metrics for your assigned team only' : 'Conversion funnel, source mix, and team performance'} roles={['super_admin', 'admin', 'rm']}>
       <ReportsInner />
     </AppShell>
   );

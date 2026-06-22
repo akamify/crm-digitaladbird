@@ -4026,17 +4026,29 @@ function googleSheetsError(res, error) {
     'GOOGLE_SHEETS_SPREADSHEET_NOT_FOUND',
     'GOOGLE_SHEETS_HEADER_INVALID',
     'INVALID_SPREADSHEET_ID',
-  ].includes(code) ? 400 : code === 'GOOGLE_SHEETS_ACCESS_DENIED' ? 403 : 500;
+    'GOOGLE_SHEETS_QUOTA_EXCEEDED',
+    'GOOGLE_SHEETS_SYNC_ALREADY_RUNNING',
+  ].includes(code) ? (code === 'GOOGLE_SHEETS_SYNC_ALREADY_RUNNING' ? 409 : code === 'GOOGLE_SHEETS_QUOTA_EXCEEDED' ? 429 : 400) : code === 'GOOGLE_SHEETS_ACCESS_DENIED' ? 403 : 500;
   return res.status(status).json({
     success: false,
     code,
     message: error?.message || 'Google Sheets request failed.',
+    retry_after_at: error?.retry_after_at || null,
   });
 }
 
 router.get('/my/google-sheets/status', authenticate, asyncHandler(async (req, res) => {
   const data = await userGoogleSheets.getStatus(req.user);
   res.json({ success: true, data });
+}));
+
+router.get('/my/google-sheets/spreadsheets', authenticate, asyncHandler(async (req, res) => {
+  try {
+    const result = await userGoogleSheets.listSpreadsheets(req.user, { refresh: req.query.refresh === 'true' });
+    res.json({ success: true, data: result.data, cached: result.cached });
+  } catch (error) {
+    return googleSheetsError(res, error);
+  }
 }));
 
 router.get('/my/google-sheets/oauth/start', authenticate, asyncHandler(async (req, res) => {
@@ -4056,10 +4068,15 @@ router.get('/my/google-sheets/oauth/callback', asyncHandler(async (req, res) => 
       oauthError.code = req.query.error === 'access_denied' ? 'access_denied' : 'GOOGLE_OAUTH_FAILED';
       throw oauthError;
     }
-    await googleUserOAuth.exchangeCallback({
+    const callback = await googleUserOAuth.exchangeCallback({
       code: req.query.code,
       state: req.query.state,
     });
+    const setup = await userGoogleSheets.setupAfterOAuth(callback.user_id);
+    if (setup.status === 'partial_setup') {
+      const code = encodeURIComponent(setup.error_code || 'PARTIAL_SETUP');
+      return res.redirect(`${frontend.replace(/\/$/, '')}/my-google-sheet?googleSheets=partial_setup&code=${code}`);
+    }
     res.redirect(`${frontend.replace(/\/$/, '')}/my-google-sheet?googleSheets=connected`);
   } catch (error) {
     const code = encodeURIComponent(error?.code || 'GOOGLE_OAUTH_FAILED');
@@ -4069,7 +4086,7 @@ router.get('/my/google-sheets/oauth/callback', asyncHandler(async (req, res) => 
 
 router.post('/my/google-sheets/create', authenticate, asyncHandler(async (req, res) => {
   try {
-    const data = await userGoogleSheets.createSpreadsheet(req.user, req.body?.spreadsheet_name);
+    const data = await userGoogleSheets.createSpreadsheet(req.user, req.body || {});
     res.json({ success: true, data, message: 'Google Sheet created successfully.' });
   } catch (error) {
     return googleSheetsError(res, error);
@@ -4078,7 +4095,7 @@ router.post('/my/google-sheets/create', authenticate, asyncHandler(async (req, r
 
 router.post('/my/google-sheets/connect-existing', authenticate, asyncHandler(async (req, res) => {
   try {
-    const data = await userGoogleSheets.connectExisting(req.user, req.body?.spreadsheet_url_or_id);
+    const data = await userGoogleSheets.connectExisting(req.user, req.body || {});
     res.json({ success: true, data, message: 'Google Sheet connected successfully.' });
   } catch (error) {
     return googleSheetsError(res, error);
@@ -4103,6 +4120,20 @@ router.post('/my/google-sheets/test', authenticate, asyncHandler(async (req, res
   }
 }));
 
+router.post('/my/google-sheets/create-missing-tabs', authenticate, asyncHandler(async (req, res) => {
+  try {
+    const data = await userGoogleSheets.testConnection(req.user);
+    res.json({ success: true, data, message: 'Missing tabs were created and headers were verified.' });
+  } catch (error) { return googleSheetsError(res, error); }
+}));
+
+router.post('/my/google-sheets/fix-headers', authenticate, asyncHandler(async (req, res) => {
+  try {
+    const data = await userGoogleSheets.testConnection(req.user);
+    res.json({ success: true, data, message: 'Google Sheet headers were repaired.' });
+  } catch (error) { return googleSheetsError(res, error); }
+}));
+
 router.post('/my/google-sheets/sync-now', authenticate, asyncHandler(async (req, res) => {
   try {
     const data = await userGoogleSheets.syncNow(req.user);
@@ -4110,6 +4141,20 @@ router.post('/my/google-sheets/sync-now', authenticate, asyncHandler(async (req,
   } catch (error) {
     return googleSheetsError(res, error);
   }
+}));
+
+router.post('/my/google-sheets/pull-sync', authenticate, asyncHandler(async (req, res) => {
+  try {
+    const data = await userGoogleSheets.pullSync(req.user);
+    res.json({ success: true, data, message: 'Allowed Google Sheet changes were synced to CRM.' });
+  } catch (error) { return googleSheetsError(res, error); }
+}));
+
+router.post('/my/google-sheets/two-way-sync', authenticate, asyncHandler(async (req, res) => {
+  try {
+    const data = await userGoogleSheets.twoWaySync(req.user);
+    res.json({ success: true, data, message: 'Two-way Google Sheet sync completed.' });
+  } catch (error) { return googleSheetsError(res, error); }
 }));
 
 router.post('/my/google-sheets/disconnect', authenticate, asyncHandler(async (req, res) => {
@@ -4288,6 +4333,15 @@ router.post('/admin/user-google-sheets/connections/:connectionId/sync-now', auth
   } catch (error) {
     return googleSheetsError(res, error);
   }
+}));
+
+router.post('/admin/user-google-sheets/connections/:connectionId/pull-sync', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  try {
+    const data = await userGoogleSheets.adminPullSync(req.params.connectionId);
+    const { logActivity } = require('../utils/auditLog');
+    logActivity(req, { entity: 'google_sheet_connection', entity_id: req.params.connectionId, action: 'user_google_sheet_pull', metadata: data });
+    res.json({ success: true, data, message: 'User Google Sheet changes synced to CRM.' });
+  } catch (error) { return googleSheetsError(res, error); }
 }));
 
 const sheetImport = require('../services/sheetImportService');

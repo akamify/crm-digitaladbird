@@ -8,6 +8,7 @@ import { formatISTCompact } from '@/lib/date';
 import { humanize } from '@/lib/format';
 import {
   useAdminSyncUserSheet,
+  useAdminPullUserSheet,
   useAdminTestUserSheet,
   useAdminUserSheetConnections,
   useAdminUserSheetLogs,
@@ -45,6 +46,7 @@ export function AdminUserGoogleSheets({ userId }: { userId?: string }) {
   const logs = useAdminUserSheetLogs(userId);
   const test = useAdminTestUserSheet();
   const sync = useAdminSyncUserSheet();
+  const pull = useAdminPullUserSheet();
   const rows = connections.data?.data || [];
 
   function runTest(id: string) {
@@ -58,6 +60,13 @@ export function AdminUserGoogleSheets({ userId }: { userId?: string }) {
     sync.mutate(id, {
       onSuccess: () => toast.success('Owner-scoped leads synced successfully.'),
       onError: error => toast.error(errorMessage(error, 'User sheet sync failed.')),
+    });
+  }
+
+  function runPull(id: string) {
+    pull.mutate(id, {
+      onSuccess: () => toast.success('Allowed sheet changes synced to CRM.'),
+      onError: error => toast.error(errorMessage(error, 'Pull sync failed.')),
     });
   }
 
@@ -102,6 +111,7 @@ export function AdminUserGoogleSheets({ userId }: { userId?: string }) {
                   <button title="Preview Data" onClick={() => setPreview(connection)} disabled={!connection.spreadsheet_id} className="rounded-md p-2 hover:bg-slate-100 disabled:opacity-40"><Eye className="h-4 w-4" /></button>
                   <button title="Test Connection" onClick={() => runTest(connection.id)} disabled={test.isPending} className="rounded-md p-2 hover:bg-slate-100"><RefreshCw className="h-4 w-4" /></button>
                   <button title="Sync Now" onClick={() => runSync(connection.id)} disabled={sync.isPending || connection.status !== 'connected'} className="rounded-md p-2 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40">{sync.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}</button>
+                  <button title="Pull Sheet to CRM" onClick={() => runPull(connection.id)} disabled={pull.isPending || connection.status !== 'connected'} className="rounded-md p-2 text-blue-700 hover:bg-blue-50 disabled:opacity-40"><RefreshCw className="h-4 w-4" /></button>
                 </div></td>
               </tr>
             ))}</tbody>
@@ -114,19 +124,19 @@ export function AdminUserGoogleSheets({ userId }: { userId?: string }) {
         <h3 className="text-sm font-semibold text-slate-900">Recent Sync Logs</h3>
         {logs.isLoading ? <Skeleton className="mt-3 h-24" /> : !(logs.data?.data || []).length ? <p className="mt-3 text-sm text-slate-500">No user sheet sync logs found.</p> : <div className="mt-2 overflow-x-auto"><table className="min-w-[760px] w-full text-xs"><thead><tr className="border-b text-left text-slate-500"><th className="p-2">Time</th>{!userId && <th className="p-2">User</th>}<th className="p-2">Type</th><th className="p-2">Status</th><th className="p-2">Attempted</th><th className="p-2">Synced</th><th className="p-2">Failed</th><th className="p-2">Error</th></tr></thead><tbody className="divide-y divide-slate-100">{(logs.data?.data || []).map(log => <tr key={log.id}><td className="p-2 text-slate-500">{log.started_at ? formatISTCompact(log.started_at) : 'Not available'}</td>{!userId && <td className="p-2">{log.user_name || 'System'}</td>}<td className="p-2">{humanize(log.sync_type)}</td><td className="p-2"><span className={log.status === 'success' ? 'chip-green' : log.status === 'failed' ? 'chip-red' : 'chip-blue'}>{humanize(log.status)}</span></td><td className="p-2">{log.records_attempted || 0}</td><td className="p-2">{log.records_synced || 0}</td><td className="p-2">{log.records_failed || 0}</td><td title={log.error_message || ''} className="max-w-52 truncate p-2 text-red-600">{log.error_message || '-'}</td></tr>)}</tbody></table></div>}
       </div>
-      <UserSheetPreviewModal connection={preview} onClose={() => setPreview(null)} onSync={runSync} onTest={runTest} />
+      <UserSheetPreviewModal connection={preview} onClose={() => setPreview(null)} onSync={runSync} onPull={runPull} onTest={runTest} />
     </section>
   );
 }
 
-function UserSheetPreviewModal({ connection, onClose, onSync, onTest }: { connection: UserSheetConnection | null; onClose: () => void; onSync: (id: string) => void; onTest: (id: string) => void }) {
+function UserSheetPreviewModal({ connection, onClose, onSync, onPull, onTest }: { connection: UserSheetConnection | null; onClose: () => void; onSync: (id: string) => void; onPull: (id: string) => void; onTest: (id: string) => void }) {
   const [sheetName, setSheetName] = useState('Leads');
   const [page, setPage] = useState(1);
   const preview = useAdminUserSheetPreview(connection?.id || null, sheetName, page);
   const data = preview.data;
   return <Modal open={!!connection} onClose={onClose} title={`${connection?.user_name || 'User'} Google Sheet`} size="xl">
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2"><select className="input w-48" value={sheetName} onChange={event => { setSheetName(event.target.value); setPage(1); }}>{[connection?.default_sheet_name || 'Leads', connection?.trader_sheet_name || 'Traders', connection?.partner_sheet_name || 'Partners', connection?.unknown_sheet_name || 'Unknown Leads'].map(name => <option key={name} value={name}>{name}</option>)}</select>{connection && <><button className="btn-outline rounded-lg px-3 py-2 text-sm" onClick={() => onTest(connection.id)}>Test</button><button className="btn-outline rounded-lg px-3 py-2 text-sm" onClick={() => onSync(connection.id)}>Sync Now</button>{connection.spreadsheet_id && <a className="btn-outline rounded-lg px-3 py-2 text-sm" target="_blank" rel="noopener noreferrer" href={`https://docs.google.com/spreadsheets/d/${connection.spreadsheet_id}/edit`}>Open Sheet</a>}</>}</div>
+      <div className="flex flex-wrap items-center gap-2"><select className="input w-48" value={sheetName} onChange={event => { setSheetName(event.target.value); setPage(1); }}>{[connection?.default_sheet_name || 'Leads', connection?.trader_sheet_name || 'Traders', connection?.partner_sheet_name || 'Partners', connection?.unknown_sheet_name || 'Unknown Leads'].map(name => <option key={name} value={name}>{name}</option>)}</select>{connection && <><button className="btn-outline rounded-lg px-3 py-2 text-sm" onClick={() => onTest(connection.id)}>Test</button><button className="btn-outline rounded-lg px-3 py-2 text-sm" onClick={() => onSync(connection.id)}>Push Sync</button><button className="btn-outline rounded-lg px-3 py-2 text-sm" onClick={() => onPull(connection.id)}>Pull Sync</button>{connection.spreadsheet_id && <a className="btn-outline rounded-lg px-3 py-2 text-sm" target="_blank" rel="noopener noreferrer" href={`https://docs.google.com/spreadsheets/d/${connection.spreadsheet_id}/edit`}>Open Sheet</a>}</>}</div>
       {preview.isLoading ? <Skeleton className="h-52" /> : preview.isError ? <p className="py-8 text-center text-sm text-red-600">{errorMessage(preview.error, 'Could not preview this sheet.')}</p> : <div className="max-h-[55vh] overflow-auto rounded-lg border"><table className="min-w-max w-full text-xs"><thead className="sticky top-0 bg-slate-50"><tr>{(data?.headers || []).map(header => <th key={header} className="border-b p-2 text-left font-medium text-slate-600">{header}</th>)}</tr></thead><tbody>{(data?.rows || []).map((row, index) => <tr key={`${page}-${index}`} className="border-b last:border-0">{(data?.headers || []).map(header => <td key={header} className="max-w-52 truncate p-2" title={row[header]}>{row[header] || '-'}</td>)}</tr>)}</tbody></table>{!data?.rows.length && <p className="p-8 text-center text-sm text-slate-500">No rows found.</p>}</div>}
       <div className="flex justify-end gap-2"><button className="btn-outline rounded-md px-3 py-1.5 text-xs" disabled={page === 1} onClick={() => setPage(value => value - 1)}>Previous</button><button className="btn-outline rounded-md px-3 py-1.5 text-xs" disabled={!data?.pagination.has_more} onClick={() => setPage(value => value + 1)}>Load More</button></div>
     </div>

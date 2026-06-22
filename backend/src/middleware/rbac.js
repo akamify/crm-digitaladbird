@@ -37,7 +37,7 @@ function requireMemberType(...types) {
  *   member/partner → only self
  */
 async function getVisibleUserIds(user) {
-  if (user.role === 'super_admin') return null;
+  if (user.role === 'super_admin' || user.role === 'admin') return null;
   if (user.role === 'rm') {
     const { rows } = await query(
       `SELECT id FROM users

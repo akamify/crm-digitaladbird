@@ -83,3 +83,11 @@ export function useAdminSyncUserSheet() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-user-google-sheets'] }),
   });
 }
+
+export function useAdminPullUserSheet() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (connectionId: string) => apiPost(`/admin/user-google-sheets/connections/${connectionId}/pull-sync`, {}),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-user-google-sheets'] }),
+  });
+}

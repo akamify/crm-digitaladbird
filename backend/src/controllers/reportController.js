@@ -7,9 +7,17 @@ function buildScope(visible, offset = 0) {
   return { sql: ` AND l.assigned_to_user_id = ANY($${offset + 1}::uuid[])`, params: [visible] };
 }
 
+async function getReportVisible(user) {
+  const visible = await getVisibleUserIds(user);
+  if (user?.role === 'rm' && Array.isArray(visible)) {
+    return visible.filter(id => String(id) !== String(user.id));
+  }
+  return visible;
+}
+
 /** GET /api/reports/summary -> headline KPIs for the dashboard. */
 exports.summary = asyncHandler(async (req, res) => {
-  const visible = await getVisibleUserIds(req.user);
+  const visible = await getReportVisible(req.user);
   const scope   = buildScope(visible);
   const from    = req.query.from || null;
   const to      = req.query.to   || null;
@@ -47,7 +55,7 @@ exports.summary = asyncHandler(async (req, res) => {
 });
 
 exports.categories = asyncHandler(async (req, res) => {
-  const visible = await getVisibleUserIds(req.user);
+  const visible = await getReportVisible(req.user);
   const scope = buildScope(visible);
   const params = [...scope.params];
   let filters = '';
@@ -70,7 +78,7 @@ exports.categories = asyncHandler(async (req, res) => {
 
 /** GET /api/reports/daily?days=14 -> { day, leads, conversions, pending }[] */
 exports.daily = asyncHandler(async (req, res) => {
-  const visible = await getVisibleUserIds(req.user);
+  const visible = await getReportVisible(req.user);
   const days    = Math.min(90, Math.max(1, parseInt(req.query.days || '14', 10)));
   const scope   = buildScope(visible, 1); // $1 is already `days`
 
@@ -92,8 +100,10 @@ exports.daily = asyncHandler(async (req, res) => {
 
 /** GET /api/reports/by-user -> per-member breakdown (admin + rm scoped). */
 exports.byUser = asyncHandler(async (req, res) => {
-  const visible = await getVisibleUserIds(req.user);
+  const visible = await getReportVisible(req.user);
   const scope   = buildScope(visible);
+  const userScope = visible === null ? '' : ` AND u.id = ANY($1::uuid[]) AND u.id <> $2`;
+  const userParams = visible === null ? [] : [visible, req.user.id];
   const { rows } = await query(
     `SELECT u.id, u.full_name, u.role, u.team_name,
             COUNT(l.id)                                                AS leads,
@@ -107,16 +117,16 @@ exports.byUser = asyncHandler(async (req, res) => {
        LEFT JOIN leads l
               ON l.assigned_to_user_id = u.id
              AND l.deleted_at IS NULL ${scope.sql}
-      WHERE u.deleted_at IS NULL AND u.role IN ('member','rm')
+      WHERE u.deleted_at IS NULL AND u.role::text IN ('member','partner') ${userScope}
       GROUP BY u.id ORDER BY conversions DESC NULLS LAST, leads DESC`,
-    scope.params
+    visible === null ? scope.params : userParams
   );
   res.json({ success: true, data: rows });
 });
 
 /** GET /api/reports/funnel */
 exports.funnel = asyncHandler(async (req, res) => {
-  const visible = await getVisibleUserIds(req.user);
+  const visible = await getReportVisible(req.user);
   const scope   = buildScope(visible);
   const { rows } = await query(
     `SELECT stage, COUNT(*) AS count
@@ -129,7 +139,7 @@ exports.funnel = asyncHandler(async (req, res) => {
 
 /** GET /api/reports/sources */
 exports.sources = asyncHandler(async (req, res) => {
-  const visible = await getVisibleUserIds(req.user);
+  const visible = await getReportVisible(req.user);
   const scope   = buildScope(visible);
   const { rows } = await query(
     `SELECT source, COUNT(*) AS count,

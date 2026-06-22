@@ -15,7 +15,27 @@ export interface MyGoogleSheetStatus {
   sync_enabled?: boolean;
   last_sync_at?: string | null;
   last_error?: string | null;
+  retry_after_at?: string | null;
   open_url?: string | null;
+  status?: 'connected' | 'needs_reconnect' | 'sync_failed' | 'quota_cooldown' | 'disconnected';
+  setup?: {
+    sheet_created?: boolean;
+    tabs_valid?: boolean;
+    headers_valid?: boolean;
+    missing_tabs?: string[];
+    invalid_headers?: string[];
+  };
+}
+
+export interface GoogleSpreadsheetOption {
+  id: string;
+  name: string;
+  modified_time?: string | null;
+  web_view_link?: string | null;
+}
+
+export interface SheetSetupResult {
+  [sheetName: string]: { sheet_name: string; ready: boolean; created?: boolean; header_fixed?: boolean };
 }
 
 export interface MyGoogleSheetSyncLog {
@@ -23,6 +43,7 @@ export interface MyGoogleSheetSyncLog {
   sync_type: string;
   status: string;
   records_synced?: number;
+  records_failed?: number;
   started_at?: string;
   error_message?: string | null;
 }
@@ -51,10 +72,20 @@ export function useStartMyGoogleOAuth() {
   });
 }
 
+export function useMyGoogleSpreadsheets(connected: boolean, refreshKey = 0) {
+  return useQuery({
+    queryKey: ['my-google-sheets', 'spreadsheets', refreshKey],
+    queryFn: () => apiGet<GoogleSpreadsheetOption[]>('/my/google-sheets/spreadsheets', refreshKey ? { refresh: true } : undefined),
+    enabled: connected,
+    staleTime: 7 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+}
+
 export function useCreateMyGoogleSheet() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (spreadsheet_name?: string) => apiPost<MyGoogleSheetStatus>('/my/google-sheets/create', { spreadsheet_name }),
+    mutationFn: (body: { spreadsheet_name: string; sheet_names?: Record<string, string> }) => apiPost<MyGoogleSheetStatus & { setup?: SheetSetupResult }>('/my/google-sheets/create', body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['my-google-sheets'] }),
   });
 }
@@ -62,8 +93,8 @@ export function useCreateMyGoogleSheet() {
 export function useConnectExistingMyGoogleSheet() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (spreadsheet_url_or_id: string) =>
-      apiPost<MyGoogleSheetStatus>('/my/google-sheets/connect-existing', { spreadsheet_url_or_id }),
+    mutationFn: (body: { spreadsheet_id: string; auto_create_tabs?: boolean; auto_fix_headers?: boolean; sheet_names?: Record<string, string> }) =>
+      apiPost<MyGoogleSheetStatus & { setup?: SheetSetupResult }>('/my/google-sheets/connect-existing', body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['my-google-sheets'] }),
   });
 }
@@ -82,12 +113,30 @@ export function useTestMyGoogleSheet() {
   });
 }
 
+export function useSetupMyGoogleSheet(action: 'create-missing-tabs' | 'fix-headers') {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiPost(`/my/google-sheets/${action}`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['my-google-sheets'] }),
+  });
+}
+
 export function useSyncMyGoogleSheetNow() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => apiPost('/my/google-sheets/sync-now', {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['my-google-sheets'] }),
   });
+}
+
+export function usePullMyGoogleSheet() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: () => apiPost('/my/google-sheets/pull-sync', {}), onSuccess: () => qc.invalidateQueries({ queryKey: ['my-google-sheets'] }) });
+}
+
+export function useTwoWayMyGoogleSheet() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: () => apiPost('/my/google-sheets/two-way-sync', {}), onSuccess: () => qc.invalidateQueries({ queryKey: ['my-google-sheets'] }) });
 }
 
 export function useDisconnectMyGoogleSheet() {
@@ -98,9 +147,10 @@ export function useDisconnectMyGoogleSheet() {
   });
 }
 
-export function useMyGoogleSheetLogs() {
+export function useMyGoogleSheetLogs(page = 1) {
   return useQuery({
-    queryKey: ['my-google-sheets', 'logs'],
-    queryFn: () => apiGet<MyGoogleSheetLogResponse>('/my/google-sheets/sync-logs', { page: 1, page_size: 20 }),
+    queryKey: ['my-google-sheets', 'logs', page],
+    queryFn: () => apiGet<MyGoogleSheetLogResponse>('/my/google-sheets/sync-logs', { page, page_size: 20 }),
+    placeholderData: previous => previous,
   });
 }

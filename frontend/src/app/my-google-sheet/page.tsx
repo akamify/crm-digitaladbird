@@ -2,280 +2,339 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { CheckCircle2, ExternalLink, FileSpreadsheet, Loader2, PlugZap, RefreshCw, Unplug, XCircle } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ExternalLink,
+  FileSpreadsheet,
+  Loader2,
+  RefreshCw,
+  Unplug,
+  XCircle,
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
-import { EmptyState, Skeleton } from '@/components/ui/Modal';
+import { EmptyState, Modal, Skeleton } from '@/components/ui/Modal';
 import {
-  useConnectExistingMyGoogleSheet,
   useCreateMyGoogleSheet,
   useDisconnectMyGoogleSheet,
   useMyGoogleSheetLogs,
   useMyGoogleSheetStatus,
+  useSetupMyGoogleSheet,
   useStartMyGoogleOAuth,
   useSyncMyGoogleSheetNow,
-  useTestMyGoogleSheet,
-  useUpdateMyGoogleSheetSettings,
-  type MyGoogleSheetSyncLog,
 } from '@/hooks/useMyGoogleSheets';
 import { useAuth } from '@/lib/auth';
 import { formatISTCompact } from '@/lib/date';
+import { humanize } from '@/lib/format';
 
-function errorMessage(error: unknown, fallback: string) {
-  return (error as { response?: { data?: { message?: string } } })?.response?.data?.message || fallback;
+const DEFAULT_SHEET_NAME = 'DigitalADbird CRM Leads';
+
+function message(error: unknown, fallback: string) {
+  const payload = (error as { response?: { data?: { code?: string; message?: string } } })?.response?.data;
+  if (payload?.code === 'GOOGLE_SHEETS_QUOTA_EXCEEDED') return 'Google Sheets quota reached. Please wait a few minutes and try again.';
+  if (payload?.code === 'GOOGLE_SHEETS_SYNC_ALREADY_RUNNING') return 'A sync is already running. Please wait.';
+  if (payload?.code === 'GOOGLE_OAUTH_NOT_CONFIGURED') return 'Google OAuth is not configured. Please contact admin.';
+  if (payload?.code === 'GOOGLE_SHEETS_ACCESS_DENIED') return 'Google Sheets access was denied. Please reconnect your Google account.';
+  return payload?.message || fallback;
 }
 
 export default function MyGoogleSheetPage() {
   return (
-    <AppShell
-      title="My Google Sheet"
-      subtitle="Connect your Google account and sync only leads you are allowed to see"
-      roles={['super_admin', 'admin', 'rm', 'member', 'partner']}
-    >
-      <MyGoogleSheetInner />
+    <AppShell title="My Google Sheet" subtitle="Secure, role-scoped CRM lead synchronization" roles={['super_admin', 'admin', 'rm', 'member', 'partner']}>
+      <MyGoogleSheetContent />
     </AppShell>
   );
 }
 
-function MyGoogleSheetInner() {
-  const searchParams = useSearchParams();
+function MyGoogleSheetContent() {
   const { user } = useAuth();
-  const status = useMyGoogleSheetStatus();
-  const logs = useMyGoogleSheetLogs();
-  const startOAuth = useStartMyGoogleOAuth();
-  const createSheet = useCreateMyGoogleSheet();
-  const connectExisting = useConnectExistingMyGoogleSheet();
-  const updateSettings = useUpdateMyGoogleSheetSettings();
-  const testSheet = useTestMyGoogleSheet();
-  const syncNow = useSyncMyGoogleSheetNow();
-  const disconnect = useDisconnectMyGoogleSheet();
-  const [sheetInput, setSheetInput] = useState('');
-  const [form, setForm] = useState({
-    default_sheet_name: 'Leads',
-    trader_sheet_name: 'Traders',
-    partner_sheet_name: 'Partners',
-    unknown_sheet_name: 'Unknown Leads',
-    sync_enabled: true,
-  });
+  const params = useSearchParams();
+  const [logPage, setLogPage] = useState(1);
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
 
-  const oauthError = searchParams.get('googleSheets') === 'error' ? searchParams.get('code') : null;
+  const status = useMyGoogleSheetStatus();
+  const logs = useMyGoogleSheetLogs(logPage);
+  const oauth = useStartMyGoogleOAuth();
+  const create = useCreateMyGoogleSheet();
+  const createTabs = useSetupMyGoogleSheet('create-missing-tabs');
+  const fixHeaders = useSetupMyGoogleSheet('fix-headers');
+  const sync = useSyncMyGoogleSheetNow();
+  const disconnect = useDisconnectMyGoogleSheet();
+
+  const data = status.data;
+  const connected = !!data?.connected;
+  const hasSheet = !!data?.spreadsheet_id;
+  const setup = data?.setup;
+  const tabsValid = setup?.tabs_valid !== false;
+  const headersValid = setup?.headers_valid !== false;
+  const needsSetup = connected && (!hasSheet || !tabsValid || !headersValid);
+  const retryAfterTime = data?.retry_after_at ? new Date(data.retry_after_at).getTime() : 0;
+  const inCooldown = !!retryAfterTime && retryAfterTime > now;
+  const busy = oauth.isPending || create.isPending || createTabs.isPending || fixHeaders.isPending || sync.isPending || disconnect.isPending;
+  const syncDisabled = busy || inCooldown;
+
+  const roleText = useMemo(() => {
+    if (user?.role === 'rm') return 'Only your team leads will sync.';
+    if (user?.role === 'member' || user?.role === 'partner') return 'Only your assigned leads will sync.';
+    return 'Your personal Google Sheet remains separate from the company master sheet.';
+  }, [user?.role]);
 
   useEffect(() => {
-    const data = status.data;
-    if (!data?.connected) return;
-    setForm({
-      default_sheet_name: data.default_sheet_name || 'Leads',
-      trader_sheet_name: data.trader_sheet_name || 'Traders',
-      partner_sheet_name: data.partner_sheet_name || 'Partners',
-      unknown_sheet_name: data.unknown_sheet_name || 'Unknown Leads',
-      sync_enabled: data.sync_enabled !== false,
-    });
-  }, [status.data]);
+    const state = params.get('googleSheets');
+    const code = params.get('code');
+    if (state === 'connected') toast.success('Google Sheet connected and leads synced successfully.');
+    if (state === 'partial_setup') {
+      toast.error(code === 'FIRST_SYNC_FAILED'
+        ? 'Sheet connected, but first sync failed. Click Sync Leads to try again.'
+        : 'Google account connected, but sheet setup needs attention.');
+    }
+    if (state === 'error') {
+      toast.error(code === 'access_denied'
+        ? 'Google blocked access because this OAuth app is still in testing or not verified.'
+        : 'Google Sheet connection failed.');
+    }
+  }, [params]);
 
-  const roleMessage = useMemo(() => {
-    if (user?.role === 'rm') return 'Only leads assigned to members in your RM team will sync.';
-    if (user?.role === 'member' || user?.role === 'partner') return 'Only leads assigned to you will sync.';
-    return 'Your personal sheet is separate from the company master sheet.';
-  }, [user?.role]);
+  useEffect(() => {
+    if (!inCooldown) return undefined;
+    const timer = window.setInterval(() => setNow(Date.now()), 15000);
+    return () => window.clearInterval(timer);
+  }, [inCooldown]);
+
+  function startOAuth() {
+    oauth.mutate(undefined, {
+      onSuccess: response => { window.location.href = response.url; },
+      onError: error => toast.error(message(error, 'Could not start Google OAuth.')),
+    });
+  }
+
+  function createSheet() {
+    create.mutate(
+      { spreadsheet_name: DEFAULT_SHEET_NAME },
+      { onSuccess: () => toast.success('Google Sheet created successfully.'), onError: error => toast.error(message(error, 'Could not create Google Sheet.')) },
+    );
+  }
+
+  function repairTabs() {
+    createTabs.mutate(undefined, {
+      onSuccess: () => toast.success('Missing tabs created.'),
+      onError: error => toast.error(message(error, 'Could not create missing tabs.')),
+    });
+  }
+
+  function repairHeaders() {
+    fixHeaders.mutate(undefined, {
+      onSuccess: () => toast.success('Headers fixed successfully.'),
+      onError: error => toast.error(message(error, 'Could not fix headers.')),
+    });
+  }
+
+  function syncLeads() {
+    sync.mutate(undefined, {
+      onSuccess: () => toast.success('Leads synced successfully.'),
+      onError: error => toast.error(message(error, 'Sync failed.')),
+    });
+  }
+
+  function confirmDisconnectSheet() {
+    disconnect.mutate(undefined, {
+      onSuccess: () => {
+        setConfirmDisconnect(false);
+        toast.success('Google Sheet disconnected.');
+      },
+      onError: error => toast.error(message(error, 'Disconnect failed.')),
+    });
+  }
 
   if (status.isLoading) return <Skeleton className="h-64" />;
   if (status.isError) {
-    return <EmptyState title="Could not load Google Sheet status" description="Please try again." icon={<FileSpreadsheet className="h-6 w-6" />} />;
-  }
-
-  const connected = !!status.data?.connected;
-
-  function handleConnect() {
-    startOAuth.mutate(undefined, {
-      onSuccess: ({ url }) => {
-        window.location.href = url;
-      },
-      onError: (error) => toast.error(errorMessage(error, 'Could not start Google OAuth.')),
-    });
-  }
-
-  function saveSettings() {
-    updateSettings.mutate(form, {
-      onSuccess: () => toast.success('My Google Sheet settings saved.'),
-      onError: (error) => toast.error(errorMessage(error, 'Could not save settings.')),
-    });
+    return <EmptyState title="Google Sheet status unavailable" description="Please refresh and try again." icon={<FileSpreadsheet className="h-6 w-6" />} />;
   }
 
   return (
-    <div className="space-y-6">
-      {oauthError && (
-        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
-          <div className="font-semibold">Google account connection was blocked</div>
+    <div className="space-y-5">
+      {params.get('googleSheets') === 'error' && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+          <strong>Google account connection was blocked.</strong>
           <p className="mt-1">Google blocked access because this OAuth app is still in testing or not verified. Ask admin to add your Gmail as a Google OAuth test user, or complete Google app verification for production use.</p>
         </div>
       )}
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <FileSpreadsheet className="h-5 w-5 text-emerald-600" />
-              <h2 className="text-base font-semibold text-slate-900">Personal Google Sheet</h2>
-              {connected ? (
-                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700">
-                  <CheckCircle2 className="h-3.5 w-3.5" /> Connected
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
-                  <XCircle className="h-3.5 w-3.5" /> Not connected
-                </span>
-              )}
+              <h2 className="font-semibold text-slate-950">Personal Google Sheet</h2>
+              <ConnectionBadge connected={connected} needsSetup={needsSetup} status={data?.status} />
             </div>
-            <p className="mt-2 text-sm text-slate-600">{roleMessage}</p>
-            {status.data?.last_error && <p className="mt-2 text-sm text-red-600">{status.data.last_error}</p>}
+            <p className="mt-2 text-sm text-slate-600">{roleText}</p>
+            {!connected && (
+              <p className="mt-1 max-w-2xl text-sm text-slate-500">
+                Connect your Google account. A new Google Sheet named {DEFAULT_SHEET_NAME} will be created automatically with required tabs and headers.
+              </p>
+            )}
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
+            {!connected ? (
+              <button className="btn-primary inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm" onClick={startOAuth} disabled={busy}>
+                {oauth.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
+                Connect Sheet
+              </button>
+            ) : (
+              <>
+                {hasSheet && (
+                  <button className="btn-primary inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm" onClick={syncLeads} disabled={syncDisabled}>
+                    {sync.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                    {sync.isPending ? 'Syncing...' : 'Sync Leads'}
+                  </button>
+                )}
+                {data?.open_url && (
+                  <a className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm" href={data.open_url} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="h-4 w-4" />
+                    Open Sheet
+                  </a>
+                )}
+                <button className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-red-600" onClick={() => setConfirmDisconnect(true)} disabled={busy}>
+                  <Unplug className="h-4 w-4" />
+                  Disconnect
+                </button>
+              </>
+            )}
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            {!connected && (
-              <button type="button" onClick={handleConnect} disabled={startOAuth.isPending} className="btn-primary rounded-lg px-4 py-2 text-sm inline-flex items-center gap-2">
-                {startOAuth.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlugZap className="h-4 w-4" />}
-                Connect Google Account
-              </button>
-            )}
-            {connected && status.data?.open_url && (
-              <a href={status.data.open_url} target="_blank" rel="noopener noreferrer" className="btn-outline rounded-lg px-4 py-2 text-sm inline-flex items-center gap-2">
-                <ExternalLink className="h-4 w-4" /> Open Sheet
-              </a>
-            )}
-          </div>
         </div>
 
-        {connected && (
-          <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2">
-            <Info label="Google Account" value={status.data?.google_email || 'Connected account'} />
-            <Info label="Spreadsheet" value={status.data?.spreadsheet_name || status.data?.spreadsheet_id || 'Not selected'} />
-            <Info label="Last Sync" value={status.data?.last_sync_at ? formatISTCompact(status.data.last_sync_at) : 'Not synced yet'} />
-            <Info label="Sync" value={status.data?.sync_enabled === false ? 'Disabled' : 'Enabled'} />
+        {connected ? (
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-2">
+            <Info label="Connection Status" value={inCooldown ? 'Quota cooldown' : needsSetup ? 'Needs setup' : data?.last_error ? 'Sync failed' : 'Connected'} />
+            <Info label="Spreadsheet Name" value={data?.spreadsheet_name || 'Not created yet'} />
+            <Info label="Last Sync" value={data?.last_sync_at ? formatISTCompact(data.last_sync_at) : 'Not synced yet'} />
+            <Info label="Sync Enabled" value={data?.sync_enabled === false ? 'Disabled' : 'Enabled'} />
+          </div>
+        ) : (
+          <div className="mt-5 rounded-lg bg-slate-50 p-4 text-sm text-slate-600">
+            After connecting, CRM will create Leads, Traders, Partners, and Unknown Leads tabs, write the required headers, and sync your allowed leads.
           </div>
         )}
-      </div>
 
-      {connected && (
-        <>
-          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="text-sm font-semibold text-slate-900">Sheet Setup</h3>
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-              <input className="input" placeholder="Existing spreadsheet URL or ID" value={sheetInput} onChange={(e) => setSheetInput(e.target.value)} />
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => createSheet.mutate('DigitalADbird CRM Leads', {
-                    onSuccess: () => toast.success('New CRM sheet created.'),
-                    onError: (error) => toast.error(errorMessage(error, 'Could not create sheet.')),
-                  })}
-                  disabled={createSheet.isPending}
-                  className="btn-outline flex-1 rounded-lg px-4 py-2 text-sm"
-                >
-                  Create New CRM Sheet
-                </button>
-                <button
-                  type="button"
-                  onClick={() => connectExisting.mutate(sheetInput, {
-                    onSuccess: () => toast.success('Existing sheet connected.'),
-                    onError: (error) => toast.error(errorMessage(error, 'Could not connect sheet.')),
-                  })}
-                  disabled={connectExisting.isPending || !sheetInput.trim()}
-                  className="btn-primary flex-1 rounded-lg px-4 py-2 text-sm"
-                >
-                  Connect Existing
-                </button>
+        {connected && data?.last_error && (
+          <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+            <div className="font-medium">{inCooldown ? 'Google Sheets quota reached.' : 'Last sync failed.'}</div>
+            <p className="mt-1">{inCooldown ? 'Try again after a few minutes.' : data.last_error}</p>
+            {inCooldown && data.retry_after_at && <p className="mt-1 text-xs">Retry after {formatISTCompact(data.retry_after_at)}.</p>}
+          </div>
+        )}
+
+        {connected && needsSetup && (
+          <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4">
+            <div className="flex items-start gap-2 text-sm text-amber-950">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                <div className="font-medium">Google Sheet setup needs attention.</div>
+                <p className="mt-1">Use only the action required below. Existing rows will not be deleted.</p>
               </div>
             </div>
-          </div>
-
-          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="text-sm font-semibold text-slate-900">Tab Names</h3>
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-              <Field label="Default Sheet" value={form.default_sheet_name} onChange={(value) => setForm(prev => ({ ...prev, default_sheet_name: value }))} />
-              <Field label="Traders Sheet" value={form.trader_sheet_name} onChange={(value) => setForm(prev => ({ ...prev, trader_sheet_name: value }))} />
-              <Field label="Partners Sheet" value={form.partner_sheet_name} onChange={(value) => setForm(prev => ({ ...prev, partner_sheet_name: value }))} />
-              <Field label="Unknown Sheet" value={form.unknown_sheet_name} onChange={(value) => setForm(prev => ({ ...prev, unknown_sheet_name: value }))} />
-            </div>
-            <label className="mt-4 flex items-center gap-2 text-sm text-slate-700">
-              <input type="checkbox" checked={form.sync_enabled} onChange={(e) => setForm(prev => ({ ...prev, sync_enabled: e.target.checked }))} />
-              Enable sync for this connection
-            </label>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button type="button" onClick={saveSettings} disabled={updateSettings.isPending} className="btn-primary rounded-lg px-4 py-2 text-sm">Save Settings</button>
-              <button
-                type="button"
-                onClick={() => testSheet.mutate(undefined, {
-                  onSuccess: () => toast.success('Google Sheet test completed.'),
-                  onError: (error) => toast.error(errorMessage(error, 'Google Sheet test failed.')),
-                })}
-                disabled={testSheet.isPending || !status.data?.spreadsheet_id}
-                className="btn-outline rounded-lg px-4 py-2 text-sm"
-              >
-                Test Connection
-              </button>
-              <button
-                type="button"
-                onClick={() => syncNow.mutate(undefined, {
-                  onSuccess: () => toast.success('Your leads synced to Google Sheets.'),
-                  onError: (error) => toast.error(errorMessage(error, 'Sync failed.')),
-                })}
-                disabled={syncNow.isPending || !status.data?.spreadsheet_id}
-                className="btn-outline rounded-lg px-4 py-2 text-sm inline-flex items-center gap-2"
-              >
-                {syncNow.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                Sync My Leads Now
-              </button>
-              <button
-                type="button"
-                onClick={() => disconnect.mutate(undefined, {
-                  onSuccess: () => toast.success('Google Sheet disconnected.'),
-                  onError: (error) => toast.error(errorMessage(error, 'Disconnect failed.')),
-                })}
-                disabled={disconnect.isPending}
-                className="rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 inline-flex items-center gap-2"
-              >
-                <Unplug className="h-4 w-4" /> Disconnect
-              </button>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {!hasSheet && (
+                <button className="btn-primary rounded-lg px-4 py-2 text-sm" onClick={createSheet} disabled={busy}>
+                  {create.isPending ? 'Creating...' : 'Create Sheet'}
+                </button>
+              )}
+              {hasSheet && !tabsValid && (
+                <button className="btn-outline rounded-lg px-4 py-2 text-sm" onClick={repairTabs} disabled={busy}>
+                  {createTabs.isPending ? 'Creating...' : 'Create Missing Tabs'}
+                </button>
+              )}
+              {hasSheet && tabsValid && !headersValid && (
+                <button className="btn-outline rounded-lg px-4 py-2 text-sm" onClick={repairHeaders} disabled={busy}>
+                  {fixHeaders.isPending ? 'Fixing...' : 'Fix Headers'}
+                </button>
+              )}
             </div>
           </div>
-        </>
-      )}
+        )}
+      </section>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h3 className="text-sm font-semibold text-slate-900">Sync Logs</h3>
-        {logs.isLoading ? <Skeleton className="mt-4 h-24" /> : (logs.data?.data || []).length === 0 ? (
-          <p className="mt-3 text-sm text-slate-500">No personal sheet sync logs yet.</p>
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="font-semibold text-slate-950">Sync Logs</h2>
+          {logs.isFetching && !logs.isLoading && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
+        </div>
+        {logs.isLoading ? (
+          <Skeleton className="mt-4 h-28" />
+        ) : !logs.data?.data.length ? (
+          <p className="mt-4 text-sm text-slate-500">No sync logs yet.</p>
         ) : (
           <div className="mt-3 divide-y divide-slate-100">
-            {(logs.data?.data || []).map((log: MyGoogleSheetSyncLog) => (
-              <div key={log.id} className="flex items-center justify-between py-3 text-sm">
-                <div>
-                  <div className="font-medium text-slate-900">{log.sync_type}</div>
-                  <div className="text-xs text-slate-500">{formatISTCompact(log.started_at)} · {log.records_synced || 0} synced</div>
+            {logs.data.data.map(log => (
+              <div key={log.id} className="flex flex-wrap items-start justify-between gap-3 py-3 text-sm">
+                <div className="min-w-0">
+                  <div className="font-medium capitalize text-slate-900">{humanize(log.sync_type)}</div>
+                  <div className="text-xs text-slate-500">
+                    {log.started_at ? formatISTCompact(log.started_at) : 'Time not available'} · {log.records_synced || 0} synced · {log.records_failed || 0} failed
+                  </div>
+                  {log.error_message && <p className="mt-1 max-w-2xl truncate text-xs text-red-600" title={log.error_message}>{log.error_message}</p>}
                 </div>
-                <span className={log.status === 'success' ? 'chip-green' : log.status === 'failed' ? 'chip-red' : 'chip-blue'}>{log.status}</span>
+                <LogStatus status={log.status} />
               </div>
             ))}
           </div>
         )}
-      </div>
+        <div className="mt-3 flex justify-end gap-2">
+          <button className="btn-outline rounded-md px-3 py-1.5 text-xs" disabled={logPage === 1 || logs.isFetching} onClick={() => setLogPage(value => Math.max(1, value - 1))}>Previous</button>
+          <button className="btn-outline rounded-md px-3 py-1.5 text-xs" disabled={!logs.data?.pagination.has_more || logs.isFetching} onClick={() => setLogPage(value => value + 1)}>Load More</button>
+        </div>
+      </section>
+
+      <Modal
+        open={confirmDisconnect}
+        onClose={() => setConfirmDisconnect(false)}
+        title="Disconnect Google Sheet?"
+        description="This will disconnect your Google account from DigitalADbird CRM. Your Google Sheet will not be deleted, but future syncing will stop."
+        footer={(
+          <>
+            <button className="btn-outline rounded-lg px-4 py-2 text-sm" onClick={() => setConfirmDisconnect(false)} disabled={disconnect.isPending}>Cancel</button>
+            <button className="btn-primary rounded-lg bg-red-600 px-4 py-2 text-sm hover:bg-red-700" onClick={confirmDisconnectSheet} disabled={disconnect.isPending}>
+              {disconnect.isPending ? 'Disconnecting...' : 'Disconnect'}
+            </button>
+          </>
+        )}
+      >
+        <p className="text-sm text-slate-600">You can reconnect later. The existing spreadsheet remains in your Google Drive.</p>
+      </Modal>
     </div>
   );
+}
+
+function ConnectionBadge({ connected, needsSetup, status }: { connected: boolean; needsSetup: boolean; status?: string }) {
+  if (!connected) return <span className="chip-slate"><XCircle className="mr-1 inline h-3 w-3" />Not connected</span>;
+  if (status === 'needs_reconnect') return <span className="chip-red"><XCircle className="mr-1 inline h-3 w-3" />Needs reconnect</span>;
+  if (status === 'quota_cooldown') return <span className="chip-amber"><AlertTriangle className="mr-1 inline h-3 w-3" />Quota cooldown</span>;
+  if (status === 'sync_failed') return <span className="chip-amber"><AlertTriangle className="mr-1 inline h-3 w-3" />Sync failed</span>;
+  if (needsSetup) return <span className="chip-amber"><AlertTriangle className="mr-1 inline h-3 w-3" />Needs setup</span>;
+  return <span className="chip-green"><CheckCircle2 className="mr-1 inline h-3 w-3" />Connected</span>;
+}
+
+function LogStatus({ status }: { status: string }) {
+  const normalized = String(status || 'started').toLowerCase();
+  const className = normalized === 'success'
+    ? 'chip-green'
+    : normalized === 'failed'
+      ? 'chip-red'
+      : normalized === 'conflict' || normalized === 'partial'
+        ? 'chip-amber'
+        : 'chip-blue';
+  return <span className={className}>{humanize(normalized)}</span>;
 }
 
 function Info({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-      <div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="mt-0.5 truncate text-sm font-medium text-slate-900">{value}</div>
+    <div className="rounded-lg bg-slate-50 p-3">
+      <div className="text-[10px] uppercase text-slate-500">{label}</div>
+      <div className="mt-1 truncate text-sm font-medium text-slate-900" title={value}>{value}</div>
     </div>
-  );
-}
-
-function Field({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-xs font-medium text-slate-600">{label}</span>
-      <input className="input" value={value} onChange={(e) => onChange(e.target.value)} />
-    </label>
   );
 }
