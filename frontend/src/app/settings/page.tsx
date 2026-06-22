@@ -1,22 +1,21 @@
 'use client';
-import { useState, useEffect, FormEvent } from 'react';
+import { useState } from 'react';
 import * as React from 'react';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  Plus, Settings as Cog, Copy, Webhook, Facebook, FileText, Clock, Play,
+  Plus, Settings as Cog, Webhook, Facebook, FileText,
   CheckCircle2, XCircle, AlertCircle, RefreshCw, Sheet, ExternalLink, Eye,
-  Loader2, ChevronDown, ChevronRight, Zap, Shield, Globe, Search,
-  ArrowLeft, Database, Activity, Radio, Key, Megaphone, BarChart3,
-  ChevronLeft, Download, Filter, Users, Pencil,
+  Loader2, ChevronRight, Zap, Shield, Globe, Search,
+  Database, Activity, Radio, Key, Megaphone,
+  ChevronLeft, Download, Pencil, Power,
 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/Button';
-import { Input, Select } from '@/components/ui/Input';
+import { Input } from '@/components/ui/Input';
 import { Modal, Skeleton, EmptyState } from '@/components/ui/Modal';
-import { apiGet, apiPost, apiPatch } from '@/lib/api';
-import { useUsers } from '@/hooks/useUsers';
+import { apiGet, apiPost } from '@/lib/api';
 import { fmtRelative, fmtDate, humanize, clsx } from '@/lib/format';
 import {
   useMetaPagesEnriched, useMetaFormsEnriched, useFormLeads, usePageLeads,
@@ -25,18 +24,64 @@ import {
   useSyncCampaigns, useSyncLeads, useUpdateMetaToken, useSubscribePage,
   useTestPageToken, useUpdatePageToken, useSyncMetaPageForms, useSetMetaPageActivation,
   // Dynamic Google Sheets credential management
-  useSheetConfigs, useSheetsConnectivity, useCreateSheetConfig, useUpdateSheetConfig,
-  useActivateSheetConfig, useTestSheetConfig, useSyncSheetConfig, useDeleteSheetConfig,
-  useSheetPreview, useSheetStats, useGoogleSheetRoutingSettings, useUpdateGoogleSheetRoutingSettings,
+  useGoogleSheetRoutingSettings, useUpdateGoogleSheetRoutingSettings,
   useTestGoogleSheetRouting, useCreateMissingGoogleSheetTabs, useExportLeadsByCategoryToSheets,
   // Sheet → CRM import
-  useSheetImport, useSheetImportLogs, useToggleAutoImport,
-  type SheetConfigPublic,
 } from '@/hooks/useAdminEnterprise';
-import { Upload, Power, FlaskConical, PlayCircle, Trash, Table as TableIcon, ArrowDownToLine, Timer, ScrollText } from 'lucide-react';
-import type { DistributionRule, MetaPage, MetaForm } from '@/types';
 
 type SettingsTab = 'overview' | 'meta-pages' | 'meta-forms' | 'campaigns' | 'sheets' | 'admin-tools' | 'webhook-logs';
+
+type LeadPreviewRow = {
+  id: string;
+  full_name?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  campaign_name?: string | null;
+  stage?: string | null;
+  call_status?: string | null;
+  assigned_to_name?: string | null;
+  created_at?: string | null;
+};
+
+type SheetSyncLogRow = {
+  id: string;
+  created_at?: string | null;
+  user_name?: string | null;
+  action?: string | null;
+  metadata?: unknown;
+};
+
+type MetaSyncLogRow = {
+  id: string;
+  started_at?: string | null;
+  sync_type?: string | null;
+  source_id?: string | null;
+  status?: string | null;
+  leads_fetched?: number | null;
+  leads_created?: number | null;
+  leads_duplicate?: number | null;
+};
+
+type ActivityLogRow = {
+  id: string;
+  created_at?: string | null;
+  user_name?: string | null;
+  action?: string | null;
+  entity?: string | null;
+  entity_id?: string | null;
+  metadata?: unknown;
+  ip_address?: string | null;
+};
+
+function formatLogMetadata(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return '—';
+  }
+}
 
 export default function SettingsPage() {
   return (
@@ -124,10 +169,6 @@ function OverviewTab({ onNavigate }: { onNavigate: (tab: SettingsTab) => void })
 
   const m = data?.meta;
   const s = data?.sheets;
-
-  const webhookUrl = typeof window !== 'undefined'
-    ? `${window.location.origin.replace(/\/$/, '')}/api/webhooks/meta`
-    : '/api/webhooks/meta';
 
   return (
     <div className="space-y-6">
@@ -505,108 +546,108 @@ function MetaPagesTab() {
           <details>
             <summary className="cursor-pointer text-xs font-medium text-slate-600">Detailed page diagnostics</summary>
             <div className="mt-3 space-y-3">
-          {pages.map(p => (
-            <div key={p.id} className={clsx('card p-4', !p.is_active && 'bg-slate-50')}>
-              <div className="flex items-start justify-between mb-3 gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className={clsx('inline-flex h-2.5 w-2.5 rounded-full ring-2 shrink-0', p.is_active ? 'bg-emerald-500 ring-emerald-100' : 'bg-slate-300 ring-slate-100')} />
-                    <h3 className="font-display text-base font-bold text-slate-900 truncate">{p.page_name || p.page_id}</h3>
+              {pages.map(p => (
+                <div key={p.id} className={clsx('card p-4', !p.is_active && 'bg-slate-50')}>
+                  <div className="flex items-start justify-between mb-3 gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={clsx('inline-flex h-2.5 w-2.5 rounded-full ring-2 shrink-0', p.is_active ? 'bg-emerald-500 ring-emerald-100' : 'bg-slate-300 ring-slate-100')} />
+                        <h3 className="font-display text-base font-bold text-slate-900 truncate">{p.page_name || p.page_id}</h3>
+                      </div>
+                      <div className="mt-1 text-[11px] font-mono text-slate-500 truncate">{p.page_id}</div>
+                    </div>
+                    <span className={clsx(
+                      'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ring-1 shrink-0',
+                      p.has_token && p.token_is_valid !== false
+                        ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+                        : 'bg-rose-50 text-rose-700 ring-rose-200'
+                    )}>
+                      <StatusDot ok={p.has_token && p.token_is_valid !== false} warn={!p.has_token} />
+                      {p.token_is_valid === false ? 'Token invalid' : p.has_token ? 'Token valid' : 'No token'}
+                    </span>
                   </div>
-                  <div className="mt-1 text-[11px] font-mono text-slate-500 truncate">{p.page_id}</div>
+
+                  {/* Stats */}
+                  <div className="grid grid-cols-4 gap-2 mb-3">
+                    <MiniStat label="Leads" value={p.lead_count} color="text-slate-900" />
+                    <MiniStat label="Today" value={p.today_leads} color="text-brand-700" />
+                    <MiniStat label="Converted" value={p.conversions} color="text-emerald-700" />
+                    <MiniStat label="Forms" value={p.form_count} color="text-violet-700" />
+                  </div>
+                  {p.last_lead_at && <div className="text-[10px] text-slate-500 mb-3">Last lead: {fmtRelative(p.last_lead_at)}</div>}
+
+                  {/* Action buttons */}
+                  <div className="flex flex-wrap gap-2">
+                    <a href={`https://www.facebook.com/${p.page_id}`} target="_blank" rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-[11px] font-medium text-blue-700 hover:bg-blue-100 transition">
+                      <Facebook className="h-3 w-3" /> Facebook Page <ExternalLink className="h-2.5 w-2.5" />
+                    </a>
+                    <a href={`https://business.facebook.com/latest/inbox/all?asset_id=${p.page_id}`} target="_blank" rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-100 transition">
+                      <Globe className="h-3 w-3" /> Meta Business <ExternalLink className="h-2.5 w-2.5" />
+                    </a>
+                    <a href={`https://business.facebook.com/latest/instant_forms?asset_id=${p.page_id}`} target="_blank" rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[11px] font-medium text-violet-700 hover:bg-violet-100 transition">
+                      <FileText className="h-3 w-3" /> Lead Ads <ExternalLink className="h-2.5 w-2.5" />
+                    </a>
+                    <button onClick={() => { setViewPageId(p.page_id); setLeadsPage(1); }}
+                      className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 transition">
+                      <Eye className="h-3 w-3" /> View Leads ({p.lead_count})
+                    </button>
+                    <button onClick={() => handleTestToken(p.page_id)} disabled={testToken.isPending}
+                      className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] font-medium text-amber-700 hover:bg-amber-100 transition disabled:opacity-60">
+                      {testToken.isPending && testToken.variables === p.page_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Shield className="h-3 w-3" />}
+                      Verify
+                    </button>
+                    <button
+                      onClick={() => subscribePage.mutate(p.page_id, { onSuccess: () => toast.success('Webhook reconnected'), onError: () => toast.error('Webhook reconnect failed') })}
+                      disabled={!p.is_active || subscribePage.isPending}
+                      className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 transition disabled:opacity-60"
+                    >
+                      {subscribePage.isPending && subscribePage.variables === p.page_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Webhook className="h-3 w-3" />}
+                      Reconnect Webhook
+                    </button>
+                    <button
+                      onClick={() => syncPageForms.mutate(p.page_id, { onSuccess: () => toast.success('Lead forms synced'), onError: () => toast.error('Lead forms sync failed') })}
+                      disabled={!p.is_active || syncPageForms.isPending}
+                      className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[11px] font-medium text-violet-700 hover:bg-violet-100 transition disabled:opacity-60"
+                    >
+                      {syncPageForms.isPending && syncPageForms.variables === p.page_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                      Sync Forms
+                    </button>
+                    <button onClick={() => { setUpdateTokenPage({ page_id: p.page_id, page_name: p.page_name || p.page_id }); setNewToken(''); }}
+                      className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] font-medium text-rose-700 hover:bg-rose-100 transition">
+                      <Key className="h-3 w-3" /> Update Token
+                    </button>
+                    {p.is_active && (
+                      <button
+                        onClick={() => handleDeactivatePage(p.page_id, p.page_name || p.page_id)}
+                        disabled={setPageActivation.isPending}
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-600 hover:bg-slate-50 transition disabled:opacity-60"
+                      >
+                        <Power className="h-3 w-3" /> Deactivate
+                      </button>
+                    )}
+                    {!p.is_active && (
+                      <button
+                        onClick={() => handleActivatePage(p.page_id, p.page_name || p.page_id)}
+                        disabled={setPageActivation.isPending || !p.has_token}
+                        className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 transition disabled:opacity-60"
+                      >
+                        <Power className="h-3 w-3" /> Activate
+                      </button>
+                    )}
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 gap-1 text-[10px] text-slate-500 sm:grid-cols-4">
+                    <span>Active in CRM: {p.is_active ? 'Yes' : 'No'} ({p.connection_status || 'discovered'})</span>
+                    <span>Page token: {p.token_is_valid === false ? 'Invalid' : p.has_token ? 'Valid' : 'Missing'}</span>
+                    <span>Webhook: {!p.is_active ? 'Ignored while inactive' : p.webhook_subscribed ? 'Subscribed' : 'Not subscribed'}</span>
+                    <span>Forms: {!p.is_active ? 'Ignored while inactive' : p.forms_status || 'Not checked'}</span>
+                  </div>
+                  {p.stale_at && <div className="mt-2 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-700">Stale page: not returned by the latest User Token refresh.</div>}
+                  {p.token_last_error && <div className="mt-2 rounded bg-red-50 px-2 py-1 text-[11px] text-red-600">{p.token_last_error}</div>}
                 </div>
-                <span className={clsx(
-                  'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ring-1 shrink-0',
-                  p.has_token && p.token_is_valid !== false
-                    ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
-                    : 'bg-rose-50 text-rose-700 ring-rose-200'
-                )}>
-                  <StatusDot ok={p.has_token && p.token_is_valid !== false} warn={!p.has_token} />
-                  {p.token_is_valid === false ? 'Token invalid' : p.has_token ? 'Token valid' : 'No token'}
-                </span>
-              </div>
-
-              {/* Stats */}
-              <div className="grid grid-cols-4 gap-2 mb-3">
-                <MiniStat label="Leads" value={p.lead_count} color="text-slate-900" />
-                <MiniStat label="Today" value={p.today_leads} color="text-brand-700" />
-                <MiniStat label="Converted" value={p.conversions} color="text-emerald-700" />
-                <MiniStat label="Forms" value={p.form_count} color="text-violet-700" />
-              </div>
-              {p.last_lead_at && <div className="text-[10px] text-slate-500 mb-3">Last lead: {fmtRelative(p.last_lead_at)}</div>}
-
-              {/* Action buttons */}
-              <div className="flex flex-wrap gap-2">
-                <a href={`https://www.facebook.com/${p.page_id}`} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-[11px] font-medium text-blue-700 hover:bg-blue-100 transition">
-                  <Facebook className="h-3 w-3" /> Facebook Page <ExternalLink className="h-2.5 w-2.5" />
-                </a>
-                <a href={`https://business.facebook.com/latest/inbox/all?asset_id=${p.page_id}`} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-100 transition">
-                  <Globe className="h-3 w-3" /> Meta Business <ExternalLink className="h-2.5 w-2.5" />
-                </a>
-                <a href={`https://business.facebook.com/latest/instant_forms?asset_id=${p.page_id}`} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[11px] font-medium text-violet-700 hover:bg-violet-100 transition">
-                  <FileText className="h-3 w-3" /> Lead Ads <ExternalLink className="h-2.5 w-2.5" />
-                </a>
-                <button onClick={() => { setViewPageId(p.page_id); setLeadsPage(1); }}
-                  className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 transition">
-                  <Eye className="h-3 w-3" /> View Leads ({p.lead_count})
-                </button>
-                <button onClick={() => handleTestToken(p.page_id)} disabled={testToken.isPending}
-                  className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] font-medium text-amber-700 hover:bg-amber-100 transition disabled:opacity-60">
-                  {testToken.isPending && testToken.variables === p.page_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Shield className="h-3 w-3" />}
-                  Verify
-                </button>
-                <button
-                  onClick={() => subscribePage.mutate(p.page_id, { onSuccess: () => toast.success('Webhook reconnected'), onError: () => toast.error('Webhook reconnect failed') })}
-                  disabled={!p.is_active || subscribePage.isPending}
-                  className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 transition disabled:opacity-60"
-                >
-                  {subscribePage.isPending && subscribePage.variables === p.page_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Webhook className="h-3 w-3" />}
-                  Reconnect Webhook
-                </button>
-                <button
-                  onClick={() => syncPageForms.mutate(p.page_id, { onSuccess: () => toast.success('Lead forms synced'), onError: () => toast.error('Lead forms sync failed') })}
-                  disabled={!p.is_active || syncPageForms.isPending}
-                  className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[11px] font-medium text-violet-700 hover:bg-violet-100 transition disabled:opacity-60"
-                >
-                  {syncPageForms.isPending && syncPageForms.variables === p.page_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-                  Sync Forms
-                </button>
-                <button onClick={() => { setUpdateTokenPage({ page_id: p.page_id, page_name: p.page_name || p.page_id }); setNewToken(''); }}
-                  className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] font-medium text-rose-700 hover:bg-rose-100 transition">
-                  <Key className="h-3 w-3" /> Update Token
-                </button>
-                {p.is_active && (
-                  <button
-                    onClick={() => handleDeactivatePage(p.page_id, p.page_name || p.page_id)}
-                    disabled={setPageActivation.isPending}
-                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-600 hover:bg-slate-50 transition disabled:opacity-60"
-                  >
-                    <Power className="h-3 w-3" /> Deactivate
-                  </button>
-                )}
-                {!p.is_active && (
-                  <button
-                    onClick={() => handleActivatePage(p.page_id, p.page_name || p.page_id)}
-                    disabled={setPageActivation.isPending || !p.has_token}
-                    className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 transition disabled:opacity-60"
-                  >
-                    <Power className="h-3 w-3" /> Activate
-                  </button>
-                )}
-              </div>
-              <div className="mt-3 grid grid-cols-1 gap-1 text-[10px] text-slate-500 sm:grid-cols-4">
-                <span>Active in CRM: {p.is_active ? 'Yes' : 'No'} ({p.connection_status || 'discovered'})</span>
-                <span>Page token: {p.token_is_valid === false ? 'Invalid' : p.has_token ? 'Valid' : 'Missing'}</span>
-                <span>Webhook: {!p.is_active ? 'Ignored while inactive' : p.webhook_subscribed ? 'Subscribed' : 'Not subscribed'}</span>
-                <span>Forms: {!p.is_active ? 'Ignored while inactive' : p.forms_status || 'Not checked'}</span>
-              </div>
-              {p.stale_at && <div className="mt-2 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-700">Stale page: not returned by the latest User Token refresh.</div>}
-              {p.token_last_error && <div className="mt-2 rounded bg-red-50 px-2 py-1 text-[11px] text-red-600">{p.token_last_error}</div>}
-            </div>
-          ))}
+              ))}
             </div>
           </details>
         </div>
@@ -675,7 +716,7 @@ function MetaPagesTab() {
                   <th className="py-2 font-medium">Created</th>
                 </tr></thead>
                 <tbody className="divide-y divide-slate-50">
-                  {pageLeads.data.rows.map((l: any) => (
+                  {(pageLeads.data.rows as LeadPreviewRow[]).map((l) => (
                     <tr key={l.id} className="hover:bg-slate-50">
                       <td className="py-2 pr-3">
                         <Link href={`/leads/${l.id}`} className="hover:text-brand-600">
@@ -796,8 +837,8 @@ function MetaFormsTab() {
                   <FileText className="h-3 w-3" /> View Form
                 </button>
                 <a href={f.page_id
-                    ? `https://business.facebook.com/latest/instant_forms?asset_id=${f.page_id}&selected_form_id=${f.form_id}`
-                    : `https://business.facebook.com/leadgen_forms/?ids=${f.form_id}`}
+                  ? `https://business.facebook.com/latest/instant_forms?asset_id=${f.page_id}&selected_form_id=${f.form_id}`
+                  : `https://business.facebook.com/leadgen_forms/?ids=${f.form_id}`}
                   target="_blank" rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[11px] font-medium text-violet-700 hover:bg-violet-100 transition">
                   <Database className="h-3 w-3" /> Form Details <ExternalLink className="h-2.5 w-2.5" />
@@ -847,7 +888,7 @@ function MetaFormsTab() {
                     <th className="py-2 font-medium">Created</th>
                   </tr></thead>
                   <tbody className="divide-y divide-slate-50">
-                    {formLeads.data.rows.map((l: any) => (
+                    {(formLeads.data.rows as LeadPreviewRow[]).map((l) => (
                       <tr key={l.id} className="hover:bg-slate-50">
                         <td className="py-2 pr-3">
                           <Link href={`/leads/${l.id}`} className="hover:text-brand-600">
@@ -1163,77 +1204,6 @@ function SheetsTab() {
 
       {isLoading ? <Skeleton className="h-64" /> : (
         <>
-          <div className="rounded-xl border border-slate-200 bg-white p-5">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-900">Connection Status</h2>
-                <p className="mt-1 text-xs text-slate-500">Credentials are managed on the server. Update only sheet names and category routing here.</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className={clsx('h-3 w-3 rounded-full', routing.data?.connected ? 'bg-emerald-500 animate-pulse' : 'bg-red-400')} />
-                <span className="font-semibold text-slate-900">{routing.data?.connected ? 'Connected' : 'Not connected'}</span>
-              </div>
-              {sheetUrl && (
-                <a href={sheetUrl} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition">
-                  <Sheet className="h-3.5 w-3.5" /> Open Sheet <ExternalLink className="h-3 w-3" />
-                </a>
-              )}
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="rounded-lg bg-slate-50 p-3">
-                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Sheet ID</div>
-                <div className="text-xs font-mono text-slate-700 truncate">{routing.data?.spreadsheet_id || cfg?.sheet_id || 'Not set'}</div>
-              </div>
-              <div className="rounded-lg bg-slate-50 p-3">
-                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Default Sheet Name</div>
-                <div className="text-xs text-slate-700">{routing.data?.default_sheet_name || cfg?.sheet_name || 'Leads'}</div>
-              </div>
-              <div className="rounded-lg bg-slate-50 p-3">
-                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Service Account</div>
-                <div className="text-xs font-mono text-slate-700 truncate">{routing.data?.service_account_email || cfg?.service_account_email || 'Not set'}</div>
-              </div>
-              <div className="rounded-lg bg-slate-50 p-3">
-                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Key Path</div>
-                <div className="text-xs font-mono text-slate-700 truncate">{routing.data?.key_path || cfg?.key_path || 'Not set'}</div>
-              </div>
-              <div className="rounded-lg bg-slate-50 p-3">
-                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Source</div>
-                <div className="text-xs text-slate-700">{routing.data?.source || 'Not set'}</div>
-              </div>
-              <div className="rounded-lg bg-slate-50 p-3">
-                <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Managed By</div>
-                <div className="text-xs text-slate-700">{routing.data?.credentials_managed_by || 'server'}</div>
-              </div>
-            </div>
-
-            {/* Lead stats */}
-            {data?.stats && (
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                <MiniStat label="Total Leads in DB" value={data.stats.total_leads} color="text-slate-900" />
-                <MiniStat label="Today's Leads" value={data.stats.today_leads} color="text-brand-700" />
-              </div>
-            )}
-
-            {/* Actions */}
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
-                onClick={() => sheetSync.mutate()} loading={sheetSync.isPending}>
-                Sync All Leads to Sheet
-              </Button>
-              <Button size="sm" variant="outline" leftIcon={<Zap className="h-3.5 w-3.5" />}
-                onClick={() => triggerSync.mutate()} loading={triggerSync.isPending}>
-                Manual Sync Trigger
-              </Button>
-              {sheetUrl && (
-                <a href={sheetUrl} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 transition">
-                  <ExternalLink className="h-3.5 w-3.5" /> View Synced Rows
-                </a>
-              )}
-            </div>
-          </div>
 
           {/* Sync Logs */}
           <div className="card-padded">
@@ -1248,12 +1218,12 @@ function SheetsTab() {
                     <th className="py-2 font-medium">Details</th>
                   </tr></thead>
                   <tbody className="divide-y divide-slate-50">
-                    {data.sync_logs.map((log: any) => (
+                    {(data.sync_logs as SheetSyncLogRow[]).map((log) => (
                       <tr key={log.id} className="hover:bg-slate-50">
                         <td className="py-2 pr-3 text-xs text-slate-500">{fmtRelative(log.created_at)}</td>
                         <td className="py-2 pr-3 text-xs text-slate-700">{log.user_name || '—'}</td>
                         <td className="py-2 pr-3"><span className="chip-slate text-[10px]">{log.action}</span></td>
-                        <td className="py-2 text-xs text-slate-500 truncate max-w-[200px]">{typeof log.metadata === 'object' ? JSON.stringify(log.metadata) : log.metadata}</td>
+                        <td className="py-2 text-xs text-slate-500 truncate max-w-[200px]">{formatLogMetadata(log.metadata)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1267,426 +1237,44 @@ function SheetsTab() {
   );
 }
 
-function GoogleSheetRoutingPanel() {
-  const routing = useGoogleSheetRoutingSettings();
-  const updateRouting = useUpdateGoogleSheetRoutingSettings();
-  const testRouting = useTestGoogleSheetRouting();
-  const createTabs = useCreateMissingGoogleSheetTabs();
-  const exportByCategory = useExportLeadsByCategoryToSheets();
-  const [form, setForm] = useState({
-    spreadsheet_id: '',
-    default_sheet_name: 'Leads',
-    trader_sheet_name: 'Traders',
-    partner_sheet_name: 'Partners',
-    unknown_sheet_name: 'Unknown Leads',
-    auto_create_missing_sheets: true,
-    category_sheet_routing_enabled: true,
-  });
-
-  useEffect(() => {
-    if (!routing.data) return;
-    setForm({
-      spreadsheet_id: routing.data.spreadsheet_id || '',
-      default_sheet_name: routing.data.default_sheet_name || 'Leads',
-      trader_sheet_name: routing.data.trader_sheet_name || 'Traders',
-      partner_sheet_name: routing.data.partner_sheet_name || 'Partners',
-      unknown_sheet_name: routing.data.unknown_sheet_name || 'Unknown Leads',
-      auto_create_missing_sheets: routing.data.auto_create_missing_sheets,
-      category_sheet_routing_enabled: routing.data.category_sheet_routing_enabled,
-    });
-  }, [routing.data]);
-
-  function save() {
-    updateRouting.mutate(form, {
-      onSuccess: () => toast.success('Google Sheet settings saved successfully.'),
-      onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Failed to save sheet routing'),
-    });
-  }
-
-  function testCategory(category: 'trader' | 'partner' | 'unknown') {
-    testRouting.mutate({
-      default_sheet_name: form.default_sheet_name,
-      trader_sheet_name: category === 'trader' ? form.trader_sheet_name : form.default_sheet_name,
-      partner_sheet_name: category === 'partner' ? form.partner_sheet_name : form.default_sheet_name,
-      unknown_sheet_name: category === 'unknown' ? form.unknown_sheet_name : form.default_sheet_name,
-    }, {
-      onSuccess: (r) => {
-        const target = r.results?.[category === 'trader' ? 'trader' : category === 'partner' ? 'partner' : 'unknown'];
-        toast.success(`${target?.sheet_name || category} ${target?.exists ? '(exists)' : '(missing)'}`);
-      },
-      onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Routing test failed'),
-    });
-  }
-
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-semibold text-slate-900">Lead Category Sheet Routing</h2>
-          <p className="mt-1 text-xs text-slate-500">Trader leads are routed to the configured Trader Lead sheet tab. Credentials are managed on the server.</p>
-        </div>
-        <span className="chip-slate text-[10px]">Server-managed credentials</span>
-      </div>
-
-      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Input label="Spreadsheet ID" value={form.spreadsheet_id} onChange={(e) => setForm((s) => ({ ...s, spreadsheet_id: e.target.value }))} />
-        <Input label="Default Sheet Name" value={form.default_sheet_name} onChange={(e) => setForm((s) => ({ ...s, default_sheet_name: e.target.value }))} />
-        <Input label="Trader Lead Sheet Name" value={form.trader_sheet_name} onChange={(e) => setForm((s) => ({ ...s, trader_sheet_name: e.target.value }))} />
-        <Input label="Partner Lead Sheet Name" value={form.partner_sheet_name} onChange={(e) => setForm((s) => ({ ...s, partner_sheet_name: e.target.value }))} />
-        <Input label="Unknown Lead Sheet Name" value={form.unknown_sheet_name} onChange={(e) => setForm((s) => ({ ...s, unknown_sheet_name: e.target.value }))} />
-      </div>
-
-      <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-slate-700">
-        <label className="inline-flex items-center gap-2">
-          <input type="checkbox" checked={form.category_sheet_routing_enabled} onChange={(e) => setForm((s) => ({ ...s, category_sheet_routing_enabled: e.target.checked }))} />
-          Enable Category Sheet Routing
-        </label>
-        <label className="inline-flex items-center gap-2">
-          <input type="checkbox" checked={form.auto_create_missing_sheets} onChange={(e) => setForm((s) => ({ ...s, auto_create_missing_sheets: e.target.checked }))} />
-          Auto-create Missing Sheet Tabs
-        </label>
-      </div>
-
-      <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs">
-        <div className="font-medium text-slate-900">Routing preview</div>
-        <div className="mt-2 grid grid-cols-1 gap-1 text-slate-600 sm:grid-cols-3">
-          <div>Trader Lead → <span className="font-medium text-slate-900">{form.trader_sheet_name || form.default_sheet_name}</span></div>
-          <div>Partner Lead → <span className="font-medium text-slate-900">{form.partner_sheet_name || form.default_sheet_name}</span></div>
-          <div>Unknown → <span className="font-medium text-slate-900">{form.unknown_sheet_name || form.default_sheet_name}</span></div>
-        </div>
-      </div>
-
-      <div className="mt-4 flex flex-wrap gap-2">
-        <Button size="sm" onClick={save} loading={updateRouting.isPending}>Save Settings</Button>
-        <Button size="sm" variant="outline" onClick={() => testCategory('trader')} loading={testRouting.isPending}>Test Trader</Button>
-        <Button size="sm" variant="outline" onClick={() => testCategory('partner')} loading={testRouting.isPending}>Test Partner</Button>
-        <Button size="sm" variant="outline" onClick={() => testCategory('unknown')} loading={testRouting.isPending}>Test Unknown</Button>
-        <Button size="sm" variant="outline" onClick={() => createTabs.mutate(undefined, {
-          onSuccess: (r) => {
-            const created = r.created?.length ? `Created: ${r.created.join(', ')}` : '';
-            const existing = r.existing?.length ? `Existing: ${r.existing.join(', ')}` : '';
-            toast.success([created, existing].filter(Boolean).join(' | ') || 'No tabs required changes');
-          },
-          onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Tab creation failed'),
-        })} loading={createTabs.isPending}>Create Missing Sheet Tabs</Button>
-        <Button size="sm" variant="outline" onClick={() => exportByCategory.mutate({
-          mode: 'dry_run',
-          category: 'all',
-          skip_duplicates: true,
-        }, {
-          onSuccess: (r) => {
-            const summary = Object.entries(r.summary || {}).map(([key, value]) => `${key}: ${value.count} → ${value.sheet_name}`).join(' | ');
-            toast.success(summary || 'No leads matched');
-          },
-          onError: () => toast.error('Dry run failed'),
-        })} loading={exportByCategory.isPending}>Dry Run Export</Button>
-      </div>
-    </div>
-  );
-}
-
-/* ═══════════════════ SHEET CREDENTIALS MANAGER (dynamic, admin-only) ═══════════════════
- * Admin uploads / pastes Google Service-Account JSON directly, switches active sheet,
- * tests / syncs / previews — everything without SSH or .env editing.
- */
-function LegacySheetCredentialsManager() {
-  const list = useSheetConfigs();
-  const conn = useSheetsConnectivity();
-  const stats = useSheetStats();
-  const activate = useActivateSheetConfig();
-  const testOne = useTestSheetConfig();
-  const syncOne = useSyncSheetConfig();
-  const del = useDeleteSheetConfig();
-  const importNow = useSheetImport();
-  const toggleAuto = useToggleAutoImport();
-
-  // Tab: which purpose are we viewing? Defaults to traders.
-  const [tab, setTab] = useState<'traders' | 'partners'>('traders');
-  // Preview is purpose-aware so each tab previews its OWN active sheet
-  const preview = useSheetPreview(8, tab);
-
-  const [uploadOpen, setUploadOpen] = useState(false);
-  const [uploadDefaultPurpose, setUploadDefaultPurpose] = useState<'traders' | 'partners'>('traders');
-  const [editTarget, setEditTarget] = useState<SheetConfigPublic | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [logsTarget, setLogsTarget] = useState<SheetConfigPublic | null>(null);
-
-  // Configs scoped to the current tab (only show this purpose's sheets)
-  const allConfigs = list.data || [];
-  const tabConfigs = allConfigs.filter(c => c.purpose === tab || (!c.purpose && tab === 'traders'));
-  const activeForTab = tabConfigs.find(c => c.is_active) || null;
-
-  const tabStats = stats.data?.[tab];
-
-  return (
-    <div className="rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50/60 to-white p-4">
-      <div className="mb-3 flex items-center gap-2">
-        <Sheet className="h-4 w-4 text-emerald-600" />
-        <h2 className="text-sm font-semibold text-slate-900">Credentials & Sheets</h2>
-        <span className={clsx('chip text-[10px]', conn.data?.api_connected ? 'chip-emerald' : 'chip-amber')}>
-          {conn.data?.api_connected ? `Live · source: ${conn.data?.source || '—'}` : conn.isLoading ? 'Checking…' : 'Not connected'}
-        </span>
-        <div className="ml-auto flex items-center gap-2">
-          <Button size="sm" variant="outline" leftIcon={<TableIcon className="h-3.5 w-3.5" />}
-            disabled={!activeForTab || !activeForTab.is_active}
-            onClick={() => { preview.refetch(); setPreviewOpen(true); }}>
-            Preview Rows
-          </Button>
-          <Button size="sm" leftIcon={<Upload className="h-3.5 w-3.5" />}
-            onClick={() => { setUploadDefaultPurpose(tab); setUploadOpen(true); }}>
-            Upload {tab === 'traders' ? 'Traders' : 'Partners'} Credentials
-          </Button>
-        </div>
-      </div>
-
-      {/* Purpose tabs — Traders | Partners — each runs an independent sheet */}
-      <div className="mb-3 flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-0.5 w-fit">
-        {(['traders', 'partners'] as const).map(t => {
-          const count = allConfigs.filter(c => c.purpose === t || (!c.purpose && t === 'traders')).length;
-          const hasActive = !!allConfigs.find(c => c.is_active && (c.purpose === t || (!c.purpose && t === 'traders')));
-          return (
-            <button key={t} onClick={() => setTab(t)}
-              className={clsx(
-                'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition',
-                tab === t ? 'bg-emerald-600 text-white' : 'text-slate-700 hover:bg-slate-50',
-              )}>
-              {t === 'traders' ? '📊 Traders Sheet' : '🤝 Partners Sheet'}
-              <span className={clsx('rounded-full px-1.5 py-0.5 text-[10px] font-bold', tab === t ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600')}>{count}</span>
-              {hasActive && <span className={clsx('h-1.5 w-1.5 rounded-full', tab === t ? 'bg-white' : 'bg-emerald-500')} />}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Per-purpose stats bar — drives "Trader Sheet Stats" / "Partner Sheet Stats" */}
-      {tabStats && (
-        <div className="mb-3 grid grid-cols-2 sm:grid-cols-5 gap-2">
-          <div className="rounded-lg bg-white border border-slate-200 px-3 py-2">
-            <div className="text-lg font-bold tabular-nums text-slate-900">{tabStats.total.toLocaleString()}</div>
-            <div className="text-[10px] uppercase tracking-wide text-slate-500">Total {tab === 'traders' ? 'Trader' : 'Partner'} Leads</div>
-          </div>
-          <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
-            <div className="text-lg font-bold tabular-nums text-amber-700">{tabStats.unassigned.toLocaleString()}</div>
-            <div className="text-[10px] uppercase tracking-wide text-slate-500">Pending (unassigned)</div>
-          </div>
-          <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2">
-            <div className="text-lg font-bold tabular-nums text-blue-700">{tabStats.assigned.toLocaleString()}</div>
-            <div className="text-[10px] uppercase tracking-wide text-slate-500">Synced (assigned)</div>
-          </div>
-          <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2">
-            <div className="text-lg font-bold tabular-nums text-emerald-700">{tabStats.converted.toLocaleString()}</div>
-            <div className="text-[10px] uppercase tracking-wide text-slate-500">Converted</div>
-          </div>
-          <div className="rounded-lg bg-violet-50 border border-violet-200 px-3 py-2">
-            <div className="text-lg font-bold tabular-nums text-violet-700">{tabStats.today.toLocaleString()}</div>
-            <div className="text-[10px] uppercase tracking-wide text-slate-500">Today</div>
-          </div>
-        </div>
-      )}
-
-      {list.isLoading ? <Skeleton className="h-32" /> : !tabConfigs.length ? (
-        <div className="rounded-lg border border-dashed border-emerald-200 bg-white px-4 py-6 text-center">
-          <Upload className="h-6 w-6 mx-auto text-emerald-400 mb-2" />
-          <div className="text-sm font-medium text-slate-900">No {tab === 'traders' ? 'Traders' : 'Partners'} sheet uploaded yet</div>
-          <p className="mt-1 text-xs text-slate-500 max-w-md mx-auto">
-            Click <strong>Upload {tab === 'traders' ? 'Traders' : 'Partners'} Credentials</strong> and pick the Google Service Account <code>.json</code> file.
-            Each imported lead will be tagged <code>category = {tab === 'traders' ? 'trader' : 'partner'}</code> so {tab === 'traders' ? 'trader' : 'partner'} lead-requests pull from this pool only.
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {tabConfigs.map(c => (
-            <div key={c.id}
-              className={clsx(
-                'rounded-lg border bg-white p-3 transition',
-                c.is_active ? 'border-emerald-300 ring-1 ring-emerald-200' : 'border-slate-200',
-              )}>
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <div className={clsx('h-2 w-2 rounded-full shrink-0', c.is_active ? 'bg-emerald-500' : 'bg-slate-300')} />
-                    <span className="text-sm font-semibold text-slate-900">{c.label}</span>
-                    {c.is_active && <span className="chip-emerald text-[10px]">Active</span>}
-                    {c.has_credentials ? (
-                      <span className="chip-slate text-[10px]">JSON stored</span>
-                    ) : (
-                      <span className="chip-amber text-[10px]">No JSON</span>
-                    )}
-                    {c.last_test_ok === true && <span className="chip-emerald text-[10px]">Test OK</span>}
-                    {c.last_test_ok === false && <span className="chip-rose text-[10px]" title={c.last_test_error || ''}>Test failed</span>}
-                  </div>
-                  <div className="mt-1 grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-0.5 text-[11px] text-slate-500">
-                    <div><span className="text-slate-400">Sheet ID:</span> <span className="font-mono text-slate-700 truncate inline-block max-w-[260px] align-middle">{c.sheet_id || '—'}</span></div>
-                    <div><span className="text-slate-400">Tab:</span> <span className="text-slate-700">{c.sheet_name}</span></div>
-                    <div className="sm:col-span-2"><span className="text-slate-400">Service account:</span> <span className="font-mono text-slate-700 truncate inline-block max-w-[420px] align-middle">{c.service_account_email || '—'}</span></div>
-                    {c.last_synced_at && <div className="sm:col-span-2"><span className="text-slate-400">Last synced:</span> <span className="text-slate-700">{fmtRelative(c.last_synced_at)} · {c.last_sync_count ?? 0} rows</span></div>}
-                    {c.last_test_ok === false && c.last_test_error && (
-                      <div className="sm:col-span-2 text-rose-600 truncate" title={c.last_test_error}>⚠ {c.last_test_error}</div>
-                    )}
-                    {c.last_import_at && c.last_import_stats && (
-                      <div className="sm:col-span-2 text-emerald-700">
-                        <ArrowDownToLine className="h-3 w-3 inline mr-1" />
-                        Last import {fmtRelative(c.last_import_at)}:
-                        <strong className="ml-1">{c.last_import_stats.imported}</strong> imported ·
-                        <span className="ml-1">{c.last_import_stats.duplicates} dup</span> ·
-                        <span className="ml-1 text-rose-600">{c.last_import_stats.failed} failed</span>
-                        <span className="ml-1 text-slate-400">/ {c.last_import_stats.total}</span>
-                      </div>
-                    )}
-                    {c.is_active && c.has_credentials && (
-                      <div className="sm:col-span-2 flex items-center gap-2 mt-1">
-                        <label className="inline-flex items-center gap-1.5 text-slate-600">
-                          <input
-                            type="checkbox"
-                            checked={c.auto_import_enabled}
-                            onChange={(e) => toggleAuto.mutate(
-                              { id: c.id, enabled: e.target.checked },
-                              {
-                                onSuccess: () => toast.success(e.target.checked ? 'Auto-import enabled' : 'Auto-import disabled'),
-                                onError: () => toast.error('Failed'),
-                              },
-                            )}
-                            className="rounded border-slate-300"
-                          />
-                          <Timer className="h-3 w-3" />
-                          Auto-import every
-                        </label>
-                        <input
-                          type="number"
-                          min={1}
-                          max={60}
-                          value={c.auto_import_minutes}
-                          onChange={(e) => {
-                            const m = Math.max(1, Math.min(60, Number(e.target.value) || 5));
-                            toggleAuto.mutate({ id: c.id, minutes: m });
-                          }}
-                          className="input h-6 w-14 text-[11px] py-0 px-1"
-                          disabled={!c.auto_import_enabled}
-                        />
-                        <span className="text-slate-500">minutes</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                  <button
-                    onClick={() => testOne.mutate(c.id, {
-                      onSuccess: (r) => toast.success(r.ok ? `OK — ${r.sheet_title || 'sheet reached'}` : `Failed — ${r.error || 'unknown'}`),
-                      onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Test failed'),
-                    })}
-                    disabled={!c.has_credentials || testOne.isPending}
-                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-                    <FlaskConical className="h-3 w-3" /> Test
-                  </button>
-                  {!c.is_active && (
-                    <button
-                      onClick={() => activate.mutate(c.id, {
-                        onSuccess: () => toast.success(`${c.label} is now active`),
-                        onError: () => toast.error('Activation failed'),
-                      })}
-                      disabled={activate.isPending}
-                      className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">
-                      <Power className="h-3 w-3" /> Activate
-                    </button>
-                  )}
-                  {c.is_active && (
-                    <button
-                      onClick={() => syncOne.mutate(c.id, {
-                        onSuccess: (r) => toast.success(`Pushed ${r.synced} leads → Sheet`),
-                        onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Sync failed'),
-                      })}
-                      disabled={syncOne.isPending}
-                      className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50"
-                      title="CRM → Sheet (push all leads from DB to the sheet)">
-                      <PlayCircle className="h-3 w-3" /> Push to Sheet
-                    </button>
-                  )}
-                  {c.is_active && c.has_credentials && (
-                    <button
-                      onClick={() => importNow.mutate({ id: c.id, max_rows: 5000, assign: true }, {
-                        onSuccess: (r) => toast.success(`Imported ${r.imported} · ${r.duplicates} duplicates · ${r.failed} failed (of ${r.total})`),
-                        onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Import failed'),
-                      })}
-                      disabled={importNow.isPending}
-                      className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
-                      title="Sheet → CRM (read all rows and create leads)">
-                      {importNow.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArrowDownToLine className="h-3 w-3" />}
-                      Import Leads From Sheet
-                    </button>
-                  )}
-                  <button
-                    onClick={() => setLogsTarget(c)}
-                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
-                    title="View import history">
-                    <ScrollText className="h-3 w-3" /> Logs
-                  </button>
-                  <button
-                    onClick={() => setEditTarget(c)}
-                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50">
-                    <Pencil className="h-3 w-3" /> Edit
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (!confirm(`Delete "${c.label}"? This will remove the credentials too.`)) return;
-                      del.mutate(c.id, {
-                        onSuccess: () => toast.success('Deleted'),
-                        onError: () => toast.error('Delete failed'),
-                      });
-                    }}
-                    disabled={del.isPending}
-                    className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50">
-                    <Trash className="h-3 w-3" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <SheetCredentialsModal
-        open={uploadOpen}
-        onClose={() => setUploadOpen(false)}
-        target={null}
-        defaultPurpose={uploadDefaultPurpose}
-      />
-      <SheetCredentialsModal
-        open={!!editTarget}
-        onClose={() => setEditTarget(null)}
-        target={editTarget}
-        defaultPurpose={editTarget?.purpose || uploadDefaultPurpose}
-      />
-      <SheetPreviewModal
-        open={previewOpen}
-        onClose={() => setPreviewOpen(false)}
-        data={preview.data ?? null}
-        isLoading={preview.isFetching}
-        error={preview.error as { response?: { data?: { error?: { message?: string } } } } | null}
-      />
-      <SheetImportLogsModal
-        open={!!logsTarget}
-        onClose={() => setLogsTarget(null)}
-        config={logsTarget}
-      />
-    </div>
-  );
-}
-
 function SheetCredentialsManager() {
+  const { data, isLoading } = useSheetsEnriched();
+  const qc = useQueryClient();
+
+
   const routing = useGoogleSheetRoutingSettings();
   const createTabs = useCreateMissingGoogleSheetTabs();
   const exportByCategory = useExportLeadsByCategoryToSheets();
   const [open, setOpen] = useState(false);
+  const cfg = data?.config;
+  const sheetSync = useMutation({
+    mutationFn: () => apiPost<{ synced: number }>('/sheets/sync', {}),
+    onSuccess: (r) => { toast.success(`Synced ${r.synced} leads`); qc.invalidateQueries({ queryKey: ['admin'] }); },
+    onError: () => toast.error('Sync failed'),
+  });
+
+  const triggerSync = useMutation({
+    mutationFn: () => apiPost('/admin/sheets/trigger-sync', {}),
+    onSuccess: () => { toast.success('Manual sync triggered'); qc.invalidateQueries({ queryKey: ['admin'] }); },
+    onError: () => toast.error('Trigger failed'),
+  });
+
+  const sheetUrl = cfg?.sheet_id ? `https://docs.google.com/spreadsheets/d/${cfg.sheet_id}` : null;
+
 
   return (
     <div className="rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50/60 to-white p-4">
       <div className="mb-3 flex items-center gap-2">
         <Sheet className="h-4 w-4 text-emerald-600" />
         <h2 className="text-sm font-semibold text-slate-900">Credentials & Sheets</h2>
-        <span className={clsx('chip text-[10px]', routing.data?.connected ? 'chip-emerald' : 'chip-amber')}>
-          {routing.data?.connected ? `Live · source: ${routing.data?.source || '-'}` : routing.isLoading ? 'Checking...' : 'Not connected'}
-        </span>
+
         <div className="ml-auto flex items-center gap-2">
+          {sheetUrl && (
+            <a href={sheetUrl} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition">
+              <Sheet className="h-3.5 w-3.5" /> Open Sheet <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
           <Button
             size="sm"
             variant="outline"
@@ -1702,25 +1290,6 @@ function SheetCredentialsManager() {
           >
             Create Missing Tabs
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => exportByCategory.mutate({
-              mode: 'export_all',
-              category: 'all',
-              skip_duplicates: true,
-            }, {
-              onSuccess: (result) => {
-                const summary = result.summary || {};
-                const total = Object.values(summary).reduce((sum, item) => sum + Number(item.upserted || item.count || 0), 0);
-                toast.success(total ? `Backfill complete: ${total} sheet rows processed` : 'No leads matched for export');
-              },
-              onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Backfill export failed'),
-            })}
-            loading={exportByCategory.isPending}
-          >
-            Export Existing Leads
-          </Button>
           <Button size="sm" leftIcon={<Pencil className="h-3.5 w-3.5" />} onClick={() => setOpen(true)}>
             Update Sheet Names
           </Button>
@@ -1728,17 +1297,13 @@ function SheetCredentialsManager() {
       </div>
 
       <div className="rounded-lg border border-dashed border-emerald-200 bg-white px-4 py-4">
-        <p className="text-sm text-slate-700">
-          Google credentials are managed on the server. Update sheet tab names below to control where leads are synced.
-        </p>
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className=" grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="rounded-lg bg-slate-50 p-3">
-            <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">Connected</div>
-            <div className="text-xs text-slate-700">{routing.data?.connected ? 'Yes' : 'No'}</div>
-          </div>
-          <div className="rounded-lg bg-slate-50 p-3">
-            <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">Source</div>
-            <div className="text-xs text-slate-700">{routing.data?.source || 'Not set'}</div>
+            <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">Connection Status</div>
+            <div className="flex items-center gap-2">
+              <div className={clsx('h-3 w-3 rounded-full', routing.data?.connected ? 'bg-emerald-500 animate-pulse' : 'bg-red-400')} />
+              <span className="font-semibold text-xs text-slate-900">{routing.data?.connected ? 'Connected' : 'Not connected'}</span>
+            </div>
           </div>
           <div className="rounded-lg bg-slate-50 p-3">
             <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">Spreadsheet ID</div>
@@ -1746,97 +1311,49 @@ function SheetCredentialsManager() {
           </div>
           <div className="rounded-lg bg-slate-50 p-3">
             <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">Current Default Sheet Name</div>
-            <div className="text-xs text-slate-700">{routing.data?.default_sheet_name || 'Leads'}</div>
+            <div className="text-xs text-slate-700">{routing.data?.default_sheet_name || 'Not set'}</div>
           </div>
           <div className="rounded-lg bg-slate-50 p-3">
             <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">Service Account Email</div>
             <div className="text-xs font-mono text-slate-700 truncate">{routing.data?.service_account_email || 'Not set'}</div>
           </div>
-          <div className="rounded-lg bg-slate-50 p-3">
-            <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">Key Path</div>
-            <div className="text-xs font-mono text-slate-700 truncate">{routing.data?.key_path || 'Not set'}</div>
+        </div>
+
+        {/* Lead stats */}
+        {data?.stats && (
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <MiniStat label="Total Leads in DB" value={data.stats.total_leads} color="text-slate-900" />
+            <MiniStat label="Today's Leads" value={data.stats.today_leads} color="text-brand-700" />
           </div>
+        )}
+
+        {/* Actions */}
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
+            onClick={() => sheetSync.mutate()} loading={sheetSync.isPending}>
+            Sync All Leads to Sheet
+          </Button>
+          <Button size="sm" variant="outline" leftIcon={<Zap className="h-3.5 w-3.5" />}
+            onClick={() => triggerSync.mutate()} loading={triggerSync.isPending}>
+            Manual Sync Trigger
+          </Button>
         </div>
       </div>
 
-      <SheetCredentialsModal open={open} onClose={() => setOpen(false)} target={null} defaultPurpose="traders" />
+      <SheetCredentialsModal open={open} onClose={() => setOpen(false)} />
     </div>
   );
 }
 
-function SheetImportLogsModal({ open, onClose, config }: { open: boolean; onClose: () => void; config: SheetConfigPublic | null }) {
-  const logs = useSheetImportLogs(open && config ? config.id : null, 25);
-  return (
-    <Modal open={open} onClose={onClose} title={config ? `Import history — ${config.label}` : 'Import history'} size="xl">
-      {logs.isLoading ? (
-        <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>
-      ) : !(logs.data || []).length ? (
-        <div className="py-8 text-center text-sm text-slate-500">No imports yet.</div>
-      ) : (
-        <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-          {(logs.data || []).map(l => (
-            <div key={l.id} className={clsx(
-              'rounded-lg border bg-white p-3',
-              l.error_message ? 'border-rose-200' : l.failed > 0 ? 'border-amber-200' : 'border-slate-200',
-            )}>
-              <div className="flex items-center gap-2 flex-wrap text-xs">
-                <span className={clsx('chip text-[10px]', l.triggered_by === 'auto' ? 'chip-blue' : 'chip-slate')}>
-                  {l.triggered_by === 'auto' ? '⏱ Auto' : '👤 Manual'}
-                </span>
-                <span className="text-slate-700 font-medium">{fmtRelative(l.started_at)}</span>
-                {l.triggered_by_name && <span className="text-slate-500">by {l.triggered_by_name}</span>}
-                <span className="ml-auto text-slate-500">{l.finished_at ? `(${Math.max(0, Math.round((new Date(l.finished_at).getTime() - new Date(l.started_at).getTime()) / 100) / 10)}s)` : 'running…'}</span>
-              </div>
-              <div className="mt-1.5 grid grid-cols-4 gap-2 text-xs">
-                <div className="rounded-md bg-emerald-50 px-2 py-1 text-center">
-                  <div className="font-bold text-emerald-700">{l.imported}</div>
-                  <div className="text-[9px] uppercase tracking-wide text-slate-500">Imported</div>
-                </div>
-                <div className="rounded-md bg-slate-50 px-2 py-1 text-center">
-                  <div className="font-bold text-slate-700">{l.duplicates}</div>
-                  <div className="text-[9px] uppercase tracking-wide text-slate-500">Duplicates</div>
-                </div>
-                <div className="rounded-md bg-rose-50 px-2 py-1 text-center">
-                  <div className="font-bold text-rose-700">{l.failed}</div>
-                  <div className="text-[9px] uppercase tracking-wide text-slate-500">Failed</div>
-                </div>
-                <div className="rounded-md bg-white border border-slate-200 px-2 py-1 text-center">
-                  <div className="font-bold text-slate-900">{l.total_rows}</div>
-                  <div className="text-[9px] uppercase tracking-wide text-slate-500">Total rows</div>
-                </div>
-              </div>
-              {l.error_message && (
-                <div className="mt-2 rounded-md bg-rose-50 border border-rose-200 px-2 py-1.5 text-xs text-rose-700">
-                  {l.error_message}
-                </div>
-              )}
-              {l.failed_samples && l.failed_samples.length > 0 && (
-                <details className="mt-2">
-                  <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-700">Failure samples ({l.failed_samples.length})</summary>
-                  <ul className="mt-1 space-y-0.5">
-                    {l.failed_samples.map((s, i) => (
-                      <li key={i} className="text-[11px] text-slate-600">Row {s.row_index}: <span className="text-rose-600">{s.error}</span></li>
-                    ))}
-                  </ul>
-                </details>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </Modal>
-  );
-}
-
-function SheetCredentialsModal({ open, onClose, target: _target, defaultPurpose: _defaultPurpose = 'traders' }: { open: boolean; onClose: () => void; target: SheetConfigPublic | null; defaultPurpose?: 'traders' | 'partners' }) {
+function SheetCredentialsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const routing = useGoogleSheetRoutingSettings();
   const updateRouting = useUpdateGoogleSheetRoutingSettings();
   const testRouting = useTestGoogleSheetRouting();
   const [form, setForm] = useState({
-    default_sheet_name: 'Leads',
-    trader_sheet_name: 'Traders',
-    partner_sheet_name: 'Partners',
-    unknown_sheet_name: 'Unknown Leads',
+    default_sheet_name: '',
+    trader_sheet_name: '',
+    partner_sheet_name: '',
+    unknown_sheet_name: '',
   });
   const formKey = JSON.stringify(form);
   const [lastPassedTestKey, setLastPassedTestKey] = useState<string | null>(null);
@@ -1844,10 +1361,10 @@ function SheetCredentialsModal({ open, onClose, target: _target, defaultPurpose:
   React.useEffect(() => {
     if (!open || !routing.data) return;
     setForm({
-      default_sheet_name: routing.data.default_sheet_name || 'Leads',
-      trader_sheet_name: routing.data.trader_sheet_name || 'Traders',
-      partner_sheet_name: routing.data.partner_sheet_name || 'Partners',
-      unknown_sheet_name: routing.data.unknown_sheet_name || 'Unknown Leads',
+      default_sheet_name: routing.data.default_sheet_name || '',
+      trader_sheet_name: routing.data.trader_sheet_name || '',
+      partner_sheet_name: routing.data.partner_sheet_name || '',
+      unknown_sheet_name: routing.data.unknown_sheet_name || '',
     });
     setLastPassedTestKey(null);
   }, [open, routing.data]);
@@ -1892,18 +1409,24 @@ function SheetCredentialsModal({ open, onClose, target: _target, defaultPurpose:
   }
 
   const testPayload = (testRouting.data as { data?: unknown } | undefined)?.data ?? testRouting.data ?? null;
-  const testResults = (testPayload as { results?: {
-    default: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
-    trader: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
-    partner: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
-    unknown: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
-  } } | null)?.results
-    ?? ((testPayload as { data?: { results?: {
+  const testResults = (testPayload as {
+    results?: {
       default: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
       trader: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
       partner: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
       unknown: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
-    } } } | null)?.data?.results ?? null);
+    }
+  } | null)?.results
+    ?? ((testPayload as {
+      data?: {
+        results?: {
+          default: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
+          trader: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
+          partner: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
+          unknown: { sheet_name: string; exists: boolean; header_valid?: boolean; header_missing_columns?: string[] };
+        }
+      }
+    } | null)?.data?.results ?? null);
   const canSave = lastPassedTestKey === formKey;
   const updateField = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm((s) => ({ ...s, [key]: e.target.value }));
@@ -1930,10 +1453,10 @@ function SheetCredentialsModal({ open, onClose, target: _target, defaultPurpose:
         <Input label="Partner Leads Sheet Name" value={form.partner_sheet_name} onChange={updateField('partner_sheet_name')} />
         <Input label="Unknown Leads Sheet Name" value={form.unknown_sheet_name} onChange={updateField('unknown_sheet_name')} />
         <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
-          <div>All leads are written to {form.default_sheet_name || 'Leads'}.</div>
-          <div>Trader leads are also written to {form.trader_sheet_name || 'Traders'}.</div>
-          <div>Partner leads are also written to {form.partner_sheet_name || 'Partners'}.</div>
-          <div>Unknown leads are also written to {form.unknown_sheet_name || form.default_sheet_name || 'Unknown Leads'}.</div>
+          <div>All leads are written to {form.default_sheet_name || 'the configured default sheet'}.</div>
+          <div>Trader leads are also written to {form.trader_sheet_name || 'the configured trader sheet'}.</div>
+          <div>Partner leads are also written to {form.partner_sheet_name || 'the configured partner sheet'}.</div>
+          <div>Unknown leads are also written to {form.unknown_sheet_name || form.default_sheet_name || 'the configured unknown sheet'}.</div>
         </div>
         {!canSave && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
@@ -1946,10 +1469,10 @@ function SheetCredentialsModal({ open, onClose, target: _target, defaultPurpose:
             <div className="text-xs font-semibold text-slate-900">Sheet Test Results</div>
             <div className="mt-2 space-y-2 text-xs">
               {([
-                ['Leads', testResults.default],
-                ['Traders', testResults.trader],
-                ['Partners', testResults.partner],
-                ['Unknown Leads', testResults.unknown],
+                ['Default', testResults.default],
+                ['Trader', testResults.trader],
+                ['Partner', testResults.partner],
+                ['Unknown', testResults.unknown],
               ] as const).map(([label, result]) => (
                 <div key={label} className="flex items-center justify-between rounded-md bg-white px-3 py-2">
                   <div>
@@ -1970,186 +1493,6 @@ function SheetCredentialsModal({ open, onClose, target: _target, defaultPurpose:
           </div>
         )}
       </div>
-    </Modal>
-  );
-}
-
-function LegacySheetCredentialsModal({ open, onClose, target, defaultPurpose = 'traders' }: { open: boolean; onClose: () => void; target: SheetConfigPublic | null; defaultPurpose?: 'traders' | 'partners' }) {
-  const create = useCreateSheetConfig();
-  const update = useUpdateSheetConfig();
-  const [label, setLabel] = useState('');
-  const [sheetId, setSheetId] = useState('');
-  const [sheetName, setSheetName] = useState('Leads');
-  const [pasted, setPasted] = useState('');
-  const [file, setFile] = useState<File | null>(null);
-  const [makeActive, setMakeActive] = useState(true);
-  const [purpose, setPurpose] = useState<'traders' | 'partners'>(defaultPurpose);
-
-  // Hydrate on open
-  React.useEffect(() => {
-    if (!open) return;
-    setLabel(target?.label || '');
-    setSheetId(target?.sheet_id || '');
-    setSheetName(target?.sheet_name || 'Leads');
-    setPasted('');
-    setFile(null);
-    setMakeActive(target ? false : true);
-    setPurpose((target?.purpose === 'partners' ? 'partners' : (target?.purpose === 'traders' ? 'traders' : defaultPurpose)));
-  }, [open, target, defaultPurpose]);
-
-  function pickFile(f: File | null) {
-    setFile(f);
-    if (f) setPasted(''); // mutually exclusive
-  }
-
-  function handleSave() {
-    if (!sheetId.trim()) { toast.error('Sheet ID is required'); return; }
-    if (!target) {
-      create.mutate(
-        { sheet_id: sheetId.trim(), label: label.trim() || `Sheet ${sheetId.slice(0, 8)}`, sheet_name: sheetName.trim() || 'Leads', purpose, make_active: makeActive, file, credentials_json: pasted || undefined },
-        {
-          onSuccess: () => { toast.success(makeActive ? 'Saved & activated' : 'Saved'); onClose(); },
-          onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Upload failed'),
-        }
-      );
-    } else {
-      const patch: { id: string; sheet_id?: string; sheet_name?: string; label?: string; purpose?: 'traders' | 'partners'; credentials_json?: string; file?: File | null } = { id: target.id };
-      if (sheetId.trim() !== (target.sheet_id || '')) patch.sheet_id = sheetId.trim();
-      if (sheetName.trim() !== target.sheet_name) patch.sheet_name = sheetName.trim();
-      if (label.trim() !== target.label) patch.label = label.trim();
-      if (purpose !== target.purpose) patch.purpose = purpose;
-      if (file) patch.file = file;
-      else if (pasted) patch.credentials_json = pasted;
-      update.mutate(patch, {
-        onSuccess: () => { toast.success('Updated'); onClose(); },
-        onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Update failed'),
-      });
-    }
-  }
-
-  const busy = create.isPending || update.isPending;
-
-  return (
-    <Modal open={open} onClose={onClose} title={target ? `Edit "${target.label}"` : 'Upload Google Sheets Credentials'} size="lg"
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button onClick={handleSave} loading={busy}>{target ? 'Save changes' : 'Upload & save'}</Button>
-        </>
-      }>
-      <div className="space-y-3">
-        <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-xs text-emerald-800">
-          <AlertCircle className="h-3.5 w-3.5 inline mr-1" />
-          Share the target sheet with the <strong>service-account email</strong> from inside the JSON (Editor access).
-          File never leaves the server — encrypted at rest with the JWT secret.
-        </div>
-
-        <div>
-          <label className="label">Sheet purpose *</label>
-          <div className="flex gap-2">
-            {(['traders', 'partners'] as const).map(p => (
-              <button key={p} type="button" onClick={() => setPurpose(p)}
-                className={clsx(
-                  'flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition',
-                  purpose === p
-                    ? (p === 'traders' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-violet-300 bg-violet-50 text-violet-700')
-                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
-                )}>
-                {p === 'traders' ? '📊 Traders sheet (leads.category = trader)' : '🤝 Partners sheet (leads.category = partner)'}
-              </button>
-            ))}
-          </div>
-          <div className="mt-1 text-[10px] text-slate-500">
-            Every row imported from this sheet is tagged with the chosen category. Partner lead-requests will only see rows from a <em>partners</em> sheet, and trader requests only see <em>traders</em> sheet rows.
-          </div>
-        </div>
-
-        <Input label="Label (internal name)" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Production Sheet 2026" />
-        <Input label="Google Sheet ID *" value={sheetId} onChange={(e) => setSheetId(e.target.value)} placeholder="1kRY_XL7hTJfZng8…" />
-        <Input label="Tab name" value={sheetName} onChange={(e) => setSheetName(e.target.value)} placeholder="Sheet1 / Leads" />
-
-        <div>
-          <label className="label">Service Account JSON {target ? '(leave blank to keep current)' : '*'}</label>
-          <div className="flex gap-2 items-center">
-            <label className={clsx(
-              'flex-1 cursor-pointer rounded-lg border-2 border-dashed px-3 py-3 text-center text-xs transition',
-              file ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-600',
-            )}>
-              <input type="file" accept=".json,application/json" className="hidden"
-                onChange={(e) => pickFile(e.target.files?.[0] || null)} />
-              {file ? (
-                <span className="inline-flex items-center gap-1"><Upload className="h-3 w-3" /> {file.name}</span>
-              ) : (
-                <span className="inline-flex items-center gap-1"><Upload className="h-3 w-3" /> Pick .json file…</span>
-              )}
-            </label>
-            {file && (
-              <button onClick={() => setFile(null)} className="text-[11px] text-slate-500 underline">Clear</button>
-            )}
-          </div>
-          <div className="text-[10px] text-slate-500 mt-1 mb-1">…or paste the JSON below:</div>
-          <textarea
-            className="input min-h-[110px] font-mono text-[11px]"
-            placeholder='{ "type": "service_account", "client_email": "…", "private_key": "-----BEGIN PRIVATE KEY-----…" }'
-            value={pasted}
-            onChange={(e) => { setPasted(e.target.value); if (e.target.value) setFile(null); }}
-          />
-        </div>
-
-        {!target && (
-          <label className="flex items-center gap-2 text-xs text-slate-700">
-            <input type="checkbox" checked={makeActive} onChange={(e) => setMakeActive(e.target.checked)} />
-            Activate immediately (replaces the current active config — backend auto-reloads, no PM2 restart)
-          </label>
-        )}
-      </div>
-    </Modal>
-  );
-}
-
-function SheetPreviewModal({ open, onClose, data, isLoading, error }: {
-  open: boolean;
-  onClose: () => void;
-  data: { sheet_id: string; sheet_name: string; header: string[]; rows: string[][] } | null;
-  isLoading: boolean;
-  error: { response?: { data?: { error?: { message?: string } } } } | null;
-}) {
-  return (
-    <Modal open={open} onClose={onClose} title="Live Sheet Preview" size="xl">
-      {isLoading ? (
-        <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>
-      ) : error ? (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {error?.response?.data?.error?.message || 'Failed to read sheet'}
-        </div>
-      ) : !data ? (
-        <div className="py-8 text-center text-sm text-slate-500">No preview yet — click Preview Rows again.</div>
-      ) : (
-        <div className="space-y-3">
-          <div className="text-xs text-slate-500 font-mono">{data.sheet_id} · {data.sheet_name}</div>
-          <div className="overflow-x-auto rounded-lg border border-slate-200">
-            <table className="w-full text-xs">
-              <thead className="bg-slate-50">
-                <tr>
-                  {data.header.map((h, i) => (
-                    <th key={i} className="px-3 py-2 text-left font-semibold text-slate-700 whitespace-nowrap">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {data.rows.map((row, i) => (
-                  <tr key={i} className="hover:bg-slate-50">
-                    {row.map((cell, j) => (
-                      <td key={j} className="px-3 py-1.5 text-slate-700 max-w-[260px] truncate" title={cell}>{cell}</td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="text-[10px] text-slate-500">Showing first {data.rows.length} data row(s).</div>
-        </div>
-      )}
     </Modal>
   );
 }
@@ -2348,7 +1691,7 @@ function WebhookLogsTab() {
                     <th className="py-2 font-medium text-right">Dupes</th>
                   </tr></thead>
                   <tbody className="divide-y divide-slate-50">
-                    {data.sync_logs.map((l: any) => (
+                    {(data.sync_logs as MetaSyncLogRow[]).map((l) => (
                       <tr key={l.id} className="hover:bg-slate-50">
                         <td className="py-2 pr-3 text-xs text-slate-500">{fmtRelative(l.started_at)}</td>
                         <td className="py-2 pr-3"><span className="chip-blue text-[10px]">{l.sync_type}</span></td>
@@ -2379,13 +1722,13 @@ function WebhookLogsTab() {
                     <th className="py-2 font-medium">Details</th>
                   </tr></thead>
                   <tbody className="divide-y divide-slate-50">
-                    {data.activity_logs.map((l: any) => (
+                    {(data.activity_logs as ActivityLogRow[]).map((l) => (
                       <tr key={l.id} className="hover:bg-slate-50">
                         <td className="py-2 pr-3 text-xs text-slate-500">{fmtRelative(l.created_at)}</td>
                         <td className="py-2 pr-3 text-xs text-slate-700">{l.user_name || '—'}</td>
                         <td className="py-2 pr-3"><span className="chip-slate text-[10px]">{l.action}</span></td>
                         <td className="py-2 pr-3 text-xs text-slate-600">{l.entity}</td>
-                        <td className="py-2 text-xs text-slate-500 truncate max-w-[200px]">{typeof l.metadata === 'object' ? JSON.stringify(l.metadata) : l.metadata || '—'}</td>
+                        <td className="py-2 text-xs text-slate-500 truncate max-w-[200px]">{formatLogMetadata(l.metadata)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2408,7 +1751,7 @@ function WebhookLogsTab() {
                     <th className="py-2 font-medium">IP</th>
                   </tr></thead>
                   <tbody className="divide-y divide-slate-50">
-                    {data.audit_logs.map((l: any) => (
+                    {(data.audit_logs as ActivityLogRow[]).map((l) => (
                       <tr key={l.id} className="hover:bg-slate-50">
                         <td className="py-2 pr-3 text-xs text-slate-500">{fmtRelative(l.created_at)}</td>
                         <td className="py-2 pr-3 text-xs text-slate-700">{l.user_name || '—'}</td>
