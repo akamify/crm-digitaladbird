@@ -40,6 +40,23 @@ async function authenticate(req, _res, next) {
     } catch (e) {
       throw new AppError(401, 'INVALID_TOKEN', 'Invalid or expired token');
     }
+    if (!payload.sid) {
+      throw new AppError(401, 'SESSION_REQUIRED', 'Session has expired. Please login again.');
+    }
+
+    const { rows: [session] } = await query(
+      `SELECT id, user_id, expires_at, revoked_at
+         FROM auth_sessions
+        WHERE id = $1 AND user_id = $2
+        LIMIT 1`,
+      [payload.sid, payload.sub],
+    );
+    if (!session || session.revoked_at) {
+      throw new AppError(401, 'SESSION_REVOKED', 'Session revoked');
+    }
+    if (new Date(session.expires_at) <= new Date()) {
+      throw new AppError(401, 'SESSION_EXPIRED', 'Session expired. Please login again.');
+    }
 
     let user = getCachedUser(payload.sub);
     if (!user) {
@@ -58,13 +75,15 @@ async function authenticate(req, _res, next) {
     if (user.status !== 'active') throw new AppError(403, 'USER_INACTIVE', 'Account is not active');
 
     req.user = user;
+    req.sessionId = session.id;
+    req.sessionExpiresAt = session.expires_at;
 
     // Bump last_activity_at on the user's most recent active session so
     // Activity Logs can show "Last Activity Time" without a per-route hook.
     // Throttled via an in-memory map to avoid hammering the DB on every
     // React Query poll: we only write once per user per ACTIVITY_BUMP_MS.
     // Fire-and-forget — never blocks the request and never throws back.
-    bumpSessionActivity(user.id, req.ip).catch(() => {});
+    bumpSessionActivity(user.id, session.id, req.ip).catch(() => {});
 
     next();
   } catch (e) { next(e); }
@@ -73,11 +92,12 @@ async function authenticate(req, _res, next) {
 const ACTIVITY_BUMP_MS = 30_000;   // write at most once per 30s per user
 const LAST_BUMPED = new Map();
 
-async function bumpSessionActivity(userId, ip) {
+async function bumpSessionActivity(userId, sessionId, ip) {
   const now = Date.now();
-  const last = LAST_BUMPED.get(userId) || 0;
+  const cacheKey = sessionId || userId;
+  const last = LAST_BUMPED.get(cacheKey) || 0;
   if (now - last < ACTIVITY_BUMP_MS) return;
-  LAST_BUMPED.set(userId, now);
+  LAST_BUMPED.set(cacheKey, now);
   // Cap the map size so it can't grow unbounded.
   if (LAST_BUMPED.size > 1000) {
     const oldest = LAST_BUMPED.keys().next().value;
@@ -89,13 +109,10 @@ async function bumpSessionActivity(userId, ip) {
           SET last_activity_at = NOW(),
               last_activity_ip = $2
         WHERE user_id = $1
+          AND id = $3
           AND revoked_at IS NULL
-          AND id = (
-            SELECT id FROM auth_sessions
-             WHERE user_id = $1 AND revoked_at IS NULL
-             ORDER BY created_at DESC LIMIT 1
-          )`,
-      [userId, ip || null]
+          AND expires_at > NOW()`,
+      [userId, ip || null, sessionId]
     );
   } catch { /* never block request on activity bump */ }
 }

@@ -162,7 +162,6 @@ exports.login = asyncHandler(async (req, res) => {
   }
   user.role = normalizeDbRole(user.role);
 
-  const accessToken = signAccessToken(user);
   const refresh     = signRefreshToken(user);
 
   // Security signal: is this UA new for this user? (no prior auth_sessions
@@ -190,9 +189,10 @@ exports.login = asyncHandler(async (req, res) => {
   const { rows: [sess] } = await query(
     `INSERT INTO auth_sessions (user_id, refresh_token_hash, user_agent, ip_address, expires_at)
        VALUES ($1, $2, $3, $4, $5)
-     RETURNING id`,
+     RETURNING id, expires_at`,
     [user.id, refresh.hash, currentUA, req.ip, refresh.expiresAt]
   );
+  const accessToken = signAccessToken(user, sess.id);
   await query(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [user.id]);
 
   // Audit trail — rich row in activity_logs. Includes security signals so
@@ -216,6 +216,7 @@ exports.login = asyncHandler(async (req, res) => {
       accessToken,
       refreshToken:        refresh.raw,
       accessTokenExpiresIn: config.jwt.accessTtl,
+      sessionExpiresAt:    sess.expires_at,
       user: {
         id:         user.id,
         name:       user.full_name,
@@ -309,14 +310,15 @@ exports.verifyOtp = asyncHandler(async (req, res) => {
   const user = rows[0];
   if (!user) throw new AppError(404, 'USER_NOT_FOUND', 'User not found');
 
-  const accessToken = signAccessToken(user);
   const refresh     = signRefreshToken(user);
 
-  await query(
+  const { rows: [sess] } = await query(
     `INSERT INTO auth_sessions (user_id, refresh_token_hash, user_agent, ip_address, expires_at)
-       VALUES ($1, $2, $3, $4, $5)`,
+       VALUES ($1, $2, $3, $4, $5)
+     RETURNING id, expires_at`,
     [user.id, refresh.hash, req.headers['user-agent'] || null, req.ip, refresh.expiresAt]
   );
+  const accessToken = signAccessToken(user, sess.id);
   await query(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [user.id]);
   await query(
     `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata, ip_address)
@@ -330,6 +332,7 @@ exports.verifyOtp = asyncHandler(async (req, res) => {
       accessToken,
       refreshToken: refresh.raw,
       accessTokenExpiresIn: config.jwt.accessTtl,
+      sessionExpiresAt: sess.expires_at,
       user: {
         id:         user.id,
         name:       user.full_name,
@@ -370,18 +373,20 @@ exports.refresh = asyncHandler(async (req, res) => {
   const newRefresh = signRefreshToken(user);
 
   await query(`UPDATE auth_sessions SET revoked_at = NOW() WHERE id = $1`, [sess.id]);
-  await query(
+  const { rows: [newSess] } = await query(
     `INSERT INTO auth_sessions(user_id, refresh_token_hash, user_agent, ip_address, expires_at)
-       VALUES ($1, $2, $3, $4, $5)`,
+       VALUES ($1, $2, $3, $4, $5)
+     RETURNING id, expires_at`,
     [user.id, newRefresh.hash, req.headers['user-agent'] || null, req.ip, newRefresh.expiresAt]
   );
 
   res.json({
     success: true,
     data: {
-      accessToken:         signAccessToken(user),
+      accessToken:         signAccessToken(user, newSess.id),
       refreshToken:        newRefresh.raw,
       accessTokenExpiresIn: config.jwt.accessTtl,
+      sessionExpiresAt:    newSess.expires_at,
     },
   });
 });

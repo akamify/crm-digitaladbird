@@ -2,9 +2,9 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const config = require('../config/env');
 
-function signAccessToken(user) {
+function signAccessToken(user, sessionId = null) {
   return jwt.sign(
-    { sub: user.id, role: user.role, name: user.full_name },
+    { sub: user.id, sid: sessionId, role: user.role, name: user.full_name },
     config.jwt.accessSecret,
     { expiresIn: config.jwt.accessTtl, issuer: 'digitaladbird-crm' }
   );
@@ -17,7 +17,7 @@ function signRefreshToken(user) {
   return {
     raw,
     hash,
-    expiresAt: new Date(Date.now() + config.jwt.refreshTtlDays * 24 * 60 * 60 * 1000),
+    expiresAt: new Date(Date.now() + config.jwt.sessionTtlHours * 60 * 60 * 1000),
   };
 }
 

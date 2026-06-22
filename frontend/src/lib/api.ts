@@ -28,6 +28,7 @@ export const api = axios.create({
 const ACCESS_KEY  = 'dab.access';
 const REFRESH_KEY = 'dab.refresh';
 const USER_KEY    = 'dab.user';
+const SESSION_EXPIRES_KEY = 'dab.session.expiresAt';
 
 // One-time sweep: prior builds wrote tokens to localStorage under these keys.
 // They poison new tabs (each tab would pick up the last login regardless of
@@ -37,6 +38,7 @@ if (typeof window !== 'undefined') {
     localStorage.removeItem('dab.access');
     localStorage.removeItem('dab.refresh');
     localStorage.removeItem('dab.user');
+    localStorage.removeItem('dab.session.expiresAt');
     localStorage.removeItem('dab.last.access');
     localStorage.removeItem('dab.last.refresh');
     localStorage.removeItem('dab.last.user');
@@ -46,16 +48,24 @@ if (typeof window !== 'undefined') {
 export const tokens = {
   get access()  { return typeof window === 'undefined' ? null : sessionStorage.getItem(ACCESS_KEY);  },
   get refresh() { return typeof window === 'undefined' ? null : sessionStorage.getItem(REFRESH_KEY); },
-  set({ accessToken, refreshToken }: { accessToken: string; refreshToken: string }) {
+  get sessionExpiresAt() { return typeof window === 'undefined' ? null : sessionStorage.getItem(SESSION_EXPIRES_KEY); },
+  get isSessionExpired() {
+    if (typeof window === 'undefined') return false;
+    const expiresAt = sessionStorage.getItem(SESSION_EXPIRES_KEY);
+    return Boolean(expiresAt && new Date(expiresAt).getTime() <= Date.now());
+  },
+  set({ accessToken, refreshToken, sessionExpiresAt }: { accessToken: string; refreshToken: string; sessionExpiresAt?: string | null }) {
     if (typeof window === 'undefined') return;
     sessionStorage.setItem(ACCESS_KEY,  accessToken);
     sessionStorage.setItem(REFRESH_KEY, refreshToken);
+    if (sessionExpiresAt) sessionStorage.setItem(SESSION_EXPIRES_KEY, sessionExpiresAt);
   },
   clear() {
     if (typeof window === 'undefined') return;
     sessionStorage.removeItem(ACCESS_KEY);
     sessionStorage.removeItem(REFRESH_KEY);
     sessionStorage.removeItem(USER_KEY);
+    sessionStorage.removeItem(SESSION_EXPIRES_KEY);
   },
 };
 
@@ -72,6 +82,13 @@ export const userStorage = {
 };
 
 api.interceptors.request.use((config) => {
+  if (tokens.isSessionExpired) {
+    tokens.clear();
+    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+      window.location.href = '/login?expired=1';
+    }
+    return config;
+  }
   const t = tokens.access;
   if (t) {
     config.headers = config.headers || {};
@@ -85,9 +102,17 @@ let refreshing: Promise<string | null> | null = null;
 async function attemptRefresh(): Promise<string | null> {
   const r = tokens.refresh;
   if (!r) return null;
+  if (tokens.isSessionExpired) {
+    tokens.clear();
+    return null;
+  }
   try {
     const { data } = await axios.post(`${BASE}/auth/refresh`, { refreshToken: r });
-    tokens.set({ accessToken: data.data.accessToken, refreshToken: data.data.refreshToken });
+    tokens.set({
+      accessToken: data.data.accessToken,
+      refreshToken: data.data.refreshToken,
+      sessionExpiresAt: data.data.sessionExpiresAt,
+    });
     return data.data.accessToken;
   } catch {
     tokens.clear();

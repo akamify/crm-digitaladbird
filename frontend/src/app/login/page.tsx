@@ -41,6 +41,7 @@ function LoginInner() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const sessionExpired = params.get('expired') === '1';
 
   useEffect(() => {
     if (!initialized) init();
@@ -199,6 +200,16 @@ function LoginInner() {
                 >
                   <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>{error}</span>
+                </div>
+              )}
+
+              {!error && sessionExpired && (
+                <div
+                  role="status"
+                  className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700"
+                >
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>Your session expired after 24 hours. Please login again.</span>
                 </div>
               )}
 

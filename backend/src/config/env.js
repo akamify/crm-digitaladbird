@@ -32,6 +32,7 @@ const config = {
     accessSecret:    required('JWT_ACCESS_SECRET',  'dev_access_secret_change_me'),
     refreshSecret:   required('JWT_REFRESH_SECRET', 'dev_refresh_secret_change_me'),
     accessTtl:       process.env.JWT_ACCESS_TTL  || '15m',
+    sessionTtlHours: parseInt(process.env.JWT_SESSION_TTL_HOURS || '24', 10),
     refreshTtlDays:  parseInt(process.env.JWT_REFRESH_TTL_DAYS || '30', 10),
   },
 

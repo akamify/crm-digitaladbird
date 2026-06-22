@@ -28,6 +28,20 @@ interface AuthState {
 }
 
 let _initP: Promise<void> | null = null;
+let _expiryTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleSessionExpiry(onExpire: () => void) {
+  if (typeof window === 'undefined') return;
+  if (_expiryTimer) clearTimeout(_expiryTimer);
+  const expiresAt = tokens.sessionExpiresAt;
+  if (!expiresAt) return;
+  const delay = new Date(expiresAt).getTime() - Date.now();
+  if (delay <= 0) {
+    onExpire();
+    return;
+  }
+  _expiryTimer = setTimeout(onExpire, Math.min(delay, 2_147_483_647));
+}
 
 function toUser(me: any): AuthUser {
   return {
@@ -54,8 +68,18 @@ export const useAuth = create<AuthState>((set, get) => ({
     if (_initP) return _initP;
     _initP = (async () => {
       const cached = userStorage.get();
+      if (tokens.isSessionExpired) {
+        tokens.clear();
+        set({ user: null, initialized: true });
+        return;
+      }
       if (cached && tokens.access) {
         set({ user: cached, initialized: true });
+        scheduleSessionExpiry(() => {
+          tokens.clear();
+          set({ user: null, initialized: false });
+          window.location.href = '/login?expired=1';
+        });
         apiGet<AuthUser>('/auth/me').then((me) => {
           const u = toUser(me);
           userStorage.set(u);
@@ -75,6 +99,11 @@ export const useAuth = create<AuthState>((set, get) => ({
           const u = toUser(me);
           userStorage.set(u);
           set({ user: u });
+          scheduleSessionExpiry(() => {
+            tokens.clear();
+            set({ user: null, initialized: false });
+            window.location.href = '/login?expired=1';
+          });
         }
       } catch { /* token invalid */ }
       finally { set({ initialized: true }); }
@@ -85,12 +114,17 @@ export const useAuth = create<AuthState>((set, get) => ({
   async login(identifier, password, role?) {
     set({ loading: true });
     try {
-      const data = await apiPost<{ accessToken: string; refreshToken: string; user: AuthUser }>(
+      const data = await apiPost<{ accessToken: string; refreshToken: string; sessionExpiresAt?: string; user: AuthUser }>(
         '/auth/login', { identifier, password, ...(role ? { role } : {}) }
       );
-      tokens.set({ accessToken: data.accessToken, refreshToken: data.refreshToken });
+      tokens.set({ accessToken: data.accessToken, refreshToken: data.refreshToken, sessionExpiresAt: data.sessionExpiresAt });
       userStorage.set(data.user);
       set({ user: data.user });
+      scheduleSessionExpiry(() => {
+        tokens.clear();
+        set({ user: null, initialized: false });
+        window.location.href = '/login?expired=1';
+      });
       return data.user;
     } finally { set({ loading: false }); }
   },
@@ -108,18 +142,24 @@ export const useAuth = create<AuthState>((set, get) => ({
   async verifyOtp(email, code) {
     set({ loading: true });
     try {
-      const data = await apiPost<{ accessToken: string; refreshToken: string; user: AuthUser }>(
+      const data = await apiPost<{ accessToken: string; refreshToken: string; sessionExpiresAt?: string; user: AuthUser }>(
         '/auth/verify-otp', { email, code }
       );
-      tokens.set({ accessToken: data.accessToken, refreshToken: data.refreshToken });
+      tokens.set({ accessToken: data.accessToken, refreshToken: data.refreshToken, sessionExpiresAt: data.sessionExpiresAt });
       userStorage.set(data.user);
       set({ user: data.user });
+      scheduleSessionExpiry(() => {
+        tokens.clear();
+        set({ user: null, initialized: false });
+        window.location.href = '/login?expired=1';
+      });
       return data.user;
     } finally { set({ loading: false }); }
   },
 
   async logout() {
     try { await api.post('/auth/logout', { refreshToken: tokens.refresh }); } catch {}
+    if (_expiryTimer) clearTimeout(_expiryTimer);
     tokens.clear(); // also removes dab.user
     set({ user: null, initialized: false });
     if (typeof window !== 'undefined') window.location.href = '/login';
