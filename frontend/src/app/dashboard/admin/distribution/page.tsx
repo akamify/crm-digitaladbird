@@ -3,9 +3,11 @@
 import Link from 'next/link';
 import { ArrowLeft, GitBranch, Loader2, Play, RotateCcw } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useEffect, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { useAssignmentOverview, useRunDistributionNow, useRunReassignmentNow, useUpdateAssignmentSettings } from '@/hooks/useAdminEnterprise';
 import { clsx } from '@/lib/format';
+import { formatISTDateTime } from '@/lib/date';
 
 export default function DistributionPage() {
   return (
@@ -23,11 +25,24 @@ function DistributionInner() {
 
   const settings = overview.data?.settings;
   const stats = overview.data?.stats || {};
+  const [scheduledTime, setScheduledTime] = useState('');
+  const [maxLeads, setMaxLeads] = useState(100);
 
-  function saveSetting(body: Record<string, boolean | number>) {
+  useEffect(() => {
+    if (!settings) return;
+    setScheduledTime(settings.scheduledAssignmentTime || '');
+    setMaxLeads(Number(settings.maxLeadsPerScheduledRun || settings.assignmentTickLimit || 100));
+  }, [settings]);
+
+  function errorMessage(error: unknown, fallback: string) {
+    const payload = error as { response?: { data?: { error?: { message?: string } } } };
+    return payload.response?.data?.error?.message || fallback;
+  }
+
+  function saveSetting(body: Record<string, boolean | number | string>) {
     updateSettings.mutate(body, {
       onSuccess: () => toast.success('Distribution settings updated'),
-      onError: (error: any) => toast.error(error?.response?.data?.error?.message || 'Update failed'),
+      onError: (error) => toast.error(errorMessage(error, 'Update failed')),
     });
   }
 
@@ -44,8 +59,8 @@ function DistributionInner() {
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="space-y-1">
-            <h2 className="text-sm font-semibold text-slate-900">Auto Distribution</h2>
-            <p className="text-sm text-slate-500">Automatically assign new leads by round robin.</p>
+            <h2 className="text-sm font-semibold text-slate-900">Scheduled Lead Assignment</h2>
+            <p className="text-sm text-slate-500">Saved leads are assigned once per day at the configured IST time.</p>
             <p className="text-xs text-slate-500">Leads will be assigned only to active Members and Partners.</p>
             <p className="text-xs text-slate-500">Manual assignment and request approval will continue to work even when auto distribution is off.</p>
           </div>
@@ -69,19 +84,64 @@ function DistributionInner() {
           <InfoCard
             label="Current State"
             value={settings?.autoAssignEnabled
-              ? 'New leads will be assigned by round robin to active Members and Partners.'
-              : 'New leads will remain unassigned until manually assigned or approved through a request.'}
+              ? `Saved leads will be assigned daily at ${settings.scheduledAssignmentTime || 'not set'} IST.`
+              : 'Scheduled assignment is disabled. Saved leads will not auto-assign.'}
           />
+          <InfoCard label="Last Run" value={settings?.lastScheduledRunAt ? formatISTDateTime(settings.lastScheduledRunAt) : 'Not run yet'} />
+          <InfoCard label="Last Result" value={settings?.lastDistributionStatus || 'Not available'} />
+          <InfoCard label="Last Error" value={settings?.lastDistributionError || 'No error'} />
+        </div>
+
+        <div className="mt-5 grid gap-4 md:grid-cols-3">
+          <label className="block">
+            <span className="text-xs font-medium text-slate-500">Assignment Time</span>
+            <input
+              type="time"
+              value={scheduledTime}
+              onChange={(event) => setScheduledTime(event.target.value)}
+              className="input mt-1 h-10"
+            />
+            <span className="mt-1 block text-xs text-slate-400">Timezone: Asia/Kolkata (IST)</span>
+          </label>
+          <label className="block">
+            <span className="text-xs font-medium text-slate-500">Max leads per run</span>
+            <input
+              type="number"
+              min={1}
+              max={1000}
+              value={maxLeads}
+              onChange={(event) => setMaxLeads(Math.max(1, Number(event.target.value) || 1))}
+              className="input mt-1 h-10"
+            />
+          </label>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Eligible users</div>
+            <div className="mt-1 text-sm font-medium text-slate-900">Members and Partners</div>
+            <div className="mt-1 text-xs text-slate-500">RM, Admin, and Super Admin are excluded.</div>
+          </div>
         </div>
 
         <div className="mt-5 flex flex-wrap gap-2">
           <button
+            onClick={() => saveSetting({
+              scheduledAssignmentTime: scheduledTime,
+              scheduledTimezone: 'Asia/Kolkata',
+              maxLeadsPerScheduledRun: maxLeads,
+            })}
+            disabled={updateSettings.isPending || overview.isLoading}
+            className="btn-outline inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"
+          >
+            {updateSettings.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            Save Settings
+          </button>
+          <button
             onClick={() => runDistribution.mutate(undefined, {
-              onSuccess: (data: any) => {
-                const assigned = Number(data?.data?.request?.assigned || 0) + Number(data?.data?.auto?.assigned || 0);
+              onSuccess: (data: unknown) => {
+                const payload = data as { data?: { assigned?: number }; assigned?: number };
+                const assigned = Number(payload?.data?.assigned || payload?.assigned || 0);
                 toast.success(assigned > 0 ? `Assigned ${assigned} lead(s)` : 'Distribution run completed');
               },
-              onError: (error: any) => toast.error(error?.response?.data?.error?.message || 'Distribution run failed'),
+              onError: (error) => toast.error(errorMessage(error, 'Distribution run failed')),
             })}
             disabled={runDistribution.isPending}
             className="btn-primary inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"
@@ -132,8 +192,11 @@ function DistributionInner() {
           </label>
           <button
             onClick={() => runReassignment.mutate(undefined, {
-              onSuccess: (data: any) => toast.success(`Reassigned ${Number(data?.data?.reassigned || 0)} lead(s)`),
-              onError: (error: any) => toast.error(error?.response?.data?.error?.message || 'Reassignment run failed'),
+              onSuccess: (data: unknown) => {
+                const payload = data as { data?: { reassigned?: number } };
+                toast.success(`Reassigned ${Number(payload?.data?.reassigned || 0)} lead(s)`);
+              },
+              onError: (error) => toast.error(errorMessage(error, 'Reassignment run failed')),
             })}
             disabled={runReassignment.isPending}
             className="btn-outline inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"

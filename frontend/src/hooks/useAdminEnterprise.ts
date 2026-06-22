@@ -7,6 +7,14 @@ export interface AssignmentSettings {
   assignStartHour: number;
   assignEndHour: number;
   timezone: string;
+  scheduledAssignmentTime?: string | null;
+  scheduledTimezone?: string | null;
+  maxLeadsPerScheduledRun?: number;
+  lastScheduledRunAt?: string | null;
+  nextScheduledRunAt?: string | null;
+  isDistributionRunning?: boolean;
+  lastDistributionStatus?: string | null;
+  lastDistributionError?: string | null;
   autoReassignEnabled: boolean;
   reassignAfterHours: number;
   reassignToHighPerformers: boolean;

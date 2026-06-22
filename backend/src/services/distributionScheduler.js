@@ -1,159 +1,163 @@
-/**
- * Auto Lead Distribution Scheduler
- *
- * Rules:
- *  - Facebook / Meta leads arrive 24×7 and are stored safely in PostgreSQL.
- *  - Distribution ONLY happens between START_HOUR and END_HOUR in IST (default 08:00–22:00).
- *  - At START_HOUR every morning, all queued (unassigned) leads are distributed in bulk.
- *  - During active hours, new leads are distributed immediately (called by metaService).
- *  - Outside active hours, leads sit in the queue — no loss possible.
- *  - Super Admin can toggle auto_distribution_enabled on/off via API at any time.
- *
- * IST = UTC + 5 hours 30 minutes
- */
-const { query } = require('../config/database');
-const { assignLead, checkPendingBlocking } = require('./leadDistributionService');
-const { runDistributionCycle } = require('./requestDistributionEngine');
+const { query, withTransaction } = require('../config/database');
 const assignmentEngine = require('./leadAssignmentEngine');
 const logger = require('../utils/logger');
 
-const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // UTC+5:30
+const DEFAULT_TZ = 'Asia/Kolkata';
 
-/** Returns the current time object in IST. */
-function nowIST() {
-  const utc  = Date.now();
-  const ist  = new Date(utc + IST_OFFSET_MS);
-  return { hour: ist.getUTCHours(), minute: ist.getUTCMinutes(), date: ist };
+function asBool(value) {
+  return String(value || '').toLowerCase() === 'true';
 }
 
-/** Read a setting from the DB (with in-memory fallback). */
-async function getSetting(key, fallback) {
-  try {
-    const { rows } = await query(
-      `SELECT value FROM distribution_settings WHERE key = $1`, [key]
-    );
-    return rows[0]?.value ?? fallback;
-  } catch {
-    return fallback;
-  }
+function normalizeTime(value) {
+  const raw = String(value || '').trim();
+  const match = raw.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+  if (!match) return '';
+  return `${match[1].padStart(2, '0')}:${match[2]}`;
 }
 
-/** Returns true if auto-distribution is currently active (enabled + within hours). */
-async function isDistributionActive() {
-  const enabled = await getSetting('auto_distribution_enabled', 'false');
-  if (enabled !== 'true') return false;
-
-  const startHour = parseInt(await getSetting('distribution_start_hour', '8'),  10);
-  const endHour   = parseInt(await getSetting('distribution_end_hour',   '22'), 10);
-  const { hour }  = nowIST();
-
-  return hour >= startHour && hour < endHour;
+function istParts(date = new Date(), timezone = DEFAULT_TZ) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone || DEFAULT_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const get = type => parts.find(p => p.type === type)?.value || '';
+  const hour = get('hour') === '24' ? '00' : get('hour');
+  return {
+    dateKey: `${get('year')}-${get('month')}-${get('day')}`,
+    time: `${hour}:${get('minute')}`,
+  };
 }
 
-/**
- * Distribute all queued leads (unassigned, non-deleted, created before now).
- * Called at morning startup (8:00 AM IST) and on-demand by admin.
- */
-async function distributeQueue() {
-  const { rows } = await query(
-    `SELECT id FROM leads
-      WHERE assigned_to_user_id IS NULL
-        AND deleted_at IS NULL
-      ORDER BY created_at ASC`
+async function getSettings() {
+  const { rows } = await query(`SELECT key, value FROM distribution_settings`);
+  return Object.fromEntries(rows.map(row => [row.key, row.value]));
+}
+
+async function setSetting(key, value) {
+  await query(
+    `INSERT INTO distribution_settings(key, value, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [key, String(value ?? '')],
   );
-
-  if (rows.length === 0) {
-    logger.info('[Scheduler] No queued leads to distribute.');
-    return { distributed: 0 };
-  }
-
-  logger.info(`[Scheduler] Distributing ${rows.length} queued lead(s)...`);
-  let success = 0;
-  let skipped = 0;
-
-  for (const { id } of rows) {
-    try {
-      const result = await assignLead(id);
-      if (result.userId) success++;
-      else skipped++;
-    } catch (err) {
-      logger.error({ err, leadId: id }, '[Scheduler] Failed to assign lead');
-      skipped++;
-    }
-  }
-
-  logger.info(`[Scheduler] Queue distribution done. Assigned: ${success}, Skipped: ${skipped}`);
-
-  // After distribution, check if any members need to be blocked for pending work overload
-  try {
-    const blocked = await checkPendingBlocking();
-    if (blocked > 0) logger.info(`[Scheduler] ${blocked} member(s) blocked for pending work overload`);
-  } catch (err) {
-    logger.error({ err }, '[Scheduler] Failed to check pending blocking');
-  }
-
-  return { distributed: success, skipped };
 }
 
-/** Tick — called every minute by the interval. */
-let lastDistributionDay = -1;
+async function isDistributionActive() {
+  const settings = await getSettings();
+  return asBool(settings.auto_assign_enabled ?? settings.auto_distribution_enabled)
+    && !!normalizeTime(settings.scheduled_assignment_time);
+}
+
+async function acquireRunLock() {
+  return withTransaction(async (client) => {
+    await client.query(
+      `INSERT INTO distribution_settings(key, value, label)
+         VALUES ('is_distribution_running', 'false', 'Distribution scheduler lock')
+       ON CONFLICT (key) DO NOTHING`,
+    );
+    const { rows: [row] } = await client.query(
+      `UPDATE distribution_settings
+          SET value = 'true', updated_at = NOW()
+        WHERE key = 'is_distribution_running'
+          AND COALESCE(value, 'false') <> 'true'
+        RETURNING value`,
+    );
+    return !!row;
+  });
+}
+
+async function releaseRunLock({ status, error = '' } = {}) {
+  await Promise.all([
+    setSetting('is_distribution_running', 'false'),
+    status ? setSetting('last_distribution_status', status) : Promise.resolve(),
+    setSetting('last_distribution_error', error || ''),
+  ]);
+}
+
+function ranToday(lastRunAt, timezone) {
+  if (!lastRunAt) return false;
+  const last = istParts(new Date(lastRunAt), timezone).dateKey;
+  const now = istParts(new Date(), timezone).dateKey;
+  return last === now;
+}
+
+async function shouldRunNow(settings) {
+  const enabled = asBool(settings.auto_assign_enabled ?? settings.auto_distribution_enabled);
+  const scheduledTime = normalizeTime(settings.scheduled_assignment_time);
+  const timezone = settings.scheduled_timezone || DEFAULT_TZ;
+  if (!enabled || !scheduledTime) {
+    return { due: false, reason: enabled ? 'NO_SCHEDULED_TIME' : 'AUTO_DISTRIBUTION_DISABLED' };
+  }
+  if (ranToday(settings.last_scheduled_run_at, timezone)) {
+    return { due: false, reason: 'ALREADY_RAN_TODAY' };
+  }
+  const now = istParts(new Date(), timezone);
+  if (now.time < scheduledTime) return { due: false, reason: 'WAITING_FOR_SCHEDULE' };
+  return { due: true, timezone, scheduledTime };
+}
+
+async function runScheduledDistribution({ actor = null, manual = false } = {}) {
+  const settings = await getSettings();
+  const timezone = settings.scheduled_timezone || DEFAULT_TZ;
+  const due = manual ? { due: true, timezone } : await shouldRunNow(settings);
+  if (!due.due) return { success: true, skipped: true, reason: due.reason, assigned: 0 };
+
+  const locked = await acquireRunLock();
+  if (!locked) {
+    return { success: false, skipped: true, reason: 'DISTRIBUTION_ALREADY_RUNNING', assigned: 0 };
+  }
+
+  try {
+    const limit = Math.max(1, Number.parseInt(settings.max_leads_per_scheduled_run || settings.assignment_tick_limit || '100', 10));
+    const result = await assignmentEngine.runAutoAssignment({
+      limit,
+      reason: manual ? 'manual_run_now' : 'scheduled_assignment',
+      actor,
+      bypassWindow: true,
+      bypassEnabled: manual,
+    });
+    const assigned = Number(result.assigned || 0);
+    const status = assigned > 0 ? `assigned:${assigned}` : 'completed_no_leads';
+    await setSetting('last_scheduled_run_at', new Date().toISOString());
+    await setSetting('next_scheduled_run_at', '');
+    await releaseRunLock({ status });
+    logger.info({ assigned, scanned: result.scanned || 0, manual }, '[Scheduler] scheduled distribution complete');
+    return { success: true, assigned, scanned: result.scanned || 0, result };
+  } catch (error) {
+    const message = String(error?.message || 'Scheduled distribution failed').slice(0, 500);
+    await releaseRunLock({ status: 'failed', error: message });
+    logger.error({ err: error }, '[Scheduler] scheduled distribution failed');
+    throw error;
+  }
+}
 
 async function tick() {
   try {
-    const enabled = await getSetting('auto_distribution_enabled', 'false');
-    if (enabled !== 'true') return;
-
-    const startHour = parseInt(await getSetting('distribution_start_hour', '8'), 10);
-    const { hour, minute, date } = nowIST();
-    const today = date.getUTCDate();
-
-    // Trigger morning queue distribution exactly at startHour:00
-    if (hour === startHour && minute === 0 && today !== lastDistributionDay) {
-      lastDistributionDay = today;
-      logger.info(`[Scheduler] ${startHour}:00 IST — starting morning lead distribution`);
-      await distributeQueue();
-    }
-
-    // Continuous request fulfillment during active hours
-    // Runs every tick (60s) — fills RM requests from global queue,
-    // then fills member requests from RM pools.
-    const active = await isDistributionActive();
-    if (active) {
-      try {
-        const settings = await assignmentEngine.getAssignmentSettings();
-        const request = await assignmentEngine.runApprovedRequestFulfillment({ limit: settings.requestFulfillmentLimit });
-        const auto = await assignmentEngine.runAutoAssignment({ limit: settings.assignmentTickLimit, reason: 'scheduler_tick' });
-        let reassignment = null;
-        if (settings.autoReassignEnabled) {
-          reassignment = await assignmentEngine.runAutoReassignment({ limit: settings.reassignmentTickLimit });
-        }
-        if ((request.assigned || 0) > 0 || (auto.assigned || 0) > 0 || (reassignment?.reassigned || 0) > 0) {
-          logger.info({
-            request_assigned: request.assigned || 0,
-            auto_assigned: auto.assigned || 0,
-            reassigned: reassignment?.reassigned || 0,
-          }, '[Scheduler] Assignment engine tick complete');
-        }
-      } catch (err) {
-        logger.error({ err }, '[Scheduler] Assignment engine tick error');
-        try {
-          await runDistributionCycle();
-        } catch (fallbackErr) {
-          logger.error({ err: fallbackErr }, '[Scheduler] Request distribution fallback error');
-        }
-      }
-    }
-  } catch (err) {
-    logger.error({ err }, '[Scheduler] Tick error');
+    await runScheduledDistribution();
+  } catch (error) {
+    logger.error({ err: error }, '[Scheduler] Tick error');
   }
 }
 
-/** Start the background scheduler. Returns the timer handle for clean shutdown. */
 function startDistributionScheduler() {
-  logger.info('[Scheduler] Auto distribution scheduler started (checks every 60s, IST window)');
+  logger.info('[Scheduler] Scheduled lead assignment scheduler started (checks every 60s, IST)');
   const timer = setInterval(tick, 60_000);
-  timer.unref(); // don't block process exit
+  timer.unref();
   return timer;
 }
 
-module.exports = { startDistributionScheduler, distributeQueue, isDistributionActive, getSetting };
+module.exports = {
+  startDistributionScheduler,
+  distributeQueue: runScheduledDistribution,
+  runScheduledDistribution,
+  isDistributionActive,
+  getSetting: async (key, fallback) => {
+    const settings = await getSettings();
+    return settings[key] ?? fallback;
+  },
+};

@@ -4,6 +4,7 @@ const { requireRole } = require('../middleware/rbac');
 const { asyncHandler, AppError } = require('../utils/errors');
 const { query } = require('../config/database');
 const assignment = require('../services/leadAssignmentEngine');
+const scheduler = require('../services/distributionScheduler');
 const { logActivity } = require('../utils/auditLog');
 
 const MANAGERS = ['super_admin', 'admin', 'rm'];
@@ -39,6 +40,9 @@ router.patch('/admin/assignment/settings', authenticate, requireRole(...ADMINS),
     assignmentTickLimit: ['assignment_tick_limit'],
     requestFulfillmentLimit: ['request_fulfillment_limit'],
     reassignmentTickLimit: ['reassignment_tick_limit'],
+    scheduledAssignmentTime: ['scheduled_assignment_time'],
+    scheduledTimezone: ['scheduled_timezone', 'assignment_timezone', 'distribution_timezone'],
+    maxLeadsPerScheduledRun: ['max_leads_per_scheduled_run', 'assignment_tick_limit'],
   };
 
   const updated = [];
@@ -151,22 +155,13 @@ router.post('/lead-requests/:id/approve', authenticate, requireRole(...MANAGERS)
 }));
 
 router.post('/admin/distribution/run-now', authenticate, requireRole(...ADMINS), asyncHandler(async (req, res) => {
-  const settings = await assignment.getAssignmentSettings();
-  const request = await assignment.runApprovedRequestFulfillment({
-    limit: Number(req.body?.requestLimit || settings.requestFulfillmentLimit),
-    actor: req.user,
-  });
-  const auto = await assignment.runAutoAssignment({
-    limit: Number(req.body?.assignmentLimit || settings.assignmentTickLimit),
-    reason: 'manual_run_now',
-    actor: req.user,
-  });
+  const result = await scheduler.runScheduledDistribution({ actor: req.user, manual: true });
   await logActivity(req, {
     entity: 'lead',
     action: 'distribution_run_now',
-    metadata: { request, auto },
+    metadata: result,
   });
-  res.json({ success: true, data: { request, auto } });
+  res.json({ success: true, data: result });
 }));
 
 router.post('/admin/reassignment/run-now', authenticate, requireRole(...ADMINS), asyncHandler(async (req, res) => {

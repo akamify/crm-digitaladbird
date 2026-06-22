@@ -38,6 +38,14 @@ async function getAssignmentSettings(client = null) {
     assignStartHour: asInt(s.assign_start_hour ?? s.distribution_start_hour, 8),
     assignEndHour: asInt(s.assign_end_hour ?? s.distribution_end_hour, 19),
     timezone: s.assignment_timezone || s.distribution_timezone || 'Asia/Kolkata',
+    scheduledAssignmentTime: s.scheduled_assignment_time || '',
+    scheduledTimezone: s.scheduled_timezone || s.assignment_timezone || s.distribution_timezone || 'Asia/Kolkata',
+    maxLeadsPerScheduledRun: Math.max(1, asInt(s.max_leads_per_scheduled_run ?? s.assignment_tick_limit, 100)),
+    lastScheduledRunAt: s.last_scheduled_run_at || null,
+    nextScheduledRunAt: s.next_scheduled_run_at || null,
+    isDistributionRunning: asBool(s.is_distribution_running, false),
+    lastDistributionStatus: s.last_distribution_status || null,
+    lastDistributionError: s.last_distribution_error || null,
     autoReassignEnabled: asBool(s.auto_reassign_enabled, false),
     reassignAfterHours: Math.max(1, asInt(s.reassign_after_hours, 24)),
     reassignToHighPerformers: asBool(s.reassign_to_high_performers, true),
@@ -533,12 +541,12 @@ async function runApprovedRequestFulfillment({ limit = 100, actor = null } = {})
   });
 }
 
-async function runAutoAssignment({ limit = 100, reason = 'auto_round_robin', actor = null } = {}) {
+async function runAutoAssignment({ limit = 100, reason = 'auto_round_robin', actor = null, bypassWindow = false, bypassEnabled = false } = {}) {
   const settings = await getAssignmentSettings();
-  if (!settings.autoAssignEnabled) {
+  if (!settings.autoAssignEnabled && !bypassEnabled) {
     return { success: true, skipped: true, reason: 'AUTO_DISTRIBUTION_DISABLED', assigned: 0, scanned: 0, results: [] };
   }
-  if (!isInsideAssignmentWindow(new Date(), settings)) {
+  if (!bypassWindow && !isInsideAssignmentWindow(new Date(), settings)) {
     return { success: true, skipped: true, reason: 'OUTSIDE_DISTRIBUTION_WINDOW', assigned: 0, scanned: 0, results: [] };
   }
   return withTransaction(async (client) => {

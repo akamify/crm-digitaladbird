@@ -454,7 +454,7 @@ async function notifyLeadRequestCreated(input, runner = null) {
       entityType: 'lead_request',
       entityId: input.requestId,
       dedupeKey: `${dedupeBase}:admin:${admin.id}`,
-      email: templates.shell({ title: 'Lead request pending approval', body: tpl.adminBody, actionUrl: templates.frontendUrl('/requests') }),
+      email: templates.shell({ title: 'New lead request received', body: tpl.adminBody, actionUrl: templates.frontendUrl('/partner-requests') }),
       emailType: tpl.emailType,
     }, runner);
   }
@@ -546,4 +546,3 @@ module.exports = {
   notifyPartnerRequestApproved: (input, runner) => notifyLeadRequestResolved({ ...input, requestType: 'partner', status: 'approved' }, runner),
   notifyPartnerRequestRejected: (input, runner) => notifyLeadRequestResolved({ ...input, requestType: 'partner', status: 'rejected' }, runner),
 };
-
