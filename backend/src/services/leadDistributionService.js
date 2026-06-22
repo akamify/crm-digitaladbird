@@ -42,7 +42,9 @@ async function getEligibleMembers(client, rule) {
   //   - have not exceeded daily_lead_cap today
   const params = [];
   let where = `u.role IN ('member', 'partner') AND u.status = 'active' AND u.is_available = TRUE
-               AND u.distribution_blocked = FALSE AND u.deleted_at IS NULL`;
+               AND u.distribution_blocked = FALSE AND u.deleted_at IS NULL
+               AND COALESCE(u.lead_assignment_enabled, TRUE) = TRUE
+               AND COALESCE(u.lead_assignment_status, 'available') = 'available'`;
 
   if (rule.eligible_user_ids && rule.eligible_user_ids.length > 0) {
     params.push(rule.eligible_user_ids);

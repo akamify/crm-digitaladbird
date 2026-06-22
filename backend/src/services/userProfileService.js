@@ -65,10 +65,14 @@ async function getSanitizedUser(userId) {
            u.daily_lead_cap, u.distribution_weight, u.is_available,
            u.distribution_blocked, u.distribution_blocked_reason,
            u.distribution_blocked_at, u.blocked_at, u.blocked_by, u.deleted_at,
+           u.lead_assignment_enabled, u.lead_assignment_status,
+           u.lead_assignment_disabled_reason, u.lead_assignment_updated_by,
+           u.lead_assignment_updated_at, lau.full_name AS lead_assignment_updated_by_name,
            u.deleted_by, u.delete_reason, u.last_login_at, u.created_at, u.updated_at,
            rm.id AS rm_id, rm.full_name AS rm_name, rm.email AS rm_email
       FROM users u
       LEFT JOIN users rm ON rm.id = u.report_to_id
+      LEFT JOIN users lau ON lau.id = u.lead_assignment_updated_by
      WHERE u.id = $1 AND COALESCE(u.is_hidden, FALSE) = FALSE
   `, [userId]);
   if (!user) throw new AppError(404, 'NOT_FOUND', 'User not found');
@@ -199,8 +203,10 @@ async function getProfile(actor, userId) {
   const counts = profileType === 'member' ? await getBasicCounts(userId) : {};
   const [reportees, adminMetrics, rmMetrics, security, emailHistory] = await Promise.all([
     safeQuery(`
-    SELECT id, full_name, email, phone, role, member_type, status, team_name, is_available
-      FROM users
+    SELECT id, full_name, email, phone, role, member_type, status, team_name, is_available,
+           lead_assignment_enabled, lead_assignment_status, lead_assignment_disabled_reason,
+           lead_assignment_updated_at
+     FROM users
      WHERE report_to_id = $1 AND deleted_at IS NULL AND COALESCE(is_hidden, FALSE) = FALSE
      ORDER BY full_name
   `, [userId]),

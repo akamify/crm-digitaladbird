@@ -54,6 +54,22 @@ export function useDeleteUser() {
   });
 }
 
+export function useUpdateLeadAvailability() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, status, reason }: { userId: string; status: 'available' | 'unavailable' | 'blocked' | 'disabled'; reason?: string }) =>
+      apiPatch<{ user: User }>(`/users/${userId}/lead-availability`, {
+        lead_assignment_status: status,
+        reason,
+      }),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ['users'] });
+      qc.invalidateQueries({ queryKey: ['user-profile', variables.userId] });
+      qc.invalidateQueries({ queryKey: ['admin', 'assignment-overview'] });
+    },
+  });
+}
+
 export function useDeletedUsers() {
   return useQuery({
     queryKey: ['users', 'deleted'],

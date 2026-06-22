@@ -17,7 +17,8 @@ import { EmptyState, Modal, Skeleton, StatusChip } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import { clsx, fmtDate, fmtPhone, fmtRelative, humanize, initials } from '@/lib/format';
 import { useActiveMembers, useBlockUser, useBulkReassignLeads, useUnblockUser } from '@/hooks/useAdmin';
-import { useDeleteUser, useSendPasswordResetLink, useUsers } from '@/hooks/useUsers';
+import { useDeleteUser, useSendPasswordResetLink, useUpdateLeadAvailability, useUsers } from '@/hooks/useUsers';
+import { formatISTDateTime } from '@/lib/date';
 import {
   ActivityRow,
   AssignmentHistoryRow,
@@ -111,6 +112,9 @@ function UserProfileInner({ userId }: { userId: string }) {
   const isRmProfile = profileType === 'rm';
   const isAdminProfile = profileType === 'admin';
   const isReadOnlyProfile = profileType === 'deleted' || user.status === 'deleted';
+  const canManageLeadAvailability = !isReadOnlyProfile
+    && ['member', 'partner'].includes(user.role)
+    && (canEdit || (currentUser?.role === 'rm' && user.report_to_id === currentUser.id));
 
   function handleBlock() {
     if (!confirm('Block this user? This user will no longer be able to login using email, phone, or CP ID. They will not receive new leads.')) return;
@@ -234,6 +238,14 @@ function UserProfileInner({ userId }: { userId: string }) {
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
           This profile is read-only. Historical users remain visible for audit, but login, lead assignment, and lifecycle actions are disabled.
         </div>
+      )}
+
+      {['member', 'partner'].includes(user.role) && (
+        <LeadAvailabilityPanel
+          user={user}
+          canManage={canManageLeadAvailability}
+          onUpdated={() => profile.refetch()}
+        />
       )}
 
       {canEdit && ['rm', 'member', 'partner'].includes(user.role) && <AdminUserGoogleSheets userId={user.id} />}
@@ -373,6 +385,75 @@ function UserProfileInner({ userId }: { userId: string }) {
         </div>
       </section>
     </div>
+  );
+}
+
+function LeadAvailabilityPanel({
+  user,
+  canManage,
+  onUpdated,
+}: {
+  user: UserProfileResponse['user'];
+  canManage: boolean;
+  onUpdated: () => void;
+}) {
+  const updateAvailability = useUpdateLeadAvailability();
+  const currentStatus = user.lead_assignment_status || (user.is_available ? 'available' : 'unavailable');
+  const [status, setStatus] = useState<'available' | 'unavailable' | 'blocked' | 'disabled'>(currentStatus);
+  const [reason, setReason] = useState(user.lead_assignment_disabled_reason || user.distribution_blocked_reason || '');
+
+  function save() {
+    updateAvailability.mutate({ userId: user.id, status, reason }, {
+      onSuccess: () => {
+        toast.success('Lead assignment availability updated.');
+        onUpdated();
+      },
+      onError: (error) => toast.error(apiErrorMessage(error, 'Availability update failed')),
+    });
+  }
+
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-900">Lead Assignment Availability</h2>
+          <p className="mt-1 text-sm text-slate-500">Unavailable, blocked, or disabled users will not receive new leads during distribution.</p>
+          <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
+            <span className={clsx('rounded-full px-2.5 py-1 font-semibold', status === 'available' ? 'bg-emerald-100 text-emerald-700' : status === 'unavailable' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700')}>
+              {humanize(status)}
+            </span>
+            <span className="rounded-full bg-slate-100 px-2.5 py-1">
+              Updated: {formatISTDateTime(user.lead_assignment_updated_at)}
+            </span>
+            {user.lead_assignment_updated_by_name && (
+              <span className="rounded-full bg-slate-100 px-2.5 py-1">By: {user.lead_assignment_updated_by_name}</span>
+            )}
+          </div>
+        </div>
+        {canManage ? (
+          <div className="grid w-full gap-3 md:w-[520px] md:grid-cols-[180px_1fr_auto]">
+            <select className="input h-10" value={status} onChange={event => setStatus(event.target.value as typeof status)}>
+              <option value="available">Available</option>
+              <option value="unavailable">Unavailable</option>
+              <option value="blocked">Blocked</option>
+              <option value="disabled">Disabled</option>
+            </select>
+            <input
+              className="input h-10"
+              value={reason}
+              onChange={event => setReason(event.target.value)}
+              placeholder="Reason for unavailable/blocked/disabled"
+              disabled={status === 'available'}
+            />
+            <button onClick={save} disabled={updateAvailability.isPending} className="btn-primary rounded-lg px-4 py-2 text-sm">
+              {updateAvailability.isPending ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        ) : (
+          <div className="text-sm text-slate-500">View only</div>
+        )}
+      </div>
+    </section>
   );
 }
 

@@ -19,6 +19,12 @@ export interface UserProfileUser {
   is_available?: boolean | null;
   distribution_blocked?: boolean | null;
   distribution_blocked_reason?: string | null;
+  lead_assignment_enabled?: boolean | null;
+  lead_assignment_status?: 'available' | 'unavailable' | 'blocked' | 'disabled' | null;
+  lead_assignment_disabled_reason?: string | null;
+  lead_assignment_updated_by?: string | null;
+  lead_assignment_updated_by_name?: string | null;
+  lead_assignment_updated_at?: string | null;
   last_login_at?: string | null;
   created_at?: string | null;
   updated_at?: string | null;

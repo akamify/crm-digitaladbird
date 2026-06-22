@@ -11,6 +11,7 @@ const { assertLeadAssigneeUser, validateLeadAssignee } = require('./leadAssignee
 const { notifyLeadAssigned, notifyLeadRequestResolved } = require('./notificationService');
 
 const DEFAULT_RULE_NAME = '__assignment_engine_default__';
+const RM_POOL_RULE_NAME = '__assignment_engine_rm_pool__';
 const CLOSED_STAGES = new Set(['won', 'lost', 'dropped']);
 const CLOSED_CALL_STATUSES = new Set(['converted', 'not_interested', 'wrong_number', 'invalid_number']);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -90,6 +91,22 @@ async function ensureDefaultRule(client) {
   return created.id;
 }
 
+async function ensureNamedRule(client, name) {
+  const { rows: [existing] } = await client.query(
+    `SELECT id FROM distribution_rules WHERE name = $1 LIMIT 1`,
+    [name],
+  );
+  if (existing) return existing.id;
+
+  const { rows: [created] } = await client.query(
+    `INSERT INTO distribution_rules(name, strategy, priority, is_active)
+       VALUES ($1, 'round_robin', 9999, TRUE)
+       RETURNING id`,
+    [name],
+  );
+  return created.id;
+}
+
 async function getAvailableMembers(options = {}, client = null) {
   const runner = client || { query };
   const params = [];
@@ -99,6 +116,8 @@ async function getAvailableMembers(options = {}, client = null) {
     AND u.deleted_at IS NULL
     AND COALESCE(u.is_available, TRUE) = TRUE
     AND COALESCE(u.distribution_blocked, FALSE) = FALSE
+    AND COALESCE(u.lead_assignment_enabled, TRUE) = TRUE
+    AND COALESCE(u.lead_assignment_status, 'available') = 'available'
   `;
 
   if (options.rmId) {
@@ -131,7 +150,7 @@ async function getAvailableMembers(options = {}, client = null) {
                 AND l.assigned_at >= CURRENT_DATE
                 AND l.deleted_at IS NULL) < COALESCE(u.daily_lead_cap, 50)
        )
-     ORDER BY u.id ASC
+     ORDER BY u.created_at ASC NULLS LAST, u.full_name ASC NULLS LAST, u.id ASC
   `, params);
   return rows;
 }
@@ -176,6 +195,50 @@ async function pickRoundRobinMember(client, members) {
   const picked = members[idx];
   await client.query(`UPDATE rr_state SET last_user_id = $1, updated_at = NOW() WHERE rule_id = $2`, [picked.id, ruleId]);
   return picked;
+}
+
+async function pickRoundRobinFromScope(client, scopeName, users) {
+  if (!users.length) return null;
+  const ruleId = await ensureNamedRule(client, scopeName);
+  await client.query(`INSERT INTO rr_state(rule_id) VALUES ($1) ON CONFLICT (rule_id) DO NOTHING`, [ruleId]);
+  const { rows: [state] } = await client.query(`SELECT last_user_id FROM rr_state WHERE rule_id = $1 FOR UPDATE`, [ruleId]);
+  let idx = 0;
+  if (state?.last_user_id) {
+    const lastIdx = users.findIndex(user => user.id === state.last_user_id);
+    idx = lastIdx === -1 ? 0 : (lastIdx + 1) % users.length;
+  }
+  const picked = users[idx];
+  await client.query(`UPDATE rr_state SET last_user_id = $1, updated_at = NOW() WHERE rule_id = $2`, [picked.id, ruleId]);
+  return picked;
+}
+
+async function getEligibleRmTeams(client) {
+  const { rows: rms } = await client.query(`
+    SELECT rm.id, rm.full_name, rm.team_name, rm.created_at
+      FROM users rm
+     WHERE rm.role = 'rm'
+       AND rm.status = 'active'
+       AND rm.deleted_at IS NULL
+       AND EXISTS (
+         SELECT 1
+           FROM users m
+          WHERE m.report_to_id = rm.id
+            AND m.role IN ('member', 'partner')
+            AND m.status = 'active'
+            AND m.deleted_at IS NULL
+            AND COALESCE(m.is_available, TRUE) = TRUE
+            AND COALESCE(m.distribution_blocked, FALSE) = FALSE
+            AND COALESCE(m.lead_assignment_enabled, TRUE) = TRUE
+            AND COALESCE(m.lead_assignment_status, 'available') = 'available'
+       )
+     ORDER BY rm.created_at ASC NULLS LAST, rm.full_name ASC NULLS LAST, rm.id ASC
+  `);
+  const teams = [];
+  for (const rm of rms) {
+    const members = await getAvailableMembers({ rmId: rm.id }, client);
+    if (members.length) teams.push({ rm, members });
+  }
+  return teams;
 }
 
 async function validateTargetMember(client, memberId, actor = null) {
@@ -550,15 +613,26 @@ async function runAutoAssignment({ limit = 100, reason = 'auto_round_robin', act
     return { success: true, skipped: true, reason: 'OUTSIDE_DISTRIBUTION_WINDOW', assigned: 0, scanned: 0, results: [] };
   }
   return withTransaction(async (client) => {
-    const members = await getAvailableMembers({}, client);
-    if (!members.length) return { assigned: 0, skipped: 'no_available_members' };
+    const teams = await getEligibleRmTeams(client);
+    if (!teams.length) {
+      return {
+        success: false,
+        code: 'NO_ELIGIBLE_ASSIGNEES',
+        message: 'No available team members found for lead distribution.',
+        assigned: 0,
+        scanned: 0,
+        results: [],
+      };
+    }
 
     const leads = await pickAssignableLeads(client, { limit });
     let assigned = 0;
     const results = [];
     const assignedByMember = new Map();
     for (const lead of leads) {
-      const member = await pickRoundRobinMember(client, members);
+      const team = await pickRoundRobinFromScope(client, RM_POOL_RULE_NAME, teams.map(t => t.rm));
+      const fullTeam = teams.find(t => t.rm.id === team?.id);
+      const member = fullTeam ? await pickRoundRobinFromScope(client, `__assignment_engine_rm_team__:${fullTeam.rm.id}`, fullTeam.members) : null;
       if (!member) break;
       const upd = await client.query(
         `UPDATE leads
@@ -756,7 +830,31 @@ async function getAssignmentOverview() {
       (SELECT COUNT(*)::int FROM lead_assignments WHERE assignment_type = 'auto_reassign'
         AND created_at::date = CURRENT_DATE) AS reassigned_today,
       (SELECT COUNT(*)::int FROM lead_assignments WHERE assignment_type = 'manual_reassign'
-        AND created_at::date = CURRENT_DATE) AS manual_reassigned_today
+        AND created_at::date = CURRENT_DATE) AS manual_reassigned_today,
+      (SELECT COUNT(*)::int
+         FROM users rm
+        WHERE rm.role = 'rm'
+          AND rm.status = 'active'
+          AND rm.deleted_at IS NULL
+          AND EXISTS (
+            SELECT 1 FROM users m
+             WHERE m.report_to_id = rm.id
+               AND m.role IN ('member','partner')
+               AND m.status = 'active'
+               AND m.deleted_at IS NULL
+               AND COALESCE(m.is_available, TRUE) = TRUE
+               AND COALESCE(m.distribution_blocked, FALSE) = FALSE
+               AND COALESCE(m.lead_assignment_enabled, TRUE) = TRUE
+               AND COALESCE(m.lead_assignment_status, 'available') = 'available'
+          )) AS eligible_rms,
+      (SELECT COUNT(*)::int FROM users m
+        WHERE m.role IN ('member','partner')
+          AND m.status = 'active'
+          AND m.deleted_at IS NULL
+          AND COALESCE(m.is_available, TRUE) = TRUE
+          AND COALESCE(m.distribution_blocked, FALSE) = FALSE
+          AND COALESCE(m.lead_assignment_enabled, TRUE) = TRUE
+          AND COALESCE(m.lead_assignment_status, 'available') = 'available') AS available_team_members
   `);
   return { settings, stats: s };
 }

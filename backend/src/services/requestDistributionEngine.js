@@ -158,7 +158,9 @@ async function fulfillMemberRequest(requestId) {
               u.report_to_id AS user_report_to_id,
               u.deleted_at AS user_deleted_at,
               COALESCE(u.is_available, TRUE) AS user_is_available,
-              COALESCE(u.distribution_blocked, FALSE) AS user_distribution_blocked
+              COALESCE(u.distribution_blocked, FALSE) AS user_distribution_blocked,
+              COALESCE(u.lead_assignment_enabled, TRUE) AS user_lead_assignment_enabled,
+              COALESCE(u.lead_assignment_status, 'available') AS user_lead_assignment_status
          FROM lead_requests lr
          JOIN users u ON u.id = lr.user_id
         WHERE lr.id = $1 AND lr.status = 'pending'
@@ -175,6 +177,8 @@ async function fulfillMemberRequest(requestId) {
         deleted_at: req.user_deleted_at,
         is_available: req.user_is_available,
         distribution_blocked: req.user_distribution_blocked,
+        lead_assignment_enabled: req.user_lead_assignment_enabled,
+        lead_assignment_status: req.user_lead_assignment_status,
       }, { requireAvailable: true });
     } catch (err) {
       logger.warn({ requestId, userId: req.user_id, code: err.code }, '[RequestEngine] Skipping request with invalid lead assignee');
@@ -299,6 +303,8 @@ async function distributeRoundRobin() {
          AND u.status = 'active' AND u.deleted_at IS NULL
          AND COALESCE(u.is_available, TRUE) = TRUE
          AND COALESCE(u.distribution_blocked, FALSE) = FALSE
+         AND COALESCE(u.lead_assignment_enabled, TRUE) = TRUE
+         AND COALESCE(u.lead_assignment_status, 'available') = 'available'
        ORDER BY lr.created_at ASC
        FOR UPDATE OF lr
     `);

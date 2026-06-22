@@ -18,6 +18,8 @@ const USER_SELECT = `
   CASE WHEN u.role::text = 'partner' THEN 'member' ELSE u.role::text END AS role,
   u.status::text AS status, u.report_to_id, m.full_name AS manager_name,
   u.team_name, u.daily_lead_cap, u.distribution_weight, u.is_available,
+  u.lead_assignment_enabled, u.lead_assignment_status,
+  u.lead_assignment_disabled_reason, u.lead_assignment_updated_at,
   u.last_login_at, u.created_at, u.updated_at, u.deleted_at,
   u.blocked_at, u.blocked_by, u.deleted_by, u.delete_reason
 `;
@@ -289,6 +291,15 @@ exports.update = asyncHandler(async (req, res) => {
     if (key === 'team_name' && effectiveRole === 'member') value = rmForMember.team_name || null;
     params.push(value);
     sets.push(`${key} = $${params.length}`);
+    if (key === 'is_available') {
+      params.push(value === true);
+      sets.push(`lead_assignment_enabled = $${params.length}`);
+      params.push(value === true ? 'available' : 'unavailable');
+      sets.push(`lead_assignment_status = $${params.length}`);
+      params.push(req.user.id);
+      sets.push(`lead_assignment_updated_by = $${params.length}`);
+      sets.push(`lead_assignment_updated_at = NOW()`);
+    }
   }
   if (effectiveRole === 'rm' && !Object.prototype.hasOwnProperty.call(req.body, 'report_to_id')) {
     params.push(null);
@@ -320,10 +331,19 @@ exports.block = asyncHandler(async (req, res) => {
   const reason = String(req.body?.reason || '').trim() || null;
   const { rows: [user] } = await query(
     `UPDATE users
-        SET status = 'blocked', is_available = FALSE, blocked_at = NOW(), blocked_by = $2, updated_at = NOW()
+        SET status = 'blocked',
+            is_available = FALSE,
+            lead_assignment_enabled = FALSE,
+            lead_assignment_status = 'blocked',
+            lead_assignment_disabled_reason = $3,
+            lead_assignment_updated_by = $2,
+            lead_assignment_updated_at = NOW(),
+            blocked_at = NOW(),
+            blocked_by = $2,
+            updated_at = NOW()
       WHERE id = $1 AND deleted_at IS NULL
       RETURNING id, full_name`,
-    [req.params.id, req.user.id],
+    [req.params.id, req.user.id, reason],
   );
   if (!user) throw new AppError(404, 'NOT_FOUND', 'User not found');
   await query(
@@ -340,10 +360,19 @@ exports.unblock = asyncHandler(async (req, res) => {
   await refuseIfProtected(req, 'unblock');
   const { rows: [user] } = await query(
     `UPDATE users
-        SET status = 'active', blocked_at = NULL, blocked_by = NULL, updated_at = NOW()
+        SET status = 'active',
+            is_available = TRUE,
+            lead_assignment_enabled = TRUE,
+            lead_assignment_status = 'available',
+            lead_assignment_disabled_reason = NULL,
+            lead_assignment_updated_by = $2,
+            lead_assignment_updated_at = NOW(),
+            blocked_at = NULL,
+            blocked_by = NULL,
+            updated_at = NOW()
       WHERE id = $1 AND deleted_at IS NULL AND status = 'blocked'
       RETURNING id, full_name`,
-    [req.params.id],
+    [req.params.id, req.user.id],
   );
   if (!user) throw new AppError(404, 'NOT_FOUND', 'User not found or not blocked');
   await query(
@@ -366,6 +395,11 @@ exports.softDelete = asyncHandler(async (req, res) => {
             delete_reason = COALESCE($3, delete_reason),
             status = 'deleted',
             is_available = FALSE,
+            lead_assignment_enabled = FALSE,
+            lead_assignment_status = 'disabled',
+            lead_assignment_disabled_reason = COALESCE($3, lead_assignment_disabled_reason),
+            lead_assignment_updated_by = $2,
+            lead_assignment_updated_at = NOW(),
             updated_at = NOW()
       WHERE id = $1`,
     [req.params.id, req.user.id, reason],

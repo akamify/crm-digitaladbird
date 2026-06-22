@@ -61,6 +61,7 @@ function DistributionInner() {
           <div className="space-y-1">
             <h2 className="text-sm font-semibold text-slate-900">Scheduled Lead Assignment</h2>
             <p className="text-sm text-slate-500">Saved leads are assigned once per day at the configured IST time.</p>
+            <p className="text-xs text-slate-500">Leads are first divided among eligible RMs, then each RM&apos;s leads are assigned to available team members using round robin.</p>
             <p className="text-xs text-slate-500">Leads will be assigned only to active Members and Partners.</p>
             <p className="text-xs text-slate-500">Manual assignment and request approval will continue to work even when auto distribution is off.</p>
           </div>
@@ -79,8 +80,10 @@ function DistributionInner() {
         </div>
 
         <div className="mt-5 grid gap-3 md:grid-cols-3">
-          <InfoCard label="Current Method" value="Round Robin" hint="Readonly" />
+          <InfoCard label="Current Method" value="RM Team Round Robin" hint="Readonly" />
           <InfoCard label="Unassigned Leads" value={String(stats.unassigned_leads ?? 0)} hint="Queue waiting for assignment" />
+          <InfoCard label="Eligible RMs" value={String(stats.eligible_rms ?? 0)} hint="RMs with available team members" />
+          <InfoCard label="Available team members" value={String(stats.available_team_members ?? 0)} hint="Members and partners only" />
           <InfoCard
             label="Current State"
             value={settings?.autoAssignEnabled
@@ -91,6 +94,17 @@ function DistributionInner() {
           <InfoCard label="Last Result" value={settings?.lastDistributionStatus || 'Not available'} />
           <InfoCard label="Last Error" value={settings?.lastDistributionError || 'No error'} />
         </div>
+
+        {Number(stats.unassigned_leads || 0) === 0 && (
+          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            No saved/unassigned leads are waiting for distribution.
+          </div>
+        )}
+        {Number(stats.eligible_rms || 0) === 0 && (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            No eligible RMs with available team members were found. Scheduled distribution will not assign leads.
+          </div>
+        )}
 
         <div className="mt-5 grid gap-4 md:grid-cols-3">
           <label className="block">

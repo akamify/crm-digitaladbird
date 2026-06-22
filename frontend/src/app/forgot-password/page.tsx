@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { FormEvent, useState } from 'react';
 import { ArrowLeft, Mail } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { BirdMark } from '@/components/ui/BirdLogo';
 import { useForgotPassword } from '@/hooks/usePasswordReset';
 
@@ -15,8 +16,15 @@ export default function ForgotPasswordPage() {
     event.preventDefault();
     if (!email.trim()) return;
     forgotPassword.mutate(email.trim().toLowerCase(), {
-      onSuccess: () => setSubmitted(true),
-      onError: () => setSubmitted(true),
+      onSuccess: (response: { message?: string } | void) => {
+        toast.success(response?.message || 'Password reset email sent successfully.');
+        setSubmitted(true);
+      },
+      onError: (error: unknown) => {
+        const payload = error as { response?: { data?: { message?: string; error?: { message?: string } } } };
+        toast.error(payload.response?.data?.error?.message || payload.response?.data?.message || 'Unable to send password reset email. Please try again.');
+        setSubmitted(true);
+      },
     });
   }
 

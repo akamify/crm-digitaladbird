@@ -38,6 +38,8 @@ async function deliver({ user, emailType, templateId, template, params, metadata
     await repository.updateEmailLog(log.id, {
       status: 'sent',
       providerMessageId: result.messageId,
+    }).catch((logError) => {
+      logger.warn({ logId: log.id, emailType, provider, err: logError.message }, 'Email sent but delivery log update failed');
     });
     return result;
   } catch (error) {

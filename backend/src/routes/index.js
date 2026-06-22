@@ -9,6 +9,12 @@ const { requireRole, requireMemberType }  = require('../middleware/rbac');
 const { responseCache }                   = require('../middleware/cache');
 const { broadcastLeadRequest }            = require('../services/socketService');
 const logger                              = require('../utils/logger');
+const { query } = require('../config/database');
+const { asyncHandler, AppError } = require('../utils/errors');
+const assignmentEngine = require('../services/leadAssignmentEngine');
+const { validateLeadAssignee } = require('../services/leadAssigneeValidator');
+const { normalizeRole } = require('../services/userIdentityService');
+const notifications = require('../services/notificationService');
 
 // Loads a lead-request enriched with user + RM context and emits the
 // appropriate `lead-request:<kind>` Socket.IO event so admin + RM + the
@@ -45,6 +51,58 @@ router.get   ('/users/deleted',   authenticate, requireRole('super_admin', 'admi
 router.post  ('/users/:id/block', authenticate, requireRole('super_admin', 'admin'), users.block);
 router.post  ('/users/:id/unblock', authenticate, requireRole('super_admin', 'admin'), users.unblock);
 router.post  ('/users/:id/delete', authenticate, requireRole('super_admin', 'admin'), users.softDelete);
+router.patch ('/users/:userId/lead-availability', authenticate, requireRole('super_admin', 'admin', 'rm'), asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+  const nextStatus = String(req.body?.lead_assignment_status || req.body?.status || '').trim().toLowerCase();
+  const allowed = new Set(['available', 'unavailable', 'blocked', 'disabled']);
+  if (!allowed.has(nextStatus)) {
+    throw new AppError(400, 'INVALID_LEAD_ASSIGNMENT_STATUS', 'Invalid lead assignment availability status.');
+  }
+
+  const { rows: [target] } = await query(
+    `SELECT id, full_name, role, report_to_id, deleted_at
+       FROM users
+      WHERE id = $1 AND deleted_at IS NULL`,
+    [userId],
+  );
+  if (!target) throw new AppError(404, 'USER_NOT_FOUND', 'User not found.');
+  if (!['member', 'partner'].includes(target.role)) {
+    throw new AppError(422, 'USER_NOT_ELIGIBLE_FOR_LEAD_ASSIGNMENT', 'Only members or partners can receive direct leads.');
+  }
+  if (req.user.role === 'rm' && target.report_to_id !== req.user.id) {
+    throw new AppError(403, 'LEAD_AVAILABILITY_FORBIDDEN', 'RM can manage lead availability only for own team members.');
+  }
+
+  const enabled = nextStatus === 'available';
+  const reason = enabled ? null : String(req.body?.reason || req.body?.lead_assignment_disabled_reason || '').trim() || null;
+  const { rows: [updated] } = await query(
+    `UPDATE users
+        SET lead_assignment_enabled = $1,
+            lead_assignment_status = $2,
+            lead_assignment_disabled_reason = $3,
+            lead_assignment_updated_by = $4,
+            lead_assignment_updated_at = NOW(),
+            is_available = $1,
+            distribution_blocked = CASE WHEN $2 = 'blocked' THEN TRUE ELSE distribution_blocked END,
+            distribution_blocked_reason = CASE WHEN $2 = 'blocked' THEN $3 ELSE distribution_blocked_reason END,
+            distribution_blocked_at = CASE WHEN $2 = 'blocked' THEN NOW() ELSE distribution_blocked_at END,
+            updated_at = NOW()
+      WHERE id = $5 AND deleted_at IS NULL
+      RETURNING id, full_name, email, phone, role, status, report_to_id, team_name,
+                is_available, distribution_blocked, distribution_blocked_reason,
+                lead_assignment_enabled, lead_assignment_status,
+                lead_assignment_disabled_reason, lead_assignment_updated_by,
+                lead_assignment_updated_at`,
+    [enabled, nextStatus, reason, req.user.id, userId],
+  );
+  await query(
+    `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata, ip_address)
+       VALUES ($1, 'user', $2, 'lead_availability_updated', $3, $4)`,
+    [req.user.id, userId, JSON.stringify({ lead_assignment_status: nextStatus, reason }), req.ip],
+  ).catch(() => {});
+  invalidateUser(userId);
+  res.json({ success: true, data: { user: updated }, message: 'Lead assignment availability updated.' });
+}));
 router.patch ('/users/:id',       authenticate, requireRole('super_admin', 'admin'), users.update);
 router.delete('/users/:id',       authenticate, requireRole('super_admin', 'admin'), users.softDelete);
 
@@ -66,13 +124,6 @@ router.get('/reports/sources', authenticate, responseCache(30000), reports.sourc
 router.get('/reports/categories', authenticate, responseCache(30000), reports.categories);
 
 // ---- Admin: Distribution rules + Meta management ------------------
-const { query } = require('../config/database');
-const { asyncHandler, AppError } = require('../utils/errors');
-const assignmentEngine = require('../services/leadAssignmentEngine');
-const { validateLeadAssignee } = require('../services/leadAssigneeValidator');
-const { normalizeRole } = require('../services/userIdentityService');
-const notifications = require('../services/notificationService');
-
 router.get('/rules',  authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
   const { rows } = await query(`SELECT * FROM distribution_rules ORDER BY priority`);
   res.json({ success: true, data: rows });
@@ -4544,7 +4595,13 @@ router.post('/admin/users/:userId/update-settings', authenticate, requireRole('s
   if (daily_lead_cap !== undefined) { sets.push(`daily_lead_cap = $${++idx}`); vals.push(daily_lead_cap); }
   if (distribution_weight !== undefined) { sets.push(`distribution_weight = $${++idx}`); vals.push(distribution_weight); }
   if (role !== undefined) { sets.push(`role = $${++idx}`); vals.push(nextRole); }
-  if (is_available !== undefined) { sets.push(`is_available = $${++idx}`); vals.push(is_available); }
+  if (is_available !== undefined) {
+    sets.push(`is_available = $${++idx}`); vals.push(is_available);
+    sets.push(`lead_assignment_enabled = $${++idx}`); vals.push(is_available === true);
+    sets.push(`lead_assignment_status = $${++idx}`); vals.push(is_available === true ? 'available' : 'unavailable');
+    sets.push(`lead_assignment_updated_by = $${++idx}`); vals.push(req.user.id);
+    sets.push(`lead_assignment_updated_at = NOW()`);
+  }
   if (team_name !== undefined || effectiveRole === 'member') { sets.push(`team_name = $${++idx}`); vals.push(derivedTeamName); }
   if (report_to_id !== undefined || effectiveRole === 'rm' || effectiveRole === 'member') {
     sets.push(`report_to_id = $${++idx}`);

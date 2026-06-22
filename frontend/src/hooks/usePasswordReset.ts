@@ -11,7 +11,7 @@ export interface ResetTokenStatus {
 
 export function useForgotPassword() {
   return useMutation({
-    mutationFn: (email: string) => apiPost<void>('/auth/forgot-password', { email }),
+    mutationFn: (email: string) => apiPost<{ message?: string }>('/auth/forgot-password', { email }),
   });
 }
 

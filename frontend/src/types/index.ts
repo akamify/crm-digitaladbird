@@ -30,6 +30,10 @@ export interface User {
   daily_lead_cap?: number | null;
   distribution_weight?: number | null;
   is_available?: boolean;
+  lead_assignment_enabled?: boolean;
+  lead_assignment_status?: 'available' | 'unavailable' | 'blocked' | 'disabled';
+  lead_assignment_disabled_reason?: string | null;
+  lead_assignment_updated_at?: string | null;
   status?: 'active' | 'blocked' | 'inactive' | 'deleted';
   is_active?: boolean;
   created_at?: string;
