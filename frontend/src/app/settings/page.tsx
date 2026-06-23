@@ -173,24 +173,6 @@ function OverviewTab({ onNavigate }: { onNavigate: (tab: SettingsTab) => void })
 
   return (
     <div className="space-y-6">
-      {/* Quick Actions */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        {[
-          { label: 'Meta Pages', Icon: Facebook, color: 'text-blue-700 bg-blue-50 border-blue-200', tab: 'meta-pages' as SettingsTab },
-          { label: 'Lead Forms', Icon: FileText, color: 'text-violet-700 bg-violet-50 border-violet-200', tab: 'meta-forms' as SettingsTab },
-          { label: 'Campaigns', Icon: Megaphone, color: 'text-amber-700 bg-amber-50 border-amber-200', tab: 'campaigns' as SettingsTab },
-          { label: 'Google Sheets', Icon: Sheet, color: 'text-emerald-700 bg-emerald-50 border-emerald-200', tab: 'sheets' as SettingsTab },
-          { label: 'Admin Tools', Icon: Shield, color: 'text-rose-700 bg-rose-50 border-rose-200', tab: 'admin-tools' as SettingsTab },
-          { label: 'Sync Logs', Icon: Activity, color: 'text-slate-700 bg-slate-50 border-slate-200', tab: 'webhook-logs' as SettingsTab },
-        ].map(c => (
-          <button key={c.label} onClick={() => onNavigate(c.tab)}
-            className={clsx('rounded-xl border p-3 text-left transition hover:shadow-md hover:scale-[1.02]', c.color)}>
-            <c.Icon className="h-5 w-5 mb-2" />
-            <div className="text-xs font-semibold">{c.label}</div>
-          </button>
-        ))}
-      </div>
-
       {/* Meta Admin Quick Actions — all admin controls inline */}
       <MetaAdminQuickActions onNavigate={onNavigate} />
 

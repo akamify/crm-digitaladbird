@@ -56,8 +56,7 @@ interface DistStats {
 }
 
 const ADMIN_MODULES = [
-  { href: '/dashboard/admin/fresh',         label: 'Fresh Leads',     Icon: Star,            color: 'text-amber-600',   bg: 'bg-amber-50',    border: 'border-amber-200',    desc: 'Today / Trader / Partner' },
-  { href: '/dashboard/admin/campaigns',     label: 'Campaigns',      Icon: Megaphone,       color: 'text-rose-600',    bg: 'bg-rose-50',    border: 'border-rose-200',    desc: 'Create, edit, pause' },
+  { href: '/dashboard/admin/campaigns',     label: 'Campaigns',      Icon: Megaphone,       color: 'text-rose-600',    bg: 'bg-rose-50',    border: 'border-rose-200',    desc: 'Edit campaigns' },
   { href: '/dashboard/admin/users',         label: 'User Management', Icon: Users,           color: 'text-violet-600',  bg: 'bg-violet-50',  border: 'border-violet-200',  desc: 'Block, edit, caps' },
   { href: '/dashboard/admin/leads-manager', label: 'Lead Management', Icon: Briefcase,       color: 'text-brand-600',   bg: 'bg-brand-50',   border: 'border-brand-200',   desc: 'Bulk actions, assign' },
   { href: '/dashboard/admin/sources',       label: 'Lead Sources',    Icon: Globe,           color: 'text-cyan-600',    bg: 'bg-cyan-50',    border: 'border-cyan-200',    desc: 'Source monitoring' },

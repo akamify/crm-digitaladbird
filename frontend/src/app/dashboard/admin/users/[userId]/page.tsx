@@ -18,7 +18,6 @@ import { useAuth } from '@/lib/auth';
 import { clsx, fmtDate, fmtPhone, fmtRelative, humanize, initials } from '@/lib/format';
 import { useActiveMembers, useBlockUser, useBulkReassignLeads, useUnblockUser } from '@/hooks/useAdmin';
 import { useDeleteUser, useSendPasswordResetLink, useUpdateLeadAvailability, useUsers } from '@/hooks/useUsers';
-import { formatISTDateTime } from '@/lib/date';
 import { validateEmail, validatePhone } from '@/lib/uiData';
 import {
   ActivityRow,
@@ -106,11 +105,12 @@ function UserProfileInner({ userId }: { userId: string }) {
 
   const { user, counts = {}, reportees = [], profileType = 'member', metrics = {}, security, emailHistory = [], tabs = [] } = profile.data;
   const perf = performance.data;
-  const availableTabs = (tabs.length ? tabs : ['leads', 'requests', 'assignment_history', 'activity']) as TabKey[];
-  const activeTab = availableTabs.includes(tab) ? tab : availableTabs[0];
   const isMemberProfile = profileType === 'member';
   const isRmProfile = profileType === 'rm';
   const isAdminProfile = profileType === 'admin';
+  const availableTabs = (tabs.length ? tabs : ['leads', 'requests', 'assignment_history', 'activity'])
+    .filter(tabKey => !(isAdminProfile && tabKey === 'permissions')) as TabKey[];
+  const activeTab = availableTabs.includes(tab) ? tab : availableTabs[0];
   const isReadOnlyProfile = profileType === 'deleted' || user.status === 'deleted';
   const canManageLeadAvailability = !isReadOnlyProfile
     && ['member', 'partner'].includes(user.role)
@@ -197,11 +197,6 @@ function UserProfileInner({ userId }: { userId: string }) {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            {isMemberProfile && (
-              <Link href={`/dashboard/admin/leads-manager?assigned_to=${user.id}`} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
-                <Briefcase className="h-4 w-4" /> Leads
-              </Link>
-            )}
             {canEdit && !isReadOnlyProfile && (
               <button onClick={handleSendResetLink} disabled={sendResetLink.isPending} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
                 {sendResetLink.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
@@ -329,12 +324,20 @@ function UserProfileInner({ userId }: { userId: string }) {
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <h2 className="text-sm font-semibold text-slate-900">Performance signals</h2>
           <dl className="mt-4 space-y-3 text-sm">
-            <InfoRow label="Rank" value={perf?.ranking?.rank_position ? `#${perf.ranking.rank_position}` : 'Not available'} />
-            <InfoRow label="Score" value={perf?.ranking?.score ?? 'Not available'} />
-            <InfoRow label="Current pending" value={perf?.workload?.currently_pending ?? 0} />
-            <InfoRow label="Inactive assigned" value={perf?.workload?.inactive_assigned_leads ?? 0} />
-            <InfoRow label="Avg response time" value={perf?.summary?.average_response_time ?? 'Not available'} />
-            <InfoRow label="Follow-up rate" value={perf?.summary?.follow_up_completion_rate ?? 'Not available'} />
+            <InfoRow
+              label="Leaderboard rank"
+              value={perf?.ranking?.rank_position
+                ? `#${perf.ranking.rank_position} of ${perf.ranking.total_ranked_users || 1}`
+                : 'Not ranked'}
+            />
+            <InfoRow label="Performance score" value={Number(perf?.ranking?.score || 0).toLocaleString('en-IN')} />
+            <InfoRow label="Total leads" value={perf?.ranking?.leads_total ?? perf?.summary?.assigned ?? 0} />
+            <InfoRow label="Converted leads" value={perf?.ranking?.leads_converted ?? perf?.summary?.converted ?? 0} />
+            <InfoRow label="Conversion rate" value={`${Number(perf?.ranking?.conv_rate ?? perf?.summary?.conversion_rate ?? 0).toFixed(1)}%`} />
+            <InfoRow label="Contacted leads" value={perf?.ranking?.contacted_leads ?? perf?.summary?.worked ?? 0} />
+            <InfoRow label="Completed leads" value={perf?.ranking?.completed_leads ?? 0} />
+            <InfoRow label="Follow-ups" value={perf?.ranking?.followups_done ?? 0} />
+            <InfoRow label="Calls logged" value={perf?.ranking?.calls_made ?? 0} />
           </dl>
           {reportees.length > 0 && (
             <div className="mt-5 border-t border-slate-100 pt-4">
@@ -397,14 +400,14 @@ function LeadAvailabilityPanel({
   onUpdated: () => void;
 }) {
   const updateAvailability = useUpdateLeadAvailability();
-  const currentStatus = user.lead_assignment_status || (user.is_available ? 'available' : 'unavailable');
-  const [status, setStatus] = useState<'available' | 'unavailable' | 'blocked' | 'disabled'>(currentStatus);
-  const [reason, setReason] = useState(user.lead_assignment_disabled_reason || user.distribution_blocked_reason || '');
+  const isAvailable = (user.lead_assignment_status || (user.is_available ? 'available' : 'unavailable')) === 'available';
+  const accountRestricted = ['blocked', 'disabled', 'inactive', 'deleted'].includes(user.status) || Boolean(user.distribution_blocked);
 
-  function save() {
-    updateAvailability.mutate({ userId: user.id, status, reason }, {
+  function toggleAvailability() {
+    const status = isAvailable ? 'unavailable' : 'available';
+    updateAvailability.mutate({ userId: user.id, status, reason: '' }, {
       onSuccess: () => {
-        toast.success('Lead assignment availability updated.');
+        toast.success(`Lead assignment marked ${status}.`);
         onUpdated();
       },
       onError: (error) => toast.error(apiErrorMessage(error, 'Availability update failed')),
@@ -413,43 +416,28 @@ function LeadAvailabilityPanel({
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="text-sm font-semibold text-slate-900">Lead Assignment Availability</h2>
-          <p className="mt-1 text-sm text-slate-500">Unavailable, blocked, or disabled users will not receive new leads during distribution.</p>
-          <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
-            <span className={clsx('rounded-full px-2.5 py-1 font-semibold', status === 'available' ? 'bg-emerald-100 text-emerald-700' : status === 'unavailable' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700')}>
-              {humanize(status)}
-            </span>
-            <span className="rounded-full bg-slate-100 px-2.5 py-1">
-              Updated: {formatISTDateTime(user.lead_assignment_updated_at)}
-            </span>
-            {user.lead_assignment_updated_by_name && (
-              <span className="rounded-full bg-slate-100 px-2.5 py-1">By: {user.lead_assignment_updated_by_name}</span>
-            )}
-          </div>
+          {accountRestricted && <p className="mt-1 text-sm text-rose-600">Account status prevents new lead assignment.</p>}
         </div>
         {canManage ? (
-          <div className="grid w-full gap-3 md:w-[520px] md:grid-cols-[180px_1fr_auto]">
-            <select className="input h-10" value={status} onChange={event => setStatus(event.target.value as typeof status)}>
-              <option value="available">Available</option>
-              <option value="unavailable">Unavailable</option>
-              <option value="blocked">Blocked</option>
-              <option value="disabled">Disabled</option>
-            </select>
-            <input
-              className="input h-10"
-              value={reason}
-              onChange={event => setReason(event.target.value)}
-              placeholder="Reason for unavailable/blocked/disabled"
-              disabled={status === 'available'}
-            />
-            <button onClick={save} disabled={updateAvailability.isPending} className="btn-primary rounded-lg px-4 py-2 text-sm">
-              {updateAvailability.isPending ? 'Saving...' : 'Save'}
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={toggleAvailability}
+            disabled={updateAvailability.isPending || accountRestricted}
+            className={clsx(
+              'min-w-32 rounded-lg px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50',
+              isAvailable ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : 'bg-amber-100 text-amber-800 hover:bg-amber-200',
+            )}
+            title={isAvailable ? 'Click to mark unavailable' : 'Click to mark available'}
+          >
+            {updateAvailability.isPending ? 'Updating...' : isAvailable ? 'Available' : 'Unavailable'}
+          </button>
         ) : (
-          <div className="text-sm text-slate-500">View only</div>
+          <span className={clsx('rounded-lg px-4 py-2 text-sm font-semibold', isAvailable ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800')}>
+            {isAvailable ? 'Available' : 'Unavailable'}
+          </span>
         )}
       </div>
     </section>
@@ -850,8 +838,8 @@ function OverviewTab({ profile }: { profile: UserProfileResponse }) {
           <InfoRow label="Role" value={humanize(user.role)} />
           <InfoRow label="Status" value={humanize(user.status)} />
           <InfoRow label="CP ID" value={user.cp_id || '-'} />
-          <InfoRow label="Reporting RM" value={user.rm_name || '-'} />
-          <InfoRow label="Team" value={user.team_name || '-'} />
+          {profileType === 'member' && user.rm_name ? <InfoRow label="Reporting RM" value={user.rm_name} /> : null}
+          {profileType !== 'admin' && user.team_name ? <InfoRow label="Team" value={user.team_name} /> : null}
         </dl>
       </div>
       <div className="rounded-xl border border-slate-200 p-4">

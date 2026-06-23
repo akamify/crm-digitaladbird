@@ -21,7 +21,7 @@ export function LeadProfileHeader({ lead, lockedByMe, lockedByOther, actions }: 
       <Link href="/leads" className="mb-2 inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-slate-900">
         <ArrowLeft className="h-3.5 w-3.5" /> Back to leads
       </Link>
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
           <h1 className="break-words text-xl font-semibold text-slate-950 sm:text-2xl">{lead.full_name || 'Unnamed lead'}</h1>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-600">
@@ -36,7 +36,7 @@ export function LeadProfileHeader({ lead, lockedByMe, lockedByOther, actions }: 
             {(lockedByMe || lockedByOther) && <span className="chip-amber inline-flex items-center gap-1"><Lock className="h-3 w-3" />{lockedByMe ? 'Locked by you' : 'Locked by another rep'}</span>}
           </div>
         </div>
-        <div className="hidden flex-wrap items-center justify-end gap-2 lg:flex">{actions}</div>
+        <div className="hidden min-w-0 max-w-[60%] flex-wrap items-center justify-end gap-2 lg:flex">{actions}</div>
       </div>
     </header>
   );

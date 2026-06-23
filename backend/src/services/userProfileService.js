@@ -295,13 +295,74 @@ async function getPerformance(actor, userId, opts = {}) {
      LIMIT 20
   `, params);
 
+  // Keep profile rank and score aligned with the live leaderboard instead of
+  // depending on a daily snapshot that may not have been computed yet.
   const { rows: [ranking] } = await query(`
-    SELECT rank_position, score, leads_total, leads_converted, calls_made, conv_rate
-      FROM daily_rankings
-     WHERE user_id = $1
-     ORDER BY rank_date DESC
-     LIMIT 1
-  `, [userId]).catch(() => ({ rows: [null] }));
+    WITH target AS (
+      SELECT role::text AS role FROM users WHERE id = $1
+    ), performance AS (
+      SELECT
+        u.id AS user_id,
+        COALESCE(leads.total_leads, 0)::int AS total_leads,
+        COALESCE(leads.converted_leads, 0)::int AS converted_leads,
+        COALESCE(leads.completed_leads, 0)::int AS completed_leads,
+        COALESCE(leads.contacted_leads, 0)::int AS contacted_leads,
+        COALESCE(remarks.followups_done, 0)::int AS followups_done,
+        COALESCE(calls.call_count, 0)::int AS call_count,
+        CASE WHEN COALESCE(leads.total_leads, 0) > 0
+          THEN ROUND(COALESCE(leads.converted_leads, 0)::numeric * 100 / leads.total_leads, 2)
+          ELSE 0 END AS conversion_rate,
+        (
+          COALESCE(leads.converted_leads, 0) * 50
+          + COALESCE(leads.completed_leads, 0) * 20
+          + COALESCE(leads.contacted_leads, 0) * 10
+          + COALESCE(remarks.followups_done, 0) * 5
+          + COALESCE(calls.call_count, 0) * 2
+          + CASE WHEN COALESCE(leads.total_leads, 0) > 0
+              THEN ROUND(COALESCE(leads.converted_leads, 0)::numeric * 100 / leads.total_leads)
+              ELSE 0 END
+        )::numeric AS performance_score,
+        u.full_name
+      FROM users u
+      CROSS JOIN target t
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(*) AS total_leads,
+          COUNT(*) FILTER (WHERE l.call_status::text = 'converted' OR l.stage::text = 'won') AS converted_leads,
+          COUNT(*) FILTER (WHERE l.stage::text IN ('won', 'lost', 'dropped') OR l.call_status::text IN ('converted', 'not_interested', 'wrong_number', 'invalid_number', 'ni')) AS completed_leads,
+          COUNT(*) FILTER (WHERE l.last_call_at IS NOT NULL OR l.call_status::text NOT IN ('not_called', 'rnr', 'cnr', 'busy', 'switched_off', 'so', 'nc', 'ccb', 'nn')) AS contacted_leads
+        FROM leads l
+        WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
+          AND l.assigned_at::date BETWEEN $2::date AND $3::date
+      ) leads ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS call_count
+        FROM lead_call_logs cl
+        WHERE cl.user_id = u.id AND cl.created_at::date BETWEEN $2::date AND $3::date
+      ) calls ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) FILTER (WHERE lr.next_followup_at IS NOT NULL) AS followups_done
+        FROM lead_remarks lr
+        WHERE lr.user_id = u.id AND lr.created_at::date BETWEEN $2::date AND $3::date
+      ) remarks ON TRUE
+      WHERE u.deleted_at IS NULL
+        AND COALESCE(u.status::text, 'active') = 'active'
+        AND u.role::text = t.role
+        AND u.role::text IN ('member', 'partner')
+    ), ranked AS (
+      SELECT *, ROW_NUMBER() OVER (
+        ORDER BY performance_score DESC, converted_leads DESC, completed_leads DESC,
+                 contacted_leads DESC, total_leads DESC, full_name ASC
+      )::int AS rank_position,
+      COUNT(*) OVER()::int AS total_ranked_users
+      FROM performance
+    )
+    SELECT rank_position, total_ranked_users, performance_score AS score,
+           total_leads AS leads_total, converted_leads AS leads_converted,
+           completed_leads, contacted_leads, followups_done, call_count AS calls_made,
+           conversion_rate AS conv_rate
+    FROM ranked WHERE user_id = $1
+  `, params).catch(() => ({ rows: [null] }));
 
   const { rows: [workload] } = await query(`
     SELECT

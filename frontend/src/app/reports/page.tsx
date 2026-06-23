@@ -93,7 +93,7 @@ function ReportsInner() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="lg:sticky lg;top-6 lg:shrink-0 card-padded">
+        <div className="card-padded lg:order-2 lg:sticky lg:top-6 lg:self-start">
           <Header title="Lead sources" subtitle="Channel-wise mix" />
           <div className="h-72">
             {sources.isLoading ? <Skeleton className="h-full" /> : sources.data?.length ? (
@@ -115,7 +115,7 @@ function ReportsInner() {
           </div>
         </div>
 
-        <div className="card-padded lg:col-span-2">
+        <div className="card-padded lg:order-1 lg:col-span-2">
           <Header title="Per-user performance" subtitle="Conversion rate and call status mix" />
           {byUser.isLoading ? (
             <Skeleton className="h-64" />

@@ -118,9 +118,13 @@ export interface UserPerformanceResponse {
   sourceBreakdown: Array<{ source?: string | null; meta_form_id?: string | null; form_name?: string | null; count: number }>;
   ranking: null | {
     rank_position?: number | null;
+    total_ranked_users?: number | null;
     score?: number | string | null;
     leads_total?: number | null;
     leads_converted?: number | null;
+    completed_leads?: number | null;
+    contacted_leads?: number | null;
+    followups_done?: number | null;
     calls_made?: number | null;
     conv_rate?: number | string | null;
   };
