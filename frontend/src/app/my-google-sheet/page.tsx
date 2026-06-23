@@ -230,10 +230,6 @@ function MyGoogleSheetContent() {
           </div>
         )}
 
-        {connected && hasSheet && !data?.last_error && (
-          <p className="mt-4 text-sm text-slate-500">Auto sync enabled. Manual Sync Leads is available as a fallback.</p>
-        )}
-
         {connected && needsSetup && (
           <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4">
             <div className="flex items-start gap-2 text-sm text-amber-950">

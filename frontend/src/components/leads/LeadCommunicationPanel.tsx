@@ -5,11 +5,10 @@ import { MessageCircle, PhoneCall, History } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { EmptyState } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
-import { clsx, fmtPhone, humanize } from '@/lib/format';
+import { clsx, humanize } from '@/lib/format';
 import { LeadChatThread } from './LeadChatThread';
 import { LeadCallPanel } from './LeadCallPanel';
 import { leadCommunicationErrorMessage, useLeadCommunication } from '@/hooks/useLeadCommunication';
-import { LeadCategoryBadge } from './LeadCategoryBadge';
 
 type Tab = 'chat' | 'calls' | 'history';
 
@@ -38,10 +37,8 @@ export function LeadCommunicationPanel({ leadId, lead, remarks = [], defaultTab 
   const { user } = useAuth();
   const [tab, setTab] = useState<Tab>(defaultTab);
   const comm = useLeadCommunication(leadId);
-  const thread = comm.thread.data;
   const calls = comm.calls.data || [];
   const error = comm.isError ? leadCommunicationErrorMessage(comm.error) : null;
-  const leadForThread = thread?.lead || lead;
   const closed = ['won', 'lost', 'dropped'].includes(String(lead.stage || ''));
 
   if (error) {
@@ -54,20 +51,10 @@ export function LeadCommunicationPanel({ leadId, lead, remarks = [], defaultTab 
 
   return (
     <section className="card-padded">
-      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
             <MessageCircle className="h-4 w-4 text-brand-600" />
             <h3 className="text-sm font-semibold text-slate-900">Communication</h3>
-          </div>
-          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
-            <span>{lead.full_name || 'Unnamed lead'}</span>
-            <LeadCategoryBadge category={lead.category} />
-            <span>{fmtPhone(lead.phone || '')}</span>
-            <span>{humanize(lead.source || 'manual')}</span>
-            <span>{lead.campaign_name || lead.campaign_label || lead.meta_form_id || 'No campaign'}</span>
-            <span>Assigned: {lead.assigned_to_name || 'Unassigned'}</span>
-          </div>
         </div>
         <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
           {([
@@ -91,7 +78,6 @@ export function LeadCommunicationPanel({ leadId, lead, remarks = [], defaultTab 
 
       {tab === 'chat' && (
         <LeadChatThread
-          lead={leadForThread}
           messages={comm.messages}
           loading={comm.isLoading}
           disabled={closed || !comm.conversationId}

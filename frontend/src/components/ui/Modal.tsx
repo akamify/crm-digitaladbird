@@ -30,7 +30,7 @@ export function Modal({ open, onClose, title, description, children, footer, siz
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto p-0 sm:items-start"
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto mt-10 p-0 sm:items-start"
     >
       <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
       <div className={clsx(

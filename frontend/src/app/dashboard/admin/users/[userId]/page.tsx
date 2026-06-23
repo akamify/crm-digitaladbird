@@ -40,7 +40,6 @@ type TabKey =
   | 'security'
   | 'admin_actions'
   | 'email_history'
-  | 'permissions'
   | 'team_members'
   | 'team_leads'
   | 'team_performance'
@@ -372,7 +371,6 @@ function UserProfileInner({ userId }: { userId: string }) {
           {activeTab === 'security' && <SecurityTab security={security} />}
           {activeTab === 'admin_actions' && <ActivityTab userId={userId} label="Admin actions" />}
           {activeTab === 'email_history' && <EmailHistoryTab rows={emailHistory} />}
-          {activeTab === 'permissions' && <PermissionsTab profile={profile.data} />}
           {activeTab === 'team_members' && <TeamMembersTab reportees={reportees} />}
           {activeTab === 'team_leads' && <AssignedLeadsTab userId={userId} canReassign={false} />}
           {activeTab === 'team_performance' && <RmTeamPerformanceTab metrics={metrics} />}
@@ -514,7 +512,7 @@ function EditProfileButton({ profile, userId }: { profile: UserProfileResponse; 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Full name" value={form.full_name} onChange={v => setForm(f => ({ ...f, full_name: v }))} />
           <Field label="Email" type="email" value={form.email} onChange={v => setForm(f => ({ ...f, email: v }))} />
-          <Field label="Phone" value={form.phone} onChange={v => setForm(f => ({ ...f, phone: v }))} />
+          <Field label="Phone" type="tel" value={form.phone} onChange={v => setForm(f => ({ ...f, phone: v }))} />
           <Field label="CP ID" value={profile.user.cp_id || 'System generated'} disabled />
           <label className="space-y-1.5 text-sm">
             <span className="font-medium text-slate-700">Role</span>
@@ -910,19 +908,6 @@ function EmailHistoryTab({ rows }: { rows?: UserProfileResponse['emailHistory'] 
   );
 }
 
-function PermissionsTab({ profile }: { profile: UserProfileResponse }) {
-  const permissions = profile.permissions || {};
-  return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      {Object.entries(permissions).map(([key, value]) => (
-        <div key={key} className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-sm">
-          <span className="font-medium text-slate-800">{humanize(key)}</span>
-          <span className={value ? 'chip-green' : 'chip-slate'}>{value ? 'Allowed' : 'No'}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
 
 function TeamMembersTab({ reportees }: { reportees: UserProfileResponse['reportees'] }) {
   if (!reportees.length) return <EmptyState title="No team members" description="This RM does not currently have active members reporting to them." icon={<Users className="h-6 w-6" />} />;

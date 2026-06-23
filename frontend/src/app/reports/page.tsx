@@ -88,7 +88,7 @@ function ReportsInner() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="card-padded">
+        <div className="lg:sticky lg;top-6 lg:shrink-0 card-padded">
           <Header title="Lead sources" subtitle="Channel-wise mix" />
           <div className="h-72">
             {sources.isLoading ? <Skeleton className="h-full" /> : sources.data?.length ? (

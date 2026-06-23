@@ -63,6 +63,7 @@ export interface AddRemarkInput {
   call_status?: CallStatus;
   next_followup_at?: string | null;
   stage?: string;
+  release_lock?: boolean;
 }
 
 export function useAddRemark() {

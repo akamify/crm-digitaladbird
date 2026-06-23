@@ -50,7 +50,6 @@ export function Topbar({ title, subtitle, onMenuClick, right }: TopbarProps) {
       {right && <div className="hidden sm:flex shrink-0">{right}</div>}
 
       <Link href="/chat" className="relative grid h-10 w-10 place-items-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition shrink-0">
-        <MessageSquare className="h-5 w-5" />
         {unreadCount > 0 && (
           <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-[16px] place-items-center rounded-full bg-brand-600 px-1 text-[9px] font-bold text-white">
             {unreadCount > 99 ? '99+' : unreadCount}

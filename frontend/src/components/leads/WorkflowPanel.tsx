@@ -573,10 +573,6 @@ function Step4Conversion({ leadId, conversion, completed }: {
         </div>
         <p className="mt-3 text-[10px] text-slate-400 text-right">Submitted {fmtDate(conversion.submitted_at)}</p>
 
-        {/* Payment proof attachments — visible to all roles after conversion */}
-        <div className="mt-3">
-          <ConversionAttachments leadId={leadId} canEdit />
-        </div>
       </div>
     );
   }
@@ -659,10 +655,6 @@ function Step4Conversion({ leadId, conversion, completed }: {
           />
         </div>
 
-        {/* Payment proof attachments — can be uploaded WHILE filling the form,
-            tied to the conversion row when it's saved next. */}
-        <ConversionAttachments leadId={leadId} canEdit />
-
         <div className="flex gap-3">
           <button
             onClick={() => handleSave(false)}
@@ -706,114 +698,6 @@ function InfoPill({ label, value }: { label: string; value: string }) {
   );
 }
 
-/* ── Step 4 attachments uploader: payment screenshot / receipt / UTR ── */
-
-function ConversionAttachments({ leadId, canEdit = true }: { leadId: string; canEdit?: boolean }) {
-  const list = useConversionAttachments(leadId);
-  const upload = useUploadConversionAttachments();
-  const del = useDeleteConversionAttachment();
-  const [kind, setKind] = useState<ConversionAttachment['kind']>('payment_screenshot');
-  const [note, setNote] = useState('');
-
-  function onPick(files: FileList | null) {
-    if (!files || !files.length) return;
-    upload.mutate(
-      { leadId, files: Array.from(files).slice(0, 3), kind, note: note || undefined },
-      {
-        onSuccess: (rows) => { toast.success(`${rows.length} file${rows.length > 1 ? 's' : ''} uploaded`); setNote(''); },
-        onError: (e: unknown) => toast.error((e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Upload failed'),
-      },
-    );
-  }
-
-  return (
-    <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
-      <div className="flex items-center gap-2 mb-2">
-        <Paperclip className="h-4 w-4 text-amber-600" />
-        <span className="text-xs font-bold text-amber-800">Payment / Receipt / UTR Screenshots</span>
-        {list.data && list.data.length > 0 && (
-          <span className="chip-amber text-[10px] ml-1">{list.data.length}</span>
-        )}
-      </div>
-
-      {/* Existing files — grid of preview thumbnails */}
-      {list.data && list.data.length > 0 && (
-        <div className="mb-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-          {list.data.map(a => {
-            const isImg = (a.mime_type || '').startsWith('image/');
-            return (
-              <div key={a.id} className="group relative rounded-lg border border-slate-200 bg-white overflow-hidden">
-                {isImg ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={a.url} alt={a.file_name} className="h-24 w-full object-cover" loading="lazy" />
-                ) : (
-                  <div className="h-24 w-full flex items-center justify-center text-slate-400 bg-slate-50">
-                    <FileText className="h-8 w-8" />
-                  </div>
-                )}
-                <div className="p-1.5">
-                  <div className="text-[10px] font-medium text-slate-700 truncate" title={a.file_name}>{a.file_name}</div>
-                  <div className="flex items-center justify-between mt-0.5">
-                    <span className={clsx('chip text-[9px]',
-                      a.kind === 'payment_screenshot' ? 'chip-emerald' :
-                      a.kind === 'receipt' ? 'chip-blue' :
-                      a.kind === 'utr' ? 'chip-violet' : 'chip-slate'
-                    )}>{a.kind.replace('_', ' ')}</span>
-                    <a href={a.url} target="_blank" rel="noopener noreferrer"
-                      className="text-[10px] text-brand-600 hover:text-brand-700 inline-flex items-center gap-0.5">
-                      Open <ExternalLink className="h-2.5 w-2.5" />
-                    </a>
-                  </div>
-                  <div className="text-[9px] text-slate-400 mt-0.5">{a.uploaded_by_name || '—'} · {fmtDate(a.uploaded_at, 'dd MMM h:mm a')}</div>
-                </div>
-                {canEdit && (
-                  <button
-                    onClick={() => { if (confirm('Delete this attachment?')) del.mutate({ leadId, attId: a.id }, { onSuccess: () => toast.success('Deleted'), onError: () => toast.error('Failed') }); }}
-                    title="Delete"
-                    className="absolute top-1 right-1 p-1 rounded-full bg-white/90 text-rose-600 opacity-0 group-hover:opacity-100 transition shadow-sm hover:bg-rose-50">
-                    <X className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Uploader */}
-      {canEdit && (
-        <div className="space-y-2">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mr-1">Kind:</span>
-            {(['payment_screenshot', 'receipt', 'utr', 'other'] as const).map(k => (
-              <button key={k} onClick={() => setKind(k)}
-                className={clsx(
-                  'rounded-md border px-2 py-1 text-[10px] font-medium transition',
-                  kind === k ? 'border-amber-400 bg-amber-100 text-amber-800' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
-                )}>
-                {k.replace('_', ' ')}
-              </button>
-            ))}
-          </div>
-          <input className="input text-xs" placeholder="Optional note (e.g. UTR number, transaction ref)" value={note} onChange={e => setNote(e.target.value)} />
-          <label className={clsx(
-            'flex items-center justify-center gap-1.5 rounded-lg border-2 border-dashed px-3 py-2.5 text-center text-xs transition cursor-pointer',
-            upload.isPending ? 'border-amber-300 bg-amber-100 text-amber-700' : 'border-amber-300 bg-white hover:bg-amber-50 text-amber-700',
-          )}>
-            <input type="file" multiple accept="image/*,application/pdf" className="hidden"
-              onChange={(e) => { onPick(e.target.files); e.currentTarget.value = ''; }}
-              disabled={upload.isPending} />
-            {upload.isPending ? (<><Loader2 className="h-3.5 w-3.5 animate-spin" /> Uploading…</>) : (<><Upload className="h-3.5 w-3.5" /> Upload up to 3 files (max 8MB each, image or PDF)</>)}
-          </label>
-        </div>
-      )}
-
-      {!canEdit && (!list.data || !list.data.length) && (
-        <div className="text-[11px] text-slate-500 italic">No attachments uploaded.</div>
-      )}
-    </div>
-  );
-}
 
 /* ── History Toggle ───────────────────────────────────────────────── */
 

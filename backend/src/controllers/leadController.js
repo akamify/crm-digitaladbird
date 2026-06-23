@@ -220,7 +220,7 @@ exports.unlock = asyncHandler(async (req, res) => {
  * Updates lead call_status, next_followup_at, call_attempts atomically.
  */
 exports.addRemark = asyncHandler(async (req, res) => {
-  const { remark, call_status, next_followup_at, stage } = req.body;
+  const { remark, call_status, next_followup_at, stage, release_lock = true } = req.body;
   if (!remark || !remark.trim()) throw new AppError(400, 'REMARK_REQUIRED', 'Remark is required');
   const normalizedCallStatus = call_status ? validateCallStatus(call_status) : '';
   const normalizedStage = stage ? validateLeadStage(stage) : '';
@@ -255,7 +255,7 @@ exports.addRemark = asyncHandler(async (req, res) => {
     if (next_followup_at) { params.push(next_followup_at); updates.push(`next_followup_at = $${params.length}`); }
     if (normalizedStage)  { params.push(normalizedStage);  updates.push(`stage = $${params.length}`); }
     // release lock for this user after they've worked the lead
-    updates.push(`locked_by_user_id = NULL`, `locked_until = NULL`);
+    if (release_lock !== false) updates.push(`locked_by_user_id = NULL`, `locked_until = NULL`);
 
     if (updates.length > 0) {
       await client.query(`UPDATE leads SET ${updates.join(', ')} WHERE id = $1`, params);
