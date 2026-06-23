@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/Input';
 import { useCreateUser, useUpdateUser } from '@/hooks/useUsers';
 import type { User, Role } from '@/types';
+import { validateEmail, validatePhone } from '@/lib/uiData';
 
 interface Props {
   open: boolean;
@@ -42,6 +43,7 @@ export function UserFormModal({ open, onClose, initial, rms }: Props) {
   const [cap, setCap] = useState<number | ''>('');
   const [weight, setWeight] = useState<number | ''>(1);
   const [sendWelcomeEmail, setSendWelcomeEmail] = useState(true);
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   const activeRms = rms.filter(u => u.role === 'rm' && u.status === 'active');
 
@@ -56,22 +58,21 @@ export function UserFormModal({ open, onClose, initial, rms }: Props) {
     setCap(initial?.daily_lead_cap ?? '');
     setWeight(initial?.distribution_weight ?? 1);
     setSendWelcomeEmail(true);
+    setErrors({});
   }, [open, initial]);
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!name.trim() || !email.trim() || !phone.trim()) {
-      toast.error('Name, email and phone are required');
-      return;
-    }
-    if (role === 'rm' && !team.trim()) {
-      toast.error('Team name is required for RM');
-      return;
-    }
-    if (role === 'member' && !reportTo) {
-      toast.error('Reporting RM is required for member');
-      return;
-    }
+    const nextErrors: Record<string, string> = {};
+    if (!name.trim()) nextErrors.name = 'Name is required.';
+    if (!email.trim()) nextErrors.email = 'Email is required.';
+    else if (!validateEmail(email)) nextErrors.email = 'Enter a valid email address.';
+    if (!phone.trim()) nextErrors.phone = 'Phone is required.';
+    else if (!validatePhone(phone)) nextErrors.phone = 'Enter a valid Indian mobile number.';
+    if (role === 'rm' && !team.trim()) nextErrors.team = 'Team name is required for RM.';
+    if (role === 'member' && !reportTo) nextErrors.reportTo = 'Reporting RM is required for member.';
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
 
     const payload = {
       full_name: name.trim(),
@@ -118,23 +119,21 @@ export function UserFormModal({ open, onClose, initial, rms }: Props) {
       )}
     >
       <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Input label="Full name" value={name} onChange={(e) => setName(e.target.value)} required />
-        <Input label="Email" value={email} onChange={(e) => setEmail(e.target.value)} type="email" required />
-        <Input label="Mobile (E.164)" value={phone} onChange={(e) => setPhone(e.target.value)}
-          placeholder="+9198xxxxxxxx" hint="Include country code." required />
+        <Input label="Full name" value={name} onChange={(e) => setName(e.target.value)} error={errors.name} required />
+        <Input label="Email" value={email} onChange={(e) => setEmail(e.target.value)} type="email" error={errors.email} required />
+        <Input label="Mobile" value={phone} onChange={(e) => setPhone(e.target.value.replace(/[^+\d\s()-]/g, ''))}
+          type="tel" inputMode="tel" placeholder="+91 98xxxxxxxx" hint="Indian mobile number with optional +91." error={errors.phone} required />
         {editing && (
           <Input label="CP ID" value={initial?.cp_id || 'System generated'} disabled
             className="font-mono" hint="CP ID is system generated and cannot be edited." />
         )}
         <Select label="Role" value={role} options={ROLE_OPTS} onChange={(e) => setRole(e.target.value as Role)} />
-        <Input label="Team name" value={team} onChange={(e) => setTeam(e.target.value)}
-          placeholder="e.g. Sales North" required={role === 'rm'} disabled={role === 'member'}
-          hint={role === 'member' ? 'Members inherit team name from their reporting RM.' : undefined} />
-        <Select label="Reporting RM" value={reportTo} placeholder="Select RM"
+        {role === 'rm' && <Input label="Team name" value={team} onChange={(e) => setTeam(e.target.value)}
+          placeholder="e.g. Sales North" required error={errors.team} />}
+        {role === 'member' && <Select label="Reporting RM" value={reportTo} placeholder="Select RM"
           options={activeRms.map(u => ({ value: u.id, label: `${u.full_name} - ${u.team_name || 'RM Team'}` }))}
-          onChange={(e) => setReportTo(e.target.value)}
-          disabled={role !== 'member'} required={role === 'member'}
-          hint="Members must report to an active RM." />
+          onChange={(e) => setReportTo(e.target.value)} required error={errors.reportTo}
+          hint="Members inherit their team from the selected RM." />}
         {role === 'member' && (
           <>
             <Input label="Daily lead cap" type="number" min={0}

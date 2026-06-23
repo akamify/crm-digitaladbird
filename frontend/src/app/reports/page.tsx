@@ -7,9 +7,10 @@ import { AppShell } from '@/components/layout/AppShell';
 import { Skeleton, EmptyState } from '@/components/ui/Modal';
 import { useDaily, useByUser, useFunnel, useSources, useCategories } from '@/hooks/useReports';
 import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
-import { humanize } from '@/lib/format';
+import { clsx, humanize } from '@/lib/format';
 import { format } from 'date-fns';
 import { useAuth } from '@/lib/auth';
+import { RefreshCw } from 'lucide-react';
 
 const PIE_COLORS = ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd', '#bfdbfe', '#1d4ed8', '#1e40af'];
 
@@ -29,9 +30,13 @@ function ReportsInner() {
   const funnel  = useFunnel();
   const sources = useSources();
   const categories = useCategories();
+  const queries = [daily, byUser, funnel, sources, categories];
+  const fetching = queries.some(query => query.isFetching);
+  const refresh = () => queries.forEach(query => query.refetch());
 
   return (
     <div className="space-y-6">
+      <div className="flex justify-end"><button onClick={refresh} disabled={fetching} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm"><RefreshCw className={clsx('h-4 w-4', fetching && 'animate-spin')} />Refresh reports</button></div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {(['trader', 'partner', 'unknown'] as const).map(category => {
           const stat = categories.data?.find(item => item.category === category);

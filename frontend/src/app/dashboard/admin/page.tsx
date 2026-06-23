@@ -6,7 +6,7 @@ import {
   Briefcase, ArrowRight, Users, Shield, AlertTriangle, Play, Pause,
   Inbox, UserX, HandMetal, Check, X, Trophy, Crown, Star, Award,
   Megaphone, Globe, GitBranch, ScrollText, FileSpreadsheet, PieChart,
-  BarChart3, Target, Zap,
+  BarChart3, Target, Zap, RefreshCw,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
@@ -91,6 +91,7 @@ function AdminDashboardInner() {
   const qc          = useQueryClient();
   const [selectedRequest, setSelectedRequest] = useState<LeadRequest | null>(null);
   const [approvedQuantity, setApprovedQuantity] = useState(1);
+  const [refreshing, setRefreshing] = useState(false);
 
   // ── Live: whenever a new lead lands or a request lifecycle event fires,
   //    invalidate the cached queries so the headline counters & lists
@@ -140,6 +141,12 @@ function AdminDashboardInner() {
     ? Math.max(1, Math.min(selectedRequest.quantity, availableForApproval || selectedRequest.quantity))
     : 1;
 
+  async function refreshDashboard() {
+    setRefreshing(true);
+    try { await qc.refetchQueries({ type: 'active' }); }
+    finally { setRefreshing(false); }
+  }
+
   return (
     <div className="space-y-6">
       {/* Admin badge */}
@@ -148,6 +155,7 @@ function AdminDashboardInner() {
         <span className="text-sm font-medium text-violet-800">
           Signed in as <strong>Super Admin</strong> — you can see all data across the entire organisation.
         </span>
+        <button onClick={refreshDashboard} disabled={refreshing} className="btn-outline ml-auto inline-flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-sm"><RefreshCw className={clsx('h-4 w-4', refreshing && 'animate-spin')} />Refresh</button>
       </div>
 
       {/* ═══ Enterprise Control Center Grid ═══ */}

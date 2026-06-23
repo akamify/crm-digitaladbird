@@ -19,6 +19,7 @@ import { clsx, fmtDate, fmtPhone, fmtRelative, humanize, initials } from '@/lib/
 import { useActiveMembers, useBlockUser, useBulkReassignLeads, useUnblockUser } from '@/hooks/useAdmin';
 import { useDeleteUser, useSendPasswordResetLink, useUpdateLeadAvailability, useUsers } from '@/hooks/useUsers';
 import { formatISTDateTime } from '@/lib/date';
+import { validateEmail, validatePhone } from '@/lib/uiData';
 import {
   ActivityRow,
   AssignmentHistoryRow,
@@ -188,8 +189,8 @@ function UserProfileInner({ userId }: { userId: string }) {
                 <span className="inline-flex items-center gap-1.5"><Users className="h-4 w-4 text-slate-400" />RM: {user.rm_name || '-'}</span>
               </div>
               <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
-                <span className="rounded-lg bg-slate-100 px-2.5 py-1">Team: {user.team_name || '-'}</span>
-                <span className="rounded-lg bg-slate-100 px-2.5 py-1">Availability: {user.is_available ? 'Available' : 'Unavailable'}</span>
+                {(isRmProfile || isMemberProfile) && user.team_name && <span className="rounded-lg bg-slate-100 px-2.5 py-1">Team: {user.team_name}</span>}
+                {isMemberProfile && <span className="rounded-lg bg-slate-100 px-2.5 py-1">Availability: {user.is_available ? 'Available' : 'Unavailable'}</span>}
                 <span className="rounded-lg bg-slate-100 px-2.5 py-1">Joined: {fmtDate(user.created_at, 'dd MMM yyyy')}</span>
                 <span className="rounded-lg bg-slate-100 px-2.5 py-1">Last login: {fmtDate(user.last_login_at)}</span>
               </div>
@@ -468,18 +469,24 @@ function EditProfileButton({ profile, userId }: { profile: UserProfileResponse; 
     team_name: profile.user.team_name || '',
     is_available: Boolean(profile.user.is_available),
   });
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const rms = (users || []).filter(u => u.role === 'rm');
   const selectedRm = rms.find(rm => rm.id === form.report_to_id);
 
   function submit() {
-    if (!form.full_name.trim()) {
-      toast.error('Full name is required');
-      return;
-    }
+    const nextErrors: Record<string, string> = {};
+    if (!form.full_name.trim()) nextErrors.full_name = 'Full name is required.';
+    if (!validateEmail(form.email)) nextErrors.email = 'Enter a valid email address.';
+    if (!validatePhone(form.phone)) nextErrors.phone = 'Enter a valid Indian mobile number.';
+    if (form.role === 'member' && !form.report_to_id) nextErrors.report_to_id = 'Select a reporting RM.';
+    if (form.role === 'rm' && !form.team_name.trim()) nextErrors.team_name = 'Team name is required for RM.';
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
     updateProfile.mutate({
       ...form,
       report_to_id: form.role === 'member' ? (form.report_to_id || null) : null,
-      team_name: form.role === 'rm' ? (form.team_name || null) : (selectedRm?.team_name || form.team_name || null),
+      team_name: form.role === 'rm' ? (form.team_name || null) : form.role === 'member' ? (selectedRm?.team_name || null) : null,
+      is_available: form.role === 'member' ? form.is_available : false,
     }, {
       onSuccess: () => {
         toast.success('Profile updated');
@@ -510,38 +517,40 @@ function EditProfileButton({ profile, userId }: { profile: UserProfileResponse; 
         )}
       >
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Full name" value={form.full_name} onChange={v => setForm(f => ({ ...f, full_name: v }))} />
-          <Field label="Email" type="email" value={form.email} onChange={v => setForm(f => ({ ...f, email: v }))} />
-          <Field label="Phone" type="tel" value={form.phone} onChange={v => setForm(f => ({ ...f, phone: v }))} />
+          <Field label="Full name" value={form.full_name} error={errors.full_name} onChange={v => setForm(f => ({ ...f, full_name: v }))} />
+          <Field label="Email" type="email" value={form.email} error={errors.email} onChange={v => setForm(f => ({ ...f, email: v }))} />
+          <Field label="Phone" type="tel" value={form.phone} error={errors.phone} onChange={v => setForm(f => ({ ...f, phone: v.replace(/[^+\d\s()-]/g, '') }))} />
           <Field label="CP ID" value={profile.user.cp_id || 'System generated'} disabled />
           <label className="space-y-1.5 text-sm">
             <span className="font-medium text-slate-700">Role</span>
             <select className="input" value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
               <option value="super_admin">Super Admin</option>
+              <option value="admin">Admin</option>
               <option value="rm">RM</option>
               <option value="member">Member</option>
             </select>
           </label>
-          <label className="space-y-1.5 text-sm">
+          {form.role === 'member' && <label className="space-y-1.5 text-sm">
             <span className="font-medium text-slate-700">Reporting RM</span>
-            <select className="input" value={form.report_to_id} disabled={form.role !== 'member'} onChange={e => {
+            <select className={errors.report_to_id ? 'input border-red-500' : 'input'} value={form.report_to_id} onChange={e => {
               const rm = rms.find(item => item.id === e.target.value);
               setForm(f => ({ ...f, report_to_id: e.target.value, team_name: rm?.team_name || '' }));
             }}>
               <option value="">No RM</option>
               {rms.map(rm => <option key={rm.id} value={rm.id}>{rm.full_name}</option>)}
             </select>
-          </label>
-          <Field
+            {errors.report_to_id && <span className="text-xs text-red-500">{errors.report_to_id}</span>}
+          </label>}
+          {form.role === 'rm' && <Field
             label="Team name"
-            value={form.role === 'member' ? (selectedRm?.team_name || form.team_name || 'Derived from RM') : form.team_name}
-            disabled={form.role === 'member'}
+            value={form.team_name}
+            error={errors.team_name}
             onChange={v => setForm(f => ({ ...f, team_name: v }))}
-          />
-          <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm">
+          />}
+          {form.role === 'member' && <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm">
             <input type="checkbox" checked={form.is_available} onChange={e => setForm(f => ({ ...f, is_available: e.target.checked }))} />
             <span className="font-medium text-slate-700">Available for lead distribution</span>
-          </label>
+          </label>}
         </div>
       </Modal>
     </>
@@ -999,11 +1008,12 @@ function InfoRow({ label, value }: { label: string; value: string | number | nul
   );
 }
 
-function Field({ label, value, onChange, type = 'text', disabled = false }: { label: string; value: string; onChange?: (value: string) => void; type?: string; disabled?: boolean }) {
+function Field({ label, value, onChange, type = 'text', disabled = false, error }: { label: string; value: string; onChange?: (value: string) => void; type?: string; disabled?: boolean; error?: string }) {
   return (
     <label className="space-y-1.5 text-sm">
       <span className="font-medium text-slate-700">{label}</span>
-      <input className="input" type={type} value={value} disabled={disabled} onChange={e => onChange?.(e.target.value)} />
+      <input className={error ? 'input border-red-500' : 'input'} type={type} value={value} disabled={disabled} onChange={e => onChange?.(e.target.value)} />
+      {error && <span className="text-xs text-red-500">{error}</span>}
     </label>
   );
 }

@@ -3,7 +3,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  Users, ArrowLeft, Search, Plus, Loader2, Eye, UserRound,
+  Users, ArrowLeft, Search, Plus, Loader2, UserRound, RefreshCw,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
@@ -12,6 +12,7 @@ import { useUsers, useCreateUser, useUpdateUser } from '@/hooks/useUsers';
 import { useUpdateUserSettings, useAdminUserDetail } from '@/hooks/useAdminEnterprise';
 import { fmtDate, clsx, humanize } from '@/lib/format';
 import type { Role, User } from '@/types';
+import { formatPhone, formatUserStatus, getUserStatusBadgeVariant, validateEmail, validatePhone } from '@/lib/uiData';
 
 export default function UsersManagerPage() {
   return (
@@ -23,7 +24,7 @@ export default function UsersManagerPage() {
 
 function UsersInner() {
   const router = useRouter();
-  const { data: users, isLoading } = useUsers();
+  const { data: users, isLoading, isFetching, isError, refetch } = useUsers();
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -33,6 +34,7 @@ function UsersInner() {
   const [settingsUser, setSettingsUser] = useState<User | null>(null);
   const [settings, setSettings] = useState({ daily_lead_cap: '', distribution_weight: '', team_name: '' });
   const [form, setForm] = useState({ full_name: '', email: '', phone: '', role: 'member' as Role, team_name: '', report_to_id: '', sendWelcomeEmail: true });
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
   const createUser = useCreateUser();
   const updateUser = useUpdateUser();
@@ -44,7 +46,7 @@ function UsersInner() {
 
   const filtered = (users || [])
     .filter(u => roleFilter === 'all' || u.role === roleFilter)
-    .filter(u => statusFilter === 'all' || u.status === statusFilter)
+    .filter(u => statusFilter === 'all' || effectiveStatus(u) === statusFilter)
     .filter(u => !search || u.full_name?.toLowerCase().includes(search.toLowerCase()) || u.email?.toLowerCase().includes(search.toLowerCase()) || u.phone?.includes(search));
 
   const counts = {
@@ -58,12 +60,18 @@ function UsersInner() {
   function openCreate() {
     setForm({ full_name: '', email: '', phone: '', role: 'member', team_name: '', report_to_id: '', sendWelcomeEmail: true });
     setCreateOpen(true);
+    setFormErrors({});
   }
 
   function handleSaveUser() {
-    if (!form.full_name || !form.email || !form.phone) { toast.error('Name, email and phone are required'); return; }
-    if (form.role === 'rm' && !form.team_name.trim()) { toast.error('Team name is required for RM'); return; }
-    if (form.role === 'member' && !form.report_to_id) { toast.error('Reporting RM is required for member'); return; }
+    const nextErrors: Record<string, string> = {};
+    if (!form.full_name.trim()) nextErrors.full_name = 'Name is required.';
+    if (!validateEmail(form.email)) nextErrors.email = 'Enter a valid email address.';
+    if (!validatePhone(form.phone)) nextErrors.phone = 'Enter a valid Indian mobile number.';
+    if (form.role === 'rm' && !form.team_name.trim()) nextErrors.team_name = 'Team name is required for RM.';
+    if (form.role === 'member' && !form.report_to_id) nextErrors.report_to_id = 'Reporting RM is required.';
+    setFormErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
     const body = {
       full_name: form.full_name.trim(),
       email: form.email.trim(),
@@ -119,18 +127,24 @@ function UsersInner() {
           <option value="all">All Status</option>
           <option value="active">Active</option>
           <option value="blocked">Blocked</option>
+          <option value="unavailable">Unavailable</option>
+          <option value="disabled">Disabled</option>
+          <option value="inactive">Inactive</option>
+          <option value="unknown">Unknown</option>
         </select>
+        <button onClick={() => refetch()} disabled={isFetching} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm"><RefreshCw className={clsx('h-4 w-4', isFetching && 'animate-spin')} />Refresh</button>
         <button onClick={openCreate} className="btn-primary rounded-lg px-4 py-2 text-sm inline-flex items-center gap-2">
           <Plus className="h-4 w-4" /> Add User
         </button>
       </div>
 
       {/* Table */}
-      {isLoading ? <Skeleton className="h-64" /> : filtered.length === 0 ? (
+      {isLoading ? <Skeleton className="h-64" /> : isError ? <EmptyState title="Could not load users" description="Please retry without reloading the page." action={<button className="btn-outline rounded-lg px-3 py-2 text-sm" onClick={() => refetch()}>Retry</button>} /> : filtered.length === 0 ? (
         <EmptyState title="No users found" description="Adjust filters or add a new user." icon={<Users className="h-6 w-6" />} />
       ) : (
-        <div className="card-padded overflow-x-auto">
-          <table className="w-full text-sm">
+        <div className="card-padded">
+          <div className="grid gap-3 md:hidden">{filtered.map(user => <UserMobileCard key={user.id} user={user} onOpen={() => router.push(`/dashboard/admin/users/${user.id}`)} />)}</div>
+          <div className="hidden overflow-x-auto md:block"><table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wider text-slate-500">
                 <th className="py-2 pr-3 font-medium">User</th>
@@ -160,9 +174,7 @@ function UsersInner() {
                   <td className="py-3 pr-3 font-mono text-xs text-slate-600">{u.cp_id || 'â€”'}</td>
                   <td className="py-3 pr-3 text-slate-600">{u.team_name || '—'}</td>
                   <td className="py-3 pr-3">
-                    <span className={clsx('text-[10px] rounded-full px-2 py-0.5 font-medium', u.status === 'blocked' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700')}>
-                      {u.status === 'blocked' ? 'Blocked' : 'Active'}
-                    </span>
+                    <span className={getUserStatusBadgeVariant(effectiveStatus(u))}>{formatUserStatus(effectiveStatus(u))}</span>
                   </td>
                   <td className="py-3 pr-3 text-slate-600 tabular-nums">{u.daily_lead_cap ?? '—'}</td>
                   <td className="py-3 pr-3 text-xs text-slate-500">{fmtDate(u.created_at, 'dd MMM yyyy')}</td>
@@ -177,7 +189,7 @@ function UsersInner() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         </div>
       )}
 
@@ -186,7 +198,7 @@ function UsersInner() {
         title={editUser ? `Edit ${editUser.full_name}` : 'Add New User'} size="md">
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="label">Full Name *</label><input className="input" value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} /></div>
+            <div><label className="label">Full Name *</label><input className={formErrors.full_name ? 'input border-red-500' : 'input'} value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} />{formErrors.full_name && <p className="mt-1 text-xs text-red-500">{formErrors.full_name}</p>}</div>
             <div><label className="label">Role *</label>
               <select className="input" value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value as Role }))}>
                 <option value="member">Member</option><option value="rm">RM</option>
@@ -194,8 +206,8 @@ function UsersInner() {
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="label">Email *</label><input className="input" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
-            <div><label className="label">Phone *</label><input className="input" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} /></div>
+            <div><label className="label">Email *</label><input className={formErrors.email ? 'input border-red-500' : 'input'} type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />{formErrors.email && <p className="mt-1 text-xs text-red-500">{formErrors.email}</p>}</div>
+            <div><label className="label">Phone *</label><input className={formErrors.phone ? 'input border-red-500' : 'input'} type="tel" inputMode="tel" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value.replace(/[^+\d\s()-]/g, '') }))} />{formErrors.phone && <p className="mt-1 text-xs text-red-500">{formErrors.phone}</p>}</div>
           </div>
           {editUser && <div><label className="label">CP ID</label><input className="input font-mono uppercase" value={editUser.cp_id || 'System generated'} disabled /></div>}
           <div className="grid grid-cols-2 gap-3">
@@ -289,4 +301,14 @@ function CountCard({ label, value, color }: { label: string; value: number; colo
       <div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
     </div>
   );
+}
+
+function effectiveStatus(user: User): string {
+  if (user.status && user.status !== 'active') return user.status;
+  if (user.lead_assignment_status && user.lead_assignment_status !== 'available') return user.lead_assignment_status;
+  return user.status || user.lead_assignment_status || 'unknown';
+}
+
+function UserMobileCard({ user, onOpen }: { user: User; onOpen: () => void }) {
+  return <button onClick={onOpen} className="rounded-lg border border-slate-200 p-4 text-left"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="truncate font-medium text-slate-950">{user.full_name}</div><div className="mt-1 break-all text-xs text-slate-500">{user.email}</div><div className="mt-0.5 text-xs text-slate-500">{formatPhone(user.phone)}</div></div><span className={getUserStatusBadgeVariant(effectiveStatus(user))}>{formatUserStatus(effectiveStatus(user))}</span></div><div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500"><span className="chip-slate">{humanize(user.role)}</span>{user.team_name && <span>{user.team_name}</span>}</div></button>;
 }

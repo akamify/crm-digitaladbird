@@ -4,12 +4,12 @@ import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
-  ChevronDown, ChevronRight, Users, UserCheck, UserX,
-  Pencil, ShieldBan, ShieldCheck, Smile, Award, Phone, Mail, UserRound,
+  Users, UserCheck, UserX, RefreshCw,
+  Pencil, ShieldBan, ShieldCheck, Award, Phone, Mail, UserRound,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
-import { Modal, PageLoader, Spinner } from '@/components/ui/Modal';
+import { Modal, PageLoader } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/Input';
 import { useUsers, useUpdateLeadAvailability, useUpdateUser } from '@/hooks/useUsers';
@@ -34,14 +34,15 @@ interface RMCard {
 /* ---------- page ---------- */
 export default function RMTeamsPage() {
   const { user } = useAuth();
-  const { data: users, isLoading: usersLoading } = useUsers();
-  const { data: teamLeads, isLoading: leadsLoading } = useQuery({
+  const { data: users, isLoading: usersLoading, isFetching: usersFetching, refetch: refetchUsers } = useUsers();
+  const { data: teamLeads, isLoading: leadsLoading, isFetching: leadsFetching, refetch: refetchLeads } = useQuery({
     queryKey: ['team-leads'],
     queryFn: () => apiGet<TeamLeadCount[]>('/reports/team-leads'),
     enabled: user?.role === 'super_admin',
   });
 
   const loading = usersLoading || (user?.role === 'super_admin' && leadsLoading);
+  const [selectedTeam, setSelectedTeam] = useState<RMCard | null>(null);
 
   const rmCards = useMemo(() => {
     if (!users) return [];
@@ -82,26 +83,27 @@ export default function RMTeamsPage() {
 
   return (
     <AppShell title="RM Teams" subtitle="View and manage RM teams" roles={['super_admin', 'rm']}>
-      {loading ? <PageLoader /> : (
+      {loading ? <PageLoader /> : <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-lg font-semibold text-slate-950">Teams</h1><p className="text-sm text-slate-500">Select a team to view members and availability.</p></div><button onClick={() => { refetchUsers(); if (user?.role === 'super_admin') refetchLeads(); }} disabled={usersFetching || leadsFetching} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm"><RefreshCw className={clsx('h-4 w-4', (usersFetching || leadsFetching) && 'animate-spin')} />Refresh</button></div>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {rmCards.map(card => (
-            <RMCardWidget key={card.rm.id} card={card} />
+            <RMCardWidget key={card.rm.id} card={card} onOpen={() => setSelectedTeam(card)} />
           ))}
         </div>
-      )}
+        {!rmCards.length && <div className="rounded-xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">No RM teams found.</div>}
+        <TeamDetailModal card={selectedTeam} onClose={() => setSelectedTeam(null)} />
+      </div>}
     </AppShell>
   );
 }
 
 /* ---------- RM Card ---------- */
-function RMCardWidget({ card }: { card: RMCard }) {
-  const [expanded, setExpanded] = useState(false);
-
+function RMCardWidget({ card, onOpen }: { card: RMCard; onOpen: () => void }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
       {/* Header */}
       <button
-        onClick={() => setExpanded(v => !v)}
+        onClick={onOpen}
         className="flex w-full items-center gap-3 px-5 py-4 text-left"
       >
         <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-sm font-bold text-white shadow-glow">
@@ -114,9 +116,7 @@ function RMCardWidget({ card }: { card: RMCard }) {
           </div>
           <div className="mt-0.5 text-xs text-slate-500">{card.rm.team_name || 'No team name'}</div>
         </div>
-        {expanded
-          ? <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />
-          : <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />}
+        <span className="text-xs font-medium text-brand-600">View team</span>
       </button>
 
       {/* Stats row */}
@@ -131,30 +131,12 @@ function RMCardWidget({ card }: { card: RMCard }) {
         <Stat label="Total Leads" value={card.totalLeads} color="text-brand-600" />
       </div>
 
-      {/* Expandable member list */}
-      <div
-        className={clsx(
-          'overflow-hidden transition-all duration-300 ease-in-out',
-          expanded ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0',
-        )}
-      >
-        <div className="border-t border-slate-100 px-4 py-3">
-          <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-            Team Members ({card.members.length})
-          </div>
-          {card.members.length === 0 ? (
-            <p className="py-4 text-center text-xs text-slate-400">No members assigned</p>
-          ) : (
-            <div className="space-y-1.5">
-              {card.members.map(m => (
-                <MemberRow key={m.id} member={m} />
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   );
+}
+
+function TeamDetailModal({ card, onClose }: { card: RMCard | null; onClose: () => void }) {
+  return <Modal open={!!card} onClose={onClose} title={card?.rm.team_name || 'Team Details'} description={card ? `Relationship Manager: ${card.rm.full_name}` : undefined} size="xl">{card && <div className="space-y-4"><div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><Stat label="Members" value={card.members.length} /><Stat label="Partner Leads" value={card.partnerLeads} /><Stat label="Trader Leads" value={card.traderLeads} /><Stat label="Total Leads" value={card.totalLeads} /></div><div><h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Members and availability</h3>{card.members.length ? <div className="space-y-2">{card.members.map(member => <MemberRow key={member.id} member={member} />)}</div> : <p className="rounded-lg bg-slate-50 p-6 text-center text-sm text-slate-500">No members assigned to this team.</p>}</div></div>}</Modal>;
 }
 
 /* ---------- Stat mini cell ---------- */
@@ -227,7 +209,7 @@ function MemberRow({ member }: { member: User }) {
         </div>
 
         {/* Actions */}
-        <div className="flex shrink-0 items-center gap-1 opacity-0 transition group-hover:opacity-100">
+        <div className="flex shrink-0 items-center gap-1 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100">
           {leadStatus !== 'available' && (
             <button
               onClick={handleActivate}

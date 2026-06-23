@@ -119,6 +119,14 @@ function SettingsInner() {
           </button>
         ))}
       </div>
+
+      {tab === 'overview' && <OverviewTab onNavigate={setTab} />}
+      {tab === 'meta-pages' && <MetaPagesTab />}
+      {tab === 'meta-forms' && <MetaFormsTab />}
+      {tab === 'campaigns' && <CampaignsTab />}
+      {tab === 'sheets' && <SheetsTab />}
+      {tab === 'admin-tools' && <AdminToolsTab />}
+      {tab === 'webhook-logs' && <WebhookLogsTab />}
     </div>
   );
 }

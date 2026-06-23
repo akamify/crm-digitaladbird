@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import Link from 'next/link';
-import { ScrollText, ArrowLeft, Search, Filter } from 'lucide-react';
+import { ScrollText, ArrowLeft, Search, RefreshCw } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { Skeleton, EmptyState } from '@/components/ui/Modal';
 import { useActivityLogs } from '@/hooks/useAdmin';
@@ -121,6 +121,7 @@ function ActivityInner() {
         <ScrollText className="h-5 w-5 text-brand-600" />
         <h1 className="text-lg font-semibold text-slate-900">Activity Logs</h1>
         <span className="chip-slate ml-1">{logs.data?.total ?? 0} entries</span>
+        <button onClick={() => logs.refetch()} disabled={logs.isFetching} className="btn-outline ml-auto inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm"><RefreshCw className={clsx('h-4 w-4', logs.isFetching && 'animate-spin')} />Refresh</button>
       </div>
 
       {/* Filters */}
@@ -162,10 +163,10 @@ function ActivityInner() {
       </div>
 
       {/* Table */}
-      {logs.isLoading ? <Skeleton className="h-96" /> : filtered.length === 0 ? (
+      {logs.isLoading ? <Skeleton className="h-96" /> : logs.isError ? <EmptyState title="Could not load activity" description="Please retry without reloading the page." action={<button onClick={() => logs.refetch()} className="btn-outline rounded-lg px-3 py-2 text-sm">Retry</button>} /> : filtered.length === 0 ? (
         <EmptyState title="No activity logs" description="Activity will appear here as actions are performed." icon={<ScrollText className="h-6 w-6" />} />
       ) : (
-        <div className="card-padded overflow-x-auto">
+        <div className="card-padded overflow-x-auto scroll-thin">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wider text-slate-500">

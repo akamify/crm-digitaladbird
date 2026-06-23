@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import {
   HandMetal, Clock, CheckCircle2, XCircle, Truck, Package, Users,
-  ChevronRight, Loader2, Send, X, History,
+  ChevronRight, Loader2, Send, X, History, RefreshCw,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
@@ -105,14 +105,14 @@ function PartnerRequestsInner() {
           ))}
         </div>
 
-        {isPartner && (
+        <div className="flex items-center gap-2"><button onClick={() => { stats.refetch(); requests.refetch(); }} disabled={stats.isFetching || requests.isFetching} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm"><RefreshCw className={clsx('h-4 w-4', (stats.isFetching || requests.isFetching) && 'animate-spin')} />Refresh</button>{isPartner && (
           <button
             onClick={() => setShowNewForm(true)}
             className="btn-primary inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium"
           >
             <Send className="h-4 w-4" /> Request Leads
           </button>
-        )}
+        )}</div>
       </div>
 
       {/* New Request Form (Partners) */}
@@ -123,7 +123,7 @@ function PartnerRequestsInner() {
       {/* Main Content */}
       <div className="flex gap-6">
         <div className="flex-1 min-w-0">
-          <div className="card overflow-hidden">
+          <div className="card overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/50">
@@ -141,7 +141,7 @@ function PartnerRequestsInner() {
                   Array.from({ length: 5 }).map((_, i) => (
                     <tr key={i}><td colSpan={7} className="px-4 py-3"><Skeleton className="h-10" /></td></tr>
                   ))
-                ) : rows.length === 0 ? (
+                ) : requests.isError ? <tr><td colSpan={7} className="px-4 py-10"><EmptyState title="Could not load requests" description="Please retry." action={<button onClick={() => requests.refetch()} className="btn-outline rounded-lg px-3 py-2 text-sm">Retry</button>} /></td></tr> : rows.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="px-4 py-10">
                       <EmptyState title="No partner requests found" description="Try a different status filter or submit a new request." icon={<HandMetal className="h-6 w-6" />} />
