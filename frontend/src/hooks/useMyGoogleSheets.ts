@@ -13,6 +13,8 @@ export interface MyGoogleSheetStatus {
   partner_sheet_name?: string | null;
   unknown_sheet_name?: string | null;
   sync_enabled?: boolean;
+  auto_sync_enabled?: boolean;
+  last_auto_sync_at?: string | null;
   last_sync_at?: string | null;
   last_error?: string | null;
   retry_after_at?: string | null;
@@ -124,7 +126,7 @@ export function useSetupMyGoogleSheet(action: 'create-missing-tabs' | 'fix-heade
 export function useSyncMyGoogleSheetNow() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => apiPost('/my/google-sheets/sync-now', {}),
+    mutationFn: () => apiPost('/my/google-sheets/two-way-sync', {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['my-google-sheets'] }),
   });
 }

@@ -1,23 +1,35 @@
 const { google } = require('googleapis');
 const crypto = require('crypto');
 const { query } = require('../config/database');
+const logger = require('../utils/logger');
 const oauth = require('./googleUserOAuthService');
 const {
   LEAD_SHEET_HEADERS,
   getLeadSelectSql,
   buildLeadSheetRow,
+  updateLeadRow: updateMasterLeadRow,
 } = require('./googleSheetsService');
 const {
   resolveConfiguredSheetNames,
   resolveLeadSheetTargets,
   sanitizeSheetName,
 } = require('./googleSheets/googleSheetNameResolver');
+const {
+  leadStatuses,
+  callStatuses,
+  leadStages,
+  followUpStatuses,
+  validateLeadStatus,
+  validateCallStatus,
+  validateLeadStage,
+} = require('../constants/leadStatusOptions');
 
 const SHEET_LIST_TTL_MS = 7 * 60 * 1000;
 const VALIDATION_TTL_MS = 3 * 60 * 1000;
 const spreadsheetListCache = new Map();
 const validationCache = new Map();
 const runningSyncs = new Set();
+const OPTIONS_SHEET_NAME = '_CRM_OPTIONS';
 
 function googleError(error, fallbackCode = 'GOOGLE_SHEETS_SYNC_FAILED') {
   const message = String(error?.message || 'Google Sheets request failed.');
@@ -66,6 +78,8 @@ function connectionData(connection) {
     partner_sheet_name: connection.partner_sheet_name || 'Partners',
     unknown_sheet_name: connection.unknown_sheet_name || 'Unknown Leads',
     sync_enabled: connection.sync_enabled !== false,
+    auto_sync_enabled: connection.auto_sync_enabled !== false,
+    last_auto_sync_at: connection.last_auto_pull_at || null,
     last_sync_at: connection.last_sync_at || null,
     last_error: connection.last_error || null,
     retry_after_at: connection.retry_after_at || null,
@@ -152,6 +166,112 @@ function configFromConnection(connection, overrides = {}) {
   };
 }
 
+function escapeSheetName(sheetName) {
+  return String(sheetName || '').replace(/'/g, "''");
+}
+
+function headerIndex(header) {
+  return LEAD_SHEET_HEADERS.findIndex((value) => value === header);
+}
+
+function optionColumnLetter(index) {
+  return String.fromCharCode(65 + index);
+}
+
+async function getSpreadsheetSheets(sheets, spreadsheetId) {
+  const metadata = await retryTransient(() => sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: 'sheets.properties(sheetId,title,hidden)',
+  }));
+  return metadata.data.sheets || [];
+}
+
+async function ensureOptionsSheetAndValidations({ sheets, spreadsheetId, tabs }) {
+  const sheetList = await getSpreadsheetSheets(sheets, spreadsheetId);
+  const byTitle = new Map(sheetList.map((sheet) => [sheet.properties?.title, sheet.properties]).filter(([title]) => title));
+  let optionsSheet = byTitle.get(OPTIONS_SHEET_NAME);
+
+  if (!optionsSheet) {
+    const created = await retryTransient(() => sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: [{ addSheet: { properties: { title: OPTIONS_SHEET_NAME, hidden: true } } }] },
+    }));
+    optionsSheet = created.data.replies?.[0]?.addSheet?.properties;
+  } else if (!optionsSheet.hidden) {
+    await retryTransient(() => sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          updateSheetProperties: {
+            properties: { sheetId: optionsSheet.sheetId, hidden: true },
+            fields: 'hidden',
+          },
+        }],
+      },
+    }));
+  }
+
+  const optionLists = [leadStatuses, callStatuses, leadStages, followUpStatuses];
+  const maxRows = Math.max(...optionLists.map((list) => list.length));
+  const values = [
+    ['Lead Status', 'Call Status', 'Stage', 'Follow Up Status'],
+    ...Array.from({ length: maxRows }, (_, rowIndex) => optionLists.map((list) => list[rowIndex] || '')),
+  ];
+  await retryTransient(() => sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${OPTIONS_SHEET_NAME}'!A1:D${values.length}`,
+    valueInputOption: 'RAW',
+    requestBody: { values },
+  }));
+
+  const refreshed = await getSpreadsheetSheets(sheets, spreadsheetId);
+  const refreshedByTitle = new Map(refreshed.map((sheet) => [sheet.properties?.title, sheet.properties]).filter(([title]) => title));
+  const validationTargets = [
+    { header: 'Status', optionColumn: 0, helpText: 'Select a valid CRM lead status.' },
+    { header: 'Call Status', optionColumn: 1, helpText: 'Select a valid CRM call status.' },
+    { header: 'Stage', optionColumn: 2, helpText: 'Select a valid CRM stage.' },
+  ];
+  if (headerIndex('Follow Up Status') >= 0) {
+    validationTargets.push({ header: 'Follow Up Status', optionColumn: 3, helpText: 'Select a valid CRM follow-up status.' });
+  }
+
+  const requests = [];
+  for (const tab of tabs) {
+    const props = refreshedByTitle.get(tab);
+    if (!props) continue;
+    for (const target of validationTargets) {
+      const col = headerIndex(target.header);
+      if (col < 0) continue;
+      const letter = optionColumnLetter(target.optionColumn);
+      requests.push({
+        setDataValidation: {
+          range: {
+            sheetId: props.sheetId,
+            startRowIndex: 1,
+            startColumnIndex: col,
+            endColumnIndex: col + 1,
+          },
+          rule: {
+            condition: {
+              type: 'ONE_OF_RANGE',
+              values: [{ userEnteredValue: `'${OPTIONS_SHEET_NAME}'!$${letter}$2:$${letter}$100` }],
+            },
+            strict: true,
+            showCustomUi: true,
+            inputMessage: target.helpText,
+          },
+        },
+      });
+    }
+  }
+
+  if (requests.length) {
+    await retryTransient(() => sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } }));
+  }
+
+  return { options_sheet: OPTIONS_SHEET_NAME, dropdowns_configured: requests.length > 0 };
+}
+
 function parseSpreadsheetId(input) {
   const value = String(input || '').trim();
   const match = value.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
@@ -197,7 +317,7 @@ async function ensureTabs({ sheets, spreadsheetId, config }) {
   }
   const headerResult = await retryTransient(() => sheets.spreadsheets.values.batchGet({
     spreadsheetId,
-    ranges: tabs.map(tab => `'${tab.replace(/'/g, "''")}'!A1:AB1`),
+    ranges: tabs.map(tab => `'${escapeSheetName(tab)}'!A1:AB1`),
   }));
   const headerUpdates = [];
   const results = {};
@@ -208,7 +328,7 @@ async function ensureTabs({ sheets, spreadsheetId, config }) {
       && current.length === LEAD_SHEET_HEADERS.length;
     if (!valid) {
       invalidHeaders.push(tab);
-      headerUpdates.push({ range: `'${tab.replace(/'/g, "''")}'!A1:AB1`, values: [LEAD_SHEET_HEADERS] });
+      headerUpdates.push({ range: `'${escapeSheetName(tab)}'!A1:AB1`, values: [LEAD_SHEET_HEADERS] });
     }
     results[tab] = { sheet_name: tab, ready: true, created: missing.includes(tab), header_fixed: !valid };
   });
@@ -218,6 +338,7 @@ async function ensureTabs({ sheets, spreadsheetId, config }) {
       requestBody: { valueInputOption: 'RAW', data: headerUpdates },
     }));
   }
+  const dropdowns = await ensureOptionsSheetAndValidations({ sheets, spreadsheetId, tabs });
   validationCache.set(`${spreadsheetId}:${tabs.join('|')}`, { expiresAt: Date.now() + VALIDATION_TTL_MS, value: results });
   return {
     tabs: results,
@@ -225,6 +346,7 @@ async function ensureTabs({ sheets, spreadsheetId, config }) {
     invalid_headers: invalidHeaders,
     tabs_valid: true,
     headers_valid: true,
+    dropdowns,
   };
 }
 
@@ -235,6 +357,7 @@ async function saveSetupState(connectionId, setup) {
             headers_valid = $3,
             missing_tabs = $4::jsonb,
             invalid_headers = $5::jsonb,
+            dropdowns_configured_at = CASE WHEN $6 THEN NOW() ELSE dropdowns_configured_at END,
             setup_checked_at = NOW(),
             last_error = NULL,
             retry_after_at = NULL,
@@ -246,6 +369,7 @@ async function saveSetupState(connectionId, setup) {
       setup.headers_valid !== false,
       JSON.stringify(setup.missing_tabs || []),
       JSON.stringify(setup.invalid_headers || []),
+      setup.dropdowns?.dropdowns_configured === true,
     ],
   );
 }
@@ -291,6 +415,7 @@ async function createSpreadsheet(user, input = {}) {
     },
   });
   const spreadsheet = created.data;
+  await assertSpreadsheetAvailableForUser(spreadsheet.spreadsheetId, user.id);
   await saveSpreadsheet(connection.id, spreadsheet);
   const nextConnection = { ...connection, spreadsheet_id: spreadsheet.spreadsheetId, spreadsheet_name: spreadsheet.properties?.title };
   const setup = await ensureTabs({ sheets, spreadsheetId: spreadsheet.spreadsheetId, config: configFromConnection(nextConnection, typeof input === 'object' ? input.sheet_names || {} : {}) });
@@ -308,6 +433,7 @@ async function connectExisting(user, input) {
     throw err;
   }
   const connection = await getConnectionOrThrow(user.id);
+  await assertSpreadsheetAvailableForUser(spreadsheetId, user.id);
   const { sheets } = await clientBundle(connection);
   let spreadsheet;
   try {
@@ -410,6 +536,24 @@ async function finishLog(id, patch) {
   ).catch(() => {});
 }
 
+async function assertSpreadsheetAvailableForUser(spreadsheetId, userId) {
+  const { rows: [existing] } = await query(
+    `SELECT c.id, c.user_id, u.full_name
+       FROM user_google_sheet_connections c
+       LEFT JOIN users u ON u.id = c.user_id
+      WHERE c.spreadsheet_id = $1
+        AND c.disconnected_at IS NULL
+        AND c.user_id <> $2
+      LIMIT 1`,
+    [spreadsheetId, userId],
+  );
+  if (existing) {
+    const err = new Error('This Google Sheet is already connected to another CRM user.');
+    err.code = 'GOOGLE_SHEET_ALREADY_CONNECTED';
+    throw err;
+  }
+}
+
 function editableValuesFromRow(row) {
   return {
     status: String(row[10] || '').trim(),
@@ -417,6 +561,39 @@ function editableValuesFromRow(row) {
     stage: String(row[12] || '').trim(),
     last_contacted: String(row[22] || '').trim(),
     notes: String(row[27] || '').trim(),
+  };
+}
+
+function normalizeEditableValues(values) {
+  const errors = [];
+  const status = values.status ? validateLeadStatus(values.status) : '';
+  const callStatus = values.call_status ? validateCallStatus(values.call_status) : '';
+  const stage = values.stage ? validateLeadStage(values.stage) : '';
+
+  if (values.status && status === null) errors.push({ field: 'Status', value: values.status });
+  if (values.call_status && callStatus === null) errors.push({ field: 'Call Status', value: values.call_status });
+  if (values.stage && stage === null) errors.push({ field: 'Stage', value: values.stage });
+
+  let lastContacted = null;
+  if (values.last_contacted) {
+    const parsed = new Date(values.last_contacted);
+    if (Number.isNaN(parsed.getTime())) errors.push({ field: 'Last Contacted', value: values.last_contacted });
+    else lastContacted = parsed.toISOString();
+  }
+
+  if (errors.length) {
+    const err = new Error('Invalid status value. Please select one of the available CRM statuses.');
+    err.code = 'INVALID_LEAD_STATUS_VALUE';
+    err.details = errors;
+    throw err;
+  }
+
+  return {
+    status,
+    call_status: callStatus,
+    stage,
+    last_contacted: lastContacted,
+    notes: String(values.notes || '').trim(),
   };
 }
 
@@ -647,24 +824,47 @@ async function pullConnection(connection, owner, syncType = 'pull') {
     const summary = { attempted: 0, updated: 0, skipped: 0, conflicts: 0, failed: 0, warnings: [] };
     try {
       const { sheets } = await clientBundle(connection);
-      const sheetName = connection.default_sheet_name || 'Leads';
-      const escaped = sheetName.replace(/'/g, "''");
-      const response = await retryTransient(() => sheets.spreadsheets.values.get({ spreadsheetId: connection.spreadsheet_id, range: `'${escaped}'!A2:AB` }));
-      const sheetRows = response.data.values || [];
+      const config = configFromConnection(connection);
+      const names = resolveConfiguredSheetNames(config);
+      const sheetNames = [...new Set([
+        names.defaultSheetName,
+        names.traderSheetName,
+        names.partnerSheetName,
+        names.unknownSheetName,
+      ].filter(Boolean))];
+      const ranges = sheetNames.map(sheetName => `'${escapeSheetName(sheetName)}'!A2:AB`);
+      const response = await retryTransient(() => sheets.spreadsheets.values.batchGet({
+        spreadsheetId: connection.spreadsheet_id,
+        ranges,
+      }));
       const scope = scopedLeadWhere(owner);
       const { rows: leads } = await query(`${getLeadSelectSql()}${scope.sql} ORDER BY l.created_at DESC`, scope.params);
       const leadById = new Map(leads.map(lead => [String(lead.id), lead]));
-      const { rows: states } = await query(`SELECT * FROM user_google_sheet_row_sync_state WHERE connection_id = $1 AND sheet_name = $2`, [connection.id, sheetName]);
-      const stateByLead = new Map(states.map(state => [String(state.lead_id), state]));
-      for (let offset = 0; offset < sheetRows.length; offset += 250) {
-        for (const row of sheetRows.slice(offset, offset + 250)) {
+      const { rows: states } = await query(`SELECT * FROM user_google_sheet_row_sync_state WHERE connection_id = $1`, [connection.id]);
+      const stateByLeadAndSheet = new Map(states.map(state => [`${state.sheet_name}:${state.lead_id}`, state]));
+      const touchedLeadIds = new Set();
+      const pulledHashByLead = new Map();
+      for (let sheetIndex = 0; sheetIndex < sheetNames.length; sheetIndex += 1) {
+        const sheetName = sheetNames[sheetIndex];
+        const sheetRows = response.data.valueRanges?.[sheetIndex]?.values || [];
+        for (let offset = 0; offset < sheetRows.length; offset += 250) {
+          for (const row of sheetRows.slice(offset, offset + 250)) {
           const leadId = String(row[0] || '').trim();
           const lead = leadById.get(leadId);
           if (!lead) { summary.skipped += 1; continue; }
           summary.attempted += 1;
           const sheetEditable = editableValuesFromRow(row);
           const sheetHash = valueHash(sheetEditable);
-          const state = stateByLead.get(leadId);
+          if (pulledHashByLead.has(leadId)) {
+            if (pulledHashByLead.get(leadId) !== sheetHash) {
+              summary.conflicts += 1;
+              summary.warnings.push({ lead_id: leadId, sheet_name: sheetName, message: 'Different values were found for this lead across sheet tabs. CRM values were preserved.' });
+            } else {
+              summary.skipped += 1;
+            }
+            continue;
+          }
+          const state = stateByLeadAndSheet.get(`${sheetName}:${leadId}`);
           if (!state || state.last_pushed_hash === sheetHash) { summary.skipped += 1; continue; }
           const crmEditable = editableValuesFromRow(buildLeadSheetRow(lead));
           const crmChanged = state.last_crm_updated_at && new Date(lead.updated_at) > new Date(state.last_crm_updated_at)
@@ -672,23 +872,23 @@ async function pullConnection(connection, owner, syncType = 'pull') {
           if (crmChanged) {
             summary.conflicts += 1;
             await query(`UPDATE user_google_sheet_row_sync_state SET sync_status = 'conflict', updated_at = NOW() WHERE id = $1`, [state.id]);
+            summary.warnings.push({ lead_id: leadId, sheet_name: sheetName, message: 'CRM and Google Sheet both changed. CRM remains source of truth until resolved.' });
             continue;
           }
           if (String(row[14] || '').trim() && String(row[14] || '').trim() !== String(lead.assigned_to_name || '').trim()) {
-            summary.warnings.push({ lead_id: leadId, message: 'Assigned To cannot be changed from personal Google Sheet. Please reassign lead inside CRM.' });
+            summary.warnings.push({ lead_id: leadId, sheet_name: sheetName, message: 'Assigned To cannot be changed from personal Google Sheet. Please reassign lead inside CRM.' });
           }
-          const contacted = sheetEditable.last_contacted ? new Date(sheetEditable.last_contacted) : null;
-          const validContacted = contacted && !Number.isNaN(contacted.getTime()) ? contacted.toISOString() : null;
           try {
+            const normalized = normalizeEditableValues(sheetEditable);
             await query(
               `UPDATE leads SET status = COALESCE(NULLIF($2,''), status), call_status = COALESCE(NULLIF($3,'')::call_status, call_status),
                        stage = COALESCE(NULLIF($4,'')::lead_stage, stage),
                        last_call_at = COALESCE($5::timestamptz, last_call_at), updated_at = NOW()
                  WHERE id = $1`,
-              [lead.id, sheetEditable.status, sheetEditable.call_status, sheetEditable.stage, validContacted],
+              [lead.id, normalized.status, normalized.call_status, normalized.stage, normalized.last_contacted],
             );
-            if (sheetEditable.notes && sheetEditable.notes !== String(state.last_sheet_values?.notes || '')) {
-              await query(`INSERT INTO lead_remarks(lead_id, user_id, remark) VALUES ($1,$2,$3)`, [lead.id, owner.id, sheetEditable.notes]);
+            if (normalized.notes && normalized.notes !== String(state.last_sheet_values?.notes || '')) {
+              await query(`INSERT INTO lead_remarks(lead_id, user_id, remark) VALUES ($1,$2,$3)`, [lead.id, owner.id, normalized.notes]);
             }
             await query(
               `UPDATE user_google_sheet_row_sync_state SET last_pulled_hash = $2, last_pushed_hash = $2,
@@ -696,16 +896,22 @@ async function pullConnection(connection, owner, syncType = 'pull') {
                  WHERE id = $1`,
               [state.id, sheetHash, sheetEditable],
             );
+            touchedLeadIds.add(lead.id);
+            pulledHashByLead.set(leadId, sheetHash);
             summary.updated += 1;
           } catch (error) {
-            summary.failed += 1;
-            summary.warnings.push({ lead_id: leadId, message: String(error.message || 'Invalid sheet value') });
+            if (error.code === 'INVALID_LEAD_STATUS_VALUE') summary.conflicts += 1;
+            else summary.failed += 1;
+            await query(`UPDATE user_google_sheet_row_sync_state SET sync_status = 'conflict', updated_at = NOW() WHERE id = $1`, [state.id]).catch(() => {});
+            summary.warnings.push({ lead_id: leadId, sheet_name: sheetName, message: String(error.message || 'Invalid sheet value'), details: error.details || null });
           }
         }
+      }
       }
       const status = summary.conflicts ? 'conflict' : summary.failed ? 'partial' : 'success';
       await finishLog(log.id, { status, records_attempted: summary.attempted, records_synced: summary.updated, records_failed: summary.failed, details: summary });
       await query(`UPDATE user_google_sheet_connections SET last_sync_at = NOW(), last_error = NULL, updated_at = NOW() WHERE id = $1`, [connection.id]);
+      summary.requires_push = touchedLeadIds.size > 0;
       return summary;
     } catch (error) {
       const normalized = googleError(error);
@@ -755,7 +961,14 @@ async function setupAfterOAuth(userId) {
 
 async function pullSync(user) {
   const connection = await getConnectionOrThrow(user.id);
-  return pullConnection(connection, user, 'pull');
+  const pull = await pullConnection(connection, user, 'pull');
+  if (!pull.requires_push) return pull;
+  try {
+    const push = await syncConnection(connection, user, 'pull_normalize_push');
+    return { ...pull, push };
+  } catch (error) {
+    return { ...pull, push_error: error.message };
+  }
 }
 
 async function twoWaySync(user) {
@@ -779,7 +992,14 @@ async function adminSyncNow(connectionId) {
 async function adminPullSync(connectionId) {
   const connection = await getAdminConnectionOrThrow(connectionId);
   const owner = await getConnectionOwner(connection);
-  return pullConnection(connection, owner, 'admin_pull');
+  const pull = await pullConnection(connection, owner, 'admin_pull');
+  if (!pull.requires_push) return pull;
+  try {
+    const push = await syncConnection(connection, owner, 'admin_pull_normalize_push');
+    return { ...pull, push };
+  } catch (error) {
+    return { ...pull, push_error: error.message };
+  }
 }
 
 async function adminTestConnection(connectionId) {
@@ -936,6 +1156,181 @@ async function listAllLogs({ page = 1, pageSize = 20, userId = '', status = '' }
   return { data: rows, pagination: { page: safePage, page_size: safeSize, total, total_pages: Math.ceil(total / safeSize), has_more: offset + rows.length < total } };
 }
 
+async function enqueueLeadSync(leadId, { eventType = 'lead_updated', source = 'crm', userId = null } = {}) {
+  if (!leadId) return false;
+  try {
+    await query(
+      `INSERT INTO google_sheet_pending_sync_events(lead_id, event_type, source, created_by_user_id)
+       VALUES ($1,$2,$3,$4)
+       ON CONFLICT(lead_id) WHERE status = 'pending'
+       DO UPDATE SET event_type = EXCLUDED.event_type,
+                     source = EXCLUDED.source,
+                     created_by_user_id = COALESCE(EXCLUDED.created_by_user_id, google_sheet_pending_sync_events.created_by_user_id),
+                     created_at = NOW()`,
+      [leadId, eventType, source, userId],
+    );
+    return true;
+  } catch (error) {
+    logger.warn({ leadId, err: error.message }, '[GoogleSheetSync] enqueue failed');
+    return false;
+  }
+}
+
+async function pushLeadToConnection(connection, owner, lead) {
+  if (!connection.spreadsheet_id || connection.sync_enabled === false) return { skipped: true };
+  assertNotInCooldown(connection);
+  const { sheets } = await clientBundle(connection);
+  const config = configFromConnection(connection);
+  const targets = resolveLeadSheetTargets({ lead, config });
+  const idRows = await readTargetLeadIdColumns({
+    sheets,
+    spreadsheetId: connection.spreadsheet_id,
+    targets,
+  });
+  const summary = {};
+  for (const target of targets) {
+    summary[target.key] = await batchUpsertTarget({
+      sheets,
+      connection,
+      owner,
+      sheetName: target.sheetName,
+      leads: [lead],
+      idRows: idRows.get(target.key) || [],
+    });
+  }
+  await query(
+    `UPDATE user_google_sheet_connections
+        SET last_sync_at = NOW(), last_error = NULL, retry_after_at = NULL, updated_at = NOW()
+      WHERE id = $1`,
+    [connection.id],
+  );
+  return summary;
+}
+
+async function pushLeadToPersonalSheets(leadId) {
+  const { rows: [lead] } = await query(`${getLeadSelectSql()} AND l.id = $1`, [leadId]);
+  if (!lead) return { connections: 0, skipped: true };
+  const { rows: connections } = await query(
+    `SELECT DISTINCT c.*
+       FROM user_google_sheet_connections c
+       JOIN users owner ON owner.id = c.user_id
+       LEFT JOIN users assignee ON assignee.id = $1
+      WHERE c.disconnected_at IS NULL
+        AND c.sync_enabled = TRUE
+        AND c.spreadsheet_id IS NOT NULL
+        AND (owner.id = $1 OR (owner.role = 'rm' AND assignee.report_to_id = owner.id))`,
+    [lead.assigned_to_user_id],
+  );
+  let synced = 0;
+  for (const connection of connections) {
+    try {
+      const owner = await getConnectionOwner(connection);
+      await withSyncLock(connection.id, () => pushLeadToConnection(connection, owner, lead));
+      synced += 1;
+    } catch (error) {
+      const normalized = googleError(error);
+      await saveSyncError(connection.id, normalized);
+      logger.warn({ leadId, connectionId: connection.id, err: normalized.message }, '[GoogleSheetSync] targeted push failed');
+    }
+  }
+  return { connections: connections.length, synced };
+}
+
+async function claimPendingSyncEvent() {
+  const { rows: [event] } = await query(
+    `WITH candidate AS (
+       SELECT id FROM google_sheet_pending_sync_events
+        WHERE status = 'pending'
+        ORDER BY created_at ASC
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+     )
+     UPDATE google_sheet_pending_sync_events e
+        SET status = 'processing', attempts = attempts + 1
+       FROM candidate
+      WHERE e.id = candidate.id
+      RETURNING e.*`,
+  );
+  return event || null;
+}
+
+async function processPendingSyncEvents({ limit = 25 } = {}) {
+  let processed = 0;
+  for (let index = 0; index < limit; index += 1) {
+    const event = await claimPendingSyncEvent();
+    if (!event) break;
+    try {
+      const results = await Promise.allSettled([
+        updateMasterLeadRow(event.lead_id),
+        pushLeadToPersonalSheets(event.lead_id),
+      ]);
+      if (results.every(result => result.status === 'rejected')) {
+        throw results[0].reason;
+      }
+      await query(
+        `UPDATE google_sheet_pending_sync_events
+            SET status = 'completed', processed_at = NOW(), last_error = NULL
+          WHERE id = $1`,
+        [event.id],
+      );
+      processed += 1;
+    } catch (error) {
+      await query(
+        `UPDATE google_sheet_pending_sync_events
+            SET status = CASE WHEN attempts >= 3 THEN 'failed' ELSE 'pending' END,
+                last_error = $2,
+                created_at = CASE WHEN attempts >= 3 THEN created_at ELSE NOW() + INTERVAL '2 minutes' END
+          WHERE id = $1`,
+        [event.id, String(error.message || 'Sync failed').slice(0, 1000)],
+      );
+    }
+  }
+  return { processed };
+}
+
+async function runAutoPullCycle({ limit = 5 } = {}) {
+  const { rows: connections } = await query(
+    `SELECT c.*
+       FROM user_google_sheet_connections c
+      WHERE c.disconnected_at IS NULL
+        AND c.sync_enabled = TRUE
+        AND c.auto_sync_enabled = TRUE
+        AND c.spreadsheet_id IS NOT NULL
+        AND (c.auto_sync_paused_until IS NULL OR c.auto_sync_paused_until <= NOW())
+        AND (c.retry_after_at IS NULL OR c.retry_after_at <= NOW())
+        AND (c.last_auto_pull_at IS NULL OR c.last_auto_pull_at <= NOW() - INTERVAL '90 seconds')
+      ORDER BY c.last_auto_pull_at ASC NULLS FIRST
+      LIMIT $1`,
+    [Math.min(20, Math.max(1, Number(limit) || 5))],
+  );
+  let synced = 0;
+  for (const connection of connections) {
+    try {
+      const owner = await getConnectionOwner(connection);
+      const pull = await pullConnection(connection, owner, 'auto_pull');
+      if (pull.requires_push) await syncConnection(connection, owner, 'auto_pull_normalize_push');
+      await query(
+        `UPDATE user_google_sheet_connections SET last_auto_pull_at = NOW(), auto_sync_paused_until = NULL WHERE id = $1`,
+        [connection.id],
+      );
+      synced += 1;
+    } catch (error) {
+      const normalized = googleError(error);
+      const pauseMinutes = normalized.code === 'GOOGLE_SHEETS_QUOTA_EXCEEDED' ? 10 : 2;
+      await query(
+        `UPDATE user_google_sheet_connections
+            SET last_auto_pull_at = NOW(),
+                auto_sync_paused_until = NOW() + ($2::text || ' minutes')::interval,
+                last_error = $3,
+                updated_at = NOW()
+          WHERE id = $1`,
+        [connection.id, pauseMinutes, normalized.message],
+      ).catch(() => {});
+    }
+  }
+  return { checked: connections.length, synced };
+}
+
 module.exports = {
   getStatus,
   createSpreadsheet,
@@ -955,4 +1350,7 @@ module.exports = {
   adminTestConnection,
   adminSyncNow,
   adminPullSync,
+  enqueueLeadSync,
+  processPendingSyncEvents,
+  runAutoPullCycle,
 };

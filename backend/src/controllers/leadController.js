@@ -7,6 +7,7 @@ const { onLeadCreated, findExistingByContact } = require('../services/leadEventS
 const logger = require('../utils/logger');
 const config = require('../config/env');
 const { resolveLeadCategory } = require('../services/leadCategory/leadCategoryResolver');
+const { validateCallStatus, validateLeadStage } = require('../constants/leadStatusOptions');
 
 /**
  * GET /api/leads — paginated, filterable list scoped by role.
@@ -221,6 +222,11 @@ exports.unlock = asyncHandler(async (req, res) => {
 exports.addRemark = asyncHandler(async (req, res) => {
   const { remark, call_status, next_followup_at, stage } = req.body;
   if (!remark || !remark.trim()) throw new AppError(400, 'REMARK_REQUIRED', 'Remark is required');
+  const normalizedCallStatus = call_status ? validateCallStatus(call_status) : '';
+  const normalizedStage = stage ? validateLeadStage(stage) : '';
+  if ((call_status && normalizedCallStatus === null) || (stage && normalizedStage === null)) {
+    throw new AppError(400, 'INVALID_LEAD_STATUS_VALUE', 'Invalid status value. Please select one of the available CRM statuses.');
+  }
 
   const result = await withTransaction(async (client) => {
     const { rows: [lead] } = await client.query(
@@ -235,19 +241,19 @@ exports.addRemark = asyncHandler(async (req, res) => {
     const { rows: [r] } = await client.query(
       `INSERT INTO lead_remarks(lead_id, user_id, remark, call_status, next_followup_at)
          VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [req.params.id, req.user.id, remark.trim(), call_status || null, next_followup_at || null]
+      [req.params.id, req.user.id, remark.trim(), normalizedCallStatus || null, next_followup_at || null]
     );
 
     const updates = [];
     const params  = [req.params.id];
-    if (call_status) {
-      params.push(call_status);
+    if (normalizedCallStatus) {
+      params.push(normalizedCallStatus);
       updates.push(`call_status = $${params.length}`);
       updates.push(`last_call_at = NOW()`);
       updates.push(`call_attempts = call_attempts + 1`);
     }
     if (next_followup_at) { params.push(next_followup_at); updates.push(`next_followup_at = $${params.length}`); }
-    if (stage)            { params.push(stage);            updates.push(`stage = $${params.length}`); }
+    if (normalizedStage)  { params.push(normalizedStage);  updates.push(`stage = $${params.length}`); }
     // release lock for this user after they've worked the lead
     updates.push(`locked_by_user_id = NULL`, `locked_until = NULL`);
 
@@ -256,6 +262,9 @@ exports.addRemark = asyncHandler(async (req, res) => {
     }
     return r;
   });
+
+  const userSheets = require('../services/userGoogleSheetsService');
+  await userSheets.enqueueLeadSync(req.params.id, { eventType: 'lead_remark_updated', source: 'crm_remark', userId: req.user.id });
 
   res.status(201).json({ success: true, data: result });
 });

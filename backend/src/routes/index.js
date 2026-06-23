@@ -15,6 +15,7 @@ const assignmentEngine = require('../services/leadAssignmentEngine');
 const { validateLeadAssignee } = require('../services/leadAssigneeValidator');
 const { normalizeRole } = require('../services/userIdentityService');
 const notifications = require('../services/notificationService');
+const leadStatusOptions = require('../constants/leadStatusOptions');
 
 // Loads a lead-request enriched with user + RM context and emits the
 // appropriate `lead-request:<kind>` Socket.IO event so admin + RM + the
@@ -1759,9 +1760,11 @@ router.post('/admin/bulk-leads', authenticate, requireRole('super_admin'), async
     }
     case 'update_stage': {
       if (!actionParams?.stage) throw new AppError(400, 'INVALID', 'params.stage required');
+      const normalizedStage = leadStatusOptions.validateLeadStage(actionParams.stage);
+      if (normalizedStage === null) throw new AppError(400, 'INVALID_LEAD_STATUS_VALUE', 'Invalid status value. Please select one of the available CRM statuses.');
       const { rowCount } = await query(
         `UPDATE leads SET stage = $1, updated_at = NOW()
-           WHERE id = ANY($2) AND deleted_at IS NULL`, [actionParams.stage, lead_ids]
+           WHERE id = ANY($2) AND deleted_at IS NULL`, [normalizedStage, lead_ids]
       );
       affected = rowCount;
       break;
@@ -1783,6 +1786,15 @@ router.post('/admin/bulk-leads', authenticate, requireRole('super_admin'), async
        VALUES ($1, 'lead', $2, 'bulk_action', $3, $4)`,
     [req.user.id, lead_ids[0], JSON.stringify({ action, count: affected, lead_ids: lead_ids.slice(0, 10) }), req.ip]
   );
+
+  if (['update_stage', 'unassign'].includes(action)) {
+    const userSheets = require('../services/userGoogleSheetsService');
+    await Promise.all(lead_ids.map(leadId => userSheets.enqueueLeadSync(leadId, {
+      eventType: action,
+      source: 'admin_bulk_action',
+      userId: req.user.id,
+    })));
+  }
 
   res.json({ success: true, data: { action, affected } });
 }));
@@ -4079,6 +4091,8 @@ function googleSheetsError(res, error) {
     'INVALID_SPREADSHEET_ID',
     'GOOGLE_SHEETS_QUOTA_EXCEEDED',
     'GOOGLE_SHEETS_SYNC_ALREADY_RUNNING',
+    'GOOGLE_SHEET_ALREADY_CONNECTED',
+    'INVALID_LEAD_STATUS_VALUE',
   ].includes(code) ? (code === 'GOOGLE_SHEETS_SYNC_ALREADY_RUNNING' ? 409 : code === 'GOOGLE_SHEETS_QUOTA_EXCEEDED' ? 429 : 400) : code === 'GOOGLE_SHEETS_ACCESS_DENIED' ? 403 : 500;
   return res.status(status).json({
     success: false,
@@ -4092,6 +4106,18 @@ router.get('/my/google-sheets/status', authenticate, asyncHandler(async (req, re
   const data = await userGoogleSheets.getStatus(req.user);
   res.json({ success: true, data });
 }));
+
+router.get('/lead-status-options', authenticate, (_req, res) => {
+  res.json({
+    success: true,
+    data: {
+      lead_statuses: leadStatusOptions.leadStatuses,
+      call_statuses: leadStatusOptions.callStatuses,
+      stages: leadStatusOptions.leadStages,
+      follow_up_statuses: leadStatusOptions.followUpStatuses,
+    },
+  });
+});
 
 router.get('/my/google-sheets/spreadsheets', authenticate, asyncHandler(async (req, res) => {
   try {

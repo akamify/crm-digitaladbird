@@ -213,6 +213,8 @@ function MyGoogleSheetContent() {
             <Info label="Spreadsheet Name" value={data?.spreadsheet_name || 'Not created yet'} />
             <Info label="Last Sync" value={data?.last_sync_at ? formatISTCompact(data.last_sync_at) : 'Not synced yet'} />
             <Info label="Sync Enabled" value={data?.sync_enabled === false ? 'Disabled' : 'Enabled'} />
+            <Info label="Auto Sync" value={data?.auto_sync_enabled === false ? 'Disabled' : 'Enabled'} />
+            <Info label="Last Auto Sync" value={data?.last_auto_sync_at ? formatISTCompact(data.last_auto_sync_at) : 'Waiting for first auto sync'} />
           </div>
         ) : (
           <div className="mt-5 rounded-lg bg-slate-50 p-4 text-sm text-slate-600">
@@ -226,6 +228,10 @@ function MyGoogleSheetContent() {
             <p className="mt-1">{inCooldown ? 'Try again after a few minutes.' : data.last_error}</p>
             {inCooldown && data.retry_after_at && <p className="mt-1 text-xs">Retry after {formatISTCompact(data.retry_after_at)}.</p>}
           </div>
+        )}
+
+        {connected && hasSheet && !data?.last_error && (
+          <p className="mt-4 text-sm text-slate-500">Auto sync enabled. Manual Sync Leads is available as a fallback.</p>
         )}
 
         {connected && needsSetup && (

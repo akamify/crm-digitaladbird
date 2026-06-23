@@ -94,7 +94,7 @@ async function logLeadCall({ leadId, user, input }) {
     : Math.max(0, Number.parseInt(input.duration_seconds, 10) || 0);
   const notes = String(input.notes || input.note || '').trim() || null;
 
-  return withTransaction(async (client) => {
+  const result = await withTransaction(async (client) => {
     await assertLeadCommunicationAccess(user, leadId, client);
 
     const { rows: [call] } = await client.query(`
@@ -169,6 +169,9 @@ async function logLeadCall({ leadId, user, input }) {
       message: 'Call log added and lead call status updated.',
     };
   });
+  const userSheets = require('./userGoogleSheetsService');
+  await userSheets.enqueueLeadSync(leadId, { eventType: 'call_log_updated', source: 'crm_call', userId: user.id });
+  return result;
 }
 
 function normalizeCallStatus(status) {

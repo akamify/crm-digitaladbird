@@ -255,6 +255,12 @@ async function notifyLeadsAssigned(input, runner = null) {
       }, runner);
     }
   }
+  const userSheets = require('../userGoogleSheetsService');
+  await Promise.all(leadIds.map(leadId => userSheets.enqueueLeadSync(leadId, {
+    eventType: 'lead_assigned',
+    source: baseMeta.assignment_source || 'assignment',
+    userId: baseMeta.assigned_by,
+  })));
   return true;
 }
 
@@ -346,6 +352,12 @@ async function notifyLeadsReassigned(input, runner = null) {
       dedupeKey: `${dedupeBase}:admin:${admin.id}`,
     }, runner);
   }
+  const userSheets = require('../userGoogleSheetsService');
+  await Promise.all(leadIds.map(leadId => userSheets.enqueueLeadSync(leadId, {
+    eventType: 'lead_reassigned',
+    source: 'reassignment',
+    userId: baseMeta.assigned_by,
+  })));
   return true;
 }
 

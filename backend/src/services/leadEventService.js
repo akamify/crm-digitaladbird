@@ -74,6 +74,7 @@ function onLeadCreated(leadId, { source = 'unknown' } = {}) {
   // Lazy require to avoid a circular dep with metaService (which requires
   // googleSheetsService which requires this file via socketService).
   const sheetsSvc = require('./googleSheetsService');
+  const userSheetsSvc = require('./userGoogleSheetsService');
   const { bustLeadCountersCache } = require('../middleware/cache');
 
   // Server-side cache bust FIRST — before the socket emit. Reason: the
@@ -108,6 +109,8 @@ function onLeadCreated(leadId, { source = 'unknown' } = {}) {
         await sheetsSvc.appendLead(leadId);
         logger.info({ leadId, source }, '[lead-fanout] sheet append ok');
       } catch (err) { logger.warn({ err: err.message, leadId }, '[lead-fanout] sheet append failed (non-fatal)'); }
+
+      await userSheetsSvc.enqueueLeadSync(leadId, { eventType: 'lead_created', source });
 
       // If this lead is still unassigned AND auto-distribution is ON,
       // try to fulfill any pre-approved-but-pending lead requests immediately
