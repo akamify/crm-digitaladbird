@@ -94,8 +94,8 @@ function playNotificationSound() {
       notifAudio.volume = 0.3;
     }
     notifAudio.currentTime = 0;
-    notifAudio.play().catch(() => {});
-  } catch {}
+    notifAudio.play().catch(() => { });
+  } catch { }
 }
 
 function requestDesktopNotification(title: string, body: string) {
@@ -815,8 +815,8 @@ function ConversationList({
             <p className={clsx('truncate text-[13px]', conv.unread_count > 0 ? (dark ? 'text-slate-300' : 'text-slate-700') : (dark ? 'text-slate-500' : 'text-slate-400'))}>
               {conv.last_message_type === 'file' ? <><Paperclip className="inline h-3 w-3 mr-0.5" /> Attachment</>
                 : conv.last_message_type === 'voice' ? <><Mic className="inline h-3 w-3 mr-0.5" /> Voice note</>
-                : conv.last_message ? <>{conv.last_sender_id === user.id && <CheckCheck className="inline h-3 w-3 mr-0.5 text-sky-500" />}{conv.last_message.slice(0, 55)}</>
-                : <span className="italic">No messages</span>}
+                  : conv.last_message ? <>{conv.last_sender_id === user.id && <CheckCheck className="inline h-3 w-3 mr-0.5 text-sky-500" />}{conv.last_message.slice(0, 55)}</>
+                    : <span className="italic">No messages</span>}
             </p>
             {conv.unread_count > 0 && (
               <span className="grid h-5 min-w-[20px] shrink-0 place-items-center rounded-full bg-teal-500 px-1.5 text-[10px] font-bold text-white">
@@ -1123,7 +1123,7 @@ function MessageThread({
   }, []);
 
   const handleCopyMsg = (body: string) => {
-    navigator.clipboard.writeText(body).catch(() => {});
+    navigator.clipboard.writeText(body).catch(() => { });
     setContextMenu(null);
   };
 
@@ -1142,7 +1142,7 @@ function MessageThread({
       a.download = `chat-export-${conversationId.slice(0, 8)}-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
-    } catch {}
+    } catch { }
     setShowMenu(false);
   };
 
@@ -1219,8 +1219,8 @@ function MessageThread({
               <span className={clsx('rounded-full px-2 py-0.5 text-[10px] font-semibold',
                 sessionInfo.tone === 'emerald' ? 'bg-emerald-500/25 text-emerald-100'
                   : sessionInfo.tone === 'amber' ? 'bg-amber-500/25 text-amber-100'
-                  : sessionInfo.tone === 'violet' ? 'bg-violet-500/25 text-violet-100'
-                  : 'bg-white/15 text-white/80')}>
+                    : sessionInfo.tone === 'violet' ? 'bg-violet-500/25 text-violet-100'
+                      : 'bg-white/15 text-white/80')}>
                 {sessionInfo.label}
               </span>
             )}
@@ -1228,10 +1228,10 @@ function MessageThread({
           <div className="text-[11px] text-white/70">
             {recordingNames.length > 0 ? <span className="text-red-200">{recordingNames.join(', ')} recording <Mic className="inline h-2.5 w-2.5 animate-pulse" /></span>
               : typingNames.length > 0 ? <span className="text-emerald-200">{typingNames.join(', ')} typing <TypingDots /></span>
-              : isOnline ? <span className="text-emerald-200 flex items-center gap-1"><Circle className="h-2 w-2 fill-emerald-400 text-emerald-400" /> Online</span>
-              : lastSeen && lastSeen !== 'online' ? lastSeen
-              : conversation?.type === 'broadcast' ? 'Broadcast' : conversation?.type === 'lead' ? 'Lead Discussion'
-              : conversation?.other_user?.role?.replace('_', ' ') || ''}
+                : isOnline ? <span className="text-emerald-200 flex items-center gap-1"><Circle className="h-2 w-2 fill-emerald-400 text-emerald-400" /> Online</span>
+                  : lastSeen && lastSeen !== 'online' ? lastSeen
+                    : conversation?.type === 'broadcast' ? 'Broadcast' : conversation?.type === 'lead' ? 'Lead Discussion'
+                      : conversation?.other_user?.role?.replace('_', ' ') || ''}
           </div>
         </div>
         <div className="flex items-center gap-0.5">
@@ -1304,7 +1304,7 @@ function MessageThread({
       )}
 
       {/* Pinned messages bar */}
-      <PinnedMessagesBar conversationId={conversationId} dark={dark} onJumpTo={() => {}} />
+      <PinnedMessagesBar conversationId={conversationId} dark={dark} onJumpTo={() => { }} />
 
       {/* Messages area */}
       <div className={clsx('flex-1 overflow-y-auto px-3 py-2 sm:px-4 relative transition-colors', isDragging && 'ring-4 ring-inset ring-teal-400/50')}
@@ -1534,42 +1534,42 @@ function MessageThread({
           )}
 
           <div className="flex items-end gap-2 px-3 py-2">
-          <input ref={fileRef} type="file" className="hidden" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip,.rar,.7z,.webm,.ogg" multiple onChange={handleFileUpload} />
+            <input ref={fileRef} type="file" className="hidden" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip,.rar,.7z,.webm,.ogg" multiple onChange={handleFileUpload} />
 
-          {showMentions && mentionQuery && (
-            <MentionAutocomplete query={mentionQuery} contacts={contacts} onSelect={handleMentionSelect} dark={dark} />
-          )}
+            {showMentions && mentionQuery && (
+              <MentionAutocomplete query={mentionQuery} contacts={contacts} onSelect={handleMentionSelect} dark={dark} />
+            )}
 
-          {showEmojiPicker && (
-            <EmojiPicker dark={dark}
-              onSelect={(emoji) => { setInput(prev => prev + emoji); inputRef.current?.focus(); }}
-              onClose={() => setShowEmojiPicker(false)} />
-          )}
+            {showEmojiPicker && (
+              <EmojiPicker dark={dark}
+                onSelect={(emoji) => { setInput(prev => prev + emoji); inputRef.current?.focus(); }}
+                onClose={() => setShowEmojiPicker(false)} />
+            )}
 
-          <button data-menu onClick={() => setShowEmojiPicker(v => !v)} className={clsx('grid h-10 w-10 shrink-0 place-items-center rounded-full transition', dark ? 'text-slate-400 hover:text-slate-200 hover:bg-slate-600' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-200')}>
-            <Smile className="h-5 w-5" />
-          </button>
-          <button onClick={() => fileRef.current?.click()} className={clsx('grid h-10 w-10 shrink-0 place-items-center rounded-full transition', dark ? 'text-slate-400 hover:text-slate-200 hover:bg-slate-600' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-200')}>
-            <Paperclip className="h-5 w-5" />
-          </button>
-          <textarea
-            ref={inputRef} value={input} onChange={e => handleInputChange(e.target.value)}
-            onKeyDown={handleKeyDown} placeholder={editingMsg ? 'Edit message...' : 'Type a message... (use @ to mention)'} rows={1}
-            className={clsx('flex-1 resize-none rounded-2xl border px-4 py-2.5 text-sm outline-none transition max-h-32',
-              dark ? 'bg-[#2a3942] border-slate-600 text-white placeholder-slate-400 focus:border-teal-500' : 'border-slate-200 bg-white focus:border-teal-400 focus:ring-1 focus:ring-teal-200')}
-            style={{ minHeight: '42px' }}
-          />
-          {input.trim() ? (
-            <button onClick={handleSend} disabled={isSending || (sendMode === 'whatsapp' && !canSendWasp)}
-              className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-white shadow-sm transition hover:brightness-110"
-              style={{ backgroundColor: editingMsg ? '#3b82f6' : sendMode === 'whatsapp' ? '#16a34a' : WA_GREEN_TEAL }}>
-              {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            <button data-menu onClick={() => setShowEmojiPicker(v => !v)} className={clsx('grid h-10 w-10 shrink-0 place-items-center rounded-full transition', dark ? 'text-slate-400 hover:text-slate-200 hover:bg-slate-600' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-200')}>
+              <Smile className="h-5 w-5" />
             </button>
-          ) : (
-            <button onClick={() => setIsRecording(true)} className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-white shadow-sm transition hover:brightness-110" style={{ backgroundColor: WA_GREEN_TEAL }}>
-              <Mic className="h-5 w-5" />
+            <button onClick={() => fileRef.current?.click()} className={clsx('grid h-10 w-10 shrink-0 place-items-center rounded-full transition', dark ? 'text-slate-400 hover:text-slate-200 hover:bg-slate-600' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-200')}>
+              <Paperclip className="h-5 w-5" />
             </button>
-          )}
+            <textarea
+              ref={inputRef} value={input} onChange={e => handleInputChange(e.target.value)}
+              onKeyDown={handleKeyDown} placeholder={editingMsg ? 'Edit message...' : 'Type a message... (use @ to mention)'} rows={1}
+              className={clsx('flex-1 resize-none rounded-2xl border px-4 py-2.5 text-sm outline-none transition max-h-32',
+                dark ? 'bg-[#2a3942] border-slate-600 text-white placeholder-slate-400 focus:border-teal-500' : 'border-slate-200 bg-white focus:border-teal-400 focus:ring-1 focus:ring-teal-200')}
+              style={{ minHeight: '42px' }}
+            />
+            {input.trim() ? (
+              <button onClick={handleSend} disabled={isSending || (sendMode === 'whatsapp' && !canSendWasp)}
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-white shadow-sm transition hover:brightness-110"
+                style={{ backgroundColor: editingMsg ? '#3b82f6' : sendMode === 'whatsapp' ? '#16a34a' : WA_GREEN_TEAL }}>
+                {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              </button>
+            ) : (
+              <button onClick={() => setIsRecording(true)} className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-white shadow-sm transition hover:brightness-110" style={{ backgroundColor: WA_GREEN_TEAL }}>
+                <Mic className="h-5 w-5" />
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1856,52 +1856,52 @@ export default function ChatPage() {
       <ChatErrorBoundary dark={dark}>
         <ConnectionBanner dark={dark} />
         <div className={clsx('flex overflow-hidden rounded-xl border shadow-card', dark ? 'border-slate-700' : 'border-slate-200')} style={{ height: 'calc(100vh - 7rem)' }}>
-        {/* Left - Conversations */}
-        <div className={clsx('w-full sm:w-[320px] md:w-[360px] shrink-0 border-r',
-          dark ? 'bg-[#111b21] border-slate-700' : 'bg-white border-slate-200',
-          selectedId ? 'hidden sm:flex sm:flex-col' : 'flex flex-col')}>
-          <ConversationList conversations={conversations} selected={selectedId} onSelect={setSelectedId}
-            onNewChat={() => user.role === 'member' || user.role === 'partner' ? toast('Members and partners can start chat only from an assigned lead.') : setShowNew(true)} onBroadcast={() => setShowBroadcast(true)}
-            user={{ id: user.id, role: user.role, name: user.name }} loading={isLoading} dark={dark} />
-        </div>
+          {/* Left - Conversations */}
+          <div className={clsx('w-full sm:w-[320px] md:w-[360px] shrink-0 border-r',
+            dark ? 'bg-[#111b21] border-slate-700' : 'bg-white border-slate-200',
+            selectedId ? 'hidden sm:flex sm:flex-col' : 'flex flex-col')}>
+            <ConversationList conversations={conversations} selected={selectedId} onSelect={setSelectedId}
+              onNewChat={() => user.role === 'member' || user.role === 'partner' ? toast('Members and partners can start chat only from an assigned lead.') : setShowNew(true)} onBroadcast={() => setShowBroadcast(true)}
+              user={{ id: user.id, role: user.role, name: user.name }} loading={isLoading} dark={dark} />
+          </div>
 
-        {/* Center - Messages */}
-        <div className={clsx('flex-1 min-w-0 flex flex-col', !selectedId ? 'hidden sm:flex' : 'flex')}>
-          {leadThread.isError && !selectedId ? (
-            <div className="flex flex-1 flex-col items-center justify-center px-6 text-center" style={{ backgroundColor: dark ? WA_DARK_CHAT : WA_CHAT_BG }}>
-              <MessageSquare className="mb-3 h-10 w-10 text-rose-400" />
-              <h3 className={clsx('text-lg font-bold', dark ? 'text-slate-200' : 'text-slate-700')}>Could not open lead conversation.</h3>
-              <p className={clsx('mt-2 max-w-sm text-sm', dark ? 'text-slate-400' : 'text-slate-500')}>
-                {chatErrorText(leadThread.error)}
-              </p>
-            </div>
-          ) : selectedId ? (
-            <MessageThread key={selectedId} conversationId={selectedId} conversation={selectedConv}
-              user={{ id: user.id, name: user.name, role: user.role }} dark={dark} onBack={() => setSelectedId(null)} onToggleDark={toggleDark} />
-          ) : (
-            <div className="flex flex-1 flex-col items-center justify-center text-center px-6" style={{ backgroundColor: dark ? WA_DARK_CHAT : WA_CHAT_BG }}>
-              <div className={clsx('grid h-20 w-20 place-items-center rounded-full shadow-md mb-4', dark ? 'bg-[#202c33]' : 'bg-white')}>
-                <MessageSquare className="h-10 w-10" style={{ color: WA_GREEN_LIGHT }} />
+          {/* Center - Messages */}
+          <div className={clsx('flex-1 min-w-0 flex flex-col', !selectedId ? 'hidden sm:flex' : 'flex')}>
+            {leadThread.isError && !selectedId ? (
+              <div className="flex flex-1 flex-col items-center justify-center px-6 text-center" style={{ backgroundColor: dark ? WA_DARK_CHAT : WA_CHAT_BG }}>
+                <MessageSquare className="mb-3 h-10 w-10 text-rose-400" />
+                <h3 className={clsx('text-lg font-bold', dark ? 'text-slate-200' : 'text-slate-700')}>Could not open lead conversation.</h3>
+                <p className={clsx('mt-2 max-w-sm text-sm', dark ? 'text-slate-400' : 'text-slate-500')}>
+                  {chatErrorText(leadThread.error)}
+                </p>
               </div>
-              <h3 className={clsx('text-xl font-bold', dark ? 'text-slate-200' : 'text-slate-700')}>DigitalADbird Chat</h3>
-              <p className={clsx('text-sm mt-2 max-w-sm', dark ? 'text-slate-400' : 'text-slate-400')}>Send and receive messages with your team in real-time. Select a conversation or start a new chat.</p>
-              <div className="flex items-center gap-3 mt-4">
-                {user.role !== 'member' && user.role !== 'partner' && <button onClick={() => setShowNew(true)} className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white shadow-md hover:brightness-110 transition" style={{ backgroundColor: WA_GREEN_TEAL }}>
-                  <Plus className="h-4 w-4" /> Start New Chat
-                </button>}
-                <button onClick={toggleDark} className={clsx('grid h-10 w-10 place-items-center rounded-xl border transition', dark ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50')} title="Toggle dark mode">
-                  {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-                </button>
+            ) : selectedId ? (
+              <MessageThread key={selectedId} conversationId={selectedId} conversation={selectedConv}
+                user={{ id: user.id, name: user.name, role: user.role }} dark={dark} onBack={() => setSelectedId(null)} onToggleDark={toggleDark} />
+            ) : (
+              <div className="flex flex-1 flex-col items-center justify-center text-center px-6" style={{ backgroundColor: dark ? WA_DARK_CHAT : WA_CHAT_BG }}>
+                <div className={clsx('grid h-20 w-20 place-items-center rounded-full shadow-md mb-4', dark ? 'bg-[#202c33]' : 'bg-white')}>
+                  <MessageSquare className="h-10 w-10" style={{ color: WA_GREEN_LIGHT }} />
+                </div>
+                <h3 className={clsx('text-xl font-bold', dark ? 'text-slate-200' : 'text-slate-700')}>DigitalADbird Chat</h3>
+                <p className={clsx('text-sm mt-2 max-w-sm', dark ? 'text-slate-400' : 'text-slate-400')}>Send and receive messages with your team in real-time. Select a conversation or start a new chat.</p>
+                <div className="flex items-center gap-3 mt-4">
+                  {user.role !== 'member' && user.role !== 'partner' && <button onClick={() => setShowNew(true)} className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white shadow-md hover:brightness-110 transition" style={{ backgroundColor: WA_GREEN_TEAL }}>
+                    <Plus className="h-4 w-4" /> Start New Chat
+                  </button>}
+                  <button onClick={toggleDark} className={clsx('grid h-10 w-10 place-items-center rounded-xl border transition', dark ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50')} title="Toggle dark mode">
+                    {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
 
-        {/* Right - Online panel */}
-        <div className="hidden xl:flex xl:w-56 xl:flex-col">
-          <OnlinePanel dark={dark} />
+          {/* Right - Online panel */}
+          <div className="hidden xl:flex xl:w-56 xl:flex-col">
+            <OnlinePanel dark={dark} />
+          </div>
         </div>
-      </div>
 
         <NewChatDialog open={showNew} onClose={() => setShowNew(false)} onSelect={handleNewChat} dark={dark} />
         <BroadcastDialog open={showBroadcast} onClose={() => setShowBroadcast(false)} dark={dark} />

@@ -90,18 +90,18 @@ function LoginInner() {
         <section className="grid w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl shadow-slate-200/60 lg:grid-cols-[0.95fr_1.05fr]">
           <div className="hidden bg-slate-950 px-10 py-12 text-white lg:flex lg:flex-col lg:justify-between">
             <div className="flex flex-col gap-1">
-            <Image
-              src="/logo.png"
-              alt="Digital AdBird logo"
-              width={44}
-              height={44}
-              className="h-11 w-11 rounded-xl shadow-lg object-contain"
-            />
-            <div>
-              <div className="text-xl font-semibold tracking-tight">Digital AdBird</div>
-              <div className="text-xs uppercase tracking-[0.24em] text-slate-400">CRM Platform</div>
+              <Image
+                src="/logo.png"
+                alt="Digital AdBird logo"
+                width={44}
+                height={44}
+                className="h-11 w-11 rounded-xl shadow-lg object-contain"
+              />
+              <div>
+                <div className="text-xl font-semibold tracking-tight">Digital AdBird</div>
+                <div className="text-xs uppercase tracking-[0.24em] text-slate-400">CRM Platform</div>
+              </div>
             </div>
-          </div>
 
             <div className="space-y-4">
               <p className="text-4xl font-semibold leading-tight tracking-tight">
