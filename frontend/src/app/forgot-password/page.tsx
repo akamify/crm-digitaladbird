@@ -1,16 +1,8 @@
 'use client';
 
-import type { Metadata } from 'next';
 import Link from 'next/link';
 import { FormEvent, useState } from 'react';
 import { ArrowLeft, Mail } from 'lucide-react';
-import { pageMetadata } from '@/lib/metadata';
-
-export const metadata: Metadata = pageMetadata(
-  'Forgot password',
-  'Request a password reset link for your DigitalADbird CRM account.',
-  '/forgot-password',
-);
 import toast from 'react-hot-toast';
 import { BirdMark } from '@/components/ui/BirdLogo';
 import { useForgotPassword } from '@/hooks/usePasswordReset';
