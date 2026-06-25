@@ -1,14 +1,14 @@
 import type { Metadata } from 'next';
 
-export const siteTitle = 'DigitalADbird CRM';
+export const siteTitle = 'Digital AdBird CRM';
 export const siteDescription = 'Lead distribution & sales CRM for performance marketing teams.';
-export const siteUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://digitaladbird.com';
+export const siteUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.crm.digitaladbird.com';
 export const siteImage = '/logo.png';
 
 export const defaultMetadata: Metadata = {
     title: {
         default: siteTitle,
-        template: '%s · DigitalAdBird CRM',
+        template: '%s · Digital AdBird CRM',
     },
     description: siteDescription,
     applicationName: siteTitle,
@@ -39,12 +39,12 @@ export const defaultMetadata: Metadata = {
 };
 
 export function pageMetadata(title: string, description: string, path = '/') {
-    const titleText = title ? `${title} · DigitalADbird CRM` : siteTitle;
+    const titleText = title ? `${title} · Digital AdBird CRM` : siteTitle;
     return {
         title: title
             ? {
                 default: title,
-                template: '%s · DigitalADbird CRM',
+                template: '%s · Digital AdBird CRM',
             }
             : defaultMetadata.title,
         description: description || siteDescription,
