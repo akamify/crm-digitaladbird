@@ -1,8 +1,16 @@
 'use client';
 
+import type { Metadata } from 'next';
 import { FormEvent, Suspense, useEffect, useId, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import { pageMetadata } from '@/lib/metadata';
+
+export const metadata: Metadata = pageMetadata(
+  'Sign in',
+  'Sign in to DigitalADbird CRM with your registered email, CP ID, or phone number.',
+  '/login',
+);
 import { AlertCircle, Eye, EyeOff, Lock, LogIn, UserRound } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { BirdMark } from '@/components/ui/BirdLogo';

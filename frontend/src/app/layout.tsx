@@ -1,22 +1,9 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { Providers } from '@/components/Providers';
+import { defaultMetadata } from '@/lib/metadata';
 
-export const metadata: Metadata = {
-  title: {
-    default: 'DigitalADbird CRM',
-    template: '%s · DigitalADbird CRM',
-  },
-  description: 'Lead distribution & sales CRM for performance marketing teams.',
-  applicationName: 'DigitalADbird CRM',
-  formatDetection: { telephone: false },
-  manifest: '/manifest.webmanifest',
-  icons: {
-    icon: [{ url: '/favicon.svg', type: 'image/svg+xml' }],
-    apple: [{ url: '/apple-touch-icon.svg', sizes: '180x180', type: 'image/svg+xml' }],
-    shortcut: ['/favicon.svg'],
-  },
-};
+export const metadata: Metadata = defaultMetadata;
 
 export const viewport: Viewport = {
   width: 'device-width',

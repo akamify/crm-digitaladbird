@@ -1,5 +1,7 @@
 'use client';
 
+import Image from 'next/image';
+
 /**
  * DigitalADbird — primary brand mark.
  *
@@ -79,14 +81,20 @@ export function LogoLockup({
   tone = 'dark',
   showTagline = true,
 }: { className?: string; tone?: 'dark' | 'light'; showTagline?: boolean }) {
-  const titleColor   = tone === 'light' ? 'text-white'    : 'text-slate-900';
+  const titleColor = tone === 'light' ? 'text-white' : 'text-slate-900';
   const taglineColor = tone === 'light' ? 'text-blue-200' : 'text-slate-500';
   return (
     <div className={`flex items-center gap-3 ${className}`}>
-      <BirdMark className="h-10 w-10 shrink-0" />
+      <Image
+        src="/logo.png"
+        alt="DigitalAdBird"
+        width={40}
+        height={40}
+        className="h-10 w-10 shrink-0"
+      />
       <div className="leading-tight">
         <div className={`font-display text-lg font-semibold tracking-tight ${titleColor}`}>
-          DigitalADbird
+          DigitalAdBird
         </div>
         {showTagline && (
           <div className={`text-[10px] uppercase tracking-[0.2em] ${taglineColor}`}>

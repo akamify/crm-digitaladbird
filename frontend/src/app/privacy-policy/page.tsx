@@ -1,7 +1,12 @@
 import type { Metadata } from 'next';
 import { LegalPage, type LegalSection } from '@/components/legal/LegalPage';
+import { pageMetadata } from '@/lib/metadata';
 
-export const metadata: Metadata = { title: 'Privacy Policy', description: 'Digital AdBird privacy policy for websites, CRM services, and connected integrations.' };
+export const metadata: Metadata = pageMetadata(
+  'Privacy Policy',
+  'DigitalADbird privacy policy for websites, CRM services, and connected integrations.',
+  '/privacy-policy',
+);
 
 const sections: LegalSection[] = [
   {

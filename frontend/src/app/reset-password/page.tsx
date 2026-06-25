@@ -1,8 +1,16 @@
 'use client';
 
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { FormEvent, Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { pageMetadata } from '@/lib/metadata';
+
+export const metadata: Metadata = pageMetadata(
+  'Reset password',
+  'Set a new password for your DigitalADbird CRM account using a secure reset link.',
+  '/reset-password',
+);
 import { Eye, EyeOff, Lock } from 'lucide-react';
 import { BirdMark } from '@/components/ui/BirdLogo';
 import { useResetPassword, useVerifyResetToken } from '@/hooks/usePasswordReset';
