@@ -85,11 +85,11 @@ function LoginInner() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 px-4 py-8 text-slate-900 sm:px-6">
+    <main className="min-h-screen bg-slate-50 px-4 py-4 text-slate-900 sm:px-6">
       <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-5xl items-center justify-center">
         <section className="grid w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl shadow-slate-200/60 lg:grid-cols-[0.95fr_1.05fr]">
           <div className="hidden bg-slate-950 px-10 py-12 text-white lg:flex lg:flex-col lg:justify-between">
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-row items-center gap-2">
               <Image
                 src="/logo.png"
                 alt="Digital AdBird logo"
@@ -118,13 +118,13 @@ function LoginInner() {
           </div>
 
           <div className="px-5 py-8 sm:px-10 sm:py-12">
-            <div className="mb-8 flex items-center gap-3">
+            <div className="mb-8 flex items-center gap-2">
               <Image
                 src="/logo.png"
                 alt="Digital AdBird logo"
                 width={40}
                 height={40}
-                className="h-10 w-10 rounded-xl shadow-md object-contain"
+                className="h-10 w-10 rounded-full shadow-md object-contain"
               />
               <div>
                 <div className="text-lg font-semibold">Digital AdBird</div>
