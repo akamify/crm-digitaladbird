@@ -4,7 +4,7 @@ import { pageMetadata } from '@/lib/metadata';
 
 export const metadata: Metadata = pageMetadata(
   'Terms and Conditions',
-  'Terms governing the use of DigitalADbird websites, CRM services, and integrations.',
+  'Terms governing the use of Digital AdBird websites, CRM services, and integrations.',
   '/terms',
 );
 
@@ -14,7 +14,7 @@ const sections: LegalSection[] = [
     paragraphs: [
       '"Company", "we", "us", or "our" refers to Digital AdBird, 3rd Floor, 4/18 Manoj Yadav Building, Saraswati Puram, Khargapur, Gomti Nagar, Lucknow, Uttar Pradesh, India - 226010.',
       '"Service" refers to Digital AdBird websites, CRM platform, lead management tools, marketing tools, automation tools, reporting tools, Google Sheets integrations, Meta/WhatsApp integrations, and any other services provided by Digital AdBird.',
-      '"Website" refers to https://digitaladbird.com and related subdomains such as https://www.crm.digitaladbird.com.',
+      '"Website" refers to https://www.crm.digitaladbird.com and related subdomains such as https://www.crm.digitaladbird.com.',
       '"User", "you", or "your" means the person, company, organization, or other legal entity accessing or using the Service.',
       '"Account" means a user account created to access the Service.',
       '"CRM Data" means leads, customer details, campaign details, call logs, notes, statuses, stages, reports, assignments, notifications, and related business data processed through the Service.',
@@ -34,7 +34,7 @@ const sections: LegalSection[] = [
   { title: '12. Limitation of Liability', paragraphs: ['To the maximum extent permitted by law, Digital AdBird shall not be liable for indirect, incidental, special, consequential, or punitive damages, including loss of profits, loss of data, business interruption, or third-party service failures.', 'The Service is provided on an "as is" and "as available" basis, unless otherwise agreed in writing.'] },
   { title: '13. No Guarantee of Third-Party Approval', paragraphs: ['Digital AdBird does not guarantee approval from Google, Meta, WhatsApp, or any third-party platform. Access to third-party APIs may depend on verification, permissions, account status, compliance, and policies of those platforms.'] },
   { title: '14. Suspension and Termination', paragraphs: ['We may suspend or terminate access if you violate these Terms, misuse the Service, fail to pay applicable fees, compromise security, or use the Service unlawfully.', 'You may stop using the Service at any time. Certain data may be retained as required for legal, operational, audit, or security purposes.'] },
-  { title: '15. Privacy', paragraphs: ['Your use of the Service is also governed by our Privacy Policy. Please review it to understand how we collect, use, store, and protect data.', 'Privacy Policy URL: https://digitaladbird.com/privacy-policy'] },
+  { title: '15. Privacy', paragraphs: ['Your use of the Service is also governed by our Privacy Policy. Please review it to understand how we collect, use, store, and protect data.', 'Privacy Policy URL: https://www.crm.digitaladbird.com/privacy-policy'] },
   { title: '16. Changes to These Terms', paragraphs: ['We may update these Terms from time to time. Updated Terms will be posted on this page with a revised "Last updated" date.', 'Continued use of the Service after changes means you accept the updated Terms.'] },
   { title: '17. Governing Law', paragraphs: ['These Terms shall be governed by and interpreted in accordance with the laws of India.'] },
   { title: '18. Contact Us', paragraphs: ['For questions about these Terms, contact us using the details below.'] },

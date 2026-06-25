@@ -1883,7 +1883,7 @@ export default function ChatPage() {
                 <div className={clsx('grid h-20 w-20 place-items-center rounded-full shadow-md mb-4', dark ? 'bg-[#202c33]' : 'bg-white')}>
                   <MessageSquare className="h-10 w-10" style={{ color: WA_GREEN_LIGHT }} />
                 </div>
-                <h3 className={clsx('text-xl font-bold', dark ? 'text-slate-200' : 'text-slate-700')}>DigitalADbird Chat</h3>
+                <h3 className={clsx('text-xl font-bold', dark ? 'text-slate-200' : 'text-slate-700')}>Digital AdBird Chat</h3>
                 <p className={clsx('text-sm mt-2 max-w-sm', dark ? 'text-slate-400' : 'text-slate-400')}>Send and receive messages with your team in real-time. Select a conversation or start a new chat.</p>
                 <div className="flex items-center gap-3 mt-4">
                   {user.role !== 'member' && user.role !== 'partner' && <button onClick={() => setShowNew(true)} className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white shadow-md hover:brightness-110 transition" style={{ backgroundColor: WA_GREEN_TEAL }}>

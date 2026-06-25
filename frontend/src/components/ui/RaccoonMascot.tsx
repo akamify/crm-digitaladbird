@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Raccoon — DigitalADbird supporting mascot.
+ * Raccoon — Digital AdBird supporting mascot.
  *
  * Friendly, modern, tech-company illustration style. Used in:
  *   - Login left panel (full body, hero illustration)
@@ -23,7 +23,7 @@ function RaccoonHead({ className }: { className: string }) {
     <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" className={className} aria-label="Mascot">
       <defs>
         <radialGradient id="rh-fur" cx="0.5" cy="0.4" r="0.7">
-          <stop offset="0%"  stopColor="#A0AEC0" />
+          <stop offset="0%" stopColor="#A0AEC0" />
           <stop offset="100%" stopColor="#4A5568" />
         </radialGradient>
       </defs>
@@ -38,11 +38,11 @@ function RaccoonHead({ className }: { className: string }) {
       <ellipse cx="100" cy="120" rx="50" ry="40" fill="#E2E8F0" />
       {/* Bandit mask */}
       <path d="M50 95 Q 70 85, 90 95 Q 100 100, 110 95 Q 130 85, 150 95 L 150 115 Q 130 122, 110 117 Q 100 113, 90 117 Q 70 122, 50 115 Z"
-            fill="#1A202C" />
+        fill="#1A202C" />
       {/* Eyes */}
-      <circle cx="78"  cy="108" r="6" fill="white" />
+      <circle cx="78" cy="108" r="6" fill="white" />
       <circle cx="122" cy="108" r="6" fill="white" />
-      <circle cx="79"  cy="109" r="3" fill="#1A202C" />
+      <circle cx="79" cy="109" r="3" fill="#1A202C" />
       <circle cx="123" cy="109" r="3" fill="#1A202C" />
       {/* Nose + smile */}
       <ellipse cx="100" cy="135" rx="6" ry="4" fill="#1A202C" />
@@ -56,11 +56,11 @@ function RaccoonBody({ className }: { className: string }) {
     <svg viewBox="0 0 320 360" xmlns="http://www.w3.org/2000/svg" className={className} aria-label="Mascot">
       <defs>
         <radialGradient id="rb-fur" cx="0.5" cy="0.3" r="0.85">
-          <stop offset="0%"  stopColor="#A0AEC0" />
+          <stop offset="0%" stopColor="#A0AEC0" />
           <stop offset="100%" stopColor="#2D3748" />
         </radialGradient>
         <linearGradient id="rb-laptop" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%"  stopColor="#60A5FA" />
+          <stop offset="0%" stopColor="#60A5FA" />
           <stop offset="100%" stopColor="#3B82F6" />
         </linearGradient>
       </defs>
@@ -103,7 +103,7 @@ function RaccoonBody({ className }: { className: string }) {
 
       {/* Bandit mask */}
       <path d="M100 115 Q 125 102, 150 115 Q 160 121, 170 115 Q 195 102, 220 115 L 220 138 Q 195 147, 170 141 Q 160 137, 150 141 Q 125 147, 100 138 Z"
-            fill="#1A202C" />
+        fill="#1A202C" />
 
       {/* Eyes */}
       <circle cx="134" cy="128" r="8" fill="white" />

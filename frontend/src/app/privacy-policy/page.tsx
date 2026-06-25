@@ -4,7 +4,7 @@ import { pageMetadata } from '@/lib/metadata';
 
 export const metadata: Metadata = pageMetadata(
   'Privacy Policy',
-  'DigitalADbird privacy policy for websites, CRM services, and connected integrations.',
+  'Digital AdBird privacy policy for websites, CRM services, and connected integrations.',
   '/privacy-policy',
 );
 
@@ -39,5 +39,5 @@ const sections: LegalSection[] = [
 ];
 
 export default function PrivacyPolicyPage() {
-  return <LegalPage title="Privacy Policy" updated="June 22, 2026" intro={['Digital AdBird ("Digital AdBird", "we", "our", or "us") respects your privacy and is committed to protecting the personal information and business data you share with us.', 'This Privacy Policy explains how we collect, use, store, disclose, and protect information when you use our websites, CRM platform, marketing tools, automation services, lead management tools, Google Sheets integrations, WhatsApp/Meta integrations, and other services provided by Digital AdBird.', 'Our website is accessible at https://digitaladbird.com and our CRM platform may be accessible through subdomains such as https://www.crm.digitaladbird.com.']} sections={sections} />;
+  return <LegalPage title="Privacy Policy" updated="June 22, 2026" intro={['Digital AdBird ("Digital AdBird", "we", "our", or "us") respects your privacy and is committed to protecting the personal information and business data you share with us.', 'This Privacy Policy explains how we collect, use, store, disclose, and protect information when you use our websites, CRM platform, marketing tools, automation services, lead management tools, Google Sheets integrations, WhatsApp/Meta integrations, and other services provided by Digital AdBird.', 'Our website is accessible at https://www.crm.digitaladbird.com and our CRM platform may be accessible through subdomains such as https://www.crm.digitaladbird.com.']} sections={sections} />;
 }

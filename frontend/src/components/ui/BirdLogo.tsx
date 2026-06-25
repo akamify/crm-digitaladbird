@@ -3,7 +3,7 @@
 import Image from 'next/image';
 
 /**
- * DigitalADbird — primary brand mark.
+ * Digital AdBird — primary brand mark.
  *
  * Swift geometric bird in flight. The body forms an upward stroke that
  * doubles as a growth-trajectory arrow (lead-gen / marketing motif).
@@ -17,7 +17,7 @@ export function BirdLogo({ className = 'h-5 w-5' }: { className?: string }) {
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       className={className}
-      aria-label="DigitalADbird"
+      aria-label="Digital AdBird"
     >
       <path
         d="M3 22 C 9 19, 14 17, 18 13 L 22 9"
@@ -46,7 +46,7 @@ export function BirdMark({ className = 'h-9 w-9' }: { className?: string }) {
       viewBox="0 0 64 64"
       xmlns="http://www.w3.org/2000/svg"
       className={className}
-      aria-label="DigitalADbird"
+      aria-label="Digital AdBird"
     >
       <defs>
         <linearGradient id="bm-bg" x1="0" y1="0" x2="1" y2="1">
@@ -73,7 +73,7 @@ export function BirdMark({ className = 'h-9 w-9' }: { className?: string }) {
 }
 
 /**
- * Wordmark lockup: bird mark + "DigitalADbird" + "CRM" tagline.
+ * Wordmark lockup: bird mark + "Digital AdBird" + "CRM" tagline.
  * Use `tone="light"` for dark backgrounds, `tone="dark"` for light backgrounds.
  */
 export function LogoLockup({
@@ -87,14 +87,14 @@ export function LogoLockup({
     <div className={`flex items-center gap-3 ${className}`}>
       <Image
         src="/logo.png"
-        alt="DigitalAdBird"
+        alt="Digital AdBird"
         width={40}
         height={40}
         className="h-10 w-10 shrink-0"
       />
       <div className="leading-tight">
         <div className={`font-display text-lg font-semibold tracking-tight ${titleColor}`}>
-          DigitalAdBird
+          Digital AdBird
         </div>
         {showTagline && (
           <div className={`text-[10px] uppercase tracking-[0.2em] ${taglineColor}`}>

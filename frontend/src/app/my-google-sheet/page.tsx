@@ -28,7 +28,7 @@ import { useAuth } from '@/lib/auth';
 import { formatISTCompact } from '@/lib/date';
 import { humanize } from '@/lib/format';
 
-const DEFAULT_SHEET_NAME = 'DigitalADbird CRM Leads';
+const DEFAULT_SHEET_NAME = 'Digital AdBird CRM Leads';
 
 function message(error: unknown, fallback: string) {
   const payload = (error as { response?: { data?: { code?: string; message?: string } } })?.response?.data;
@@ -295,7 +295,7 @@ function MyGoogleSheetContent() {
         open={confirmDisconnect}
         onClose={() => setConfirmDisconnect(false)}
         title="Disconnect Google Sheet?"
-        description="This will disconnect your Google account from DigitalADbird CRM. Your Google Sheet will not be deleted, but future syncing will stop."
+        description="This will disconnect your Google account from Digital AdBird CRM. Your Google Sheet will not be deleted, but future syncing will stop."
         footer={(
           <>
             <button className="btn-outline rounded-lg px-4 py-2 text-sm" onClick={() => setConfirmDisconnect(false)} disabled={disconnect.isPending}>Cancel</button>

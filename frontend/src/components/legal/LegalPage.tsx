@@ -15,7 +15,7 @@ export function LegalPage({ title, updated, intro, sections }: { title: string; 
         <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-4 sm:px-6">
           <Link href="/login" className="flex items-center gap-2 font-semibold text-slate-950">
             <span className="grid h-9 w-9 place-items-center rounded-lg bg-blue-600 text-white"><Bird className="h-5 w-5" /></span>
-            DigitalADbird
+            Digital AdBird
           </Link>
           <Link href="/login" className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-blue-600">
             <ArrowLeft className="h-4 w-4" /> Back to sign in
@@ -53,7 +53,7 @@ export function LegalPage({ title, updated, intro, sections }: { title: string; 
           <div className="mt-3 space-y-2 text-sm leading-6 text-slate-600">
             <p className="flex items-start gap-2"><MapPin className="mt-1 h-4 w-4 shrink-0" />3rd Floor, 4/18 Manoj Yadav Building, Saraswati Puram, Khargapur, Gomti Nagar, Lucknow, Uttar Pradesh, India - 226010</p>
             <a href="mailto:support@digitaladbird.com" className="flex items-center gap-2 hover:text-blue-600"><Mail className="h-4 w-4" />support@digitaladbird.com</a>
-            <a href="https://digitaladbird.com" target="_blank" rel="noopener noreferrer" className="inline-block font-medium text-blue-600 hover:text-blue-700">digitaladbird.com</a>
+            <a href="https://www.crm.digitaladbird.com" target="_blank" rel="noopener noreferrer" className="inline-block font-medium text-blue-600 hover:text-blue-700">www.crm.digitaladbird.com</a>
           </div>
         </section>
 

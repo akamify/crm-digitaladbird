@@ -105,7 +105,7 @@ export function showBrowserNotification(title: string, body?: string | null) {
   if (typeof window === 'undefined' || !('Notification' in window)) return;
   if (Notification.permission !== 'granted') return;
   try {
-    new Notification(title || 'DigitalADbird CRM', {
+    new Notification(title || 'Digital AdBird CRM', {
       body: body || 'New notification received.',
       icon: '/favicon.png',
     });

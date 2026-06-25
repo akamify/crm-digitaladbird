@@ -113,7 +113,7 @@ function LoginInner() {
             </div>
 
             <div className="text-xs text-slate-500">
-              DigitalADbird CRM · Secure session access
+              Digital AdBird CRM · Secure session access
             </div>
           </div>
 
