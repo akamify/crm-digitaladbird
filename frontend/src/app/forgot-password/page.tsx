@@ -1,10 +1,10 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { FormEvent, useState } from 'react';
 import { ArrowLeft, Mail } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { BirdMark } from '@/components/ui/BirdLogo';
 import { useForgotPassword } from '@/hooks/usePasswordReset';
 
 export default function ForgotPasswordPage() {
@@ -32,8 +32,17 @@ export default function ForgotPasswordPage() {
     <main className="grid min-h-screen place-items-center bg-slate-50 px-4 py-8 text-slate-900">
       <section className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-lg sm:p-8">
         <div className="mb-7 flex items-center gap-3">
-          <BirdMark className="h-10 w-10 rounded-lg" />
-          <div><div className="font-semibold">DigitalADbird</div><div className="text-xs text-slate-500">CRM Platform</div></div>
+          <Image
+            src="/logo.png"
+            alt="Digital AdBird logo"
+            width={40}
+            height={40}
+            className="h-10 w-10 rounded-lg object-contain"
+          />
+          <div>
+            <div className="font-semibold">Digital AdBird</div>
+            <div className="text-xs text-slate-500">CRM Platform</div>
+          </div>
         </div>
         <h1 className="text-2xl font-semibold">Forgot password</h1>
         {submitted ? (

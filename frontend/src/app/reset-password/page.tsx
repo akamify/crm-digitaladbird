@@ -1,10 +1,10 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { FormEvent, Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Eye, EyeOff, Lock } from 'lucide-react';
-import { BirdMark } from '@/components/ui/BirdLogo';
 import { useResetPassword, useVerifyResetToken } from '@/hooks/usePasswordReset';
 
 function apiError(error: unknown) {
@@ -40,7 +40,19 @@ function ResetPasswordForm() {
   return (
     <main className="grid min-h-screen place-items-center bg-slate-50 px-4 py-8 text-slate-900">
       <section className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-lg sm:p-8">
-        <div className="mb-7 flex items-center gap-3"><BirdMark className="h-10 w-10 rounded-lg" /><div><div className="font-semibold">DigitalADbird</div><div className="text-xs text-slate-500">CRM Platform</div></div></div>
+        <div className="mb-7 flex items-center gap-3">
+          <Image
+            src="/logo.png"
+            alt="Digital AdBird logo"
+            width={40}
+            height={40}
+            className="h-10 w-10 rounded-lg object-contain"
+          />
+          <div>
+            <div className="font-semibold">Digital AdBird</div>
+            <div className="text-xs text-slate-500">CRM Platform</div>
+          </div>
+        </div>
         <h1 className="text-2xl font-semibold">Set a new password</h1>
         {verification.isLoading ? <p className="mt-5 text-sm text-slate-500">Verifying secure link...</p> : invalid ? (
           <div className="mt-5 space-y-4"><p className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">This reset link is invalid or expired.</p><Link href="/forgot-password" className="text-sm font-medium text-blue-600">Request another link</Link></div>

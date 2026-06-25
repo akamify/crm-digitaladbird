@@ -107,7 +107,7 @@ export function showBrowserNotification(title: string, body?: string | null) {
   try {
     new Notification(title || 'DigitalADbird CRM', {
       body: body || 'New notification received.',
-      icon: '/favicon.ico',
+      icon: '/favicon.png',
     });
   } catch {
     // Browser notification display is best effort.

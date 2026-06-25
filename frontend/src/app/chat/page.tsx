@@ -102,7 +102,7 @@ function requestDesktopNotification(title: string, body: string) {
   if (typeof window === 'undefined' || !('Notification' in window)) return;
   if (Notification.permission === 'default') Notification.requestPermission();
   if (Notification.permission === 'granted' && document.hidden) {
-    new Notification(title, { body, icon: '/favicon.ico', tag: 'chat-msg' });
+    new Notification(title, { body, icon: '/favicon.png', tag: 'chat-msg' });
   }
 }
 

@@ -28,15 +28,14 @@ export const defaultMetadata: Metadata = {
         images: [siteImage],
     },
     icons: {
-        icon: '/favicon.ico',
-        shortcut: '/favicon.ico',
-        apple: [{ url: '/apple-touch-icon.svg', sizes: '180x180', type: 'image/svg+xml' }],
+        icon: '/favicon.png',
+        shortcut: '/favicon.png',
+        apple: [{ url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' }],
     },
     manifest: '/manifest.webmanifest',
     formatDetection: {
         telephone: false,
     },
-    themeColor: '#3B82F6',
 };
 
 export function pageMetadata(title: string, description: string, path = '/') {

@@ -2,10 +2,10 @@
 
 import { FormEvent, Suspense, useEffect, useId, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Image from 'next/image';
 import Link from 'next/link';
 import { AlertCircle, Eye, EyeOff, Lock, LogIn, UserRound } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { BirdMark } from '@/components/ui/BirdLogo';
 import { dashboardPath, useAuth } from '@/lib/auth';
 
 function loginErrorMessage(error: unknown) {
@@ -89,13 +89,19 @@ function LoginInner() {
       <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-5xl items-center justify-center">
         <section className="grid w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl shadow-slate-200/60 lg:grid-cols-[0.95fr_1.05fr]">
           <div className="hidden bg-slate-950 px-10 py-12 text-white lg:flex lg:flex-col lg:justify-between">
-            <div className="flex items-center gap-3">
-              <BirdMark className="h-11 w-11 rounded-xl shadow-lg" />
-              <div>
-                <div className="text-xl font-semibold tracking-tight">DigitalADbird</div>
-                <div className="text-xs uppercase tracking-[0.24em] text-slate-400">CRM Platform</div>
-              </div>
+            <div className="flex flex-col gap-1">
+            <Image
+              src="/logo.png"
+              alt="Digital AdBird logo"
+              width={44}
+              height={44}
+              className="h-11 w-11 rounded-xl shadow-lg object-contain"
+            />
+            <div>
+              <div className="text-xl font-semibold tracking-tight">Digital AdBird</div>
+              <div className="text-xs uppercase tracking-[0.24em] text-slate-400">CRM Platform</div>
             </div>
+          </div>
 
             <div className="space-y-4">
               <p className="text-4xl font-semibold leading-tight tracking-tight">
@@ -112,10 +118,16 @@ function LoginInner() {
           </div>
 
           <div className="px-5 py-8 sm:px-10 sm:py-12">
-            <div className="mb-8 flex items-center gap-3 lg:hidden">
-              <BirdMark className="h-10 w-10 rounded-xl shadow-md" />
+            <div className="mb-8 flex items-center gap-3">
+              <Image
+                src="/logo.png"
+                alt="Digital AdBird logo"
+                width={40}
+                height={40}
+                className="h-10 w-10 rounded-xl shadow-md object-contain"
+              />
               <div>
-                <div className="text-lg font-semibold">DigitalADbird</div>
+                <div className="text-lg font-semibold">Digital AdBird</div>
                 <div className="text-[10px] uppercase tracking-[0.22em] text-slate-400">CRM Platform</div>
               </div>
             </div>
