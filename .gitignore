@@ -11,6 +11,8 @@ out/
 dist/
 build/
 
+docs/
+/docs/
 
 
 # logs
