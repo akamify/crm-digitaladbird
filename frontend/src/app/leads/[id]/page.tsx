@@ -79,7 +79,7 @@ function LeadDetailInner() {
           <LeadCommunicationPanel leadId={id} lead={lead} remarks={lead.remarks} />
           <LeadRemarkTimeline remarks={lead.remarks} onAdd={() => setRemarkOpen(true)} />
         </main>
-        <aside className="min-w-0 lg:sticky lg:top-6 lg:self-start space-y-4">
+        <aside className="min-w-0 space-y-4 lg:sticky lg:top-6 lg:self-start">
           <LeadSummaryCard lead={lead} />
           <AssignmentCard lead={lead} />
           <FollowUpCard lead={lead} />

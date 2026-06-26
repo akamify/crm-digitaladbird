@@ -13,10 +13,6 @@ const STATUS_OPTS = [
   { value: 'rnr',            label: 'Missed' },
   { value: 'busy',           label: 'Busy' },
   { value: 'not_interested', label: 'Not Interested' },
-  { value: 'switched_off', label: 'Switched Off' },
-  { value: 'switched_off', label: 'Switched Off' },
-  { value: 'number_not_existed', label: 'Number Not Existed' },
-  { value: 'fake_number', label: 'Fake Number' },
   { value: 'converted',      label: 'Converted' },
 ];
 

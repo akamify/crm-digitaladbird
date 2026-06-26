@@ -21,7 +21,7 @@ const accentClass: Record<NonNullable<KpiCardProps['accent']>, string> = {
 
 export function KpiCard({ label, value, delta, trend, icon, accent = 'pink' }: KpiCardProps) {
   return (
-    <div className="card card-hover flex items-center gap-3 sm:gap-4 p-4 sm:p-5">
+    <div className="card card-hover flex items-center gap-3 sm:gap-4 p-4 sm:p-5 cursor-pointer">
       {icon && (
         <div className={clsx('grid h-10 w-10 sm:h-12 sm:w-12 place-items-center rounded-xl shadow-md shrink-0', accentClass[accent])}>
           {icon}
