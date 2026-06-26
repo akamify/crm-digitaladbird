@@ -95,6 +95,7 @@ export function LeadCommunicationPanel({ leadId, lead, remarks = [], defaultTab 
           disabled={closed}
           starting={comm.startCall.isPending}
           logging={comm.logCall.isPending}
+          autoStart={defaultTab === 'calls'}
           onStart={() => comm.startCall.mutateAsync(undefined)}
           onLog={(body) => comm.logCall.mutateAsync(body)}
         />

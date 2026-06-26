@@ -126,7 +126,7 @@ exports.list = asyncHandler(async (req, res) => {
       l.stage, l.call_status, l.last_call_at, l.next_followup_at, l.call_attempts,
       l.assigned_to_user_id, u.full_name AS assigned_to_name,
       l.locked_by_user_id, l.locked_until,
-      l.created_at, l.assigned_at, l.updated_at
+      l.created_at, l.assigned_at, l.stage_updated_at, l.updated_at
     FROM leads l
     LEFT JOIN users u ON u.id = l.assigned_to_user_id
     WHERE ${whereSql}

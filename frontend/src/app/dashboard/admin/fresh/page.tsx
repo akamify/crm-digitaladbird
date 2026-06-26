@@ -179,9 +179,8 @@ function FreshLeadsInner() {
                   <td className="py-2.5">
                     <LeadActions
                       phone={l.phone}
-                      email={l.email}
-                      name={l.full_name}
                       compact
+                      onCall={() => openCommunication(l, 'calls')}
                       onChat={() => openCommunication(l, 'chat')}
                     />
                   </td>

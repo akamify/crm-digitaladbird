@@ -17,6 +17,7 @@ import { ReassignModal } from '@/components/leads/ReassignModal';
 import { WorkflowPanel } from '@/components/leads/WorkflowPanel';
 import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
 import { useLead, useLockLead, useUnlockLead } from '@/hooks/useLeads';
+import { useLeadCommunication } from '@/hooks/useLeadCommunication';
 import { useAuth } from '@/lib/auth';
 import { useUpdateLeadCategory } from '@/hooks/useAdminEnterprise';
 import { triggerPhoneCall } from '@/lib/phone';
@@ -29,6 +30,7 @@ function LeadDetailInner() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { user } = useAuth();
+  const comm = useLeadCommunication(id);
   const leadQuery = useLead(id);
   const lock = useLockLead();
   const unlock = useUnlockLead();
@@ -49,8 +51,19 @@ function LeadDetailInner() {
   const canSeeTechnical = user.role === 'super_admin' || user.role === 'admin';
   const leadPhone = lead.phone;
 
-  function callLead() {
-    if (!triggerPhoneCall(leadPhone)) toast.error('This lead does not have a valid phone number.');
+  async function callLead() {
+    if (!leadPhone) {
+      toast.error('This lead does not have a valid phone number.');
+      return;
+    }
+
+    triggerPhoneCall(leadPhone);
+    try {
+      await comm.startCall.mutateAsync(undefined);
+      toast.success('Dialer opened and call log created.');
+    } catch {
+      toast.error('Could not record call in CRM.');
+    }
   }
 
   const desktopActions = (
@@ -79,7 +92,7 @@ function LeadDetailInner() {
           <LeadCommunicationPanel leadId={id} lead={lead} remarks={lead.remarks} />
           <LeadRemarkTimeline remarks={lead.remarks} onAdd={() => setRemarkOpen(true)} />
         </main>
-        <aside className="min-w-0 space-y-4 lg:sticky lg:top-6 lg:self-start">
+        <aside className="min-w-0 space-y-4 lg:sticky lg:top-20 lg:self-start">
           <LeadSummaryCard lead={lead} />
           <AssignmentCard lead={lead} />
           <FollowUpCard lead={lead} />

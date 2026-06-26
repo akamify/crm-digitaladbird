@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { Loader2, PhoneCall, Plus } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Modal, Skeleton, EmptyState } from '@/components/ui/Modal';
@@ -15,16 +15,18 @@ interface Props {
   disabled?: boolean;
   starting?: boolean;
   logging?: boolean;
+  autoStart?: boolean;
   onStart: () => Promise<unknown>;
   onLog: (body: { status: string; duration_seconds?: string; notes?: string; next_followup_at?: string }) => Promise<unknown>;
 }
 
-export function LeadCallPanel({ phone, calls, loading, disabled, starting, logging, onStart, onLog }: Props) {
+export function LeadCallPanel({ phone, calls, loading, disabled, starting, logging, autoStart, onStart, onLog }: Props) {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState('connected');
   const [duration, setDuration] = useState('');
   const [notes, setNotes] = useState('');
   const [followup, setFollowup] = useState('');
+  const [autoStarted, setAutoStarted] = useState(false);
   const providerMode = process.env.NEXT_PUBLIC_CALL_PROVIDER || 'disabled';
   const telHref = buildTelHref(phone);
 
@@ -40,6 +42,13 @@ export function LeadCallPanel({ phone, calls, loading, disabled, starting, loggi
       toast.error('Could not start call');
     }
   }
+
+  useEffect(() => {
+    if (!autoStart || autoStarted || disabled || starting) return;
+    if (!telHref) return;
+    setAutoStarted(true);
+    void startCall();
+  }, [autoStart, autoStarted, disabled, starting, telHref]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();

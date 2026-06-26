@@ -1,6 +1,6 @@
 'use client';
 
-import { Phone, MessageCircle, Mail } from 'lucide-react';
+import { Phone, MessageCircle } from 'lucide-react';
 import { clsx } from '@/lib/format';
 import { buildTelHref, triggerPhoneCall } from '@/lib/phone';
 
@@ -8,17 +8,13 @@ type Size = 'xs' | 'sm';
 
 interface Props {
   phone?: string | null;
-  email?: string | null;
-  name?: string | null;
-  waMessage?: string;
   size?: Size;
   compact?: boolean;
   onCall?: () => void | Promise<unknown>;
   onChat?: () => void;
 }
 
-export function LeadActions({ phone, email, size = 'xs', compact = false, onCall, onChat }: Props) {
-  const mailto = email ? `mailto:${email}` : null;
+export function LeadActions({ phone, size = 'xs', compact = false, onCall, onChat }: Props) {
   const telHref = buildTelHref(phone);
   const cls = size === 'sm' ? 'px-2 py-1.5 text-xs' : 'px-1.5 py-1 text-[11px]';
   const icon = size === 'sm' ? 'h-3.5 w-3.5' : 'h-3 w-3';
@@ -58,21 +54,6 @@ export function LeadActions({ phone, email, size = 'xs', compact = false, onCall
       ) : (
         <span title="Open lead communication to chat" className={clsx('inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 text-slate-300 cursor-not-allowed', cls)}>
           <MessageCircle className={icon} />{!compact && 'Chat'}
-        </span>
-      )}
-
-      {mailto ? (
-        <a
-          href={mailto}
-          title={`Email ${email}`}
-          onClick={(e) => e.stopPropagation()}
-          className={clsx('inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 font-medium text-violet-700 hover:bg-violet-100 transition', cls)}
-        >
-          <Mail className={icon} />{!compact && 'Email'}
-        </a>
-      ) : (
-        <span title="No email" className={clsx('inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 text-slate-300 cursor-not-allowed', cls)}>
-          <Mail className={icon} />{!compact && 'Email'}
         </span>
       )}
     </div>

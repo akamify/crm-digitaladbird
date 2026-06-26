@@ -340,8 +340,8 @@ function LeadsInner() {
                     <td className="py-3 pr-3"><LeadCategoryBadge category={lead.category} /></td>
                     <td className="py-3 pr-3">
                       <div className="space-y-1">
-                        <span className={clsx('chip', lead.stage === 'won' ? 'chip-green' : lead.stage === 'lost' ? 'chip-red' : 'chip-slate')} title={formatISTTooltip(lead.updated_at)}>{humanize(lead.stage)}</span>
-                        <div className="text-[11px] text-slate-500" title={formatISTTooltip(lead.updated_at)}>{formatStageUpdatedAt(lead.updated_at || lead.created_at)}</div>
+                        <span className={clsx('chip', lead.stage === 'won' ? 'chip-green' : lead.stage === 'lost' ? 'chip-red' : 'chip-slate')} title={formatISTTooltip(lead.stage_updated_at || lead.updated_at)}>{humanize(lead.stage)}</span>
+                        <div className="text-[11px] text-slate-500" title={formatISTTooltip(lead.stage_updated_at || lead.updated_at)}>{formatStageUpdatedAt(lead.stage_updated_at || lead.updated_at || lead.created_at)}</div>
                       </div>
                     </td>
                     <td className="py-3 pr-3"><span className={clsx('chip', lead.call_status === 'converted' ? 'chip-green' : lead.call_status === 'not_called' ? 'chip-amber' : lead.call_status === 'interested' ? 'chip-blue' : 'chip-slate')}>{humanize(lead.call_status)}</span></td>
@@ -349,7 +349,7 @@ function LeadsInner() {
                     <td className="py-3 pr-3 text-xs">{lead.next_followup_at ? <span className={isOverdue(lead.next_followup_at) ? 'text-rose-600 font-medium' : 'text-slate-500'} title={formatISTTooltip(lead.next_followup_at)}>{formatISTCompact(lead.next_followup_at)}</span> : 'Not available'}</td>
                     <td className="py-3 pr-3 text-xs text-slate-500" title={formatISTTooltip(lead.created_at)}>{formatISTCompact(lead.created_at)}</td>
                     <td className="py-3">
-                      <LeadActions phone={lead.phone} email={lead.email} name={lead.full_name} compact onChat={() => openCommunication(lead, 'chat')} />
+                      <LeadActions phone={lead.phone} compact onCall={() => openCommunication(lead, 'calls')} onChat={() => openCommunication(lead, 'chat')} />
                     </td>
                   </tr>
                 );

@@ -161,9 +161,9 @@ function LeadsInner() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="space-y-1">
-                          <span className={stageChip[lead.stage] || 'chip-slate'} title={formatISTTooltip(lead.updated_at)}>{humanize(lead.stage)}</span>
-                          <div className="text-[11px] text-slate-500" title={formatISTTooltip(lead.updated_at)}>
-                            {formatStageUpdatedAt(lead.updated_at || lead.created_at)}
+                          <span className={stageChip[lead.stage] || 'chip-slate'} title={formatISTTooltip(lead.stage_updated_at || lead.updated_at)}>{humanize(lead.stage)}</span>
+                          <div className="text-[11px] text-slate-500" title={formatISTTooltip(lead.stage_updated_at || lead.updated_at)}>
+                            {formatStageUpdatedAt(lead.stage_updated_at || lead.updated_at || lead.created_at)}
                           </div>
                         </div>
                       </td>
@@ -189,9 +189,8 @@ function LeadsInner() {
                       <td className="px-4 py-3">
                         <LeadActions
                           phone={lead.phone}
-                          email={lead.email}
-                          name={lead.full_name}
                           compact
+                          onCall={() => openCommunication(lead, 'calls')}
                           onChat={() => openCommunication(lead, 'chat')}
                         />
                       </td>

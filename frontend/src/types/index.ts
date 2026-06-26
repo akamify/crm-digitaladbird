@@ -85,6 +85,7 @@ export interface Lead {
   locked_until: string | null;
   created_at: string;
   assigned_at: string | null;
+  stage_updated_at?: string | null;
   updated_at: string;
 }
 
