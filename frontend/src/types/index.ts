@@ -19,6 +19,9 @@ export type CallStatus =
   | 'communication_completed' | 'respond_hi' | 'recall'
   | 'in' | 'session_730_attend' | 'session_after_730';
 
+export type LeadLevel = 'hot' | 'warm' | 'cold';
+export type CustomerType = 'new' | 'existing';
+
 export interface User {
   id: string;
   cp_id: string;
