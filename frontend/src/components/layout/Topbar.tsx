@@ -1,6 +1,6 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
-import { LogOut, ChevronDown, Menu, MessageSquare } from 'lucide-react';
+import { LogOut, ChevronDown, Menu } from 'lucide-react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth';
 import { useChatUnread } from '@/hooks/useChat';
