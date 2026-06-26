@@ -5646,19 +5646,19 @@ router.get('/workflow/stats', authenticate, requireRole('super_admin', 'admin', 
       (SELECT COUNT(*) FROM leads l WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}) AS total_assigned,
       (SELECT COUNT(*) FROM leads l LEFT JOIN lead_workflow wf ON wf.lead_id = l.id
         WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}
-        AND wf.remark_status IS NULL) AS step1_pending,
-      (SELECT COUNT(*) FROM leads l JOIN lead_workflow wf ON wf.lead_id = l.id
+        AND (wf.remark_status IS NULL OR wf.id IS NULL)) AS step1_pending,
+      (SELECT COUNT(*) FROM leads l LEFT JOIN lead_workflow wf ON wf.lead_id = l.id
         WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}
-        AND wf.remark_status IS NOT NULL AND wf.lead_level IS NULL) AS step2_pending,
-      (SELECT COUNT(*) FROM leads l JOIN lead_workflow wf ON wf.lead_id = l.id
+        AND (wf.remark_status IS NOT NULL OR wf.id IS NULL) AND (wf.lead_level IS NULL OR wf.id IS NULL)) AS step2_pending,
+      (SELECT COUNT(*) FROM leads l LEFT JOIN lead_workflow wf ON wf.lead_id = l.id
         WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}
-        AND wf.lead_level IS NOT NULL AND wf.followup_completed IS NOT TRUE) AS step3_pending,
-      (SELECT COUNT(*) FROM leads l JOIN lead_workflow wf ON wf.lead_id = l.id
+        AND (wf.lead_level IS NULL OR wf.id IS NULL)) AS step3_pending,
+      (SELECT COUNT(*) FROM leads l LEFT JOIN lead_workflow wf ON wf.lead_id = l.id
         WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}
-        AND wf.followup_completed = TRUE AND wf.conversion_completed IS NOT TRUE) AS step4_pending,
-      (SELECT COUNT(*) FROM leads l JOIN lead_workflow wf ON wf.lead_id = l.id
+        AND (wf.followup_completed IS NOT TRUE OR wf.id IS NULL)) AS step4_pending,
+      (SELECT COUNT(*) FROM leads l LEFT JOIN lead_workflow wf ON wf.lead_id = l.id
         WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}
-        AND wf.conversion_completed = TRUE) AS completed,
+        AND (wf.conversion_completed IS NOT TRUE OR wf.id IS NULL)) AS completed,
       (SELECT COUNT(*) FROM lead_workflow_history h
         JOIN leads l ON l.id = h.lead_id
         WHERE (h.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date ${scope}) AS today_actions

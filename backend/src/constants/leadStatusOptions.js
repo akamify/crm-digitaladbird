@@ -11,6 +11,9 @@ const leadStatuses = [
 
 const callStatuses = [
   'not_called',
+  'communication_completed',
+  'respond_hi',
+  'recall',
   'rnr',
   'cnr',
   'cw',
@@ -19,17 +22,20 @@ const callStatuses = [
   'switched_off',
   'so',
   'invalid_number',
+  'in',
   'callback_requested',
   'ccb',
   'nn',
+  'ni',
   'interested',
   'talk_response',
   'not_interested',
-  'ni',
   'wrong_number',
   'language_barrier',
   'converted',
   'follow_up',
+  'session_730_attend',
+  'session_after_730',
   'custom_remark',
 ];
 

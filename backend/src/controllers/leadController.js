@@ -93,7 +93,7 @@ exports.list = asyncHandler(async (req, res) => {
   }
 
   if (req.query.followup === 'today') {
-    where.push(`l.next_followup_at::date = CURRENT_DATE`);
+    where.push(`(l.next_followup_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date`);
   } else if (req.query.followup === 'overdue') {
     where.push(`l.next_followup_at < NOW()`);
   } else if (req.query.followup === 'week') {

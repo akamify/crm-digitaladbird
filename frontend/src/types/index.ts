@@ -15,7 +15,9 @@ export type CallStatus =
   | 'talk_response' | 'custom_remark'
   | 'interested' | 'not_interested' | 'follow_up' | 'converted'
   | 'rnr' | 'busy' | 'switched_off' | 'invalid_number'
-  | 'callback_requested' | 'wrong_number' | 'language_barrier';
+  | 'callback_requested' | 'wrong_number' | 'language_barrier'
+  | 'communication_completed' | 'respond_hi' | 'recall'
+  | 'in' | 'session_730_attend' | 'session_after_730';
 
 export interface User {
   id: string;

@@ -84,14 +84,16 @@ interface Props {
 export function WorkflowPanel({ leadId, isAdmin }: Props) {
   const { data: wfData, isLoading, isError } = useLeadWorkflow(leadId);
   const [openStep, setOpenStep] = useState<number | null>(null);
+  const [hasInteracted, setHasInteracted] = useState(false);
 
   const currentStep = wfData?.current_step ?? 1;
 
   useEffect(() => {
-    if (wfData && openStep === null) {
+    // Only auto-open on initial load, not when user manually closes
+    if (wfData && openStep === null && !hasInteracted) {
       setOpenStep(currentStep <= 4 ? currentStep : null);
     }
-  }, [wfData, currentStep, openStep]);
+  }, [wfData, currentStep, openStep, hasInteracted]);
 
   if (isLoading) {
     return (
@@ -185,7 +187,7 @@ export function WorkflowPanel({ leadId, isAdmin }: Props) {
         <StepCard
           step={1} config={STEP_CONFIG[0]}
           unlocked={currentStep >= 1} completed={completedSteps[0]}
-          isOpen={openStep === 1} onToggle={() => setOpenStep(openStep === 1 ? null : 1)}
+          isOpen={openStep === 1} onToggle={() => { setHasInteracted(true); setOpenStep(openStep === 1 ? null : 1); }}
           savedValue={wfData.workflow?.remark_status ? (REMARK_DISPLAY[wfData.workflow.remark_status]?.label || humanize(wfData.workflow.remark_status)) : undefined}
           savedAt={wfData.workflow?.remark_saved_at || undefined}
         >
@@ -195,7 +197,7 @@ export function WorkflowPanel({ leadId, isAdmin }: Props) {
         <StepCard
           step={2} config={STEP_CONFIG[1]}
           unlocked={currentStep >= 2} completed={completedSteps[1]}
-          isOpen={openStep === 2} onToggle={() => setOpenStep(openStep === 2 ? null : 2)}
+          isOpen={openStep === 2} onToggle={() => { setHasInteracted(true); setOpenStep(openStep === 2 ? null : 2); }}
           savedValue={wfData.workflow?.lead_level ? (LEVEL_DISPLAY[wfData.workflow.lead_level]?.label || humanize(wfData.workflow.lead_level)) : undefined}
           savedAt={wfData.workflow?.lead_level_saved_at || undefined}
         >
@@ -205,7 +207,7 @@ export function WorkflowPanel({ leadId, isAdmin }: Props) {
         <StepCard
           step={3} config={STEP_CONFIG[2]}
           unlocked={currentStep >= 3} completed={completedSteps[2]}
-          isOpen={openStep === 3} onToggle={() => setOpenStep(openStep === 3 ? null : 3)}
+          isOpen={openStep === 3} onToggle={() => { setHasInteracted(true); setOpenStep(openStep === 3 ? null : 3); }}
           savedValue={wfData.workflow?.followup_completed ? 'Follow-up complete' : undefined}
           savedAt={wfData.workflow?.followup_completed_at || undefined}
         >
@@ -215,7 +217,7 @@ export function WorkflowPanel({ leadId, isAdmin }: Props) {
         <StepCard
           step={4} config={STEP_CONFIG[3]}
           unlocked={currentStep >= 4} completed={completedSteps[3]}
-          isOpen={openStep === 4} onToggle={() => setOpenStep(openStep === 4 ? null : 4)}
+          isOpen={openStep === 4} onToggle={() => { setHasInteracted(true); setOpenStep(openStep === 4 ? null : 4); }}
           savedValue={wfData.conversion?.customer_type ? `${humanize(wfData.conversion.customer_type)} — ₹${Number(wfData.conversion.total_payment || 0).toLocaleString()}` : undefined}
           savedAt={wfData.conversion?.submitted_at || undefined}
         >
