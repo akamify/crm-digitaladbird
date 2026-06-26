@@ -170,7 +170,7 @@ export interface UserPerformance {
 }
 
 export interface FunnelStage { stage: LeadStage; count: string; }
-export interface SourceStat  { source: string | null; count: string; conversions: string; }
+export interface SourceStat { source: string | null; count: string; conversions: string; }
 
 export interface DistributionRule {
   id: string;

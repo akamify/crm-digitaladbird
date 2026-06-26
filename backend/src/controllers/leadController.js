@@ -28,8 +28,8 @@ const { validateCallStatus, validateLeadStage } = require('../constants/leadStat
  */
 exports.list = asyncHandler(async (req, res) => {
   const visible = await getVisibleUserIds(req.user);
-  const where   = [`l.deleted_at IS NULL`];
-  const params  = [];
+  const where = [`l.deleted_at IS NULL`];
+  const params = [];
 
   // role scoping
   if (visible !== null) {
@@ -53,10 +53,10 @@ exports.list = asyncHandler(async (req, res) => {
     const n = params.length;
     where.push(`(l.full_name ILIKE $${n} OR l.phone ILIKE $${n} OR l.email ILIKE $${n})`);
   }
-  if (req.query.stage)       { params.push(req.query.stage);        where.push(`l.stage = $${params.length}`); }
-  if (req.query.call_status) { params.push(req.query.call_status);  where.push(`l.call_status = $${params.length}`); }
-  if (req.query.source)      { params.push(req.query.source);       where.push(`l.source = $${params.length}`); }
-  if (req.query.form_id)     { params.push(req.query.form_id);      where.push(`l.meta_form_id = $${params.length}`); }
+  if (req.query.stage) { params.push(req.query.stage); where.push(`l.stage = $${params.length}`); }
+  if (req.query.call_status) { params.push(req.query.call_status); where.push(`l.call_status = $${params.length}`); }
+  if (req.query.source) { params.push(req.query.source); where.push(`l.source = $${params.length}`); }
+  if (req.query.form_id) { params.push(req.query.form_id); where.push(`l.meta_form_id = $${params.length}`); }
   if (req.query.campaign_id) {
     params.push(req.query.campaign_id);
     const n = params.length;
@@ -83,9 +83,9 @@ exports.list = asyncHandler(async (req, res) => {
       )
     )`);
   }
-  if (req.query.adset)       { params.push(req.query.adset);        where.push(`l.adset_name = $${params.length}`); }
-  if (req.query.from)        { params.push(req.query.from);         where.push(`l.created_at >= $${params.length}`); }
-  if (req.query.to)          { params.push(req.query.to);           where.push(`l.created_at <= $${params.length}`); }
+  if (req.query.adset) { params.push(req.query.adset); where.push(`l.adset_name = $${params.length}`); }
+  if (req.query.from) { params.push(req.query.from); where.push(`l.created_at >= $${params.length}`); }
+  if (req.query.to) { params.push(req.query.to); where.push(`l.created_at <= $${params.length}`); }
   if (req.query.pending === 'true') where.push(`l.is_pending = TRUE`);
   if (req.query.category && ['partner', 'trader', 'unknown'].includes(req.query.category)) {
     params.push(req.query.category);
@@ -100,21 +100,21 @@ exports.list = asyncHandler(async (req, res) => {
     where.push(`l.next_followup_at BETWEEN NOW() AND NOW() + INTERVAL '7 days'`);
   }
 
-  const allowedSort  = new Set(['created_at', 'assigned_at', 'next_followup_at', 'updated_at']);
-  const sortCol      = allowedSort.has(req.query.sort) ? req.query.sort : 'created_at';
-  const sortOrd      = req.query.order === 'asc' ? 'ASC' : 'DESC';
+  const allowedSort = new Set(['created_at', 'assigned_at', 'next_followup_at', 'updated_at']);
+  const sortCol = allowedSort.has(req.query.sort) ? req.query.sort : 'created_at';
+  const sortOrd = req.query.order === 'asc' ? 'ASC' : 'DESC';
 
-  const page         = Math.max(1, parseInt(req.query.page || '1', 10));
-  const pageSize     = Math.min(200, Math.max(1, parseInt(req.query.page_size || '25', 10)));
-  const offset       = (page - 1) * pageSize;
+  const page = Math.max(1, parseInt(req.query.page || '1', 10));
+  const pageSize = Math.min(200, Math.max(1, parseInt(req.query.page_size || '25', 10)));
+  const offset = (page - 1) * pageSize;
 
   const whereSql = where.join(' AND ');
 
   const totalRes = await query(`SELECT COUNT(*) FROM leads l WHERE ${whereSql}`, params);
-  const total    = parseInt(totalRes.rows[0].count, 10);
+  const total = parseInt(totalRes.rows[0].count, 10);
 
-  params.push(pageSize); const limitIdx  = params.length;
-  params.push(offset);   const offsetIdx = params.length;
+  params.push(pageSize); const limitIdx = params.length;
+  params.push(offset); const offsetIdx = params.length;
 
   const sql = `
     SELECT
@@ -192,7 +192,7 @@ exports.lock = asyncHandler(async (req, res) => {
       throw new AppError(403, 'FORBIDDEN', 'Lead not assigned to you');
     }
     if (lead.locked_by_user_id && lead.locked_by_user_id !== req.user.id &&
-        lead.locked_until && new Date(lead.locked_until) > new Date()) {
+      lead.locked_until && new Date(lead.locked_until) > new Date()) {
       throw new AppError(409, 'LOCKED', 'Lead is currently being worked on by another user');
     }
     const until = new Date(Date.now() + config.leadLock.durationMinutes * 60_000);
@@ -245,7 +245,7 @@ exports.addRemark = asyncHandler(async (req, res) => {
     );
 
     const updates = [];
-    const params  = [req.params.id];
+    const params = [req.params.id];
     if (normalizedCallStatus) {
       params.push(normalizedCallStatus);
       updates.push(`call_status = $${params.length}`);
@@ -253,7 +253,7 @@ exports.addRemark = asyncHandler(async (req, res) => {
       updates.push(`call_attempts = call_attempts + 1`);
     }
     if (next_followup_at) { params.push(next_followup_at); updates.push(`next_followup_at = $${params.length}`); }
-    if (normalizedStage)  { params.push(normalizedStage);  updates.push(`stage = $${params.length}`); }
+    if (normalizedStage) { params.push(normalizedStage); updates.push(`stage = $${params.length}`); }
     // release lock for this user after they've worked the lead
     if (release_lock !== false) updates.push(`locked_by_user_id = NULL`, `locked_until = NULL`);
 

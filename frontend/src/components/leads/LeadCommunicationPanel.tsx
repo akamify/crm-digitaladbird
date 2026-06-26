@@ -53,8 +53,8 @@ export function LeadCommunicationPanel({ leadId, lead, remarks = [], defaultTab 
     <section className="card-padded">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-            <MessageCircle className="h-4 w-4 text-brand-600" />
-            <h3 className="text-sm font-semibold text-slate-900">Communication</h3>
+          <MessageCircle className="h-4 w-4 text-brand-600" />
+          <h3 className="text-sm font-semibold text-slate-900">Communication</h3>
         </div>
         <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
           {([

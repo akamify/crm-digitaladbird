@@ -200,76 +200,76 @@ function LeadsInner() {
 
       <div className="card p-4">
         <div className="flex flex-wrap items-center gap-3">
-        <div className="relative min-w-[240px] flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input
-            className="input pl-10"
-            placeholder="Search name, phone, email, city..."
-            value={search}
-            onChange={(event) => {
-              setSearch(event.target.value);
-              setFilters(current => ({ ...current, page: 1 }));
-              setSelected([]);
-            }}
-          />
+          <div className="relative min-w-[240px] flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              className="input pl-10"
+              placeholder="Search name, phone, email, city..."
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setFilters(current => ({ ...current, page: 1 }));
+                setSelected([]);
+              }}
+            />
+          </div>
+          <select className="input w-48" value={filters.campaign_id || ''} onChange={e => updateFilters({ campaign_id: e.target.value || undefined, campaign: undefined })}>
+            <option value="">All campaigns</option>
+            {campaigns.isLoading && <option value="" disabled>Loading campaigns...</option>}
+            {(campaigns.data || []).map(campaign => <option key={campaign.campaign_id} value={campaign.campaign_id}>{campaign.internal_label || campaign.campaign_name}</option>)}
+          </select>
+          <select className="input w-32" value={filters.source || ''} onChange={e => updateFilters({ source: e.target.value || undefined })}>
+            <option value="">All Sources</option>
+            <option value="meta">Meta</option>
+            <option value="google">Google Sheet</option>
+            <option value="manual">Manual</option>
+            <option value="import">Import</option>
+            <option value="website">Website</option>
+            <option value="whatsapp">WhatsApp</option>
+          </select>
+          <select className="input w-32" value={filters.stage || ''} onChange={e => updateFilters({ stage: e.target.value as LeadFilters['stage'] })}>
+            <option value="">All Stages</option>
+            <option value="new">New</option>
+            <option value="contacted">Contacted</option>
+            <option value="qualified">Qualified</option>
+            <option value="follow_up">Follow-up</option>
+            <option value="won">Won</option>
+            <option value="lost">Lost</option>
+          </select>
+          <select className="input w-36" value={filters.call_status || ''} onChange={e => updateFilters({ call_status: e.target.value as LeadFilters['call_status'] })}>
+            <option value="">All Status</option>
+            <option value="not_called">Not Called</option>
+            <option value="interested">Interested</option>
+            <option value="converted">Converted</option>
+            <option value="not_interested">Not Interested</option>
+            <option value="follow_up">Follow-up</option>
+            <option value="busy">Busy</option>
+          </select>
+          <select className="input w-36" value={filters.category || ''} onChange={e => updateFilters({ category: e.target.value as LeadFilters['category'] })}>
+            <option value="">All Categories</option>
+            <option value="partner">Partner Leads</option>
+            <option value="trader">Trader Leads</option>
+            <option value="unknown">Unknown</option>
+          </select>
+          <select className="input w-40" value={filters.assigned_to || ''} onChange={e => updateFilters({ assigned_to: e.target.value || undefined })}>
+            <option value="">All assignees</option>
+            <option value="__unassigned">Unassigned</option>
+            {assignableUsers.map(user => <option key={user.id} value={user.id}>{user.full_name}</option>)}
+          </select>
+          <select className="input w-32" value={filters.pending || ''} onChange={e => updateFilters({ pending: e.target.value as LeadFilters['pending'] })}>
+            <option value="">All Work</option>
+            <option value="true">Pending Only</option>
+            <option value="false">Worked Only</option>
+          </select>
+          <select className="input w-28" value={String(pageSize)} onChange={e => updateFilters({ page_size: Number(e.target.value) })}>
+            <option value="10">10 / page</option>
+            <option value="25">25 / page</option>
+            <option value="50">50 / page</option>
+          </select>
+          <button onClick={() => { setSearch(''); setFilters({ page: 1, page_size: pageSize }); setSelected([]); }} className="btn-outline rounded-lg px-3 py-2 text-sm">
+            Clear filters
+          </button>
         </div>
-        <select className="input w-48" value={filters.campaign_id || ''} onChange={e => updateFilters({ campaign_id: e.target.value || undefined, campaign: undefined })}>
-          <option value="">All campaigns</option>
-          {campaigns.isLoading && <option value="" disabled>Loading campaigns...</option>}
-          {(campaigns.data || []).map(campaign => <option key={campaign.campaign_id} value={campaign.campaign_id}>{campaign.internal_label || campaign.campaign_name}</option>)}
-        </select>
-        <select className="input w-32" value={filters.source || ''} onChange={e => updateFilters({ source: e.target.value || undefined })}>
-          <option value="">All Sources</option>
-          <option value="meta">Meta</option>
-          <option value="google">Google Sheet</option>
-          <option value="manual">Manual</option>
-          <option value="import">Import</option>
-          <option value="website">Website</option>
-          <option value="whatsapp">WhatsApp</option>
-        </select>
-        <select className="input w-32" value={filters.stage || ''} onChange={e => updateFilters({ stage: e.target.value as LeadFilters['stage'] })}>
-          <option value="">All Stages</option>
-          <option value="new">New</option>
-          <option value="contacted">Contacted</option>
-          <option value="qualified">Qualified</option>
-          <option value="follow_up">Follow-up</option>
-          <option value="won">Won</option>
-          <option value="lost">Lost</option>
-        </select>
-        <select className="input w-36" value={filters.call_status || ''} onChange={e => updateFilters({ call_status: e.target.value as LeadFilters['call_status'] })}>
-          <option value="">All Status</option>
-          <option value="not_called">Not Called</option>
-          <option value="interested">Interested</option>
-          <option value="converted">Converted</option>
-          <option value="not_interested">Not Interested</option>
-          <option value="follow_up">Follow-up</option>
-          <option value="busy">Busy</option>
-        </select>
-        <select className="input w-36" value={filters.category || ''} onChange={e => updateFilters({ category: e.target.value as LeadFilters['category'] })}>
-          <option value="">All Categories</option>
-          <option value="partner">Partner Leads</option>
-          <option value="trader">Trader Leads</option>
-          <option value="unknown">Unknown</option>
-        </select>
-        <select className="input w-40" value={filters.assigned_to || ''} onChange={e => updateFilters({ assigned_to: e.target.value || undefined })}>
-          <option value="">All assignees</option>
-          <option value="__unassigned">Unassigned</option>
-          {assignableUsers.map(user => <option key={user.id} value={user.id}>{user.full_name}</option>)}
-        </select>
-        <select className="input w-32" value={filters.pending || ''} onChange={e => updateFilters({ pending: e.target.value as LeadFilters['pending'] })}>
-          <option value="">All Work</option>
-          <option value="true">Pending Only</option>
-          <option value="false">Worked Only</option>
-        </select>
-        <select className="input w-28" value={String(pageSize)} onChange={e => updateFilters({ page_size: Number(e.target.value) })}>
-          <option value="10">10 / page</option>
-          <option value="25">25 / page</option>
-          <option value="50">50 / page</option>
-        </select>
-        <button onClick={() => { setSearch(''); setFilters({ page: 1, page_size: pageSize }); setSelected([]); }} className="btn-outline rounded-lg px-3 py-2 text-sm">
-          Clear filters
-        </button>
-      </div>
       </div>
 
       {selected.length > 0 && (

@@ -42,7 +42,7 @@ function LeadsInner() {
     page_size: Number(sp.get('page_size') || '25'),
     sort: 'created_at',
     order: 'desc',
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }), []);
 
   const [filters, setFilters] = useState<LeadFilterType>(initial);

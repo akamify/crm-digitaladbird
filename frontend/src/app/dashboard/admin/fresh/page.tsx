@@ -23,10 +23,10 @@ export default function AdminFreshLeadsPage() {
 }
 
 const TABS: { key: FreshLeadsScope; label: string; icon: React.ReactNode; color: string }[] = [
-  { key: 'today',   label: 'Today',           icon: <Sparkles className="h-3.5 w-3.5" />,    color: 'amber'   },
-  { key: 'trader',  label: 'Trader Fresh',    icon: <Briefcase className="h-3.5 w-3.5" />,   color: 'blue'    },
-  { key: 'partner', label: 'Partner Fresh',   icon: <HandMetal className="h-3.5 w-3.5" />,   color: 'violet'  },
-  { key: 'all',     label: 'All Active',      icon: <Inbox className="h-3.5 w-3.5" />,       color: 'slate'   },
+  { key: 'today', label: 'Today', icon: <Sparkles className="h-3.5 w-3.5" />, color: 'amber' },
+  { key: 'trader', label: 'Trader Fresh', icon: <Briefcase className="h-3.5 w-3.5" />, color: 'blue' },
+  { key: 'partner', label: 'Partner Fresh', icon: <HandMetal className="h-3.5 w-3.5" />, color: 'violet' },
+  { key: 'all', label: 'All Active', icon: <Inbox className="h-3.5 w-3.5" />, color: 'slate' },
 ];
 type CommunicationTab = 'chat' | 'calls';
 
@@ -63,12 +63,12 @@ function FreshLeadsInner() {
 
       {/* Counter row — total / today / per-category, all clickable to switch tab */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
-        <CountTile label="Total Leads"      value={counts?.total_active}  color="slate"  icon={<Inbox className="h-4 w-4" />}     onClick={() => setScope('all')} />
-        <CountTile label="Today Fresh"      value={counts?.today_total}   color="amber"  icon={<Sparkles className="h-4 w-4" />}  onClick={() => setScope('today')} active={scope === 'today'} />
-        <CountTile label="Trader Today"     value={counts?.today_trader}  color="blue"   icon={<Briefcase className="h-4 w-4" />} onClick={() => setScope('trader')}  active={scope === 'trader'} />
-        <CountTile label="Partner Today"    value={counts?.today_partner} color="violet" icon={<HandMetal className="h-4 w-4" />}  onClick={() => setScope('partner')} active={scope === 'partner'} />
-        <CountTile label="Unassigned"       value={counts?.unassigned}    color="rose"   icon={<Users className="h-4 w-4" />}     onClick={() => setScope('today')} />
-        <CountTile label="Assigned"         value={counts?.assigned}      color="emerald" icon={<Users className="h-4 w-4" />}    onClick={() => setScope('today')} />
+        <CountTile label="Total Leads" value={counts?.total_active} color="slate" icon={<Inbox className="h-4 w-4" />} onClick={() => setScope('all')} />
+        <CountTile label="Today Fresh" value={counts?.today_total} color="amber" icon={<Sparkles className="h-4 w-4" />} onClick={() => setScope('today')} active={scope === 'today'} />
+        <CountTile label="Trader Today" value={counts?.today_trader} color="blue" icon={<Briefcase className="h-4 w-4" />} onClick={() => setScope('trader')} active={scope === 'trader'} />
+        <CountTile label="Partner Today" value={counts?.today_partner} color="violet" icon={<HandMetal className="h-4 w-4" />} onClick={() => setScope('partner')} active={scope === 'partner'} />
+        <CountTile label="Unassigned" value={counts?.unassigned} color="rose" icon={<Users className="h-4 w-4" />} onClick={() => setScope('today')} />
+        <CountTile label="Assigned" value={counts?.assigned} color="emerald" icon={<Users className="h-4 w-4" />} onClick={() => setScope('today')} />
       </div>
 
       {/* Sheet shortcuts — directly open trader / partner sheets in Google */}
@@ -104,9 +104,9 @@ function FreshLeadsInner() {
         {TABS.map(t => {
           const n = counts && (
             t.key === 'today' ? counts.today_total :
-            t.key === 'trader' ? counts.today_trader :
-            t.key === 'partner' ? counts.today_partner :
-            counts.total_active
+              t.key === 'trader' ? counts.today_trader :
+                t.key === 'partner' ? counts.today_partner :
+                  counts.total_active
           );
           return (
             <button key={t.key} onClick={() => setScope(t.key)}
@@ -214,11 +214,11 @@ function CountTile({ label, value, color, icon, onClick, active }: {
   onClick?: () => void; active?: boolean;
 }) {
   const map: Record<string, string> = {
-    slate:   'bg-slate-50 text-slate-700 border-slate-200',
-    amber:   'bg-amber-50 text-amber-700 border-amber-200',
-    blue:    'bg-blue-50 text-blue-700 border-blue-200',
-    violet:  'bg-violet-50 text-violet-700 border-violet-200',
-    rose:    'bg-rose-50 text-rose-700 border-rose-200',
+    slate: 'bg-slate-50 text-slate-700 border-slate-200',
+    amber: 'bg-amber-50 text-amber-700 border-amber-200',
+    blue: 'bg-blue-50 text-blue-700 border-blue-200',
+    violet: 'bg-violet-50 text-violet-700 border-violet-200',
+    rose: 'bg-rose-50 text-rose-700 border-rose-200',
     emerald: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   };
   const cls = map[color] || map.slate;
