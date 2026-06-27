@@ -160,9 +160,12 @@ async function fulfillMemberRequest(requestId) {
               COALESCE(u.is_available, TRUE) AS user_is_available,
               COALESCE(u.distribution_blocked, FALSE) AS user_distribution_blocked,
               COALESCE(u.lead_assignment_enabled, TRUE) AS user_lead_assignment_enabled,
-              COALESCE(u.lead_assignment_status, 'available') AS user_lead_assignment_status
+              COALESCE(u.lead_assignment_status, 'available') AS user_lead_assignment_status,
+              COALESCE(rm.is_available, TRUE) AS rm_is_available,
+              COALESCE(rm.lead_assignment_status, 'available') AS rm_lead_assignment_status
          FROM lead_requests lr
          JOIN users u ON u.id = lr.user_id
+         LEFT JOIN users rm ON rm.id = u.report_to_id AND rm.role = 'rm' AND rm.deleted_at IS NULL
         WHERE lr.id = $1 AND lr.status = 'pending'
         FOR UPDATE OF lr`,
       [requestId]
@@ -179,6 +182,8 @@ async function fulfillMemberRequest(requestId) {
         distribution_blocked: req.user_distribution_blocked,
         lead_assignment_enabled: req.user_lead_assignment_enabled,
         lead_assignment_status: req.user_lead_assignment_status,
+        rm_is_available: req.rm_is_available,
+        rm_lead_assignment_status: req.rm_lead_assignment_status,
       }, { requireAvailable: true });
     } catch (err) {
       logger.warn({ requestId, userId: req.user_id, code: err.code }, '[RequestEngine] Skipping request with invalid lead assignee');
@@ -305,6 +310,17 @@ async function distributeRoundRobin() {
          AND COALESCE(u.distribution_blocked, FALSE) = FALSE
          AND COALESCE(u.lead_assignment_enabled, TRUE) = TRUE
          AND COALESCE(u.lead_assignment_status, 'available') = 'available'
+         AND NOT EXISTS (
+           SELECT 1 FROM users rm
+            WHERE rm.id = u.report_to_id
+              AND rm.role = 'rm'
+              AND (
+                rm.status <> 'active'
+                OR rm.deleted_at IS NOT NULL
+                OR COALESCE(rm.is_available, TRUE) = FALSE
+                OR COALESCE(rm.lead_assignment_status, 'available') <> 'available'
+              )
+         )
        ORDER BY lr.created_at ASC
        FOR UPDATE OF lr
     `);

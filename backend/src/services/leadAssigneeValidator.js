@@ -32,6 +32,9 @@ function assertLeadAssigneeUser(user, options = {}) {
   if (user.lead_assignment_enabled === false || String(user.lead_assignment_status || 'available') !== 'available') {
     throw new AppError(422, INVALID_LEAD_ASSIGNEE, INVALID_LEAD_ASSIGNEE_AVAILABILITY_MESSAGE);
   }
+  if (user.rm_is_available === false || String(user.rm_lead_assignment_status || 'available') !== 'available') {
+    throw new AppError(422, INVALID_LEAD_ASSIGNEE, INVALID_LEAD_ASSIGNEE_AVAILABILITY_MESSAGE);
+  }
   if (actor?.role === 'rm' && user.report_to_id !== actor.id) {
     throw new AppError(403, 'FORBIDDEN', 'RM can only assign leads to users in their team');
   }
@@ -40,13 +43,16 @@ function assertLeadAssigneeUser(user, options = {}) {
 
 async function validateLeadAssignee(runner, userId, options = {}) {
   const { rows: [user] } = await runner.query(
-    `SELECT id, full_name, role, status, report_to_id, deleted_at,
-            COALESCE(is_available, TRUE) AS is_available,
-            COALESCE(distribution_blocked, FALSE) AS distribution_blocked,
-            COALESCE(lead_assignment_enabled, TRUE) AS lead_assignment_enabled,
-            COALESCE(lead_assignment_status, 'available') AS lead_assignment_status
-       FROM users
-      WHERE id = $1 AND deleted_at IS NULL`,
+    `SELECT u.id, u.full_name, u.role, u.status, u.report_to_id, u.deleted_at,
+            COALESCE(u.is_available, TRUE) AS is_available,
+            COALESCE(u.distribution_blocked, FALSE) AS distribution_blocked,
+            COALESCE(u.lead_assignment_enabled, TRUE) AS lead_assignment_enabled,
+            COALESCE(u.lead_assignment_status, 'available') AS lead_assignment_status,
+            COALESCE(rm.is_available, TRUE) AS rm_is_available,
+            COALESCE(rm.lead_assignment_status, 'available') AS rm_lead_assignment_status
+       FROM users u
+       LEFT JOIN users rm ON rm.id = u.report_to_id AND rm.role = 'rm' AND rm.deleted_at IS NULL
+      WHERE u.id = $1 AND u.deleted_at IS NULL`,
     [userId],
   );
   return assertLeadAssigneeUser(user, options);

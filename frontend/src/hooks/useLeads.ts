@@ -79,6 +79,29 @@ export function useAddRemark() {
   });
 }
 
+export interface BulkAddRemarkInput {
+  leadIds: string[];
+  remark: string;
+  call_status?: CallStatus;
+  next_followup_at?: string | null;
+  stage?: string;
+}
+
+export function useBulkAddRemark() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ leadIds, ...body }: BulkAddRemarkInput) =>
+      apiPost<{ requested: number; updated: number; skipped: number; skippedReasons: Record<string, string> }>('/leads/bulk/remarks', {
+        lead_ids: leadIds,
+        ...body,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['reports'] });
+    },
+  });
+}
+
 export interface MetaCampaign {
   campaign_id: string;
   campaign_name: string;

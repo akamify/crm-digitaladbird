@@ -3,15 +3,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ChevronLeft, ChevronRight, Inbox, Lock, Mail, Phone } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Inbox, Lock, Mail, MessageSquarePlus, Phone } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { LeadActions } from '@/components/leads/LeadActions';
 import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
 import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
 import { LeadFilters } from '@/components/leads/LeadFilters';
+import { RemarkModal } from '@/components/leads/RemarkModal';
 import { EmptyState, Modal, Skeleton, StatusChip } from '@/components/ui/Modal';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
-import { useLeadList } from '@/hooks/useLeads';
+import { useBulkAddRemark, useLeadList } from '@/hooks/useLeads';
 import { formatISTCompact, formatISTTooltip, formatStageUpdatedAt } from '@/lib/date';
 import { clsx, fmtPhone, humanize, isDueToday, isOverdue, stageChip } from '@/lib/format';
 import type { Lead, LeadFilters as LeadFilterType } from '@/types';
@@ -48,15 +50,22 @@ function LeadsInner() {
   const [filters, setFilters] = useState<LeadFilterType>(initial);
   const [communicationLead, setCommunicationLead] = useState<Lead | null>(null);
   const [communicationTab, setCommunicationTab] = useState<CommunicationTab>('chat');
+  const [remarkLeadId, setRemarkLeadId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkRemarkOpen, setBulkRemarkOpen] = useState(false);
+  const [bulkRemark, setBulkRemark] = useState('');
   const debouncedSearch = useDebouncedValue(filters.q || '');
   const effectiveFilters = useMemo(() => ({ ...filters, q: debouncedSearch || undefined }), [filters, debouncedSearch]);
   const { data, isLoading, isFetching } = useLeadList(effectiveFilters);
+  const bulkAddRemark = useBulkAddRemark();
 
   const rows = data?.rows ?? [];
   const total = data?.total ?? 0;
   const page = filters.page || 1;
   const size = filters.page_size || 25;
   const pages = Math.max(1, Math.ceil(total / size));
+  const currentPageIds = rows.map(lead => lead.id);
+  const allCurrentPageSelected = currentPageIds.length > 0 && currentPageIds.every(id => selectedIds.includes(id));
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -77,9 +86,48 @@ function LeadsInner() {
     setCommunicationTab(tab);
   }
 
+  function toggleLeadSelection(leadId: string, checked: boolean) {
+    setSelectedIds(ids => checked ? [...new Set([...ids, leadId])] : ids.filter(id => id !== leadId));
+  }
+
+  function toggleCurrentPage(checked: boolean) {
+    setSelectedIds(ids => checked
+      ? [...new Set([...ids, ...currentPageIds])]
+      : ids.filter(id => !currentPageIds.includes(id)));
+  }
+
+  function submitBulkRemark() {
+    if (!bulkRemark.trim()) {
+      toast.error('Remark is required');
+      return;
+    }
+    bulkAddRemark.mutate({ leadIds: selectedIds, remark: bulkRemark.trim() }, {
+      onSuccess: (summary) => {
+        toast.success(`Remark added to ${summary.updated} lead${summary.updated === 1 ? '' : 's'}`);
+        if (summary.skipped) toast.error(`${summary.skipped} lead${summary.skipped === 1 ? '' : 's'} skipped`);
+        setSelectedIds([]);
+        setBulkRemark('');
+        setBulkRemarkOpen(false);
+      },
+      onError: (e: any) => toast.error(e?.response?.data?.error?.message || e?.response?.data?.message || 'Could not add remarks'),
+    });
+  }
+
   return (
     <div className="space-y-4">
       <LeadFilters value={filters} onChange={setFilters} />
+
+      {selectedIds.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm">
+          <div className="font-medium text-blue-950">{selectedIds.length} lead{selectedIds.length === 1 ? '' : 's'} selected</div>
+          <div className="ml-auto flex flex-wrap gap-2">
+            <button onClick={() => setBulkRemarkOpen(true)} className="btn-primary inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs">
+              <MessageSquarePlus className="h-4 w-4" /> Add Remark
+            </button>
+            <button onClick={() => setSelectedIds([])} className="btn-ghost rounded-lg px-3 py-2 text-xs">Clear Selection</button>
+          </div>
+        </div>
+      )}
 
       <div className="card overflow-hidden">
         <div className="flex flex-col gap-2 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -105,6 +153,14 @@ function LeadsInner() {
             <table className="w-full min-w-[1120px] text-sm">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/60 text-left text-xs uppercase tracking-wider text-slate-500">
+                  <th className="w-10 px-4 py-2.5 font-medium">
+                    <input
+                      type="checkbox"
+                      checked={allCurrentPageSelected}
+                      onChange={event => toggleCurrentPage(event.target.checked)}
+                      aria-label="Select all leads on current page"
+                    />
+                  </th>
                   <th className="px-4 py-2.5 font-medium">Lead</th>
                   <th className="px-4 py-2.5 font-medium">Contact</th>
                   <th className="px-4 py-2.5 font-medium">Source</th>
@@ -123,6 +179,14 @@ function LeadsInner() {
                   const locked = Boolean(lead.locked_until && new Date(lead.locked_until) > new Date());
                   return (
                     <tr key={lead.id} className="table-row">
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(lead.id)}
+                          onChange={event => toggleLeadSelection(lead.id, event.target.checked)}
+                          aria-label={`Select ${lead.full_name || 'lead'}`}
+                        />
+                      </td>
                       <td className="px-4 py-3">
                         <Link href={`/leads/${lead.id}`} className="block">
                           <div className="flex items-center gap-2 font-medium text-slate-900 hover:text-brand-700">
@@ -187,12 +251,22 @@ function LeadsInner() {
                         {formatISTCompact(lead.created_at)}
                       </td>
                       <td className="px-4 py-3">
-                        <LeadActions
-                          phone={lead.phone}
-                          compact
-                          onCall={() => openCommunication(lead, 'calls')}
-                          onChat={() => openCommunication(lead, 'chat')}
-                        />
+                        <div className="flex items-center gap-1">
+                          <LeadActions
+                            phone={lead.phone}
+                            compact
+                            onCall={() => openCommunication(lead, 'calls')}
+                            onChat={() => openCommunication(lead, 'chat')}
+                          />
+                          <button
+                            type="button"
+                            title="Add remark"
+                            onClick={() => setRemarkLeadId(lead.id)}
+                            className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-1 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50"
+                          >
+                            <MessageSquarePlus className="h-3 w-3" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -229,6 +303,24 @@ function LeadsInner() {
         {communicationLead && (
           <LeadCommunicationPanel leadId={communicationLead.id} lead={communicationLead} defaultTab={communicationTab} />
         )}
+      </Modal>
+      {remarkLeadId && <RemarkModal leadId={remarkLeadId} open={!!remarkLeadId} onClose={() => setRemarkLeadId(null)} />}
+      <Modal open={bulkRemarkOpen} onClose={() => setBulkRemarkOpen(false)} title="Add Remark to Selected Leads" size="md">
+        <div className="space-y-3">
+          <p className="text-sm text-slate-600">This remark will be added to {selectedIds.length} selected lead{selectedIds.length === 1 ? '' : 's'} you can access.</p>
+          <textarea
+            className="input min-h-[120px] resize-y"
+            value={bulkRemark}
+            onChange={event => setBulkRemark(event.target.value)}
+            placeholder="Write the remark..."
+          />
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={() => setBulkRemarkOpen(false)} className="btn-ghost rounded-lg px-4 py-2 text-sm">Cancel</button>
+          <button onClick={submitBulkRemark} disabled={bulkAddRemark.isPending} className="btn-primary rounded-lg px-4 py-2 text-sm">
+            {bulkAddRemark.isPending ? 'Saving...' : 'Save Remark'}
+          </button>
+        </div>
       </Modal>
     </div>
   );

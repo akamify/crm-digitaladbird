@@ -118,6 +118,17 @@ async function getAvailableMembers(options = {}, client = null) {
     AND COALESCE(u.distribution_blocked, FALSE) = FALSE
     AND COALESCE(u.lead_assignment_enabled, TRUE) = TRUE
     AND COALESCE(u.lead_assignment_status, 'available') = 'available'
+    AND NOT EXISTS (
+      SELECT 1 FROM users rm
+       WHERE rm.id = u.report_to_id
+         AND rm.role = 'rm'
+         AND (
+           rm.status <> 'active'
+           OR rm.deleted_at IS NOT NULL
+           OR COALESCE(rm.is_available, TRUE) = FALSE
+           OR COALESCE(rm.lead_assignment_status, 'available') <> 'available'
+         )
+    )
   `;
 
   if (options.rmId) {
@@ -218,6 +229,8 @@ async function getEligibleRmTeams(client) {
       FROM users rm
      WHERE rm.role = 'rm'
        AND rm.status = 'active'
+       AND COALESCE(rm.is_available, TRUE) = TRUE
+       AND COALESCE(rm.lead_assignment_status, 'available') = 'available'
        AND rm.deleted_at IS NULL
        AND EXISTS (
          SELECT 1
@@ -529,9 +542,14 @@ async function runApprovedRequestFulfillment({ limit = 100, actor = null } = {})
       SELECT lr.*, u.role AS user_role, u.status AS user_status,
              u.report_to_id AS user_report_to_id, u.is_available,
              u.deleted_at AS user_deleted_at,
-             COALESCE(u.distribution_blocked, FALSE) AS user_distribution_blocked
+             COALESCE(u.distribution_blocked, FALSE) AS user_distribution_blocked,
+             COALESCE(u.lead_assignment_enabled, TRUE) AS user_lead_assignment_enabled,
+             COALESCE(u.lead_assignment_status, 'available') AS user_lead_assignment_status,
+             COALESCE(rm.is_available, TRUE) AS rm_is_available,
+             COALESCE(rm.lead_assignment_status, 'available') AS rm_lead_assignment_status
         FROM lead_requests lr
         JOIN users u ON u.id = lr.user_id
+        LEFT JOIN users rm ON rm.id = u.report_to_id AND rm.role = 'rm' AND rm.deleted_at IS NULL
        WHERE lr.status IN ('approved', 'partially_fulfilled')
          AND COALESCE(lr.approved_quantity, lr.quantity) > COALESCE(lr.fulfilled_quantity, lr.leads_assigned, 0)
        ORDER BY COALESCE(lr.approved_at, lr.resolved_at, lr.created_at) ASC
@@ -552,6 +570,10 @@ async function runApprovedRequestFulfillment({ limit = 100, actor = null } = {})
           deleted_at: req.user_deleted_at,
           is_available: req.is_available,
           distribution_blocked: req.user_distribution_blocked,
+          lead_assignment_enabled: req.user_lead_assignment_enabled,
+          lead_assignment_status: req.user_lead_assignment_status,
+          rm_is_available: req.rm_is_available,
+          rm_lead_assignment_status: req.rm_lead_assignment_status,
         }, { requireAvailable: true });
       } catch (err) {
         requestResults.push({ requestId: req.id, assigned: 0, skipped: err.code || 'invalid_assignee' });
@@ -835,6 +857,8 @@ async function getAssignmentOverview() {
          FROM users rm
         WHERE rm.role = 'rm'
           AND rm.status = 'active'
+          AND COALESCE(rm.is_available, TRUE) = TRUE
+          AND COALESCE(rm.lead_assignment_status, 'available') = 'available'
           AND rm.deleted_at IS NULL
           AND EXISTS (
             SELECT 1 FROM users m
@@ -854,7 +878,18 @@ async function getAssignmentOverview() {
           AND COALESCE(m.is_available, TRUE) = TRUE
           AND COALESCE(m.distribution_blocked, FALSE) = FALSE
           AND COALESCE(m.lead_assignment_enabled, TRUE) = TRUE
-          AND COALESCE(m.lead_assignment_status, 'available') = 'available') AS available_team_members
+          AND COALESCE(m.lead_assignment_status, 'available') = 'available'
+          AND NOT EXISTS (
+            SELECT 1 FROM users rm
+             WHERE rm.id = m.report_to_id
+               AND rm.role = 'rm'
+               AND (
+                 rm.status <> 'active'
+                 OR rm.deleted_at IS NOT NULL
+                 OR COALESCE(rm.is_available, TRUE) = FALSE
+                 OR COALESCE(rm.lead_assignment_status, 'available') <> 'available'
+               )
+          )) AS available_team_members
   `);
   return { settings, stats: s };
 }

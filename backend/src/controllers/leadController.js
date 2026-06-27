@@ -269,6 +269,93 @@ exports.addRemark = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, data: result });
 });
 
+/**
+ * POST /api/leads/bulk/remarks
+ * Body: { lead_ids, remark, call_status?, next_followup_at?, stage? }
+ * Applies the same remark/status update rules as single-lead remarks.
+ */
+exports.bulkAddRemarks = asyncHandler(async (req, res) => {
+  const leadIds = Array.isArray(req.body?.lead_ids) ? req.body.lead_ids : req.body?.leadIds;
+  const { remark, call_status, next_followup_at, stage } = req.body;
+  if (!Array.isArray(leadIds) || leadIds.length === 0) throw new AppError(400, 'LEAD_IDS_REQUIRED', 'Select at least one lead.');
+  if (!remark || !remark.trim()) throw new AppError(400, 'REMARK_REQUIRED', 'Remark is required');
+
+  const normalizedCallStatus = call_status ? validateCallStatus(call_status) : '';
+  const normalizedStage = stage ? validateLeadStage(stage) : '';
+  if ((call_status && normalizedCallStatus === null) || (stage && normalizedStage === null)) {
+    throw new AppError(400, 'INVALID_LEAD_STATUS_VALUE', 'Invalid status value. Please select one of the available CRM statuses.');
+  }
+
+  const uniqueLeadIds = [...new Set(leadIds.map(String).filter(Boolean))].slice(0, 500);
+  const visible = await getVisibleUserIds(req.user);
+  const result = await withTransaction(async (client) => {
+    const params = [uniqueLeadIds];
+    let scope = '';
+    if (visible !== null) {
+      params.push(visible);
+      scope = ` AND assigned_to_user_id = ANY($${params.length}::uuid[])`;
+    }
+    const { rows: leads } = await client.query(
+      `SELECT id
+         FROM leads
+        WHERE id = ANY($1::uuid[])
+          AND deleted_at IS NULL
+          ${scope}
+        FOR UPDATE`,
+      params,
+    );
+    const allowed = new Set(leads.map(lead => lead.id));
+    const skippedReasons = {};
+    let updated = 0;
+
+    for (const leadId of uniqueLeadIds) {
+      if (!allowed.has(leadId)) {
+        skippedReasons[leadId] = 'not_found_or_forbidden';
+        continue;
+      }
+      await client.query(
+        `INSERT INTO lead_remarks(lead_id, user_id, remark, call_status, next_followup_at)
+           VALUES ($1, $2, $3, $4, $5)`,
+        [leadId, req.user.id, remark.trim(), normalizedCallStatus || null, next_followup_at || null],
+      );
+
+      const updates = ['updated_at = NOW()'];
+      const updateParams = [leadId];
+      if (normalizedCallStatus) {
+        updateParams.push(normalizedCallStatus);
+        updates.push(`call_status = $${updateParams.length}`);
+        updates.push(`last_call_at = NOW()`);
+        updates.push(`call_attempts = call_attempts + 1`);
+      }
+      if (next_followup_at) {
+        updateParams.push(next_followup_at);
+        updates.push(`next_followup_at = $${updateParams.length}`);
+      }
+      if (normalizedStage) {
+        updateParams.push(normalizedStage);
+        updates.push(`stage = $${updateParams.length}`);
+      }
+      await client.query(`UPDATE leads SET ${updates.join(', ')} WHERE id = $1`, updateParams);
+      updated++;
+    }
+
+    return {
+      requested: uniqueLeadIds.length,
+      updated,
+      skipped: uniqueLeadIds.length - updated,
+      skippedReasons,
+      updatedLeadIds: [...allowed],
+    };
+  });
+
+  const userSheets = require('../services/userGoogleSheetsService');
+  for (const leadId of result.updatedLeadIds) {
+    await userSheets.enqueueLeadSync(leadId, { eventType: 'lead_bulk_remark_updated', source: 'crm_bulk_remark', userId: req.user.id });
+  }
+
+  res.status(201).json({ success: true, data: result });
+});
+
 /** Admin/RM only: change assignment manually. */
 exports.reassign = asyncHandler(async (req, res) => {
   if (!['super_admin', 'rm'].includes(req.user.role)) throw new AppError(403, 'FORBIDDEN', 'Not allowed');

@@ -70,6 +70,21 @@ export function useUpdateLeadAvailability() {
   });
 }
 
+export function useBulkUpdateLeadAvailability() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userIds, isAvailable }: { userIds: string[]; isAvailable: boolean }) =>
+      apiPatch<{ updatedUsers: User[]; updatedMembersByRmCascade: Record<string, User[]>; targetRole: 'rm' | 'member'; isAvailable: boolean }>('/users/lead-availability/bulk', {
+        user_ids: userIds,
+        is_available: isAvailable,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['users'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'assignment-overview'] });
+    },
+  });
+}
+
 export function useDeletedUsers() {
   return useQuery({
     queryKey: ['users', 'deleted'],

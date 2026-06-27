@@ -1,14 +1,14 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Users, ArrowLeft, Search, Plus, Loader2, UserRound, RefreshCw,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { Modal, Skeleton, EmptyState } from '@/components/ui/Modal';
-import { useUsers, useCreateUser, useUpdateUser } from '@/hooks/useUsers';
+import { useUsers, useCreateUser, useUpdateUser, useBulkUpdateLeadAvailability } from '@/hooks/useUsers';
 import { useUpdateUserSettings, useAdminUserDetail } from '@/hooks/useAdminEnterprise';
 import { fmtDate, clsx, humanize } from '@/lib/format';
 import type { Role, User } from '@/types';
@@ -24,10 +24,13 @@ export default function UsersManagerPage() {
 
 function UsersInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { data: users, isLoading, isFetching, isError, refetch } = useUsers();
-  const [search, setSearch] = useState('');
-  const [roleFilter, setRoleFilter] = useState<string>('all');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [search, setSearch] = useState(() => searchParams.get('search') || '');
+  const [roleFilter, setRoleFilter] = useState<string>(() => searchParams.get('role') || 'all');
+  const [statusFilter, setStatusFilter] = useState<string>(() => searchParams.get('status') || 'all');
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkConfirm, setBulkConfirm] = useState<{ isAvailable: boolean } | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [editUser, setEditUser] = useState<User | null>(null);
   const [detailUserId, setDetailUserId] = useState<string | null>(null);
@@ -38,6 +41,7 @@ function UsersInner() {
 
   const createUser = useCreateUser();
   const updateUser = useUpdateUser();
+  const bulkAvailability = useBulkUpdateLeadAvailability();
   const updateSettings = useUpdateUserSettings();
   const userDetail = useAdminUserDetail(detailUserId);
 
@@ -49,6 +53,14 @@ function UsersInner() {
     .filter(u => statusFilter === 'all' || effectiveStatus(u) === statusFilter)
     .filter(u => !search || u.full_name?.toLowerCase().includes(search.toLowerCase()) || u.email?.toLowerCase().includes(search.toLowerCase()) || u.phone?.includes(search));
 
+  const usersById = useMemo(() => new Map((users || []).map(user => [user.id, user])), [users]);
+  const selectedUsers = selectedIds.map(id => usersById.get(id)).filter(Boolean) as User[];
+  const selectedRoleBucket = selectedUsers[0] ? selectionRoleBucket(selectedUsers[0]) : null;
+  const selectedAvailable = selectedUsers.length ? Boolean(selectedUsers[0].is_available) : null;
+  const selectedIsRm = selectedRoleBucket === 'rm';
+  const canMarkAvailable = selectedUsers.length > 0 && selectedAvailable === false;
+  const canMarkUnavailable = selectedUsers.length > 0 && selectedAvailable === true;
+
   const counts = {
     total: users?.length ?? 0,
     admin: users?.filter(u => u.role === 'super_admin').length ?? 0,
@@ -56,6 +68,78 @@ function UsersInner() {
     member: users?.filter(u => u.role === 'member').length ?? 0,
     blocked: users?.filter(u => u.status === 'blocked').length ?? 0,
   };
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (search.trim()) params.set('search', search.trim());
+    if (roleFilter !== 'all') params.set('role', roleFilter);
+    if (statusFilter !== 'all') params.set('status', statusFilter);
+    const next = params.toString();
+    const current = searchParams.toString();
+    if (next !== current) {
+      router.replace(`/dashboard/admin/users${next ? `?${next}` : ''}`, { scroll: false });
+    }
+  }, [roleFilter, router, search, searchParams, statusFilter]);
+
+  function clearFilters() {
+    setSearch('');
+    setRoleFilter('all');
+    setStatusFilter('all');
+  }
+
+  function toggleSelection(user: User, checked: boolean) {
+    if (!checked) {
+      setSelectedIds(ids => ids.filter(id => id !== user.id));
+      return;
+    }
+    if (!isBulkSelectable(user)) {
+      toast.error('Only RM and member rows can be selected.');
+      return;
+    }
+    const bucket = selectionRoleBucket(user);
+    const availability = Boolean(user.is_available);
+    if (selectedUsers.length > 0 && selectedRoleBucket !== bucket) {
+      toast.error('Select either RM users or members, not both.');
+      return;
+    }
+    if (selectedUsers.length > 0 && selectedAvailable !== availability) {
+      toast.error('Available and unavailable users cannot be selected together.');
+      return;
+    }
+    setSelectedIds(ids => ids.includes(user.id) ? ids : [...ids, user.id]);
+  }
+
+  function toggleCurrentPage(checked: boolean) {
+    if (!checked) {
+      setSelectedIds(ids => ids.filter(id => !filtered.some(user => user.id === id)));
+      return;
+    }
+    const selectable = filtered.filter(isBulkSelectable);
+    if (!selectable.length) return;
+    const bucket = selectionRoleBucket(selectable[0]);
+    const availability = Boolean(selectable[0].is_available);
+    const valid = selectable.filter(user => selectionRoleBucket(user) === bucket && Boolean(user.is_available) === availability);
+    if (valid.length !== selectable.length) {
+      toast.error('Current page has mixed roles or availability. Select rows manually.');
+      return;
+    }
+    setSelectedIds(ids => [...new Set([...ids, ...valid.map(user => user.id)])]);
+  }
+
+  function submitBulkAvailability() {
+    if (!bulkConfirm) return;
+    bulkAvailability.mutate({ userIds: selectedIds, isAvailable: bulkConfirm.isAvailable }, {
+      onSuccess: () => {
+        toast.success(`Marked ${selectedIds.length} user${selectedIds.length === 1 ? '' : 's'} ${bulkConfirm.isAvailable ? 'available' : 'unavailable'}`);
+        setSelectedIds([]);
+        setBulkConfirm(null);
+        refetch();
+      },
+      onError: (e: any) => {
+        toast.error(e?.response?.data?.error?.message || e?.response?.data?.message || 'Could not update availability');
+      },
+    });
+  }
 
   function openCreate() {
     setForm({ full_name: '', email: '', phone: '', role: 'member', team_name: '', report_to_id: '', sendWelcomeEmail: true });
@@ -132,11 +216,38 @@ function UsersInner() {
           <option value="inactive">Inactive</option>
           <option value="unknown">Unknown</option>
         </select>
+        <button onClick={clearFilters} className="btn-outline rounded-lg px-3 py-2 text-sm">Clear Filters</button>
         <button onClick={() => refetch()} disabled={isFetching} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm"><RefreshCw className={clsx('h-4 w-4', isFetching && 'animate-spin')} />Refresh</button>
         <button onClick={openCreate} className="btn-primary rounded-lg px-4 py-2 text-sm inline-flex items-center gap-2">
           <Plus className="h-4 w-4" /> Add User
         </button>
       </div>
+
+      {selectedIds.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm">
+          <div className="font-medium text-blue-950">{selectedIds.length} selected</div>
+          <div className="text-blue-700">
+            {selectedRoleBucket === 'rm' ? 'RM selection' : 'Member selection'} · currently {selectedAvailable ? 'available' : 'unavailable'}
+          </div>
+          <div className="ml-auto flex flex-wrap gap-2">
+            <button
+              disabled={!canMarkAvailable}
+              onClick={() => setBulkConfirm({ isAvailable: true })}
+              className="btn-outline rounded-lg px-3 py-2 text-xs disabled:opacity-50"
+            >
+              Mark Available
+            </button>
+            <button
+              disabled={!canMarkUnavailable}
+              onClick={() => setBulkConfirm({ isAvailable: false })}
+              className="btn-outline rounded-lg px-3 py-2 text-xs disabled:opacity-50"
+            >
+              Mark Unavailable
+            </button>
+            <button onClick={() => setSelectedIds([])} className="btn-ghost rounded-lg px-3 py-2 text-xs">Clear Selection</button>
+          </div>
+        </div>
+      )}
 
       {/* Table */}
       {isLoading ? <Skeleton className="h-64" /> : isError ? <EmptyState title="Could not load users" description="Please retry without reloading the page." action={<button className="btn-outline rounded-lg px-3 py-2 text-sm" onClick={() => refetch()}>Retry</button>} /> : filtered.length === 0 ? (
@@ -147,6 +258,14 @@ function UsersInner() {
           <div className="hidden overflow-x-auto md:block"><table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wider text-slate-500">
+                <th className="w-10 py-2 pr-3 font-medium">
+                  <input
+                    type="checkbox"
+                    checked={filtered.length > 0 && filtered.filter(isBulkSelectable).every(user => selectedIds.includes(user.id))}
+                    onChange={event => toggleCurrentPage(event.target.checked)}
+                    aria-label="Select current page"
+                  />
+                </th>
                 <th className="py-2 pr-3 font-medium">User</th>
                 <th className="py-2 pr-3 font-medium">Role</th>
                 <th className="py-2 pr-3 font-medium">CP ID</th>
@@ -160,6 +279,16 @@ function UsersInner() {
             <tbody className="divide-y divide-slate-50">
               {filtered.map(u => (
                 <tr key={u.id} className="hover:bg-slate-50 transition cursor-pointer" onClick={() => router.push(`/dashboard/admin/users/${u.id}`)}>
+                  <td className="py-3 pr-3" onClick={event => event.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      disabled={!isBulkSelectable(u)}
+                      checked={selectedIds.includes(u.id)}
+                      onChange={event => toggleSelection(u, event.target.checked)}
+                      aria-label={`Select ${u.full_name}`}
+                      title={!isBulkSelectable(u) ? 'Only RM and member rows can be selected' : undefined}
+                    />
+                  </td>
                   <td className="py-3 pr-3">
                     <Link href={`/dashboard/admin/users/${u.id}`} className="font-medium text-slate-900 hover:text-brand-700">
                       {u.full_name}
@@ -227,6 +356,28 @@ function UsersInner() {
             className="btn-primary rounded-lg px-4 py-2 text-sm inline-flex items-center gap-2">
             {(createUser.isPending || updateUser.isPending) && <Loader2 className="h-4 w-4 animate-spin" />}
             {editUser ? 'Update' : 'Create'}
+          </button>
+        </div>
+      </Modal>
+
+      <Modal open={!!bulkConfirm} onClose={() => setBulkConfirm(null)} title={bulkConfirm?.isAvailable ? 'Mark users available?' : 'Mark users unavailable?'} size="sm">
+        <div className="space-y-3 text-sm text-slate-700">
+          <p>
+            {selectedIsRm
+              ? 'This will update the selected RM users and every member under their teams.'
+              : 'This will update only the selected members.'}
+          </p>
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-amber-800">
+            {bulkConfirm?.isAvailable
+              ? 'Selected users will become eligible for future lead distribution if their account status is active.'
+              : 'Selected users will stop receiving new leads during distribution.'}
+          </p>
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={() => setBulkConfirm(null)} className="btn-ghost rounded-lg px-4 py-2 text-sm">Cancel</button>
+          <button onClick={submitBulkAvailability} disabled={bulkAvailability.isPending} className="btn-primary rounded-lg px-4 py-2 text-sm inline-flex items-center gap-2">
+            {bulkAvailability.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            Confirm
           </button>
         </div>
       </Modal>
@@ -307,6 +458,14 @@ function effectiveStatus(user: User): string {
   if (user.status && user.status !== 'active') return user.status;
   if (user.lead_assignment_status && user.lead_assignment_status !== 'available') return user.lead_assignment_status;
   return user.status || user.lead_assignment_status || 'unknown';
+}
+
+function selectionRoleBucket(user: User): 'rm' | 'member' {
+  return user.role === 'rm' ? 'rm' : 'member';
+}
+
+function isBulkSelectable(user: User): boolean {
+  return user.role === 'rm' || user.role === 'member';
 }
 
 function UserMobileCard({ user, onOpen }: { user: User; onOpen: () => void }) {
