@@ -12,6 +12,13 @@ function isValidLeadAssigneeRole(role) {
   return VALID_LEAD_ASSIGNEE_ROLES.includes(String(role || '').toLowerCase());
 }
 
+function isEffectivelyAvailable(user) {
+  if (user.is_available === false) return false;
+  if (user.is_available === true) return true;
+  return String(user.lead_assignment_status || 'available') === 'available'
+    && user.lead_assignment_enabled !== false;
+}
+
 function assertLeadAssigneeUser(user, options = {}) {
   const { actor = null, requireAvailable = false } = options;
   if (!user || user.deleted_at) {
@@ -26,13 +33,13 @@ function assertLeadAssigneeUser(user, options = {}) {
   if (user.distribution_blocked === true) {
     throw new AppError(422, INVALID_LEAD_ASSIGNEE, INVALID_LEAD_ASSIGNEE_AVAILABILITY_MESSAGE);
   }
-  if (requireAvailable && user.is_available === false) {
+  if (requireAvailable && !isEffectivelyAvailable(user)) {
     throw new AppError(422, INVALID_LEAD_ASSIGNEE, INVALID_LEAD_ASSIGNEE_AVAILABILITY_MESSAGE);
   }
-  if (user.lead_assignment_enabled === false || String(user.lead_assignment_status || 'available') !== 'available') {
+  if (!isEffectivelyAvailable(user)) {
     throw new AppError(422, INVALID_LEAD_ASSIGNEE, INVALID_LEAD_ASSIGNEE_AVAILABILITY_MESSAGE);
   }
-  if (user.rm_is_available === false || String(user.rm_lead_assignment_status || 'available') !== 'available') {
+  if (user.rm_is_available === false) {
     throw new AppError(422, INVALID_LEAD_ASSIGNEE, INVALID_LEAD_ASSIGNEE_AVAILABILITY_MESSAGE);
   }
   if (actor?.role === 'rm' && user.report_to_id !== actor.id) {

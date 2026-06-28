@@ -308,8 +308,6 @@ async function distributeRoundRobin() {
          AND u.status = 'active' AND u.deleted_at IS NULL
          AND COALESCE(u.is_available, TRUE) = TRUE
          AND COALESCE(u.distribution_blocked, FALSE) = FALSE
-         AND COALESCE(u.lead_assignment_enabled, TRUE) = TRUE
-         AND COALESCE(u.lead_assignment_status, 'available') = 'available'
          AND NOT EXISTS (
            SELECT 1 FROM users rm
             WHERE rm.id = u.report_to_id
@@ -318,7 +316,6 @@ async function distributeRoundRobin() {
                 rm.status <> 'active'
                 OR rm.deleted_at IS NOT NULL
                 OR COALESCE(rm.is_available, TRUE) = FALSE
-                OR COALESCE(rm.lead_assignment_status, 'available') <> 'available'
               )
          )
        ORDER BY lr.created_at ASC

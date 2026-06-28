@@ -117,8 +117,6 @@ async function getAvailableMembers(options = {}, client = null) {
     AND u.deleted_at IS NULL
     AND COALESCE(u.is_available, TRUE) = TRUE
     AND COALESCE(u.distribution_blocked, FALSE) = FALSE
-    AND COALESCE(u.lead_assignment_enabled, TRUE) = TRUE
-    AND COALESCE(u.lead_assignment_status, 'available') = 'available'
     AND NOT EXISTS (
       SELECT 1 FROM users rm
        WHERE rm.id = u.report_to_id
@@ -127,7 +125,6 @@ async function getAvailableMembers(options = {}, client = null) {
            rm.status <> 'active'
            OR rm.deleted_at IS NOT NULL
            OR COALESCE(rm.is_available, TRUE) = FALSE
-           OR COALESCE(rm.lead_assignment_status, 'available') <> 'available'
          )
     )
   `;
@@ -231,7 +228,6 @@ async function getEligibleRmTeams(client) {
      WHERE rm.role = 'rm'
        AND rm.status = 'active'
        AND COALESCE(rm.is_available, TRUE) = TRUE
-       AND COALESCE(rm.lead_assignment_status, 'available') = 'available'
        AND rm.deleted_at IS NULL
        AND EXISTS (
          SELECT 1
@@ -242,8 +238,6 @@ async function getEligibleRmTeams(client) {
             AND m.deleted_at IS NULL
             AND COALESCE(m.is_available, TRUE) = TRUE
             AND COALESCE(m.distribution_blocked, FALSE) = FALSE
-            AND COALESCE(m.lead_assignment_enabled, TRUE) = TRUE
-            AND COALESCE(m.lead_assignment_status, 'available') = 'available'
        )
      ORDER BY rm.created_at ASC NULLS LAST, rm.full_name ASC NULLS LAST, rm.id ASC
   `);
@@ -904,7 +898,6 @@ async function getAssignmentOverview() {
         WHERE rm.role = 'rm'
           AND rm.status = 'active'
           AND COALESCE(rm.is_available, TRUE) = TRUE
-          AND COALESCE(rm.lead_assignment_status, 'available') = 'available'
           AND rm.deleted_at IS NULL
           AND EXISTS (
             SELECT 1 FROM users m
@@ -914,8 +907,6 @@ async function getAssignmentOverview() {
                AND m.deleted_at IS NULL
                AND COALESCE(m.is_available, TRUE) = TRUE
                AND COALESCE(m.distribution_blocked, FALSE) = FALSE
-               AND COALESCE(m.lead_assignment_enabled, TRUE) = TRUE
-               AND COALESCE(m.lead_assignment_status, 'available') = 'available'
           )) AS eligible_rms,
       (SELECT COUNT(*)::int FROM users m
         WHERE m.role IN ('member','partner')
@@ -923,8 +914,6 @@ async function getAssignmentOverview() {
           AND m.deleted_at IS NULL
           AND COALESCE(m.is_available, TRUE) = TRUE
           AND COALESCE(m.distribution_blocked, FALSE) = FALSE
-          AND COALESCE(m.lead_assignment_enabled, TRUE) = TRUE
-          AND COALESCE(m.lead_assignment_status, 'available') = 'available'
           AND NOT EXISTS (
             SELECT 1 FROM users rm
              WHERE rm.id = m.report_to_id
@@ -933,7 +922,6 @@ async function getAssignmentOverview() {
                  rm.status <> 'active'
                  OR rm.deleted_at IS NOT NULL
                  OR COALESCE(rm.is_available, TRUE) = FALSE
-                 OR COALESCE(rm.lead_assignment_status, 'available') <> 'available'
                )
           )) AS available_team_members
   `);
