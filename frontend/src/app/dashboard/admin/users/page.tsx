@@ -50,7 +50,11 @@ function UsersInner() {
 
   const filtered = (users || [])
     .filter(u => roleFilter === 'all' || u.role === roleFilter)
-    .filter(u => statusFilter === 'all' || effectiveStatus(u) === statusFilter)
+    .filter(u => {
+      if (statusFilter === 'all') return true;
+      if (statusFilter === 'unavailable') return effectiveStatus(u) === 'active' && !isLeadAvailable(u);
+      return effectiveStatus(u) === statusFilter;
+    })
     .filter(u => !search || u.full_name?.toLowerCase().includes(search.toLowerCase()) || u.email?.toLowerCase().includes(search.toLowerCase()) || u.phone?.includes(search));
 
   const usersById = useMemo(() => new Map((users || []).map(user => [user.id, user])), [users]);
@@ -271,7 +275,6 @@ function UsersInner() {
                 <th className="py-2 pr-3 font-medium">CP ID</th>
                 <th className="py-2 pr-3 font-medium">Team</th>
                 <th className="py-2 pr-3 font-medium">Status</th>
-                <th className="py-2 pr-3 font-medium">Lead Availability</th>
                 <th className="py-2 pr-3 font-medium">Lead Cap</th>
                 <th className="py-2 pr-3 font-medium">Joined</th>
                 <th className="py-2 font-medium text-right">Actions</th>
@@ -305,11 +308,6 @@ function UsersInner() {
                   <td className="py-3 pr-3 text-slate-600">{u.team_name || '—'}</td>
                   <td className="py-3 pr-3">
                     <span className={getUserStatusBadgeVariant(effectiveStatus(u))}>{formatUserStatus(effectiveStatus(u))}</span>
-                  </td>
-                  <td className="py-3 pr-3">
-                    <span className={isLeadAvailable(u) ? 'chip-green' : 'chip-amber'}>
-                      {isLeadAvailable(u) ? 'Available' : 'Unavailable'}
-                    </span>
                   </td>
                   <td className="py-3 pr-3 text-slate-600 tabular-nums">{u.daily_lead_cap ?? '—'}</td>
                   <td className="py-3 pr-3 text-xs text-slate-500">{fmtDate(u.created_at, 'dd MMM yyyy')}</td>
@@ -461,15 +459,13 @@ function CountCard({ label, value, color }: { label: string; value: number; colo
 }
 
 function effectiveStatus(user: User): string {
-  if (user.status && user.status !== 'active') return user.status;
-  if (user.lead_assignment_status && user.lead_assignment_status !== 'available') return user.lead_assignment_status;
-  return user.status || user.lead_assignment_status || 'unknown';
+  return user.status || 'unknown';
 }
 
 function isLeadAvailable(user: User): boolean {
   if (user.status && user.status !== 'active') return false;
-  if (['unavailable', 'blocked', 'disabled'].includes(String(user.lead_assignment_status || '').toLowerCase())) return false;
-  return user.is_available !== false;
+  if (typeof user.is_available === 'boolean') return user.is_available;
+  return !['unavailable', 'blocked', 'disabled'].includes(String(user.lead_assignment_status || '').toLowerCase());
 }
 
 function selectionRoleBucket(user: User): 'rm' | 'member' {

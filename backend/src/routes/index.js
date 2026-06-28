@@ -55,7 +55,7 @@ router.post  ('/users/:id/unblock', authenticate, requireRole('super_admin', 'ad
 router.post  ('/users/:id/delete', authenticate, requireRole('super_admin', 'admin'), users.softDelete);
 router.patch ('/users/:userId/lead-availability', authenticate, requireRole('super_admin', 'admin', 'rm'), asyncHandler(async (req, res) => {
   const { userId } = req.params;
-  const status = req.body?.lead_assignment_status || req.body?.status || req.body?.is_available;
+  const status = req.body?.lead_assignment_status ?? req.body?.status ?? req.body?.is_available;
   const reason = String(req.body?.reason || req.body?.lead_assignment_disabled_reason || '').trim() || null;
   const result = await updateSingleLeadAvailability({
     actor: req.user,
@@ -69,7 +69,7 @@ router.patch ('/users/:userId/lead-availability', authenticate, requireRole('sup
 }));
 router.patch('/users/lead-availability/bulk', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
   const userIds = Array.isArray(req.body?.user_ids) ? req.body.user_ids : req.body?.userIds;
-  const status = req.body?.lead_assignment_status || req.body?.status || req.body?.is_available;
+  const status = req.body?.lead_assignment_status ?? req.body?.status ?? req.body?.is_available;
   const reason = String(req.body?.reason || '').trim() || null;
   const result = await updateLeadAvailability({
     actor: req.user,
