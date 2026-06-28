@@ -494,11 +494,28 @@ async function pickAssignableLeads(client, { limit, category = null, forUpdate =
   return rows;
 }
 
+async function leadRequestStatusSupported(client, status) {
+  const { rows: [row] } = await client.query(
+    `SELECT COUNT(*)::int AS checks,
+            COUNT(*) FILTER (WHERE pg_get_constraintdef(c.oid) ILIKE $1)::int AS matching
+       FROM pg_constraint c
+       JOIN pg_class t ON t.oid = c.conrelid
+      WHERE t.relname = 'lead_requests'
+        AND c.contype = 'c'
+        AND c.conname ILIKE '%status%'`,
+    [`%${status}%`],
+  );
+  return Number(row?.checks || 0) === 0 || Number(row?.matching || 0) > 0;
+}
+
 async function markRequestAfterFulfillment(client, request, fulfilledNow) {
   const previous = Number(request.fulfilled_quantity ?? request.leads_assigned ?? 0);
   const approved = Number(request.approved_quantity ?? request.quantity ?? 0);
   const fulfilled = previous + fulfilledNow;
-  const status = fulfilled >= approved ? 'fulfilled' : (fulfilled > 0 ? 'partially_fulfilled' : 'approved');
+  const logicalStatus = fulfilled >= approved ? 'fulfilled' : (fulfilled > 0 ? 'partially_fulfilled' : 'approved');
+  const status = logicalStatus === 'partially_fulfilled' && !(await leadRequestStatusSupported(client, 'partially_fulfilled'))
+    ? 'approved'
+    : logicalStatus;
   await client.query(
     `UPDATE lead_requests
         SET fulfilled_quantity = $1,
@@ -510,7 +527,7 @@ async function markRequestAfterFulfillment(client, request, fulfilledNow) {
       WHERE id = $3`,
     [fulfilled, status, request.id],
   );
-  return { fulfilled, status, remaining: Math.max(0, approved - fulfilled) };
+  return { fulfilled, status: logicalStatus, dbStatus: status, remaining: Math.max(0, approved - fulfilled) };
 }
 
 async function countAvailableLeadsForRequest(request, actor, client = null) {
@@ -611,17 +628,25 @@ async function fulfillApprovedRequestsInTransaction(client, { limit = 100, actor
         leadIds.push(lead.id);
       }
       if (filled) {
-        await notifyAssigned(client, req.user_id, filled, { request_id: req.id, assignment_type: 'request_fulfillment', lead_ids: leadIds, assigned_by: actor?.id || req.approved_by || req.resolved_by || null });
+        try {
+          await notifyAssigned(client, req.user_id, filled, { request_id: req.id, assignment_type: 'request_fulfillment', lead_ids: leadIds, assigned_by: actor?.id || req.approved_by || req.resolved_by || null });
+        } catch (err) {
+          logger.warn({ err: err.message, requestId: req.id, userId: req.user_id }, '[assignment] lead assigned notification failed');
+        }
       }
       const status = await markRequestAfterFulfillment(client, req, filled);
       if (filled || status.status === 'fulfilled') {
-        await notifyLeadRequestResolved({
-          requestId: req.id,
-          requesterId: req.user_id,
-          quantity: approved,
-          assigned: status.fulfilled,
-          status: status.status,
-        }, client);
+        try {
+          await notifyLeadRequestResolved({
+            requestId: req.id,
+            requesterId: req.user_id,
+            quantity: approved,
+            assigned: status.fulfilled,
+            status: status.status,
+          }, client);
+        } catch (err) {
+          logger.warn({ err: err.message, requestId: req.id, userId: req.user_id }, '[assignment] request resolved notification failed');
+        }
       }
       assigned += filled;
       requestResults.push({ requestId: req.id, assigned: filled, status: status.status, remaining: status.remaining });
