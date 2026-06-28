@@ -50,6 +50,12 @@ const CATEGORY_OPTS = [
   { value: 'unknown', label: 'Unknown' },
 ];
 
+const ASSIGNMENT_OPTS = [
+  { value: '', label: 'All assignment' },
+  { value: 'assigned', label: 'Assigned' },
+  { value: 'unassigned', label: 'Unassigned' },
+];
+
 export function LeadFilters({ value, onChange }: Props) {
   const set = <K extends keyof LeadFilters>(k: K, v: LeadFilters[K]) =>
     onChange({ ...value, [k]: v, page: 1 });
@@ -60,7 +66,7 @@ export function LeadFilters({ value, onChange }: Props) {
     ...(campaignNames || []).map(n => ({ value: n, label: n })),
   ];
 
-  const hasFilters = !!(value.q || value.category || value.stage || value.call_status || value.followup || value.source || value.campaign || value.from || value.to || value.pending);
+  const hasFilters = !!(value.q || value.category || value.stage || value.call_status || value.followup || value.source || value.campaign || value.from || value.to || value.pending || value.assignment);
 
   return (
     <div className="card p-4">
@@ -95,6 +101,11 @@ export function LeadFilters({ value, onChange }: Props) {
           value={value.category || ''}
           options={CATEGORY_OPTS}
           onChange={(e: ChangeEvent<HTMLSelectElement>) => set('category', e.target.value as LeadFilters['category'])}
+        />
+        <Select
+          value={value.assignment || ''}
+          options={ASSIGNMENT_OPTS}
+          onChange={(e: ChangeEvent<HTMLSelectElement>) => set('assignment', e.target.value as LeadFilters['assignment'])}
         />
         <Select
           value={value.campaign || ''}

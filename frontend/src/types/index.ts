@@ -130,6 +130,7 @@ export interface LeadFilters {
   unworked?: 'true' | 'false' | '';
   followup?: 'today' | 'overdue' | 'upcoming' | '';
   reassignment?: 'to_me' | 'to_others' | '';
+  assignment?: 'assigned' | 'unassigned' | '';
   assigned_to?: string;
   page?: number;
   page_size?: number;

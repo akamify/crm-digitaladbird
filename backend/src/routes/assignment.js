@@ -127,6 +127,19 @@ router.post('/admin/assignment/approved-requests/run-now', authenticate, require
   }
 }));
 
+router.post('/admin/assignment/sync-assigned-sheets', authenticate, requireRole(...ADMINS), asyncHandler(async (req, res) => {
+  const result = await assignment.syncAssignedLeadSheetRows({
+    limit: req.body?.limit || 200,
+    actor: req.user,
+  });
+  await logActivity(req, {
+    entity: 'lead',
+    action: 'assigned_leads_sheet_sync',
+    metadata: { requested: result.requested, synced: result.synced, failed: result.failed },
+  });
+  res.json({ success: true, data: result });
+}));
+
 async function runBulkAssignment(req, res, type) {
   const leadIds = leadIdsFromBody(req.body);
   const memberId = memberIdFromBody(req.body);

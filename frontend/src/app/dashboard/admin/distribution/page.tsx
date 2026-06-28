@@ -10,6 +10,7 @@ import {
   useRunApprovedRequestAssignmentNow,
   useRunDistributionNow,
   useRunReassignmentNow,
+  useSyncAssignedLeadSheets,
   useUpdateAssignmentSettings,
 } from '@/hooks/useAdminEnterprise';
 import { clsx } from '@/lib/format';
@@ -29,6 +30,7 @@ function DistributionInner() {
   const runDistribution = useRunDistributionNow();
   const runApprovedRequests = useRunApprovedRequestAssignmentNow();
   const runReassignment = useRunReassignmentNow();
+  const syncAssignedSheets = useSyncAssignedLeadSheets();
 
   const settings = overview.data?.settings;
   const stats = overview.data?.stats || {};
@@ -139,11 +141,6 @@ function DistributionInner() {
               className="input mt-1 h-10"
             />
           </label>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Eligible users</div>
-            <div className="mt-1 text-sm font-medium text-slate-900">Members and Partners</div>
-            <div className="mt-1 text-xs text-slate-500">RM, Admin, and Super Admin are excluded.</div>
-          </div>
         </div>
 
         <div className="mt-5 flex flex-wrap gap-2">
@@ -173,6 +170,21 @@ function DistributionInner() {
           >
             {runDistribution.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
             Run Distribution Now
+          </button>
+          <button
+            onClick={() => syncAssignedSheets.mutate(undefined, {
+              onSuccess: (data: unknown) => {
+                const payload = data as { data?: { requested?: number; synced?: number; failed?: number }; requested?: number; synced?: number; failed?: number };
+                const result = payload?.data || payload;
+                toast.success(`Sheet sync started for ${Number(result?.requested || 0)} assigned lead(s). Synced ${Number(result?.synced || 0)}, failed ${Number(result?.failed || 0)}.`);
+              },
+              onError: (error) => toast.error(errorMessage(error, 'Assigned lead sheet sync failed')),
+            })}
+            disabled={syncAssignedSheets.isPending}
+            className="btn-outline inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"
+          >
+            {syncAssignedSheets.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            Sync Assigned Leads to Sheets
           </button>
         </div>
       </section>

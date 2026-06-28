@@ -70,6 +70,17 @@ export function useRunApprovedRequestAssignmentNow() {
   });
 }
 
+export function useSyncAssignedLeadSheets() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiPost('/admin/assignment/sync-assigned-sheets', { limit: 300 }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'assignment-overview'] });
+    },
+  });
+}
+
 export function useRunReassignmentNow() {
   const qc = useQueryClient();
   return useMutation({

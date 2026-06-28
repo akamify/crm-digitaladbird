@@ -160,6 +160,8 @@ exports.list = asyncHandler(async (req, res) => {
   if (req.query.assigned_to) {
     if (req.query.assigned_to === '__unassigned') {
       where.push(`l.assigned_to_user_id IS NULL`);
+    } else if (req.query.assigned_to === '__assigned') {
+      where.push(`l.assigned_to_user_id IS NOT NULL`);
     } else {
       params.push(req.query.assigned_to);
       where.push(`l.assigned_to_user_id = $${params.length}`);

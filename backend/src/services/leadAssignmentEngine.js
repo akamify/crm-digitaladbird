@@ -616,6 +616,25 @@ async function syncAssignedLeadsToSheets(leadIds, context = {}) {
   return { requested: ids.length, synced, failed };
 }
 
+async function syncAssignedLeadSheetRows({ limit = 200, actor = null } = {}) {
+  const safeLimit = Math.max(1, Math.min(1000, Number.parseInt(limit, 10) || 200));
+  const { rows } = await query(
+    `SELECT id
+       FROM leads
+      WHERE deleted_at IS NULL
+        AND assigned_to_user_id IS NOT NULL
+      ORDER BY assigned_at DESC NULLS LAST, updated_at DESC NULLS LAST, created_at DESC
+      LIMIT $1`,
+    [safeLimit],
+  );
+  const leadIds = rows.map(row => row.id);
+  const sync = await syncAssignedLeadsToSheets(leadIds, {
+    assignmentType: 'manual_assigned_sheet_sync',
+    actorId: actor?.id || null,
+  });
+  return { ...sync, leadIds };
+}
+
 async function countAvailableLeadsForRequest(request, actor, client = null) {
   const runner = client || { query };
   const params = [];
@@ -1094,4 +1113,5 @@ module.exports = {
   approveLeadRequest,
   countAvailableLeadsForRequest,
   getAssignmentOverview,
+  syncAssignedLeadSheetRows,
 };

@@ -38,6 +38,7 @@ function LeadsInner() {
     call_status: (sp.get('call_status') as LeadFilterType['call_status']) || '',
     followup: (sp.get('followup') as LeadFilterType['followup']) || '',
     reassignment: (sp.get('reassignment') as LeadFilterType['reassignment']) || '',
+    assignment: (sp.get('assignment') as LeadFilterType['assignment']) || '',
     unworked: (sp.get('unworked') as LeadFilterType['unworked']) || '',
     source: sp.get('source') || '',
     from: sp.get('from') || '',
@@ -57,7 +58,13 @@ function LeadsInner() {
   const [bulkRemarkOpen, setBulkRemarkOpen] = useState(false);
   const [bulkRemark, setBulkRemark] = useState('');
   const debouncedSearch = useDebouncedValue(filters.q || '');
-  const effectiveFilters = useMemo(() => ({ ...filters, q: debouncedSearch || undefined }), [filters, debouncedSearch]);
+  const effectiveFilters = useMemo(() => {
+    const next: LeadFilterType = { ...filters, q: debouncedSearch || undefined };
+    if (next.assignment === 'assigned') next.assigned_to = '__assigned';
+    if (next.assignment === 'unassigned') next.assigned_to = '__unassigned';
+    delete next.assignment;
+    return next;
+  }, [filters, debouncedSearch]);
   const { data, isLoading, isFetching } = useLeadList(effectiveFilters);
   const bulkAddRemark = useBulkAddRemark();
 
