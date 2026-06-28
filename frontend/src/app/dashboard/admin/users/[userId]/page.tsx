@@ -49,7 +49,7 @@ type TabKey =
   | 'assignment_history'
   | 'notifications'
   | 'activity';
-type ApiErrorLike = { response?: { data?: { code?: string; message?: string; error?: { code?: string; message?: string } } } };
+type ApiErrorLike = { response?: { data?: { code?: string; message?: string; error?: { code?: string; message?: string; details?: { actual?: Record<string, unknown> } } } } };
 type AssignResult = { assigned?: number };
 
 function apiErrorMessage(error: unknown, fallback: string) {
@@ -60,6 +60,9 @@ function apiErrorMessage(error: unknown, fallback: string) {
   }
   if (code === 'EMAIL_PROVIDER_NOT_CONFIGURED') return 'Email provider is not configured.';
   if (code === 'USER_EMAIL_MISSING') return 'User has no registered email.';
+  if (code === 'LEAD_AVAILABILITY_UPDATE_FAILED' && data?.error?.details?.actual) {
+    return `${data?.error?.message || fallback} Actual: ${JSON.stringify(data.error.details.actual)}`;
+  }
   return data?.message || data?.error?.message || fallback;
 }
 

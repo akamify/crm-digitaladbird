@@ -16,6 +16,23 @@ function targetBucket(role) {
   return role === 'rm' ? 'rm' : 'member';
 }
 
+function availabilitySyncWarning(row, expectedAvailable, expectedStatus) {
+  const enabled = normalizeAvailability(row.lead_assignment_enabled);
+  const status = String(row.lead_assignment_status || '').trim().toLowerCase();
+  if (enabled === expectedAvailable && status === expectedStatus) return null;
+  return {
+    user_id: row.id,
+    expected: {
+      lead_assignment_enabled: expectedAvailable,
+      lead_assignment_status: expectedStatus,
+    },
+    actual: {
+      lead_assignment_enabled: row.lead_assignment_enabled,
+      lead_assignment_status: row.lead_assignment_status,
+    },
+  };
+}
+
 function assertActorCanUpdate(actor, targets, { bulk = false } = {}) {
   if (!actor) throw new AppError(401, 'NO_USER', 'Not authenticated');
   const isAdmin = ['super_admin', 'admin'].includes(actor.role);
@@ -76,10 +93,32 @@ async function loadTargets(client, userIds) {
 async function setAvailabilityForIds(client, userIds, isAvailable, actorId, reason = null) {
   if (!userIds.length) return [];
   const status = isAvailable ? 'available' : 'unavailable';
-  const { rows } = await client.query(
+  const { rows: canonicalRows } = await client.query(
     `UPDATE users
         SET is_available = $1,
-            lead_assignment_enabled = $1,
+            updated_at = NOW()
+      WHERE id = ANY($2::uuid[])
+        AND deleted_at IS NULL
+      RETURNING id, is_available`,
+    [isAvailable, userIds],
+  );
+  if (canonicalRows.length !== userIds.length) {
+    throw new AppError(409, 'LEAD_AVAILABILITY_UPDATE_INCOMPLETE', 'Could not update lead availability for every selected user.');
+  }
+  const staleCanonical = canonicalRows.find(row => normalizeAvailability(row.is_available) !== isAvailable);
+  if (staleCanonical) {
+    throw new AppError(409, 'LEAD_AVAILABILITY_UPDATE_FAILED', 'Lead availability did not save correctly. Please retry.', {
+      expected: { is_available: isAvailable },
+      actual: {
+        user_id: staleCanonical.id,
+        is_available: staleCanonical.is_available,
+      },
+    });
+  }
+
+  const { rows } = await client.query(
+    `UPDATE users
+        SET lead_assignment_enabled = $1,
             lead_assignment_status = $2,
             lead_assignment_disabled_reason = CASE WHEN $1 THEN NULL ELSE $3 END,
             lead_assignment_updated_by = $4,
@@ -97,23 +136,33 @@ async function setAvailabilityForIds(client, userIds, isAvailable, actorId, reas
   if (rows.length !== userIds.length) {
     throw new AppError(409, 'LEAD_AVAILABILITY_UPDATE_INCOMPLETE', 'Could not update lead availability for every selected user.');
   }
-  const stale = rows.find(row => (
-    normalizeAvailability(row.is_available) !== isAvailable
-    || normalizeAvailability(row.lead_assignment_enabled) !== isAvailable
-    || String(row.lead_assignment_status || '').trim().toLowerCase() !== status
-  ));
+  const stale = rows.find(row => normalizeAvailability(row.is_available) !== isAvailable);
   if (stale) {
     throw new AppError(409, 'LEAD_AVAILABILITY_UPDATE_FAILED', 'Lead availability did not save correctly. Please retry.', {
-      expected: { is_available: isAvailable, lead_assignment_enabled: isAvailable, lead_assignment_status: status },
+      expected: { is_available: isAvailable },
       actual: {
         user_id: stale.id,
         is_available: stale.is_available,
-        lead_assignment_enabled: stale.lead_assignment_enabled,
-        lead_assignment_status: stale.lead_assignment_status,
       },
     });
   }
-  return rows;
+  const syncWarnings = rows.map(row => availabilitySyncWarning(row, isAvailable, status)).filter(Boolean);
+  if (syncWarnings.length) {
+    await client.query(
+      `UPDATE users
+          SET lead_assignment_enabled = $1,
+              lead_assignment_status = $2,
+              updated_at = NOW()
+        WHERE id = ANY($3::uuid[])`,
+      [isAvailable, status, syncWarnings.map(warning => warning.user_id)],
+    ).catch(() => {});
+  }
+  return rows.map(row => ({
+    ...row,
+    is_available: isAvailable,
+    lead_assignment_enabled: normalizeAvailability(row.lead_assignment_enabled) ?? isAvailable,
+    lead_assignment_status: String(row.lead_assignment_status || status).trim().toLowerCase() || status,
+  }));
 }
 
 async function updateLeadAvailability({ actor, userIds, isAvailable, reason = null, bulk = false }) {
