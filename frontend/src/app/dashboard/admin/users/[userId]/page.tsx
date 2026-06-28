@@ -401,7 +401,7 @@ function LeadAvailabilityPanel({
   onUpdated: () => void;
 }) {
   const updateAvailability = useUpdateLeadAvailability();
-  const isAvailable = (user.lead_assignment_status || (user.is_available ? 'available' : 'unavailable')) === 'available';
+  const isAvailable = Boolean(user.is_available);
   const accountRestricted = ['blocked', 'disabled', 'inactive', 'deleted'].includes(user.status) || Boolean(user.distribution_blocked);
 
   function toggleAvailability() {
@@ -423,18 +423,23 @@ function LeadAvailabilityPanel({
           {accountRestricted && <p className="mt-1 text-sm text-rose-600">Account status prevents new lead assignment.</p>}
         </div>
         {canManage ? (
-          <button
-            type="button"
-            onClick={toggleAvailability}
-            disabled={updateAvailability.isPending || accountRestricted}
-            className={clsx(
-              'min-w-32 rounded-lg px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50',
-              isAvailable ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : 'bg-amber-100 text-amber-800 hover:bg-amber-200',
-            )}
-            title={isAvailable ? 'Click to mark unavailable' : 'Click to mark available'}
-          >
-            {updateAvailability.isPending ? 'Updating...' : isAvailable ? 'Available' : 'Unavailable'}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={clsx('rounded-lg px-3 py-2 text-sm font-semibold', isAvailable ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800')}>
+              Currently {isAvailable ? 'Available' : 'Unavailable'}
+            </span>
+            <button
+              type="button"
+              onClick={toggleAvailability}
+              disabled={updateAvailability.isPending || accountRestricted}
+              className={clsx(
+                'min-w-40 rounded-lg px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50',
+                isAvailable ? 'bg-amber-500 text-white hover:bg-amber-600' : 'bg-emerald-600 text-white hover:bg-emerald-700',
+              )}
+              title={isAvailable ? 'Click to stop future lead assignment' : 'Click to allow future lead assignment'}
+            >
+              {updateAvailability.isPending ? 'Updating...' : isAvailable ? 'Mark Unavailable' : 'Mark Available'}
+            </button>
+          </div>
         ) : (
           <span className={clsx('rounded-lg px-4 py-2 text-sm font-semibold', isAvailable ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800')}>
             {isAvailable ? 'Available' : 'Unavailable'}
@@ -475,7 +480,7 @@ function EditProfileButton({ profile, userId }: { profile: UserProfileResponse; 
       ...form,
       report_to_id: form.role === 'member' ? (form.report_to_id || null) : null,
       team_name: form.role === 'rm' ? (form.team_name || null) : form.role === 'member' ? (selectedRm?.team_name || null) : null,
-      is_available: form.role === 'member' ? form.is_available : false,
+      is_available: ['rm', 'member', 'partner'].includes(form.role) ? form.is_available : false,
     }, {
       onSuccess: () => {
         toast.success('Profile updated');
@@ -536,7 +541,7 @@ function EditProfileButton({ profile, userId }: { profile: UserProfileResponse; 
             error={errors.team_name}
             onChange={v => setForm(f => ({ ...f, team_name: v }))}
           />}
-          {form.role === 'member' && <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm">
+          {['rm', 'member', 'partner'].includes(form.role) && <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm">
             <input type="checkbox" checked={form.is_available} onChange={e => setForm(f => ({ ...f, is_available: e.target.checked }))} />
             <span className="font-medium text-slate-700">Available for lead distribution</span>
           </label>}
