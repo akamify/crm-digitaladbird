@@ -15,10 +15,19 @@ function isValidLeadAssigneeRole(role) {
 }
 
 function isEffectivelyAvailable(user) {
-  if (user.is_available === false) return false;
-  if (user.is_available === true) return true;
-  return String(user.lead_assignment_status || 'available') === 'available'
-    && user.lead_assignment_enabled !== false;
+  const assignmentStatus = String(user?.lead_assignment_status || '').trim().toLowerCase();
+  if (assignmentStatus) {
+    return user.lead_assignment_enabled !== false && assignmentStatus === 'available';
+  }
+  return user?.is_available !== false;
+}
+
+function isReportingRmAvailable(user) {
+  const assignmentStatus = String(user?.rm_lead_assignment_status || '').trim().toLowerCase();
+  if (assignmentStatus) {
+    return user.rm_lead_assignment_enabled !== false && assignmentStatus === 'available';
+  }
+  return user?.rm_is_available !== false;
 }
 
 function availabilityDetails(user, reason) {
@@ -30,6 +39,8 @@ function availabilityDetails(user, reason) {
     is_available: user?.is_available ?? null,
     distribution_blocked: user?.distribution_blocked ?? null,
     rm_is_available: user?.rm_is_available ?? null,
+    rm_lead_assignment_enabled: user?.rm_lead_assignment_enabled ?? null,
+    rm_lead_assignment_status: user?.rm_lead_assignment_status ?? null,
   };
 }
 
@@ -53,7 +64,7 @@ function assertLeadAssigneeUser(user, options = {}) {
   if (!isEffectivelyAvailable(user)) {
     throw new AppError(422, INVALID_LEAD_ASSIGNEE, INVALID_LEAD_ASSIGNEE_AVAILABILITY_MESSAGE, availabilityDetails(user, 'user_unavailable'));
   }
-  if (user.rm_is_available === false) {
+  if (!isReportingRmAvailable(user)) {
     throw new AppError(422, 'REPORTING_RM_UNAVAILABLE', RM_UNAVAILABLE_MESSAGE, availabilityDetails(user, 'reporting_rm_unavailable'));
   }
   if (actor?.role === 'rm' && user.report_to_id !== actor.id) {
@@ -69,7 +80,9 @@ async function validateLeadAssignee(runner, userId, options = {}) {
             COALESCE(u.distribution_blocked, FALSE) AS distribution_blocked,
             COALESCE(u.lead_assignment_enabled, TRUE) AS lead_assignment_enabled,
             COALESCE(u.lead_assignment_status, 'available') AS lead_assignment_status,
-            COALESCE(rm.is_available, TRUE) AS rm_is_available
+            COALESCE(rm.is_available, TRUE) AS rm_is_available,
+            COALESCE(rm.lead_assignment_enabled, TRUE) AS rm_lead_assignment_enabled,
+            COALESCE(rm.lead_assignment_status, 'available') AS rm_lead_assignment_status
        FROM users u
        LEFT JOIN users rm ON rm.id = u.report_to_id AND rm.role = 'rm' AND rm.deleted_at IS NULL
       WHERE u.id = $1 AND u.deleted_at IS NULL`,

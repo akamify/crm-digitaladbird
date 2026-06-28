@@ -26,6 +26,15 @@ function asInt(value, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function leadAvailabilitySql(alias) {
+  return `
+    COALESCE(${alias}.lead_assignment_enabled, COALESCE(${alias}.is_available, TRUE)) = TRUE
+    AND COALESCE(${alias}.lead_assignment_status,
+      CASE WHEN COALESCE(${alias}.is_available, TRUE) THEN 'available' ELSE 'unavailable' END
+    ) = 'available'
+  `;
+}
+
 async function settingRows(client = null) {
   const runner = client || { query };
   const { rows } = await runner.query(`SELECT key, value FROM distribution_settings`);
@@ -115,7 +124,7 @@ async function getAvailableMembers(options = {}, client = null) {
     u.role IN ('member', 'partner')
     AND u.status = 'active'
     AND u.deleted_at IS NULL
-    AND COALESCE(u.is_available, TRUE) = TRUE
+    AND ${leadAvailabilitySql('u')}
     AND COALESCE(u.distribution_blocked, FALSE) = FALSE
     AND NOT EXISTS (
       SELECT 1 FROM users rm
@@ -124,7 +133,7 @@ async function getAvailableMembers(options = {}, client = null) {
          AND (
            rm.status <> 'active'
            OR rm.deleted_at IS NOT NULL
-           OR COALESCE(rm.is_available, TRUE) = FALSE
+           OR NOT (${leadAvailabilitySql('rm')})
          )
     )
   `;
@@ -227,7 +236,7 @@ async function getEligibleRmTeams(client) {
       FROM users rm
      WHERE rm.role = 'rm'
        AND rm.status = 'active'
-       AND COALESCE(rm.is_available, TRUE) = TRUE
+       AND ${leadAvailabilitySql('rm')}
        AND rm.deleted_at IS NULL
        AND EXISTS (
          SELECT 1
@@ -236,7 +245,7 @@ async function getEligibleRmTeams(client) {
             AND m.role IN ('member', 'partner')
             AND m.status = 'active'
             AND m.deleted_at IS NULL
-            AND COALESCE(m.is_available, TRUE) = TRUE
+            AND ${leadAvailabilitySql('m')}
             AND COALESCE(m.distribution_blocked, FALSE) = FALSE
        )
      ORDER BY rm.created_at ASC NULLS LAST, rm.full_name ASC NULLS LAST, rm.id ASC
@@ -540,6 +549,7 @@ async function fulfillApprovedRequestsInTransaction(client, { limit = 100, actor
              COALESCE(u.lead_assignment_enabled, TRUE) AS user_lead_assignment_enabled,
              COALESCE(u.lead_assignment_status, 'available') AS user_lead_assignment_status,
              COALESCE(rm.is_available, TRUE) AS rm_is_available,
+             COALESCE(rm.lead_assignment_enabled, TRUE) AS rm_lead_assignment_enabled,
              COALESCE(rm.lead_assignment_status, 'available') AS rm_lead_assignment_status
         FROM lead_requests lr
         JOIN users u ON u.id = lr.user_id
@@ -567,6 +577,7 @@ async function fulfillApprovedRequestsInTransaction(client, { limit = 100, actor
           lead_assignment_enabled: req.user_lead_assignment_enabled,
           lead_assignment_status: req.user_lead_assignment_status,
           rm_is_available: req.rm_is_available,
+          rm_lead_assignment_enabled: req.rm_lead_assignment_enabled,
           rm_lead_assignment_status: req.rm_lead_assignment_status,
         }, { requireAvailable: true });
       } catch (err) {
@@ -897,7 +908,7 @@ async function getAssignmentOverview() {
          FROM users rm
         WHERE rm.role = 'rm'
           AND rm.status = 'active'
-          AND COALESCE(rm.is_available, TRUE) = TRUE
+          AND ${leadAvailabilitySql('rm')}
           AND rm.deleted_at IS NULL
           AND EXISTS (
             SELECT 1 FROM users m
@@ -905,14 +916,14 @@ async function getAssignmentOverview() {
                AND m.role IN ('member','partner')
                AND m.status = 'active'
                AND m.deleted_at IS NULL
-               AND COALESCE(m.is_available, TRUE) = TRUE
+               AND ${leadAvailabilitySql('m')}
                AND COALESCE(m.distribution_blocked, FALSE) = FALSE
           )) AS eligible_rms,
       (SELECT COUNT(*)::int FROM users m
         WHERE m.role IN ('member','partner')
           AND m.status = 'active'
           AND m.deleted_at IS NULL
-          AND COALESCE(m.is_available, TRUE) = TRUE
+          AND ${leadAvailabilitySql('m')}
           AND COALESCE(m.distribution_blocked, FALSE) = FALSE
           AND NOT EXISTS (
             SELECT 1 FROM users rm
@@ -921,7 +932,7 @@ async function getAssignmentOverview() {
                AND (
                  rm.status <> 'active'
                  OR rm.deleted_at IS NOT NULL
-                 OR COALESCE(rm.is_available, TRUE) = FALSE
+                 OR NOT (${leadAvailabilitySql('rm')})
                )
           )) AS available_team_members
   `);

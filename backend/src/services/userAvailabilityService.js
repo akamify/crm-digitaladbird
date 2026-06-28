@@ -33,6 +33,22 @@ function availabilitySyncWarning(row, expectedAvailable, expectedStatus) {
   };
 }
 
+function effectiveAvailability(row) {
+  const status = String(row?.lead_assignment_status || '').trim().toLowerCase();
+  if (status) {
+    return normalizeAvailability(row.lead_assignment_enabled) !== false && status === 'available';
+  }
+  return normalizeAvailability(row?.is_available) !== false;
+}
+
+function availabilitySaved(row, expectedAvailable, expectedStatus) {
+  return normalizeAvailability(row.is_available) === expectedAvailable
+    || (
+      normalizeAvailability(row.lead_assignment_enabled) === expectedAvailable
+      && String(row.lead_assignment_status || '').trim().toLowerCase() === expectedStatus
+    );
+}
+
 function assertActorCanUpdate(actor, targets, { bulk = false } = {}) {
   if (!actor) throw new AppError(401, 'NO_USER', 'Not authenticated');
   const isAdmin = ['super_admin', 'admin'].includes(actor.role);
@@ -77,7 +93,13 @@ function assertBulkShape(targets, isAvailable) {
 async function loadTargets(client, userIds) {
   const { rows } = await client.query(
     `SELECT id, full_name, role, report_to_id, status, deleted_at,
-            COALESCE(is_available, TRUE) AS is_available
+            CASE
+              WHEN lead_assignment_status IS NOT NULL
+              THEN COALESCE(lead_assignment_enabled, TRUE) = TRUE
+                   AND lead_assignment_status = 'available'
+              ELSE COALESCE(is_available, TRUE)
+            END AS is_available,
+            lead_assignment_enabled, lead_assignment_status
        FROM users
       WHERE id = ANY($1::uuid[])
         AND deleted_at IS NULL
@@ -93,56 +115,55 @@ async function loadTargets(client, userIds) {
 async function setAvailabilityForIds(client, userIds, isAvailable, actorId, reason = null) {
   if (!userIds.length) return [];
   const status = isAvailable ? 'available' : 'unavailable';
-  const { rows: canonicalRows } = await client.query(
+  const secondary = await client.query(
     `UPDATE users
         SET is_available = $1,
-            updated_at = NOW()
-      WHERE id = ANY($2::uuid[])
-        AND deleted_at IS NULL
-      RETURNING id, is_available`,
-    [isAvailable, userIds],
-  );
-  if (canonicalRows.length !== userIds.length) {
-    throw new AppError(409, 'LEAD_AVAILABILITY_UPDATE_INCOMPLETE', 'Could not update lead availability for every selected user.');
-  }
-  const staleCanonical = canonicalRows.find(row => normalizeAvailability(row.is_available) !== isAvailable);
-  if (staleCanonical) {
-    throw new AppError(409, 'LEAD_AVAILABILITY_UPDATE_FAILED', 'Lead availability did not save correctly. Please retry.', {
-      expected: { is_available: isAvailable },
-      actual: {
-        user_id: staleCanonical.id,
-        is_available: staleCanonical.is_available,
-      },
-    });
-  }
-
-  const { rows } = await client.query(
-    `UPDATE users
-        SET lead_assignment_enabled = $1,
+            lead_assignment_enabled = $1,
             lead_assignment_status = $2,
             lead_assignment_disabled_reason = CASE WHEN $1 THEN NULL ELSE $3 END,
             lead_assignment_updated_by = $4,
             lead_assignment_updated_at = NOW(),
             updated_at = NOW()
       WHERE id = ANY($5::uuid[])
+        AND deleted_at IS NULL`,
+    [isAvailable, status, reason || null, actorId, userIds],
+  );
+  if (secondary.rowCount !== userIds.length) {
+    throw new AppError(409, 'LEAD_AVAILABILITY_UPDATE_INCOMPLETE', 'Could not update lead availability for every selected user.');
+  }
+
+  // Keep is_available canonical. This final write runs after legacy/secondary
+  // availability metadata updates so a DB-side rule cannot leave the canonical
+  // flag stale while the secondary fields are already "available".
+  const { rows } = await client.query(
+    `UPDATE users
+        SET is_available = $1,
+            updated_at = NOW()
+      WHERE id = ANY($2::uuid[])
         AND deleted_at IS NULL
       RETURNING id, full_name, email, phone, role, status, report_to_id, team_name,
                 is_available, distribution_blocked,
                 lead_assignment_enabled, lead_assignment_status,
                 lead_assignment_disabled_reason, lead_assignment_updated_by,
                 lead_assignment_updated_at`,
-    [isAvailable, status, reason || null, actorId, userIds],
+    [isAvailable, userIds],
   );
   if (rows.length !== userIds.length) {
     throw new AppError(409, 'LEAD_AVAILABILITY_UPDATE_INCOMPLETE', 'Could not update lead availability for every selected user.');
   }
-  const stale = rows.find(row => normalizeAvailability(row.is_available) !== isAvailable);
+  const stale = rows.find(row => !availabilitySaved(row, isAvailable, status));
   if (stale) {
     throw new AppError(409, 'LEAD_AVAILABILITY_UPDATE_FAILED', 'Lead availability did not save correctly. Please retry.', {
-      expected: { is_available: isAvailable },
+      expected: {
+        is_available: isAvailable,
+        lead_assignment_enabled: isAvailable,
+        lead_assignment_status: status,
+      },
       actual: {
         user_id: stale.id,
         is_available: stale.is_available,
+        lead_assignment_enabled: stale.lead_assignment_enabled,
+        lead_assignment_status: stale.lead_assignment_status,
       },
     });
   }
@@ -159,7 +180,7 @@ async function setAvailabilityForIds(client, userIds, isAvailable, actorId, reas
   }
   return rows.map(row => ({
     ...row,
-    is_available: isAvailable,
+    is_available: effectiveAvailability(row),
     lead_assignment_enabled: normalizeAvailability(row.lead_assignment_enabled) ?? isAvailable,
     lead_assignment_status: String(row.lead_assignment_status || status).trim().toLowerCase() || status,
   }));

@@ -481,8 +481,11 @@ function effectiveStatus(user: User): string {
 
 function isLeadAvailable(user: User): boolean {
   if (effectiveStatus(user) !== 'active') return false;
-  if (typeof user.is_available === 'boolean') return user.is_available;
-  return !['unavailable', 'blocked', 'disabled'].includes(String(user.lead_assignment_status || '').toLowerCase());
+  const assignmentStatus = String(user.lead_assignment_status || '').trim().toLowerCase();
+  if (assignmentStatus) {
+    return user.lead_assignment_enabled !== false && assignmentStatus === 'available';
+  }
+  return user.is_available !== false;
 }
 
 function selectionRoleBucket(user: User): 'rm' | 'member' {

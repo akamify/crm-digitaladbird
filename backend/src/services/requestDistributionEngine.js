@@ -23,6 +23,15 @@ const { notifyLeadAssigned, notifyLeadRequestResolved } = require('./notificatio
 
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
+function leadAvailabilitySql(alias) {
+  return `
+    COALESCE(${alias}.lead_assignment_enabled, COALESCE(${alias}.is_available, TRUE)) = TRUE
+    AND COALESCE(${alias}.lead_assignment_status,
+      CASE WHEN COALESCE(${alias}.is_available, TRUE) THEN 'available' ELSE 'unavailable' END
+    ) = 'available'
+  `;
+}
+
 /** Check if distribution is active (avoids circular import with distributionScheduler). */
 async function isDistributionActive() {
   try {
@@ -162,6 +171,7 @@ async function fulfillMemberRequest(requestId) {
               COALESCE(u.lead_assignment_enabled, TRUE) AS user_lead_assignment_enabled,
               COALESCE(u.lead_assignment_status, 'available') AS user_lead_assignment_status,
               COALESCE(rm.is_available, TRUE) AS rm_is_available,
+              COALESCE(rm.lead_assignment_enabled, TRUE) AS rm_lead_assignment_enabled,
               COALESCE(rm.lead_assignment_status, 'available') AS rm_lead_assignment_status
          FROM lead_requests lr
          JOIN users u ON u.id = lr.user_id
@@ -183,6 +193,7 @@ async function fulfillMemberRequest(requestId) {
         lead_assignment_enabled: req.user_lead_assignment_enabled,
         lead_assignment_status: req.user_lead_assignment_status,
         rm_is_available: req.rm_is_available,
+        rm_lead_assignment_enabled: req.rm_lead_assignment_enabled,
         rm_lead_assignment_status: req.rm_lead_assignment_status,
       }, { requireAvailable: true });
     } catch (err) {
@@ -306,7 +317,7 @@ async function distributeRoundRobin() {
        WHERE lr.status = 'pending'
          AND u.role = 'member'
          AND u.status = 'active' AND u.deleted_at IS NULL
-         AND COALESCE(u.is_available, TRUE) = TRUE
+         AND ${leadAvailabilitySql('u')}
          AND COALESCE(u.distribution_blocked, FALSE) = FALSE
          AND NOT EXISTS (
            SELECT 1 FROM users rm
@@ -315,7 +326,7 @@ async function distributeRoundRobin() {
               AND (
                 rm.status <> 'active'
                 OR rm.deleted_at IS NOT NULL
-                OR COALESCE(rm.is_available, TRUE) = FALSE
+                OR NOT (${leadAvailabilitySql('rm')})
               )
          )
        ORDER BY lr.created_at ASC

@@ -66,6 +66,15 @@ function apiErrorMessage(error: unknown, fallback: string) {
   return data?.message || data?.error?.message || fallback;
 }
 
+function isLeadAvailable(user: { status?: string | null; is_available?: boolean | null; lead_assignment_enabled?: boolean | null; lead_assignment_status?: string | null }) {
+  if (String(user.status || '').toLowerCase() !== 'active') return false;
+  const assignmentStatus = String(user.lead_assignment_status || '').trim().toLowerCase();
+  if (assignmentStatus) {
+    return user.lead_assignment_enabled !== false && assignmentStatus === 'available';
+  }
+  return user.is_available !== false;
+}
+
 export default function AdminUserProfilePage() {
   const params = useParams<{ userId: string }>();
   const userId = params.userId;
@@ -194,7 +203,7 @@ function UserProfileInner({ userId }: { userId: string }) {
               </div>
               <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
                 {(isRmProfile || isMemberProfile) && user.team_name && <span className="rounded-lg bg-slate-100 px-2.5 py-1">Team: {user.team_name}</span>}
-                {(isRmProfile || isMemberProfile) && <span className="rounded-lg bg-slate-100 px-2.5 py-1">Availability: {user.is_available ? 'Available' : 'Unavailable'}</span>}
+                {(isRmProfile || isMemberProfile) && <span className="rounded-lg bg-slate-100 px-2.5 py-1">Availability: {isLeadAvailable(user) ? 'Available' : 'Unavailable'}</span>}
                 <span className="rounded-lg bg-slate-100 px-2.5 py-1">Joined: {fmtDate(user.created_at, 'dd MMM yyyy')}</span>
                 <span className="rounded-lg bg-slate-100 px-2.5 py-1">Last login: {fmtDate(user.last_login_at)}</span>
               </div>
@@ -404,7 +413,7 @@ function LeadAvailabilityPanel({
   onUpdated: () => void;
 }) {
   const updateAvailability = useUpdateLeadAvailability();
-  const isAvailable = Boolean(user.is_available);
+  const isAvailable = isLeadAvailable(user);
   const accountRestricted = ['blocked', 'disabled', 'inactive', 'deleted'].includes(user.status) || Boolean(user.distribution_blocked);
 
   function setAvailability(nextAvailable: boolean) {
@@ -488,7 +497,7 @@ function EditProfileButton({ profile, userId }: { profile: UserProfileResponse; 
     role: profile.user.role === 'partner' ? 'member' : (profile.user.role || 'member'),
     report_to_id: profile.user.report_to_id || '',
     team_name: profile.user.team_name || '',
-    is_available: Boolean(profile.user.is_available),
+    is_available: isLeadAvailable(profile.user),
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const rms = (users || []).filter(u => u.role === 'rm');
@@ -944,7 +953,7 @@ function TeamMembersTab({ reportees }: { reportees: UserProfileResponse['reporte
   return (
     <div className="grid gap-3 md:grid-cols-2">
       {reportees.map(member => {
-        const leadAvailable = Boolean(member.is_available) && member.status === 'active';
+        const leadAvailable = isLeadAvailable(member);
         return (
           <Link key={member.id} href={`/dashboard/admin/users/${member.id}`} className="rounded-xl border border-slate-200 p-4 hover:bg-slate-50">
             <div className="flex items-start justify-between gap-3">
@@ -991,7 +1000,7 @@ function SettingsTab({ profile }: { profile: UserProfileResponse }) {
           <InfoRow label="Daily lead cap" value={profile.user.role === 'member' ? profile.user.daily_lead_cap ?? 'Not set' : 'Not applicable'} />
           <InfoRow label="Distribution weight" value={profile.user.role === 'member' ? profile.user.distribution_weight ?? 'Not set' : 'Not applicable'} />
           <InfoRow label="Team name" value={profile.user.team_name || '-'} />
-          <InfoRow label="Availability" value={profile.user.is_available ? 'Available' : 'Unavailable'} />
+          <InfoRow label="Availability" value={isLeadAvailable(profile.user) ? 'Available' : 'Unavailable'} />
         </dl>
       </div>
     </div>

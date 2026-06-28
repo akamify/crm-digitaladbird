@@ -35,10 +35,18 @@ function normalizePhoneInput(phone) {
 function mapUserRow(row) {
   if (!row) return row;
   const mapped = { ...row, role: normalizeRole(row.role) };
-  if (mapped.status === 'active') {
-    mapped.lead_assignment_status = mapped.is_available === false ? 'unavailable' : 'available';
-    mapped.lead_assignment_enabled = mapped.is_available !== false;
-  }
+  const assignmentStatus = String(mapped.lead_assignment_status || '').trim().toLowerCase();
+  const hasAssignmentStatus = Boolean(assignmentStatus);
+  const assignmentEnabled = mapped.lead_assignment_enabled !== false;
+  const accountActive = mapped.status === 'active';
+  const effectiveAvailable = accountActive && (hasAssignmentStatus
+    ? assignmentEnabled && assignmentStatus === 'available'
+    : mapped.is_available !== false);
+  mapped.is_available = effectiveAvailable;
+  mapped.lead_assignment_enabled = hasAssignmentStatus ? assignmentEnabled : effectiveAvailable;
+  mapped.lead_assignment_status = hasAssignmentStatus
+    ? assignmentStatus
+    : (effectiveAvailable ? 'available' : 'unavailable');
   return mapped;
 }
 

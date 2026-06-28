@@ -21,6 +21,15 @@ const { getAssignmentSettings, isInsideAssignmentWindow } = require('./leadAssig
 
 const FALLBACK_RULE_NAME = '__default__';
 
+function leadAvailabilitySql(alias) {
+  return `
+    COALESCE(${alias}.lead_assignment_enabled, COALESCE(${alias}.is_available, TRUE)) = TRUE
+    AND COALESCE(${alias}.lead_assignment_status,
+      CASE WHEN COALESCE(${alias}.is_available, TRUE) THEN 'available' ELSE 'unavailable' END
+    ) = 'available'
+  `;
+}
+
 async function getActiveRule(client, formId) {
   // form-specific rule first, then null-form default
   const { rows } = await client.query(
@@ -41,7 +50,7 @@ async function getEligibleMembers(client, rule) {
   //   - belong to rule.eligible_user_ids if specified
   //   - have not exceeded daily_lead_cap today
   const params = [];
-  let where = `u.role IN ('member', 'partner') AND u.status = 'active' AND u.is_available = TRUE
+  let where = `u.role IN ('member', 'partner') AND u.status = 'active' AND ${leadAvailabilitySql('u')}
                AND u.distribution_blocked = FALSE AND u.deleted_at IS NULL
                AND NOT EXISTS (
                  SELECT 1 FROM users rm
@@ -50,7 +59,7 @@ async function getEligibleMembers(client, rule) {
                     AND (
                       rm.status <> 'active'
                       OR rm.deleted_at IS NOT NULL
-                      OR COALESCE(rm.is_available, TRUE) = FALSE
+                      OR NOT (${leadAvailabilitySql('rm')})
                     )
                )`;
 
