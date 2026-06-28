@@ -1351,6 +1351,7 @@ module.exports = {
   adminSyncNow,
   adminPullSync,
   enqueueLeadSync,
+  pushLeadToPersonalSheets,
   processPendingSyncEvents,
   runAutoPullCycle,
 };

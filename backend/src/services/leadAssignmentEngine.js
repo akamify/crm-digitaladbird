@@ -558,7 +558,49 @@ async function dispatchApprovedRequestNotifications(result) {
   if (result && Object.prototype.hasOwnProperty.call(result, '_notificationJobs')) {
     delete result._notificationJobs;
   }
+  if (result && Object.prototype.hasOwnProperty.call(result, '_sheetSyncLeadIds')) {
+    delete result._sheetSyncLeadIds;
+  }
   return result;
+}
+
+async function syncAssignedLeadsToSheets(leadIds, context = {}) {
+  const ids = [...new Set((leadIds || []).filter(Boolean))];
+  if (!ids.length) return { requested: 0, synced: 0, failed: 0 };
+
+  let googleSheetsService;
+  let userGoogleSheetsService;
+  try {
+    googleSheetsService = require('./googleSheetsService');
+    userGoogleSheetsService = require('./userGoogleSheetsService');
+  } catch (err) {
+    logger.warn({ err: err.message, count: ids.length, ...context }, '[assignment] Google Sheet sync services unavailable');
+    return { requested: ids.length, synced: 0, failed: ids.length };
+  }
+
+  let synced = 0;
+  let failed = 0;
+  for (const leadId of ids) {
+    try {
+      const [master, personal] = await Promise.allSettled([
+        googleSheetsService.updateLeadRow(leadId),
+        userGoogleSheetsService.pushLeadToPersonalSheets(leadId),
+      ]);
+      if (master.status === 'rejected') {
+        logger.warn({ leadId, err: master.reason?.message || String(master.reason || 'Master sheet sync failed'), ...context }, '[assignment] master Google Sheet update failed');
+      }
+      if (personal.status === 'rejected') {
+        logger.warn({ leadId, err: personal.reason?.message || String(personal.reason || 'Personal sheet sync failed'), ...context }, '[assignment] personal Google Sheet update failed');
+      }
+      if (master.status === 'fulfilled' || personal.status === 'fulfilled') synced += 1;
+      if (master.status === 'rejected' && personal.status === 'rejected') failed += 1;
+    } catch (err) {
+      failed += 1;
+      logger.warn({ leadId, err: err.message, ...context }, '[assignment] Google Sheet update failed');
+    }
+  }
+  logger.info({ requested: ids.length, synced, failed, ...context }, '[assignment] Google Sheet sync completed after assignment');
+  return { requested: ids.length, synced, failed };
 }
 
 async function countAvailableLeadsForRequest(request, actor, client = null) {
@@ -614,6 +656,7 @@ async function fulfillApprovedRequestsInTransaction(client, { limit = 100, actor
     let assigned = 0;
     const requestResults = [];
     const notificationJobs = [];
+    const sheetSyncLeadIds = [];
     for (const req of requests) {
       currentStep = `process_request:${req.id}`;
       if (assigned >= limit) break;
@@ -664,6 +707,7 @@ async function fulfillApprovedRequestsInTransaction(client, { limit = 100, actor
         });
         filled++;
         leadIds.push(lead.id);
+        sheetSyncLeadIds.push(lead.id);
       }
       if (filled) {
         notificationJobs.push({
@@ -693,7 +737,7 @@ async function fulfillApprovedRequestsInTransaction(client, { limit = 100, actor
       requestResults.push({ requestId: req.id, assigned: filled, status: status.status, remaining: status.remaining });
     }
 
-    return { processed: requests.length, assigned, requests: requestResults, _notificationJobs: notificationJobs };
+    return { processed: requests.length, assigned, requests: requestResults, _notificationJobs: notificationJobs, _sheetSyncLeadIds: sheetSyncLeadIds };
     } catch (err) {
       err.assignment_step = currentStep;
       throw err;
@@ -706,6 +750,8 @@ async function runApprovedRequestFulfillment({ limit = 100, actor = null, bypass
     return { processed: 0, assigned: 0, skipped: true, reason: 'AUTO_ASSIGN_APPROVED_REQUESTS_DISABLED', requests: [] };
   }
   const result = await withTransaction((client) => fulfillApprovedRequestsInTransaction(client, { limit, actor }));
+  const sheetSyncLeadIds = [...(result._sheetSyncLeadIds || [])];
+  await syncAssignedLeadsToSheets(sheetSyncLeadIds, { assignmentType: 'approved_request_fulfillment' });
   return dispatchApprovedRequestNotifications(result);
 }
 
@@ -798,6 +844,11 @@ async function runAutoAssignment({ limit = 100, reason = 'auto_round_robin', act
       results,
     };
   });
+  const sheetSyncLeadIds = [
+    ...(result?.requestFulfillment?._sheetSyncLeadIds || []),
+    ...(result?.results || []).filter(item => item.assigned).map(item => item.leadId),
+  ];
+  await syncAssignedLeadsToSheets(sheetSyncLeadIds, { assignmentType: reason || 'auto_round_robin' });
   if (result?.requestFulfillment) {
     await dispatchApprovedRequestNotifications(result.requestFulfillment);
   }
