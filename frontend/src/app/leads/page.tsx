@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ChevronLeft, ChevronRight, Inbox, Lock, Mail, MessageSquarePlus, Phone } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Eye, Inbox, Lock, Mail, MessageSquarePlus, Phone } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { LeadActions } from '@/components/leads/LeadActions';
@@ -37,6 +37,7 @@ function LeadsInner() {
     stage: (sp.get('stage') as LeadFilterType['stage']) || '',
     call_status: (sp.get('call_status') as LeadFilterType['call_status']) || '',
     followup: (sp.get('followup') as LeadFilterType['followup']) || '',
+    reassignment: (sp.get('reassignment') as LeadFilterType['reassignment']) || '',
     source: sp.get('source') || '',
     from: sp.get('from') || '',
     to: sp.get('to') || '',
@@ -64,8 +65,8 @@ function LeadsInner() {
   const page = filters.page || 1;
   const size = filters.page_size || 25;
   const pages = Math.max(1, Math.ceil(total / size));
-  const currentPageIds = rows.map(lead => lead.id);
-  const allCurrentPageSelected = currentPageIds.length > 0 && currentPageIds.every(id => selectedIds.includes(id));
+  const selectablePageIds = rows.filter(lead => !lead.read_only_access).map(lead => lead.id);
+  const allCurrentPageSelected = selectablePageIds.length > 0 && selectablePageIds.every(id => selectedIds.includes(id));
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -92,8 +93,8 @@ function LeadsInner() {
 
   function toggleCurrentPage(checked: boolean) {
     setSelectedIds(ids => checked
-      ? [...new Set([...ids, ...currentPageIds])]
-      : ids.filter(id => !currentPageIds.includes(id)));
+      ? [...new Set([...ids, ...selectablePageIds])]
+      : ids.filter(id => !selectablePageIds.includes(id)));
   }
 
   function submitBulkRemark() {
@@ -115,6 +116,35 @@ function LeadsInner() {
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
+        {[
+          { value: '', label: 'Current Leads' },
+          { value: 'to_me', label: 'Reassigned To Me' },
+          { value: 'to_others', label: 'Reassigned To Others' },
+        ].map(tab => {
+          const active = (filters.reassignment || '') === tab.value;
+          return (
+            <button
+              key={tab.value || 'current'}
+              type="button"
+              onClick={() => setFilters(f => ({ ...f, reassignment: tab.value as LeadFilterType['reassignment'], page: 1 }))}
+              className={clsx(
+                'rounded-lg px-3 py-2 text-sm font-medium transition',
+                active ? 'bg-brand-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50',
+              )}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {filters.reassignment === 'to_others' && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          These leads were reassigned away from you or your team. You can open the profile for reference, but editing actions are disabled.
+        </div>
+      )}
+
       <LeadFilters value={filters} onChange={setFilters} />
 
       {selectedIds.length > 0 && (
@@ -169,6 +199,7 @@ function LeadsInner() {
                   <th className="px-4 py-2.5 font-medium">Stage</th>
                   <th className="px-4 py-2.5 font-medium">Call status</th>
                   <th className="px-4 py-2.5 font-medium">Assigned</th>
+                  <th className="px-4 py-2.5 font-medium">Reassigned</th>
                   <th className="px-4 py-2.5 font-medium">Follow-up</th>
                   <th className="px-4 py-2.5 font-medium">Created</th>
                   <th className="px-4 py-2.5 font-medium">Actions</th>
@@ -182,9 +213,11 @@ function LeadsInner() {
                       <td className="px-4 py-3">
                         <input
                           type="checkbox"
+                          disabled={lead.read_only_access}
                           checked={selectedIds.includes(lead.id)}
                           onChange={event => toggleLeadSelection(lead.id, event.target.checked)}
                           aria-label={`Select ${lead.full_name || 'lead'}`}
+                          title={lead.read_only_access ? 'Read-only reassigned lead' : undefined}
                         />
                       </td>
                       <td className="px-4 py-3">
@@ -234,6 +267,15 @@ function LeadsInner() {
                       <td className="px-4 py-3"><StatusChip status={lead.call_status} /></td>
                       <td className="px-4 py-3 text-slate-700">{lead.assigned_to_name || <span className="italic text-slate-400">Unassigned</span>}</td>
                       <td className="px-4 py-3">
+                        {lead.read_only_access ? (
+                          <span className="chip-amber">To others</span>
+                        ) : lead.was_reassigned ? (
+                          <span className="chip-blue">To me</span>
+                        ) : (
+                          <span className="text-xs text-slate-400">-</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
                         {lead.next_followup_at ? (
                           <div
                             className={clsx(
@@ -251,22 +293,28 @@ function LeadsInner() {
                         {formatISTCompact(lead.created_at)}
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-1">
-                          <LeadActions
-                            phone={lead.phone}
-                            compact
-                            onCall={() => openCommunication(lead, 'calls')}
-                            onChat={() => openCommunication(lead, 'chat')}
-                          />
-                          <button
-                            type="button"
-                            title="Add remark"
-                            onClick={() => setRemarkLeadId(lead.id)}
-                            className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-1 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50"
-                          >
-                            <MessageSquarePlus className="h-3 w-3" />
-                          </button>
-                        </div>
+                        {lead.read_only_access ? (
+                          <Link href={`/leads/${lead.id}`} className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50">
+                            <Eye className="h-3 w-3" /> View
+                          </Link>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <LeadActions
+                              phone={lead.phone}
+                              compact
+                              onCall={() => openCommunication(lead, 'calls')}
+                              onChat={() => openCommunication(lead, 'chat')}
+                            />
+                            <button
+                              type="button"
+                              title="Add remark"
+                              onClick={() => setRemarkLeadId(lead.id)}
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-1 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50"
+                            >
+                              <MessageSquarePlus className="h-3 w-3" />
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   );

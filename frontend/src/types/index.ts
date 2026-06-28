@@ -87,6 +87,9 @@ export interface Lead {
   assigned_at: string | null;
   stage_updated_at?: string | null;
   updated_at: string;
+  was_reassigned?: boolean;
+  read_only_access?: boolean;
+  reassignment_access_type?: 'current_owner' | 'reassigned_to_other' | null;
 }
 
 export interface LeadRemark {
@@ -125,6 +128,7 @@ export interface LeadFilters {
   to?: string;
   pending?: 'true' | 'false' | '';
   followup?: 'today' | 'overdue' | 'upcoming' | '';
+  reassignment?: 'to_me' | 'to_others' | '';
   assigned_to?: string;
   page?: number;
   page_size?: number;

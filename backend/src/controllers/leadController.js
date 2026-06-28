@@ -25,6 +25,47 @@ function buildRemarkText({ remark, callStatus, stage, nextFollowupAt }) {
   return parts.length ? parts.join(' | ') : 'Lead activity updated';
 }
 
+const callStatusEnumCache = {
+  values: null,
+  loadedAt: 0,
+};
+
+async function getDbCallStatusValues(client) {
+  const now = Date.now();
+  if (callStatusEnumCache.values && now - callStatusEnumCache.loadedAt < 5 * 60 * 1000) {
+    return callStatusEnumCache.values;
+  }
+  const { rows } = await client.query(
+    `SELECT enumlabel
+       FROM pg_enum
+      WHERE enumtypid = 'call_status'::regtype`,
+  );
+  callStatusEnumCache.values = new Set(rows.map(row => row.enumlabel));
+  callStatusEnumCache.loadedAt = now;
+  return callStatusEnumCache.values;
+}
+
+async function toDbCallStatus(client, normalizedCallStatus) {
+  if (!normalizedCallStatus) return null;
+  const allowed = await getDbCallStatusValues(client);
+  if (allowed.has(normalizedCallStatus)) return normalizedCallStatus;
+  const fallbackMap = {
+    communication_completed: 'interested',
+    respond_hi: 'interested',
+    talk_response: 'interested',
+    recall: 'callback_requested',
+    cb: 'busy',
+    in: 'invalid_number',
+    session_730_attend: 'follow_up',
+    session_after_730: 'follow_up',
+    custom_remark: null,
+  };
+  const fallback = Object.prototype.hasOwnProperty.call(fallbackMap, normalizedCallStatus)
+    ? fallbackMap[normalizedCallStatus]
+    : null;
+  return fallback && allowed.has(fallback) ? fallback : null;
+}
+
 async function enqueueLeadSheetSync(leadId, payload) {
   try {
     const userSheets = require('../services/userGoogleSheetsService');
@@ -37,6 +78,21 @@ async function enqueueLeadSheetSync(leadId, payload) {
       message: error?.message,
     }, '[LeadRemarks] Google Sheets sync enqueue failed');
   }
+}
+
+async function assertLeadWriteAccess(client, leadId, user) {
+  const { rows: [lead] } = await client.query(
+    `SELECT l.id, l.assigned_to_user_id, assigned_user.report_to_id AS assigned_user_rm_id
+       FROM leads l
+       LEFT JOIN users assigned_user ON assigned_user.id = l.assigned_to_user_id
+      WHERE l.id = $1 AND l.deleted_at IS NULL`,
+    [leadId],
+  );
+  if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
+  if (user.role === 'super_admin' || user.role === 'admin') return lead;
+  if ((user.role === 'member' || user.role === 'partner') && lead.assigned_to_user_id === user.id) return lead;
+  if (user.role === 'rm' && lead.assigned_user_rm_id === user.id) return lead;
+  throw new AppError(403, 'REASSIGNED_LEAD_READ_ONLY', 'This lead has been reassigned. You can view it, but cannot edit it.');
 }
 
 /**
@@ -60,12 +116,44 @@ exports.list = asyncHandler(async (req, res) => {
   const visible = await getVisibleUserIds(req.user);
   const where = [`l.deleted_at IS NULL`];
   const params = [];
+  const reassignment = String(req.query.reassignment || '').trim();
 
   // role scoping
-  if (visible !== null) {
+  if (reassignment === 'to_others') {
+    if (visible !== null) {
+      if (visible.length === 0) return res.json({ success: true, data: { rows: [], total: 0 } });
+      params.push(visible);
+      const visibleIdx = params.length;
+      where.push(`EXISTS (
+        SELECT 1 FROM lead_assignments la
+         WHERE la.lead_id = l.id
+           AND la.previous_user_id = ANY($${visibleIdx}::uuid[])
+      )`);
+      where.push(`(
+        l.assigned_to_user_id IS NULL
+        OR l.assigned_to_user_id <> ALL($${visibleIdx}::uuid[])
+      )`);
+    } else {
+      where.push(`EXISTS (
+        SELECT 1 FROM lead_assignments la
+         WHERE la.lead_id = l.id
+           AND la.previous_user_id IS NOT NULL
+           AND la.previous_user_id IS DISTINCT FROM l.assigned_to_user_id
+      )`);
+    }
+  } else if (visible !== null) {
     if (visible.length === 0) return res.json({ success: true, data: { rows: [], total: 0 } });
     params.push(visible);
     where.push(`l.assigned_to_user_id = ANY($${params.length}::uuid[])`);
+  }
+
+  if (reassignment === 'to_me') {
+    where.push(`EXISTS (
+      SELECT 1 FROM lead_assignments la
+       WHERE la.lead_id = l.id
+         AND la.previous_user_id IS NOT NULL
+         AND COALESCE(la.assigned_to_user_id, la.user_id) = l.assigned_to_user_id
+    )`);
   }
 
   // explicit assigned_to filter (admin/RM only — and RM can only narrow within visible set)
@@ -156,7 +244,14 @@ exports.list = asyncHandler(async (req, res) => {
       l.stage, l.call_status, l.last_call_at, l.next_followup_at, l.call_attempts,
       l.assigned_to_user_id, u.full_name AS assigned_to_name,
       l.locked_by_user_id, l.locked_until,
-      l.created_at, l.assigned_at, l.stage_updated_at, l.updated_at
+      l.created_at, l.assigned_at, l.stage_updated_at, l.updated_at,
+      EXISTS (
+        SELECT 1 FROM lead_assignments la
+         WHERE la.lead_id = l.id
+           AND la.previous_user_id IS NOT NULL
+           AND COALESCE(la.assigned_to_user_id, la.user_id) = l.assigned_to_user_id
+      ) AS was_reassigned,
+      ${reassignment === 'to_others' && visible !== null ? 'TRUE' : 'FALSE'} AS read_only_access
     FROM leads l
     LEFT JOIN users u ON u.id = l.assigned_to_user_id
     WHERE ${whereSql}
@@ -174,13 +269,34 @@ exports.getOne = asyncHandler(async (req, res) => {
   let scope = '';
   if (visible !== null) {
     params.push(visible);
-    scope = ` AND l.assigned_to_user_id = ANY($2::uuid[])`;
+    scope = ` AND (
+      l.assigned_to_user_id = ANY($2::uuid[])
+      OR EXISTS (
+        SELECT 1 FROM lead_assignments la
+         WHERE la.lead_id = l.id
+           AND la.previous_user_id = ANY($2::uuid[])
+           AND (
+             l.assigned_to_user_id IS NULL
+             OR l.assigned_to_user_id <> ALL($2::uuid[])
+           )
+      )
+    )`;
   }
   const { rows } = await query(
-    `SELECT l.*, u.full_name AS assigned_to_name
+    `SELECT l.*, u.full_name AS assigned_to_name,
+            CASE
+              WHEN $2::uuid[] IS NULL THEN FALSE
+              WHEN l.assigned_to_user_id = ANY($2::uuid[]) THEN FALSE
+              ELSE TRUE
+            END AS read_only_access,
+            CASE
+              WHEN $2::uuid[] IS NULL THEN NULL
+              WHEN l.assigned_to_user_id = ANY($2::uuid[]) THEN 'current_owner'
+              ELSE 'reassigned_to_other'
+            END AS reassignment_access_type
        FROM leads l LEFT JOIN users u ON u.id = l.assigned_to_user_id
       WHERE l.id = $1 AND l.deleted_at IS NULL ${scope}`,
-    params
+    visible === null ? [req.params.id, null] : params
   );
   if (!rows[0]) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
 
@@ -264,26 +380,24 @@ exports.addRemark = asyncHandler(async (req, res) => {
   });
 
   const result = await withTransaction(async (client) => {
-    const { rows: [lead] } = await client.query(
-      `SELECT id, assigned_to_user_id FROM leads WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
-      [req.params.id]
-    );
-    if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
-    if (req.user.role === 'member' && lead.assigned_to_user_id !== req.user.id) {
-      throw new AppError(403, 'FORBIDDEN', 'Lead not assigned to you');
-    }
+    const dbCallStatus = await toDbCallStatus(client, normalizedCallStatus);
+    await assertLeadWriteAccess(client, req.params.id, req.user);
+    await client.query(`SELECT id FROM leads WHERE id = $1 FOR UPDATE`, [req.params.id]);
 
     const { rows: [r] } = await client.query(
       `INSERT INTO lead_remarks(lead_id, user_id, remark, call_status, next_followup_at)
          VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [req.params.id, req.user.id, remarkText, normalizedCallStatus || null, next_followup_at || null]
+      [req.params.id, req.user.id, remarkText, dbCallStatus, next_followup_at || null]
     );
 
     const updates = [];
     const params = [req.params.id];
-    if (normalizedCallStatus) {
-      params.push(normalizedCallStatus);
+    if (dbCallStatus) {
+      params.push(dbCallStatus);
       updates.push(`call_status = $${params.length}`);
+      updates.push(`last_call_at = NOW()`);
+      updates.push(`call_attempts = call_attempts + 1`);
+    } else if (normalizedCallStatus) {
       updates.push(`last_call_at = NOW()`);
       updates.push(`call_attempts = call_attempts + 1`);
     }
@@ -329,6 +443,7 @@ exports.bulkAddRemarks = asyncHandler(async (req, res) => {
   const uniqueLeadIds = [...new Set(leadIds.map(String).filter(Boolean))].slice(0, 500);
   const visible = await getVisibleUserIds(req.user);
   const result = await withTransaction(async (client) => {
+    const dbCallStatus = await toDbCallStatus(client, normalizedCallStatus);
     const params = [uniqueLeadIds];
     let scope = '';
     if (visible !== null) {
@@ -356,14 +471,17 @@ exports.bulkAddRemarks = asyncHandler(async (req, res) => {
       await client.query(
         `INSERT INTO lead_remarks(lead_id, user_id, remark, call_status, next_followup_at)
            VALUES ($1, $2, $3, $4, $5)`,
-        [leadId, req.user.id, remarkText, normalizedCallStatus || null, next_followup_at || null],
+        [leadId, req.user.id, remarkText, dbCallStatus, next_followup_at || null],
       );
 
       const updates = ['updated_at = NOW()'];
       const updateParams = [leadId];
-      if (normalizedCallStatus) {
-        updateParams.push(normalizedCallStatus);
+      if (dbCallStatus) {
+        updateParams.push(dbCallStatus);
         updates.push(`call_status = $${updateParams.length}`);
+        updates.push(`last_call_at = NOW()`);
+        updates.push(`call_attempts = call_attempts + 1`);
+      } else if (normalizedCallStatus) {
         updates.push(`last_call_at = NOW()`);
         updates.push(`call_attempts = call_attempts + 1`);
       }
@@ -403,10 +521,13 @@ exports.reassign = asyncHandler(async (req, res) => {
 
   // Capture old assignee + names for the audit row BEFORE the reassign happens.
   const { rows: [prev] } = await query(
-    `SELECT l.assigned_to_user_id, u.full_name AS prev_name FROM leads l
+    `SELECT l.assigned_to_user_id, u.full_name AS prev_name, u.report_to_id AS prev_rm_id FROM leads l
        LEFT JOIN users u ON u.id = l.assigned_to_user_id WHERE l.id = $1`,
     [req.params.id]
   );
+  if (req.user.role === 'rm' && prev?.prev_rm_id !== req.user.id) {
+    throw new AppError(403, 'REASSIGNED_LEAD_READ_ONLY', 'This lead has been reassigned. You can view it, but cannot edit it.');
+  }
   const { rows: [target] } = await query(`SELECT full_name FROM users WHERE id = $1`, [to_user_id]);
 
   const out = await reassignLead(req.params.id, to_user_id, req.user.id, 'manual');

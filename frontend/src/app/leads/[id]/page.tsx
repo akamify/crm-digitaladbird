@@ -49,11 +49,16 @@ function LeadDetailInner() {
   const canReassign = user.role === 'super_admin' || user.role === 'rm';
   const canEditCategory = user.role === 'super_admin' || user.role === 'admin';
   const canSeeTechnical = user.role === 'super_admin' || user.role === 'admin';
+  const readOnlyAccess = Boolean(lead.read_only_access);
   const leadPhone = lead.phone;
 
   async function callLead() {
     if (!leadPhone) {
       toast.error('This lead does not have a valid phone number.');
+      return;
+    }
+    if (readOnlyAccess) {
+      toast.error('This reassigned lead is read-only for your account.');
       return;
     }
 
@@ -68,29 +73,36 @@ function LeadDetailInner() {
 
   const desktopActions = (
     <>
-      {canEditCategory && <select className="input h-10 w-auto text-xs" aria-label="Lead category" value={lead.category || 'unknown'} disabled={updateCategory.isPending} onChange={event => {
+      {canEditCategory && !readOnlyAccess && <select className="input h-10 w-auto text-xs" aria-label="Lead category" value={lead.category || 'unknown'} disabled={updateCategory.isPending} onChange={event => {
         const category = event.target.value as 'trader' | 'partner' | 'unknown';
         updateCategory.mutate({ leadId: id, category, reason: 'Manual correction from lead profile' }, { onSuccess: () => toast.success('Lead category updated'), onError: () => toast.error('Category update failed') });
       }}><option value="trader">Trader Lead</option><option value="partner">Partner Lead</option><option value="unknown">Unknown</option></select>}
-      <Button variant="outline" leftIcon={<Phone className="h-4 w-4" />} onClick={callLead} disabled={!lead.phone}>Call</Button>
-      <Button variant="outline" leftIcon={<MessageCircle className="h-4 w-4" />} onClick={() => router.push(`/chat?leadId=${id}`)}>Chat</Button>
-      <Button leftIcon={<MessageSquarePlus className="h-4 w-4" />} onClick={() => setRemarkOpen(true)}>Add Remark</Button>
-      {canReassign && <Button variant="ghost" leftIcon={<UserCog className="h-4 w-4" />} onClick={() => setReassignOpen(true)}>Reassign</Button>}
-      {lockedByMe ? <Button variant="ghost" leftIcon={<Unlock className="h-4 w-4" />} loading={unlock.isPending} onClick={() => unlock.mutate({ id }, { onSuccess: () => toast.success('Lock released'), onError: () => toast.error('Failed to release lock') })}>Release lock</Button> : <Button variant="ghost" leftIcon={<Lock className="h-4 w-4" />} loading={lock.isPending} disabled={lockedByOther} onClick={() => lock.mutate({ id, minutes: 10 }, { onSuccess: () => toast.success('Lead locked for 10 minutes'), onError: () => toast.error('Could not acquire lock') })}>{lockedByOther ? 'Locked' : 'Lock'}</Button>}
+      <Button variant="outline" leftIcon={<Phone className="h-4 w-4" />} onClick={callLead} disabled={!lead.phone || readOnlyAccess}>Call</Button>
+      {!readOnlyAccess && <Button variant="outline" leftIcon={<MessageCircle className="h-4 w-4" />} onClick={() => router.push(`/chat?leadId=${id}`)}>Chat</Button>}
+      {!readOnlyAccess && <Button leftIcon={<MessageSquarePlus className="h-4 w-4" />} onClick={() => setRemarkOpen(true)}>Add Remark</Button>}
+      {canReassign && !readOnlyAccess && <Button variant="ghost" leftIcon={<UserCog className="h-4 w-4" />} onClick={() => setReassignOpen(true)}>Reassign</Button>}
+      {!readOnlyAccess && (lockedByMe ? <Button variant="ghost" leftIcon={<Unlock className="h-4 w-4" />} loading={unlock.isPending} onClick={() => unlock.mutate({ id }, { onSuccess: () => toast.success('Lock released'), onError: () => toast.error('Failed to release lock') })}>Release lock</Button> : <Button variant="ghost" leftIcon={<Lock className="h-4 w-4" />} loading={lock.isPending} disabled={lockedByOther} onClick={() => lock.mutate({ id, minutes: 10 }, { onSuccess: () => toast.success('Lead locked for 10 minutes'), onError: () => toast.error('Could not acquire lock') })}>{lockedByOther ? 'Locked' : 'Lock'}</Button>)}
     </>
   );
 
   return (
     <div className="space-y-5 pb-20 lg:pb-0">
       <LeadProfileHeader lead={lead} lockedByMe={lockedByMe} lockedByOther={lockedByOther} actions={desktopActions} />
+      {readOnlyAccess && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          This lead was reassigned to another member. You can review the profile, remarks, and history, but editing actions are disabled.
+        </div>
+      )}
 
       <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1.85fr)_minmax(280px,1fr)]">
         <main className="min-w-0 space-y-5">
-          <section className="card-padded">
-            <WorkflowBoundary><WorkflowPanel leadId={id} isAdmin={user.role === 'super_admin'} /></WorkflowBoundary>
-          </section>
-          <LeadCommunicationPanel leadId={id} lead={lead} remarks={lead.remarks} />
-          <LeadRemarkTimeline remarks={lead.remarks} onAdd={() => setRemarkOpen(true)} />
+          {!readOnlyAccess && (
+            <section className="card-padded">
+              <WorkflowBoundary><WorkflowPanel leadId={id} isAdmin={user.role === 'super_admin'} /></WorkflowBoundary>
+            </section>
+          )}
+          {!readOnlyAccess && <LeadCommunicationPanel leadId={id} lead={lead} remarks={lead.remarks} />}
+          <LeadRemarkTimeline remarks={lead.remarks} onAdd={() => setRemarkOpen(true)} canAdd={!readOnlyAccess} />
         </main>
         <aside className="lg:sticky lg:top-20 lg:self-start min-w-0 space-y-4 lg:overflow-y-auto lg:pr-1">
           <LeadSummaryCard lead={lead} />
@@ -100,9 +112,9 @@ function LeadDetailInner() {
         </aside>
       </div>
 
-      <LeadActionBar onCall={callLead} callDisabled={!lead.phone} onChat={() => router.push(`/chat?leadId=${id}`)} onRemark={() => setRemarkOpen(true)} onReassign={canReassign ? () => setReassignOpen(true) : undefined} />
-      <RemarkModal leadId={id} open={remarkOpen} onClose={() => setRemarkOpen(false)} />
-      <ReassignModal leadId={id} open={reassignOpen} onClose={() => setReassignOpen(false)} />
+      {!readOnlyAccess && <LeadActionBar onCall={callLead} callDisabled={!lead.phone} onChat={() => router.push(`/chat?leadId=${id}`)} onRemark={() => setRemarkOpen(true)} onReassign={canReassign ? () => setReassignOpen(true) : undefined} />}
+      {!readOnlyAccess && <RemarkModal leadId={id} open={remarkOpen} onClose={() => setRemarkOpen(false)} />}
+      {!readOnlyAccess && <ReassignModal leadId={id} open={reassignOpen} onClose={() => setReassignOpen(false)} />}
     </div>
   );
 }
