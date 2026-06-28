@@ -1071,7 +1071,8 @@ router.get('/lead-requests/stats', authenticate, asyncHandler(async (req, res) =
   // My assigned leads count
   const { rows: [my] } = await query(`
     SELECT COUNT(*) AS my_leads,
-           COUNT(*) FILTER (WHERE is_pending = TRUE) AS my_pending
+           COUNT(*) FILTER (WHERE is_pending = TRUE) AS my_pending,
+           COUNT(*) FILTER (WHERE assigned_at::date = CURRENT_DATE) AS my_assigned_today
       FROM leads WHERE assigned_to_user_id = $1 AND deleted_at IS NULL
   `, [userId]);
 
@@ -1144,6 +1145,7 @@ router.get('/lead-requests/stats', authenticate, asyncHandler(async (req, res) =
       available_leads: parseInt(q.available_leads, 10),
       my_leads: parseInt(my.my_leads, 10),
       my_pending: parseInt(my.my_pending, 10),
+      my_assigned_today: parseInt(my.my_assigned_today || '0', 10),
       my_pending_request: myReqs[0] || null,
       pending_requests: pendingRequests,
       distribution_enabled: distEnabled === 'true',

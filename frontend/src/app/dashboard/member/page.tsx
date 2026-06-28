@@ -81,7 +81,7 @@ function MemberDashboardInner() {
         </div>
 
         {/* Stats row */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5 mb-4">
           <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
             <Inbox className="h-4 w-4 text-amber-600" />
             <div>
@@ -94,6 +94,13 @@ function MemberDashboardInner() {
             <div>
               <div className="text-lg font-bold tabular-nums text-slate-900">{stats?.my_leads ?? '—'}</div>
               <div className="text-[10px] uppercase tracking-wide text-slate-500">My Leads</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+            <div>
+              <div className="text-lg font-bold tabular-nums text-emerald-700">{stats?.my_assigned_today ?? 'â€”'}</div>
+              <div className="text-[10px] uppercase tracking-wide text-emerald-700">Assigned Today</div>
             </div>
           </div>
           <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">

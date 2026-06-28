@@ -11,6 +11,8 @@ import { useAuth } from '@/lib/auth';
 import {
   playNotificationSound,
   showBrowserNotification,
+  unlockNotificationSound,
+  saveNotificationSoundPreferences,
 } from '@/lib/notificationSound';
 
 const TYPE_COLORS: Record<string, string> = {
@@ -112,7 +114,11 @@ export function NotificationBell() {
   return (
     <div className="relative" ref={ref}>
       <button
-        onClick={() => setOpen(v => !v)}
+        onClick={() => {
+          setOpen(v => !v);
+          saveNotificationSoundPreferences({ soundEnabled: true });
+          unlockNotificationSound().catch(() => {});
+        }}
         className="relative grid h-9 w-9 place-items-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
         aria-label="Notifications"
       >

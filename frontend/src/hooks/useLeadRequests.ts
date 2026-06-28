@@ -30,6 +30,7 @@ export interface LeadRequestStats {
   available_leads: number;
   my_leads: number;
   my_pending: number;
+  my_assigned_today: number;
   my_pending_request: LeadRequest | null;
   pending_requests: number;
   distribution_enabled: boolean;

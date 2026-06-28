@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useAuth } from '@/lib/auth';
 import { useChatUnread } from '@/hooks/useChat';
 import { initials } from '@/lib/format';
-import { requestBrowserNotificationPermission, saveNotificationSoundPreferences } from '@/lib/notificationSound';
+import { requestBrowserNotificationPermission, saveNotificationSoundPreferences, unlockNotificationSound } from '@/lib/notificationSound';
 import { NotificationBell } from './NotificationBell';
 
 interface TopbarProps {
@@ -39,7 +39,13 @@ export function Topbar({ title, subtitle, onMenuClick, right }: TopbarProps) {
     window.localStorage.setItem(key, 'true');
     const timer = window.setTimeout(async () => {
       const permission = await requestBrowserNotificationPermission();
-      saveNotificationSoundPreferences({ browserNotifications: permission === 'granted' });
+      saveNotificationSoundPreferences({
+        browserNotifications: permission === 'granted',
+        soundEnabled: permission === 'granted',
+      });
+      if (permission === 'granted') {
+        unlockNotificationSound().catch(() => {});
+      }
     }, 1200);
     return () => window.clearTimeout(timer);
   }, [user?.id]);

@@ -582,10 +582,23 @@ async function syncAssignedLeadsToSheets(leadIds, context = {}) {
   let failed = 0;
   for (const leadId of ids) {
     try {
+      if (userGoogleSheetsService.enqueueLeadSync) {
+        await userGoogleSheetsService.enqueueLeadSync(leadId, {
+          eventType: 'lead_assigned',
+          source: context.assignmentType || 'assignment',
+          userId: context.actorId || null,
+        });
+      }
       const [master, personal] = await Promise.allSettled([
         googleSheetsService.updateLeadRow(leadId),
         userGoogleSheetsService.pushLeadToPersonalSheets(leadId),
       ]);
+      if (master.status === 'fulfilled' && master.value?.reason) {
+        logger.warn({ leadId, reason: master.value.reason, ...context }, '[assignment] master Google Sheet update skipped');
+      }
+      if (personal.status === 'fulfilled' && personal.value?.skipped) {
+        logger.warn({ leadId, ...context }, '[assignment] personal Google Sheet update skipped');
+      }
       if (master.status === 'rejected') {
         logger.warn({ leadId, err: master.reason?.message || String(master.reason || 'Master sheet sync failed'), ...context }, '[assignment] master Google Sheet update failed');
       }
