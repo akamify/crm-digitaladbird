@@ -1,6 +1,7 @@
 const { query } = require('../config/database');
 const { AppError } = require('../utils/errors');
 const { assertCpIdNotEditable, normalizeRole } = require('./userIdentityService');
+const { updateSingleLeadAvailability } = require('./userAvailabilityService');
 
 const ADMIN_ROLES = new Set(['super_admin', 'admin']);
 const CLOSED_CALL_STATUSES = ['converted', 'not_interested', 'wrong_number', 'invalid_number'];
@@ -685,7 +686,10 @@ async function updateProfile(actor, userId, body) {
     if (!rm) throw new AppError(400, 'INVALID_REPORTING_RM', 'Member must report to an active RM.');
     rmForMember = rm;
   }
-  const allowed = ['full_name', 'email', 'phone', 'role', 'report_to_id', 'team_name', 'is_available'];
+  const requestedAvailabilityChange = Object.prototype.hasOwnProperty.call(body, 'is_available')
+    ? body.is_available
+    : undefined;
+  const allowed = ['full_name', 'email', 'phone', 'role', 'report_to_id', 'team_name'];
   const sets = [];
   const params = [];
   for (const key of allowed) {
@@ -708,18 +712,27 @@ async function updateProfile(actor, userId, body) {
     params.push(rmForMember.team_name || null);
     sets.push(`team_name = $${params.length}`);
   }
-  if (!sets.length) return getProfile(actor, userId);
-  params.push(userId);
-  const { rows: [updated] } = await query(
-    `UPDATE users SET ${sets.join(', ')}, updated_at = NOW()
-      WHERE id = $${params.length}
-        AND deleted_at IS NULL
-        AND COALESCE(is_hidden, FALSE) = FALSE
-        AND COALESCE(is_protected, FALSE) = FALSE
-      RETURNING id`,
-    params,
-  );
-  if (!updated) throw new AppError(404, 'NOT_FOUND', 'User not found or protected');
+  if (sets.length) {
+    params.push(userId);
+    const { rows: [updated] } = await query(
+      `UPDATE users SET ${sets.join(', ')}, updated_at = NOW()
+        WHERE id = $${params.length}
+          AND deleted_at IS NULL
+          AND COALESCE(is_hidden, FALSE) = FALSE
+          AND COALESCE(is_protected, FALSE) = FALSE
+        RETURNING id`,
+      params,
+    );
+    if (!updated) throw new AppError(404, 'NOT_FOUND', 'User not found or protected');
+  }
+  if (requestedAvailabilityChange !== undefined && ['rm', 'member', 'partner'].includes(effectiveRole)) {
+    await updateSingleLeadAvailability({
+      actor,
+      userId,
+      isAvailable: requestedAvailabilityChange,
+      reason: null,
+    });
+  }
   return getProfile(actor, userId);
 }
 

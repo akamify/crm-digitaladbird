@@ -476,11 +476,11 @@ function CountCard({ label, value, color }: { label: string; value: number; colo
 }
 
 function effectiveStatus(user: User): string {
-  return user.status || 'unknown';
+  return String(user.status || 'unknown').toLowerCase();
 }
 
 function isLeadAvailable(user: User): boolean {
-  if (user.status && user.status !== 'active') return false;
+  if (effectiveStatus(user) !== 'active') return false;
   if (typeof user.is_available === 'boolean') return user.is_available;
   return !['unavailable', 'blocked', 'disabled'].includes(String(user.lead_assignment_status || '').toLowerCase());
 }
