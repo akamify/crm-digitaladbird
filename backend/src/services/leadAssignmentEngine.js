@@ -290,7 +290,19 @@ async function insertAssignmentHistory(client, {
 }
 
 async function notifyAssigned(client, memberId, count, metadata = {}) {
-  await notifyLeadAssigned(memberId, count, metadata, client);
+  try {
+    // Best-effort only. Do not use the assignment transaction client here:
+    // a notification rendering/insert failure must not abort lead assignment.
+    await notifyLeadAssigned(memberId, count, metadata, null);
+  } catch (err) {
+    logger.warn({
+      err: err.message,
+      memberId,
+      count,
+      assignmentType: metadata.assignment_type || metadata.assignmentSource || null,
+      leadIds: metadata.lead_ids || metadata.leadIds || null,
+    }, '[assignment] lead assignment notification failed');
+  }
 }
 
 async function assignLeadToMember(input) {

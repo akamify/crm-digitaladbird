@@ -29,10 +29,16 @@ function categoryLabel(category) {
 }
 
 function categoryBreakdownText(breakdown = {}) {
+  const safeBreakdown = breakdown && typeof breakdown === 'object' ? breakdown : {};
+  const counts = {
+    trader: Number(safeBreakdown.trader || 0),
+    partner: Number(safeBreakdown.partner || 0),
+    unknown: Number(safeBreakdown.unknown || 0),
+  };
   const parts = [];
-  if (Number(breakdown.trader || 0) > 0) parts.push(`Trader Leads: ${breakdown.trader}`);
-  if (Number(breakdown.partner || 0) > 0) parts.push(`Partner Leads: ${breakdown.partner}`);
-  if (Number(breakdown.unknown || 0) > 0) parts.push(`Unknown: ${breakdown.unknown}`);
+  if (counts.trader > 0) parts.push(`Trader Leads: ${counts.trader}`);
+  if (counts.partner > 0) parts.push(`Partner Leads: ${counts.partner}`);
+  if (counts.unknown > 0) parts.push(`Unknown: ${counts.unknown}`);
   return parts.join(', ');
 }
 
@@ -155,4 +161,3 @@ module.exports = {
   requestResolved,
   shell,
 };
-

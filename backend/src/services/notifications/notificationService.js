@@ -138,11 +138,12 @@ async function fetchLeadsForNotification(leadIds = [], runner = null) {
 }
 
 function categoryBreakdown(leads = []) {
-  return leads.reduce((acc, lead) => {
+  const safeLeads = Array.isArray(leads) ? leads : [];
+  return safeLeads.reduce((acc, lead = {}) => {
     const key = ['trader', 'partner'].includes(lead.category) ? lead.category : 'unknown';
     acc[key] = (acc[key] || 0) + 1;
     return acc;
-  }, {});
+  }, { trader: 0, partner: 0, unknown: 0 });
 }
 
 function dominantCategory(breakdown) {
@@ -151,8 +152,9 @@ function dominantCategory(breakdown) {
 }
 
 function leadMetadata({ leads, leadIds, count, metadata, extra = {} }) {
-  const first = leads[0] || {};
-  const breakdown = categoryBreakdown(leads);
+  const safeLeads = Array.isArray(leads) ? leads : [];
+  const first = safeLeads[0] || {};
+  const breakdown = categoryBreakdown(safeLeads);
   const category = dominantCategory(breakdown) || first.category || metadata.lead_category || 'unknown';
   return {
     event_type: extra.eventType || metadata.event_type || null,

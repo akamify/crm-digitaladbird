@@ -166,7 +166,7 @@ export function NotificationBell() {
                   <>
                     <div className="shrink-0 mt-0.5">
                       <div className={clsx(
-                        'grid h-8 w-8 place-items-center rounded-full text-xs font-bold',
+                        'grid h-8 w-8 place-items-start rounded-full text-xs font-bold',
                         TYPE_COLORS[n.type] || 'bg-slate-100 text-slate-600'
                       )}>
                         {!n.is_read ? (
