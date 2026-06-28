@@ -530,6 +530,25 @@ async function markRequestAfterFulfillment(client, request, fulfilledNow) {
   return { fulfilled, status: logicalStatus, dbStatus: status, remaining: Math.max(0, approved - fulfilled) };
 }
 
+async function dispatchApprovedRequestNotifications(result) {
+  const jobs = Array.isArray(result?._notificationJobs) ? result._notificationJobs : [];
+  for (const job of jobs) {
+    try {
+      if (job.type === 'lead_assigned') {
+        await notifyAssigned(null, job.memberId, job.count, job.metadata);
+      } else if (job.type === 'request_resolved') {
+        await notifyLeadRequestResolved(job.input);
+      }
+    } catch (err) {
+      logger.warn({ err: err.message, jobType: job.type, requestId: job.requestId }, '[assignment] post-commit notification failed');
+    }
+  }
+  if (result && Object.prototype.hasOwnProperty.call(result, '_notificationJobs')) {
+    delete result._notificationJobs;
+  }
+  return result;
+}
+
 async function countAvailableLeadsForRequest(request, actor, client = null) {
   const runner = client || { query };
   const params = [];
@@ -580,6 +599,7 @@ async function fulfillApprovedRequestsInTransaction(client, { limit = 100, actor
 
     let assigned = 0;
     const requestResults = [];
+    const notificationJobs = [];
     for (const req of requests) {
       if (assigned >= limit) break;
       try {
@@ -628,31 +648,33 @@ async function fulfillApprovedRequestsInTransaction(client, { limit = 100, actor
         leadIds.push(lead.id);
       }
       if (filled) {
-        try {
-          await notifyAssigned(client, req.user_id, filled, { request_id: req.id, assignment_type: 'request_fulfillment', lead_ids: leadIds, assigned_by: actor?.id || req.approved_by || req.resolved_by || null });
-        } catch (err) {
-          logger.warn({ err: err.message, requestId: req.id, userId: req.user_id }, '[assignment] lead assigned notification failed');
-        }
+        notificationJobs.push({
+          type: 'lead_assigned',
+          requestId: req.id,
+          memberId: req.user_id,
+          count: filled,
+          metadata: { request_id: req.id, assignment_type: 'request_fulfillment', lead_ids: leadIds, assigned_by: actor?.id || req.approved_by || req.resolved_by || null },
+        });
       }
       const status = await markRequestAfterFulfillment(client, req, filled);
       if (filled || status.status === 'fulfilled') {
-        try {
-          await notifyLeadRequestResolved({
+        notificationJobs.push({
+          type: 'request_resolved',
+          requestId: req.id,
+          input: {
             requestId: req.id,
             requesterId: req.user_id,
             quantity: approved,
             assigned: status.fulfilled,
             status: status.status,
-          }, client);
-        } catch (err) {
-          logger.warn({ err: err.message, requestId: req.id, userId: req.user_id }, '[assignment] request resolved notification failed');
-        }
+          },
+        });
       }
       assigned += filled;
       requestResults.push({ requestId: req.id, assigned: filled, status: status.status, remaining: status.remaining });
     }
 
-    return { processed: requests.length, assigned, requests: requestResults };
+    return { processed: requests.length, assigned, requests: requestResults, _notificationJobs: notificationJobs };
 }
 
 async function runApprovedRequestFulfillment({ limit = 100, actor = null, bypassEnabled = false } = {}) {
@@ -660,7 +682,8 @@ async function runApprovedRequestFulfillment({ limit = 100, actor = null, bypass
   if (!settings.autoAssignApprovedRequests && !bypassEnabled) {
     return { processed: 0, assigned: 0, skipped: true, reason: 'AUTO_ASSIGN_APPROVED_REQUESTS_DISABLED', requests: [] };
   }
-  return withTransaction((client) => fulfillApprovedRequestsInTransaction(client, { limit, actor }));
+  const result = await withTransaction((client) => fulfillApprovedRequestsInTransaction(client, { limit, actor }));
+  return dispatchApprovedRequestNotifications(result);
 }
 
 async function runAutoAssignment({ limit = 100, reason = 'auto_round_robin', actor = null, bypassWindow = false, bypassEnabled = false } = {}) {
@@ -671,7 +694,7 @@ async function runAutoAssignment({ limit = 100, reason = 'auto_round_robin', act
   if (!bypassWindow && !isInsideAssignmentWindow(new Date(), settings)) {
     return { success: true, skipped: true, reason: 'OUTSIDE_DISTRIBUTION_WINDOW', assigned: 0, scanned: 0, results: [] };
   }
-  return withTransaction(async (client) => {
+  const result = await withTransaction(async (client) => {
     let approvedRequestFulfillment = { processed: 0, assigned: 0, requests: [] };
     let remainingLimit = limit;
     if (settings.autoAssignApprovedRequests && remainingLimit > 0) {
@@ -752,6 +775,10 @@ async function runAutoAssignment({ limit = 100, reason = 'auto_round_robin', act
       results,
     };
   });
+  if (result?.requestFulfillment) {
+    await dispatchApprovedRequestNotifications(result.requestFulfillment);
+  }
+  return result;
 }
 
 async function getLeadWorkActivity(leadId) {
