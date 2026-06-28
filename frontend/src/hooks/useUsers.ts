@@ -60,11 +60,12 @@ export function useUpdateLeadAvailability() {
     mutationFn: ({ userId, status, reason }: { userId: string; status: 'available' | 'unavailable' | 'blocked' | 'disabled'; reason?: string }) =>
       apiPatch<{ user: User }>(`/users/${userId}/lead-availability`, {
         lead_assignment_status: status,
+        is_available: status === 'available',
         reason,
       }),
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ['users'] });
-      qc.invalidateQueries({ queryKey: ['user-profile', variables.userId] });
+      qc.invalidateQueries({ queryKey: ['admin', 'user-profile', variables.userId] });
       qc.invalidateQueries({ queryKey: ['admin', 'assignment-overview'] });
     },
   });

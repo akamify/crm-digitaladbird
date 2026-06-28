@@ -8,7 +8,7 @@ const INVALID_LEAD_ASSIGNEE_MESSAGE =
 const INVALID_LEAD_ASSIGNEE_AVAILABILITY_MESSAGE =
   'Leads can only be assigned to available members or partners.';
 const RM_UNAVAILABLE_MESSAGE =
-  'Your reporting RM is unavailable for lead assignment. Ask admin to mark the RM available first.';
+  'Your reporting RM is unavailable for lead assignment.';
 
 function isValidLeadAssigneeRole(role) {
   return VALID_LEAD_ASSIGNEE_ROLES.includes(String(role || '').toLowerCase());
