@@ -22,6 +22,7 @@ export interface AssignmentSettings {
   assignmentTickLimit: number;
   requestFulfillmentLimit: number;
   reassignmentTickLimit: number;
+  approvedRequestFulfillment?: { assigned?: number; processed?: number; requests?: Array<{ requestId: string; assigned: number }> } | null;
 }
 
 export function useAssignmentOverview() {

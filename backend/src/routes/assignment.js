@@ -29,6 +29,7 @@ router.get('/admin/assignment/settings', authenticate, requireRole(...ADMINS), a
 }));
 
 router.patch('/admin/assignment/settings', authenticate, requireRole(...ADMINS), asyncHandler(async (req, res) => {
+  const before = await assignment.getAssignmentSettings();
   const map = {
     autoAssignEnabled: ['auto_assign_enabled', 'auto_distribution_enabled'],
     assignStartHour: ['assign_start_hour', 'distribution_start_hour'],
@@ -71,8 +72,22 @@ router.patch('/admin/assignment/settings', authenticate, requireRole(...ADMINS),
     action: 'updated',
     metadata: { updated, values: req.body },
   });
+
+  let approvedRequestFulfillment = null;
+  if (
+    req.body.autoAssignApprovedRequests === true
+    && before.autoAssignApprovedRequests !== true
+  ) {
+    const latest = await assignment.getAssignmentSettings();
+    approvedRequestFulfillment = await assignment.runApprovedRequestFulfillment({
+      limit: Number(latest.requestFulfillmentLimit || latest.assignmentTickLimit || 100),
+      actor: req.user,
+      bypassEnabled: true,
+    });
+  }
+
   const settings = await assignment.getAssignmentSettings();
-  res.json({ success: true, data: settings });
+  res.json({ success: true, data: { ...settings, approvedRequestFulfillment } });
 }));
 
 async function runBulkAssignment(req, res, type) {

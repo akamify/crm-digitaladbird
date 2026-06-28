@@ -12,7 +12,7 @@ import { KpiCard } from '@/components/dashboard/KpiCard';
 import { Skeleton, EmptyState, PageLoader, StatusChip } from '@/components/ui/Modal';
 import { useSummary } from '@/hooks/useReports';
 import { useLeadList } from '@/hooks/useLeads';
-import { useLeadRequestStats, useSubmitLeadRequest, useCancelLeadRequest } from '@/hooks/useLeadRequests';
+import { type LeadRequest, useLeadRequestStats, useSubmitLeadRequest, useCancelLeadRequest } from '@/hooks/useLeadRequests';
 import { useMyRank, RANK_LABELS, BADGE_MAP } from '@/hooks/useRankings';
 import { useWorkflowStats } from '@/hooks/useWorkflow';
 import { MovementIndicator, ScoreBadge } from '@/components/rankings/RankBadge';
@@ -38,6 +38,7 @@ function MemberDashboardInner() {
   const [category, setCategory] = useState<LeadCategory | 'all'>('all');
   const [reqQty, setReqQty] = useState(10);
   const [reqCat, setReqCat] = useState<string>('');
+  const [hiddenRequestIds, setHiddenRequestIds] = useState<string[]>([]);
 
   const summary   = useSummary();
   const myLeads   = useLeadList({ page: 1, page_size: 10, ...(category !== 'all' ? { category } : {}) });
@@ -52,7 +53,9 @@ function MemberDashboardInner() {
   const memberTypeLabel = user.memberType === 'veteran' ? 'Veteran' : 'Fresher';
   const memberTypeBadge = user.memberType === 'veteran' ? 'chip-amber' : 'chip-blue';
   const stats = lrStats.data;
-  const hasPending = !!stats?.my_pending_request;
+  const activeRequest = stats?.my_pending_request && !hiddenRequestIds.includes(stats.my_pending_request.id)
+    ? stats.my_pending_request
+    : null;
 
   return (
     <div className="space-y-6">
@@ -111,31 +114,17 @@ function MemberDashboardInner() {
           </div>
         </div>
 
-        {/* Request form or pending status */}
-        {hasPending ? (
-          <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
-            <div className="flex items-center gap-2">
-              <Loader2 className="h-4 w-4 text-amber-600 animate-spin" />
-              <div>
-                <span className="text-sm font-medium text-amber-800">
-                  Request pending — {stats.my_pending_request!.quantity} lead{stats.my_pending_request!.quantity > 1 ? 's' : ''}
-                  {stats.my_pending_request!.category && ` (${stats.my_pending_request!.category})`}
-                </span>
-                <div className="text-xs text-amber-600">Auto-assigning from queue — leads will appear shortly</div>
-              </div>
-            </div>
-            <button
-              onClick={() => cancelReq.mutate(stats.my_pending_request!.id, {
-                onSuccess: () => toast.success('Request cancelled'),
-                onError: () => toast.error('Failed to cancel'),
-              })}
-              disabled={cancelReq.isPending}
-              className="rounded-md p-1.5 text-amber-600 hover:bg-amber-100 transition"
-              title="Cancel request"
-            >
-              <XCircle className="h-4 w-4" />
-            </button>
-          </div>
+        {/* Request form or request status */}
+        {activeRequest ? (
+          <RequestStatusBanner
+            request={activeRequest}
+            cancelling={cancelReq.isPending}
+            onCancel={() => cancelReq.mutate(activeRequest.id, {
+              onSuccess: () => toast.success('Request cancelled'),
+              onError: () => toast.error('Failed to cancel'),
+            })}
+            onDismiss={() => setHiddenRequestIds(ids => [...new Set([...ids, activeRequest.id])])}
+          />
         ) : (
           <div className="flex flex-wrap items-end gap-3">
             <div>
@@ -300,6 +289,86 @@ const WF_CARDS = [
   { key: 'step3_pending', label: 'Follow-up', desc: 'Pending follow-ups', icon: Target, gradient: 'from-emerald-500 to-teal-600', light: 'border-emerald-200 bg-emerald-50', text: 'text-emerald-700' },
   { key: 'step4_pending', label: 'Conversion', desc: 'Pending conversions', icon: Trophy, gradient: 'from-amber-500 to-orange-600', light: 'border-amber-200 bg-amber-50', text: 'text-amber-700' },
 ] as const;
+
+function RequestStatusBanner({
+  request,
+  cancelling,
+  onCancel,
+  onDismiss,
+}: {
+  request: LeadRequest;
+  cancelling: boolean;
+  onCancel: () => void;
+  onDismiss: () => void;
+}) {
+  const requested = Number(request.requested_quantity ?? request.quantity ?? 0);
+  const approved = Number(request.approved_quantity ?? request.quantity ?? requested);
+  const fulfilled = Number(request.fulfilled_quantity ?? request.leads_assigned ?? 0);
+  const remaining = Math.max(0, approved - fulfilled);
+  const progress = approved > 0 ? Math.min(100, Math.round((fulfilled / approved) * 100)) : 0;
+  const status = request.status || 'pending';
+  const isPending = status === 'pending';
+  const isRejected = status === 'rejected' || status === 'cancelled';
+  const tone = isRejected
+    ? 'border-rose-200 bg-rose-50 text-rose-800'
+    : isPending
+      ? 'border-amber-200 bg-amber-50 text-amber-800'
+      : 'border-emerald-200 bg-emerald-50 text-emerald-800';
+  const icon = isRejected ? <XCircle className="h-4 w-4" /> : isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />;
+  const title = isRejected
+    ? `Your lead request was ${status}.`
+    : isPending
+      ? `Request pending - ${requested} lead${requested === 1 ? '' : 's'}`
+      : `Your request has been approved.`;
+  const detail = isRejected
+    ? request.resolve_note || 'You can submit a new request when eligible.'
+    : isPending
+      ? 'Admin approval is pending.'
+      : remaining > 0
+        ? `${fulfilled}/${approved} leads assigned. ${remaining} remaining.`
+        : `${fulfilled}/${approved} leads assigned.`;
+
+  return (
+    <div className={clsx('rounded-lg border px-4 py-3', tone)}>
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5">{icon}</div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-semibold">{title}</div>
+          <div className="mt-0.5 text-xs opacity-90">
+            {detail}
+            {request.category ? ` Category: ${request.category}.` : ''}
+          </div>
+          {!isRejected && !isPending && (
+            <div className="mt-2 flex items-center gap-2">
+              <div className="h-1.5 w-32 overflow-hidden rounded-full bg-white/70">
+                <div className="h-full rounded-full bg-emerald-500" style={{ width: `${progress}%` }} />
+              </div>
+              <span className="text-[11px] font-medium">{progress}%</span>
+            </div>
+          )}
+        </div>
+        {isPending ? (
+          <button
+            onClick={onCancel}
+            disabled={cancelling}
+            className="rounded-md p-1.5 transition hover:bg-white/50 disabled:opacity-50"
+            title="Cancel request"
+          >
+            <XCircle className="h-4 w-4" />
+          </button>
+        ) : (
+          <button
+            onClick={onDismiss}
+            className="rounded-md p-1.5 transition hover:bg-white/50"
+            title="Close"
+          >
+            <XCircle className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function WorkflowProgressCards() {
   const { data: stats, isLoading } = useWorkflowStats();

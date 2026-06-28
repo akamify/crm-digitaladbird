@@ -41,7 +41,11 @@ function DistributionInner() {
 
   function saveSetting(body: Record<string, boolean | number | string>) {
     updateSettings.mutate(body, {
-      onSuccess: () => toast.success('Distribution settings updated'),
+      onSuccess: (data: unknown) => {
+        const payload = data as { approvedRequestFulfillment?: { assigned?: number; processed?: number } };
+        const assigned = Number(payload?.approvedRequestFulfillment?.assigned || 0);
+        toast.success(assigned > 0 ? `Distribution settings updated. Assigned ${assigned} approved request lead(s).` : 'Distribution settings updated');
+      },
       onError: (error) => toast.error(errorMessage(error, 'Update failed')),
     });
   }

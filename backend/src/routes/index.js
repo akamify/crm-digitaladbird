@@ -1075,10 +1075,31 @@ router.get('/lead-requests/stats', authenticate, asyncHandler(async (req, res) =
       FROM leads WHERE assigned_to_user_id = $1 AND deleted_at IS NULL
   `, [userId]);
 
-  // My pending request
+  // Latest request that still needs user visibility. Keep the legacy
+  // my_pending_request key for the dashboard contract, but include approved,
+  // partial, fulfilled, and recent rejected/cancelled states too.
   const { rows: myReqs } = await query(
-    `SELECT id, quantity, category, status, created_at FROM lead_requests
-      WHERE user_id = $1 AND status = 'pending' LIMIT 1`, [userId]
+    `SELECT id, quantity, requested_quantity, approved_quantity, fulfilled_quantity,
+            leads_assigned, category, status, note, resolve_note,
+            created_at, updated_at, approved_at, fulfilled_at, resolved_at
+       FROM lead_requests
+      WHERE user_id = $1
+        AND (
+          status IN ('pending', 'approved', 'partially_fulfilled')
+          OR (status IN ('fulfilled', 'rejected', 'cancelled') AND updated_at > NOW() - INTERVAL '7 days')
+        )
+      ORDER BY
+        CASE status
+          WHEN 'pending' THEN 0
+          WHEN 'approved' THEN 1
+          WHEN 'partially_fulfilled' THEN 2
+          WHEN 'fulfilled' THEN 3
+          WHEN 'rejected' THEN 4
+          WHEN 'cancelled' THEN 5
+          ELSE 6
+        END,
+        created_at DESC
+      LIMIT 1`, [userId]
   );
 
   // Pending requests count (for RM/admin)
