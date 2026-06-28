@@ -7,6 +7,8 @@ const INVALID_LEAD_ASSIGNEE_MESSAGE =
   'Leads can only be assigned to members or partners. RM users cannot receive direct lead assignments.';
 const INVALID_LEAD_ASSIGNEE_AVAILABILITY_MESSAGE =
   'Leads can only be assigned to available members or partners.';
+const RM_UNAVAILABLE_MESSAGE =
+  'Your reporting RM is unavailable for lead assignment. Ask admin to mark the RM available first.';
 
 function isValidLeadAssigneeRole(role) {
   return VALID_LEAD_ASSIGNEE_ROLES.includes(String(role || '').toLowerCase());
@@ -17,6 +19,18 @@ function isEffectivelyAvailable(user) {
   if (user.is_available === true) return true;
   return String(user.lead_assignment_status || 'available') === 'available'
     && user.lead_assignment_enabled !== false;
+}
+
+function availabilityDetails(user, reason) {
+  return {
+    reason,
+    user_id: user?.id || null,
+    user_role: user?.role || null,
+    user_status: user?.status || null,
+    is_available: user?.is_available ?? null,
+    distribution_blocked: user?.distribution_blocked ?? null,
+    rm_is_available: user?.rm_is_available ?? null,
+  };
 }
 
 function assertLeadAssigneeUser(user, options = {}) {
@@ -31,16 +45,16 @@ function assertLeadAssigneeUser(user, options = {}) {
     throw new AppError(422, 'INVALID_LEAD_ASSIGNEE_STATUS', 'Target assignee is not active');
   }
   if (user.distribution_blocked === true) {
-    throw new AppError(422, INVALID_LEAD_ASSIGNEE, INVALID_LEAD_ASSIGNEE_AVAILABILITY_MESSAGE);
+    throw new AppError(422, INVALID_LEAD_ASSIGNEE, INVALID_LEAD_ASSIGNEE_AVAILABILITY_MESSAGE, availabilityDetails(user, 'distribution_blocked'));
   }
   if (requireAvailable && !isEffectivelyAvailable(user)) {
-    throw new AppError(422, INVALID_LEAD_ASSIGNEE, INVALID_LEAD_ASSIGNEE_AVAILABILITY_MESSAGE);
+    throw new AppError(422, INVALID_LEAD_ASSIGNEE, INVALID_LEAD_ASSIGNEE_AVAILABILITY_MESSAGE, availabilityDetails(user, 'user_unavailable'));
   }
   if (!isEffectivelyAvailable(user)) {
-    throw new AppError(422, INVALID_LEAD_ASSIGNEE, INVALID_LEAD_ASSIGNEE_AVAILABILITY_MESSAGE);
+    throw new AppError(422, INVALID_LEAD_ASSIGNEE, INVALID_LEAD_ASSIGNEE_AVAILABILITY_MESSAGE, availabilityDetails(user, 'user_unavailable'));
   }
   if (user.rm_is_available === false) {
-    throw new AppError(422, INVALID_LEAD_ASSIGNEE, INVALID_LEAD_ASSIGNEE_AVAILABILITY_MESSAGE);
+    throw new AppError(422, 'REPORTING_RM_UNAVAILABLE', RM_UNAVAILABLE_MESSAGE, availabilityDetails(user, 'reporting_rm_unavailable'));
   }
   if (actor?.role === 'rm' && user.report_to_id !== actor.id) {
     throw new AppError(403, 'FORBIDDEN', 'RM can only assign leads to users in their team');
@@ -55,8 +69,7 @@ async function validateLeadAssignee(runner, userId, options = {}) {
             COALESCE(u.distribution_blocked, FALSE) AS distribution_blocked,
             COALESCE(u.lead_assignment_enabled, TRUE) AS lead_assignment_enabled,
             COALESCE(u.lead_assignment_status, 'available') AS lead_assignment_status,
-            COALESCE(rm.is_available, TRUE) AS rm_is_available,
-            COALESCE(rm.lead_assignment_status, 'available') AS rm_lead_assignment_status
+            COALESCE(rm.is_available, TRUE) AS rm_is_available
        FROM users u
        LEFT JOIN users rm ON rm.id = u.report_to_id AND rm.role = 'rm' AND rm.deleted_at IS NULL
       WHERE u.id = $1 AND u.deleted_at IS NULL`,
