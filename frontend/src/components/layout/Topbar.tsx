@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useAuth } from '@/lib/auth';
 import { useChatUnread } from '@/hooks/useChat';
 import { initials } from '@/lib/format';
+import { requestBrowserNotificationPermission, saveNotificationSoundPreferences } from '@/lib/notificationSound';
 import { NotificationBell } from './NotificationBell';
 
 interface TopbarProps {
@@ -29,6 +30,19 @@ export function Topbar({ title, subtitle, onMenuClick, right }: TopbarProps) {
     window.addEventListener('mousedown', handler);
     return () => window.removeEventListener('mousedown', handler);
   }, [open]);
+
+  useEffect(() => {
+    if (!user?.id || typeof window === 'undefined' || !('Notification' in window)) return;
+    if (Notification.permission !== 'default') return;
+    const key = `crm_notification_permission_prompted:${user.id}`;
+    if (window.localStorage.getItem(key) === 'true') return;
+    window.localStorage.setItem(key, 'true');
+    const timer = window.setTimeout(async () => {
+      const permission = await requestBrowserNotificationPermission();
+      saveNotificationSoundPreferences({ browserNotifications: permission === 'granted' });
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [user?.id]);
 
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center gap-2 sm:gap-3 border-b border-slate-200 bg-white/85 px-3 sm:px-4 lg:px-6 backdrop-blur">

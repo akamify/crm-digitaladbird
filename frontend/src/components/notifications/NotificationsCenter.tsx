@@ -19,8 +19,8 @@ function notificationTarget(n: UserNotification) {
   if (leadId) return `/leads/${leadId}`;
   if (Array.isArray(metadata.lead_ids) && metadata.lead_ids.length > 0) return '/leads';
   const eventType = String(metadata.event_type || n.type || '');
-  if (eventType.includes('partner_request')) return '/partner-requests';
-  if (eventType.includes('lead_request') || eventType.includes('rm_lead_request') || eventType.includes('request_')) return '/partner-requests';
+  if (eventType.includes('partner_request')) return '/lead-requests';
+  if (eventType.includes('lead_request') || eventType.includes('rm_lead_request') || eventType.includes('request_')) return '/lead-requests';
   if (eventType.includes('reassigned') || eventType.includes('assigned')) return '/leads';
   return null;
 }

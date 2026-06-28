@@ -1,7 +1,6 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
 import { Bell, Check, CheckCheck, X } from 'lucide-react';
-import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { useNotifications, useMarkRead, useMarkAllRead, type UserNotification } from '@/hooks/useNotifications';
@@ -10,13 +9,8 @@ import { clsx } from '@/lib/format';
 import { connectSocket } from '@/lib/socket';
 import { useAuth } from '@/lib/auth';
 import {
-  getNotificationSoundPreferences,
   playNotificationSound,
-  requestBrowserNotificationPermission,
-  saveNotificationSoundPreferences,
   showBrowserNotification,
-  unlockNotificationSound,
-  type NotificationSoundPreferences,
 } from '@/lib/notificationSound';
 
 const TYPE_COLORS: Record<string, string> = {
@@ -58,15 +52,14 @@ function notificationTarget(n: UserNotification) {
   if (leadId) return `/leads/${leadId}`;
   if (Array.isArray(n.metadata?.lead_ids) && n.metadata.lead_ids.length > 0) return '/leads';
   const eventType = String(n.metadata?.event_type || n.type || '');
-  if (eventType.includes('partner_request')) return '/partner-requests';
-  if (eventType.includes('lead_request') || eventType.includes('rm_lead_request') || eventType.includes('request_')) return '/partner-requests';
+  if (eventType.includes('partner_request')) return '/lead-requests';
+  if (eventType.includes('lead_request') || eventType.includes('rm_lead_request') || eventType.includes('request_')) return '/lead-requests';
   if (eventType.includes('reassigned') || eventType.includes('assigned')) return '/leads';
   return null;
 }
 
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
-  const [soundPrefs, setSoundPrefs] = useState<NotificationSoundPreferences>(() => getNotificationSoundPreferences());
   const ref = useRef<HTMLDivElement>(null);
   const qc = useQueryClient();
   const { user } = useAuth();
@@ -109,35 +102,6 @@ export function NotificationBell() {
     }).catch(() => {});
     return () => { cleanup?.(); };
   }, [qc, user?.id]);
-
-  async function enableSound() {
-    const unlocked = await unlockNotificationSound();
-    const next = saveNotificationSoundPreferences({ soundEnabled: true });
-    setSoundPrefs(next);
-    if (unlocked) {
-      await playNotificationSound({ force: true });
-      toast.success('Notification sound enabled');
-    } else {
-      toast('Click Test Sound if audio does not play.');
-    }
-  }
-
-  async function enableBrowserNotifications() {
-    const permission = await requestBrowserNotificationPermission();
-    if (permission === 'granted') {
-      setSoundPrefs(saveNotificationSoundPreferences({ browserNotifications: true }));
-      toast.success('Browser notifications enabled');
-    } else if (permission === 'denied') {
-      setSoundPrefs(saveNotificationSoundPreferences({ browserNotifications: false }));
-      toast.error('Browser notification permission is blocked.');
-    } else {
-      toast.error('Browser notifications are not supported here.');
-    }
-  }
-
-  function updateVolume(volume: number) {
-    setSoundPrefs(saveNotificationSoundPreferences({ volume }));
-  }
 
   function handleNotificationClick(notification: UserNotification) {
     if (!notification.is_read) {
@@ -245,44 +209,6 @@ export function NotificationBell() {
             )}
           </div>
 
-          <div className="border-t border-slate-100 px-4 py-3">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Notification alerts</div>
-            <p className="mt-1 text-xs text-slate-500">Enable sound to hear alerts while this CRM tab is open, even if the browser is minimized.</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <button type="button" onClick={enableBrowserNotifications} className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50">
-                Enable Notifications
-              </button>
-              <button type="button" onClick={enableSound} className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50">
-                {soundPrefs.soundEnabled ? 'Sound On' : 'Enable Sound'}
-              </button>
-              <button type="button" onClick={() => playNotificationSound({ force: true })} className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50">
-                Test Sound
-              </button>
-            </div>
-            <label className="mt-2 flex items-center gap-2 text-xs text-slate-500">
-              Volume
-              <input
-                type="range"
-                min={0.2}
-                max={1}
-                step={0.1}
-                value={soundPrefs.volume}
-                onChange={(event) => updateVolume(Number(event.target.value))}
-                className="flex-1"
-              />
-            </label>
-          </div>
-
-          <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3">
-            <span className="text-xs text-slate-500">Latest {items.length} notifications</span>
-            <Link
-              href="/notifications"
-              onClick={() => setOpen(false)}
-              className="text-xs font-medium text-brand-700 hover:text-brand-800"
-            >
-              Read more
-            </Link>
-          </div>
         </div>
       )}
     </div>

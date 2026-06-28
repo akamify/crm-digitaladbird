@@ -28,7 +28,7 @@ const NAV: NavItem[] = [
   { href: '/notifications', label: 'Notifications', Icon: Bell },
   { href: '/my-google-sheet', label: 'My Google Sheet', Icon: FileSpreadsheet, roles: ['rm', 'member', 'partner'] },
   { href: '/reports',   label: 'Reports',   Icon: BarChart3,  roles: ['super_admin', 'rm'] },
-  { href: '/partner-requests', label: 'Partner Requests', Icon: HandMetal, roles: ['super_admin', 'rm', 'partner'] },
+  { href: '/lead-requests', label: 'Lead Requests', Icon: HandMetal, roles: ['super_admin', 'admin', 'rm', 'member', 'partner'] },
   { href: '/leaderboard', label: 'Leaderboard', Icon: Trophy },
   { href: '/users',     label: 'Team',      Icon: Users,      roles: ['super_admin', 'rm'] },
   { href: '/rm-teams',  label: 'RM Teams',  Icon: UsersRound, roles: ['super_admin'] },

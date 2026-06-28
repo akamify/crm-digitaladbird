@@ -56,7 +56,7 @@ function UsersInner() {
   const usersById = useMemo(() => new Map((users || []).map(user => [user.id, user])), [users]);
   const selectedUsers = selectedIds.map(id => usersById.get(id)).filter(Boolean) as User[];
   const selectedRoleBucket = selectedUsers[0] ? selectionRoleBucket(selectedUsers[0]) : null;
-  const selectedAvailable = selectedUsers.length ? Boolean(selectedUsers[0].is_available) : null;
+  const selectedAvailable = selectedUsers.length ? isLeadAvailable(selectedUsers[0]) : null;
   const selectedIsRm = selectedRoleBucket === 'rm';
   const canMarkAvailable = selectedUsers.length > 0 && selectedAvailable === false;
   const canMarkUnavailable = selectedUsers.length > 0 && selectedAvailable === true;
@@ -97,7 +97,7 @@ function UsersInner() {
       return;
     }
     const bucket = selectionRoleBucket(user);
-    const availability = Boolean(user.is_available);
+    const availability = isLeadAvailable(user);
     if (selectedUsers.length > 0 && selectedRoleBucket !== bucket) {
       toast.error('Select either RM users or members, not both.');
       return;
@@ -117,8 +117,8 @@ function UsersInner() {
     const selectable = filtered.filter(isBulkSelectable);
     if (!selectable.length) return;
     const bucket = selectionRoleBucket(selectable[0]);
-    const availability = Boolean(selectable[0].is_available);
-    const valid = selectable.filter(user => selectionRoleBucket(user) === bucket && Boolean(user.is_available) === availability);
+    const availability = isLeadAvailable(selectable[0]);
+    const valid = selectable.filter(user => selectionRoleBucket(user) === bucket && isLeadAvailable(user) === availability);
     if (valid.length !== selectable.length) {
       toast.error('Current page has mixed roles or availability. Select rows manually.');
       return;
@@ -271,6 +271,7 @@ function UsersInner() {
                 <th className="py-2 pr-3 font-medium">CP ID</th>
                 <th className="py-2 pr-3 font-medium">Team</th>
                 <th className="py-2 pr-3 font-medium">Status</th>
+                <th className="py-2 pr-3 font-medium">Lead Availability</th>
                 <th className="py-2 pr-3 font-medium">Lead Cap</th>
                 <th className="py-2 pr-3 font-medium">Joined</th>
                 <th className="py-2 font-medium text-right">Actions</th>
@@ -304,6 +305,11 @@ function UsersInner() {
                   <td className="py-3 pr-3 text-slate-600">{u.team_name || '—'}</td>
                   <td className="py-3 pr-3">
                     <span className={getUserStatusBadgeVariant(effectiveStatus(u))}>{formatUserStatus(effectiveStatus(u))}</span>
+                  </td>
+                  <td className="py-3 pr-3">
+                    <span className={isLeadAvailable(u) ? 'chip-green' : 'chip-amber'}>
+                      {isLeadAvailable(u) ? 'Available' : 'Unavailable'}
+                    </span>
                   </td>
                   <td className="py-3 pr-3 text-slate-600 tabular-nums">{u.daily_lead_cap ?? '—'}</td>
                   <td className="py-3 pr-3 text-xs text-slate-500">{fmtDate(u.created_at, 'dd MMM yyyy')}</td>
@@ -460,6 +466,12 @@ function effectiveStatus(user: User): string {
   return user.status || user.lead_assignment_status || 'unknown';
 }
 
+function isLeadAvailable(user: User): boolean {
+  if (user.status && user.status !== 'active') return false;
+  if (['unavailable', 'blocked', 'disabled'].includes(String(user.lead_assignment_status || '').toLowerCase())) return false;
+  return user.is_available !== false;
+}
+
 function selectionRoleBucket(user: User): 'rm' | 'member' {
   return user.role === 'rm' ? 'rm' : 'member';
 }
@@ -469,5 +481,5 @@ function isBulkSelectable(user: User): boolean {
 }
 
 function UserMobileCard({ user, onOpen }: { user: User; onOpen: () => void }) {
-  return <button onClick={onOpen} className="rounded-lg border border-slate-200 p-4 text-left"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="truncate font-medium text-slate-950">{user.full_name}</div><div className="mt-1 break-all text-xs text-slate-500">{user.email}</div><div className="mt-0.5 text-xs text-slate-500">{formatPhone(user.phone)}</div></div><span className={getUserStatusBadgeVariant(effectiveStatus(user))}>{formatUserStatus(effectiveStatus(user))}</span></div><div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500"><span className="chip-slate">{humanize(user.role)}</span>{user.team_name && <span>{user.team_name}</span>}</div></button>;
+  return <button onClick={onOpen} className="rounded-lg border border-slate-200 p-4 text-left"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="truncate font-medium text-slate-950">{user.full_name}</div><div className="mt-1 break-all text-xs text-slate-500">{user.email}</div><div className="mt-0.5 text-xs text-slate-500">{formatPhone(user.phone)}</div></div><span className={getUserStatusBadgeVariant(effectiveStatus(user))}>{formatUserStatus(effectiveStatus(user))}</span></div><div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500"><span className="chip-slate">{humanize(user.role)}</span><span className={isLeadAvailable(user) ? 'chip-green' : 'chip-amber'}>{isLeadAvailable(user) ? 'Available' : 'Unavailable'}</span>{user.team_name && <span>{user.team_name}</span>}</div></button>;
 }

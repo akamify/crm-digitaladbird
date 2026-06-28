@@ -21,6 +21,8 @@ import {
 const STATUS_CHIP: Record<string, string> = {
   pending:   'bg-amber-100 text-amber-700',
   approved:  'bg-emerald-100 text-emerald-700',
+  partially_fulfilled: 'bg-amber-100 text-amber-700',
+  fulfilled: 'bg-emerald-100 text-emerald-700',
   rejected:  'bg-rose-100 text-rose-700',
   assigned:  'bg-blue-100 text-blue-700',
   completed: 'bg-violet-100 text-violet-700',
@@ -29,6 +31,8 @@ const STATUS_CHIP: Record<string, string> = {
 const STATUS_ICON: Record<string, typeof Clock> = {
   pending: Clock,
   approved: CheckCircle2,
+  partially_fulfilled: Clock,
+  fulfilled: CheckCircle2,
   rejected: XCircle,
   assigned: Truck,
   completed: Package,
@@ -36,7 +40,7 @@ const STATUS_ICON: Record<string, typeof Clock> = {
 
 export default function PartnerRequestsPage() {
   return (
-    <AppShell title="Partner Requests" subtitle="Lead request workflow management">
+    <AppShell title="Lead Requests" subtitle="Pending, approved, rejected, and completed lead requests">
       <PartnerRequestsInner />
     </AppShell>
   );
@@ -50,7 +54,7 @@ function PartnerRequestsInner() {
   const [showNewForm, setShowNewForm] = useState(false);
 
   const isPartner = user?.role === 'partner' || user?.role === 'member';
-  const isAdmin = user?.role === 'super_admin';
+  const isAdmin = user?.role === 'super_admin' || user?.role === 'admin';
   const isRM = user?.role === 'rm';
   const canManage = isAdmin || isRM;
 
@@ -89,7 +93,7 @@ function PartnerRequestsInner() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Filter:</span>
-          {['', 'pending', 'approved', 'assigned', 'rejected', 'completed'].map(st => (
+          {['', 'pending', 'approved', 'partially_fulfilled', 'fulfilled', 'rejected', 'completed'].map(st => (
             <button
               key={st}
               onClick={() => { setStatusFilter(st); setPage(1); }}
@@ -144,7 +148,7 @@ function PartnerRequestsInner() {
                 ) : requests.isError ? <tr><td colSpan={7} className="px-4 py-10"><EmptyState title="Could not load requests" description="Please retry." action={<button onClick={() => requests.refetch()} className="btn-outline rounded-lg px-3 py-2 text-sm">Retry</button>} /></td></tr> : rows.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="px-4 py-10">
-                      <EmptyState title="No partner requests found" description="Try a different status filter or submit a new request." icon={<HandMetal className="h-6 w-6" />} />
+                      <EmptyState title="No lead requests found" description="Try a different status filter or submit a new request." icon={<HandMetal className="h-6 w-6" />} />
                     </td>
                   </tr>
                 ) : rows.map(r => (
