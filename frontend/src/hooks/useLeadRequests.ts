@@ -95,6 +95,15 @@ export function usePendingLeadRequests() {
   });
 }
 
+export function useLeadRequests(status?: string) {
+  const qs = status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : '?status=all';
+  return useQuery({
+    queryKey: ['lead-requests', 'all', status || 'all'],
+    queryFn: () => apiGet<LeadRequest[]>(`/lead-requests${qs}`),
+    staleTime: 30_000,
+  });
+}
+
 export function useSubmitLeadRequest() {
   const qc = useQueryClient();
   return useMutation({

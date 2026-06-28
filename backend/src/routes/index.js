@@ -761,9 +761,15 @@ router.get('/lead-requests/my', authenticate, asyncHandler(async (req, res) => {
 
 // RM/Admin: list pending requests (scoped by role)
 router.get('/lead-requests', authenticate, requireRole('super_admin', 'admin', 'rm'), asyncHandler(async (req, res) => {
-  const status = req.query.status || 'pending';
+  const status = req.query.status || '';
   let scopeSql = '';
-  const params = [status];
+  const params = [];
+  let statusSql = '';
+
+  if (status && status !== 'all') {
+    params.push(status);
+    statusSql = ` AND lr.status = $${params.length}`;
+  }
 
   if (req.user.role === 'rm') {
     params.push(req.user.id);
@@ -776,7 +782,7 @@ router.get('/lead-requests', authenticate, requireRole('super_admin', 'admin', '
       FROM lead_requests lr
       JOIN users u ON u.id = lr.user_id
       LEFT JOIN users r ON r.id = lr.resolved_by
-     WHERE lr.status = $1 ${scopeSql}
+     WHERE 1=1 ${statusSql} ${scopeSql}
      ORDER BY lr.created_at DESC
      LIMIT 100
   `, params);
