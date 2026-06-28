@@ -31,7 +31,9 @@ function assertActorCanUpdate(actor, targets, { bulk = false } = {}) {
       throw new AppError(422, 'USER_NOT_ELIGIBLE_FOR_LEAD_ASSIGNMENT', 'Admin users cannot be updated for lead assignment availability.');
     }
     if (actor.role === 'rm') {
-      if (target.role === 'rm' || target.report_to_id !== actor.id) {
+      const isOwnRmProfile = target.role === 'rm' && target.id === actor.id;
+      const isOwnTeamMember = target.role !== 'rm' && target.report_to_id === actor.id;
+      if (!isOwnRmProfile && !isOwnTeamMember) {
         throw new AppError(403, 'LEAD_AVAILABILITY_FORBIDDEN', 'RM can manage lead availability only for own team members.');
       }
     } else if (!isAdmin) {

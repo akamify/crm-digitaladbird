@@ -33,7 +33,6 @@ export function LeadProfileHeader({ lead, lockedByMe, lockedByOther, actions }: 
             <span className={getStatusBadgeVariant(lead.call_status)}>{humanize(lead.call_status)}</span>
             <LeadCategoryBadge category={lead.category} />
             {isMeaningfulValue(lead.source) && <span className="chip-slate">{humanize(lead.source)}</span>}
-            {(lockedByMe || lockedByOther) && <span className="chip-amber inline-flex items-center gap-1"><Lock className="h-3 w-3" />{lockedByMe ? 'Locked by you' : 'Locked by another rep'}</span>}
           </div>
         </div>
         <div className="hidden min-w-0 max-w-[60%] flex-wrap items-center justify-end gap-2 lg:flex">{actions}</div>

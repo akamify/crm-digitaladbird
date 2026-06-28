@@ -37,6 +37,7 @@ router.patch('/admin/assignment/settings', authenticate, requireRole(...ADMINS),
     autoReassignEnabled: ['auto_reassign_enabled'],
     reassignAfterHours: ['reassign_after_hours'],
     reassignToHighPerformers: ['reassign_to_high_performers'],
+    autoAssignApprovedRequests: ['auto_assign_approved_requests'],
     assignmentTickLimit: ['assignment_tick_limit'],
     requestFulfillmentLimit: ['request_fulfillment_limit'],
     reassignmentTickLimit: ['reassignment_tick_limit'],
@@ -113,7 +114,7 @@ router.post('/admin/leads/bulk-reassign', authenticate, requireRole(...MANAGERS)
   runBulkAssignment(req, res, 'manual_reassign')
 )));
 
-router.post('/lead-requests/:id/approve', authenticate, requireRole(...MANAGERS), asyncHandler(async (req, res) => {
+router.post('/lead-requests/:id/approve', authenticate, requireRole(...ADMINS), asyncHandler(async (req, res) => {
   const { rows: [request] } = await query(
     `SELECT quantity, requested_quantity FROM lead_requests WHERE id = $1`,
     [req.params.id],

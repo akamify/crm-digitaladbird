@@ -113,8 +113,9 @@ function UserProfileInner({ userId }: { userId: string }) {
   const activeTab = availableTabs.includes(tab) ? tab : availableTabs[0];
   const isReadOnlyProfile = profileType === 'deleted' || user.status === 'deleted';
   const canManageLeadAvailability = !isReadOnlyProfile
-    && ['member', 'partner'].includes(user.role)
-    && (canEdit || (currentUser?.role === 'rm' && user.report_to_id === currentUser.id));
+    && ['rm', 'member', 'partner'].includes(user.role)
+    && (canEdit
+      || (currentUser?.role === 'rm' && (user.id === currentUser.id || user.report_to_id === currentUser.id)));
 
   function handleBlock() {
     if (!confirm('Block this user? This user will no longer be able to login using email, phone, or CP ID. They will not receive new leads.')) return;
@@ -190,7 +191,7 @@ function UserProfileInner({ userId }: { userId: string }) {
               </div>
               <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
                 {(isRmProfile || isMemberProfile) && user.team_name && <span className="rounded-lg bg-slate-100 px-2.5 py-1">Team: {user.team_name}</span>}
-                {isMemberProfile && <span className="rounded-lg bg-slate-100 px-2.5 py-1">Availability: {user.is_available ? 'Available' : 'Unavailable'}</span>}
+                {(isRmProfile || isMemberProfile) && <span className="rounded-lg bg-slate-100 px-2.5 py-1">Availability: {user.is_available ? 'Available' : 'Unavailable'}</span>}
                 <span className="rounded-lg bg-slate-100 px-2.5 py-1">Joined: {fmtDate(user.created_at, 'dd MMM yyyy')}</span>
                 <span className="rounded-lg bg-slate-100 px-2.5 py-1">Last login: {fmtDate(user.last_login_at)}</span>
               </div>
@@ -235,7 +236,7 @@ function UserProfileInner({ userId }: { userId: string }) {
         </div>
       )}
 
-      {['member', 'partner'].includes(user.role) && (
+      {['rm', 'member', 'partner'].includes(user.role) && (
         <LeadAvailabilityPanel
           user={user}
           canManage={canManageLeadAvailability}
@@ -910,18 +911,25 @@ function TeamMembersTab({ reportees }: { reportees: UserProfileResponse['reporte
   if (!reportees.length) return <EmptyState title="No team members" description="This RM does not currently have active members reporting to them." icon={<Users className="h-6 w-6" />} />;
   return (
     <div className="grid gap-3 md:grid-cols-2">
-      {reportees.map(member => (
-        <Link key={member.id} href={`/dashboard/admin/users/${member.id}`} className="rounded-xl border border-slate-200 p-4 hover:bg-slate-50">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="font-semibold text-slate-900">{member.full_name}</div>
-              <div className="text-xs text-slate-500">{member.email || member.phone || '-'}</div>
+      {reportees.map(member => {
+        const leadAvailable = Boolean(member.is_available) && member.status === 'active';
+        return (
+          <Link key={member.id} href={`/dashboard/admin/users/${member.id}`} className="rounded-xl border border-slate-200 p-4 hover:bg-slate-50">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="truncate font-semibold text-slate-900">{member.full_name}</div>
+                <div className="truncate text-xs text-slate-500">{member.email || member.phone || '-'}</div>
+              </div>
+              <span className="chip-slate">{humanize(member.role)}</span>
             </div>
-            <span className={member.status === 'active' ? 'chip-green' : 'chip-slate'}>{humanize(member.status)}</span>
-          </div>
-          <div className="mt-2 text-xs text-slate-500">Team: {member.team_name || '-'}</div>
-        </Link>
-      ))}
+            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              <span className={member.status === 'active' ? 'chip-green' : 'chip-red'}>Account: {humanize(member.status || 'unknown')}</span>
+              <span className={leadAvailable ? 'chip-green' : 'chip-amber'}>Lead Availability: {leadAvailable ? 'Available' : 'Unavailable'}</span>
+            </div>
+            <div className="mt-2 text-xs text-slate-500">Team: {member.team_name || '-'}</div>
+          </Link>
+        );
+      })}
     </div>
   );
 }

@@ -15,6 +15,7 @@ export interface AssignmentSettings {
   isDistributionRunning?: boolean;
   lastDistributionStatus?: string | null;
   lastDistributionError?: string | null;
+  autoAssignApprovedRequests: boolean;
   autoReassignEnabled: boolean;
   reassignAfterHours: number;
   reassignToHighPerformers: boolean;

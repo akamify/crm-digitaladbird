@@ -671,6 +671,11 @@ router.post('/lead-requests', authenticate, asyncHandler(async (req, res) => {
   // 'partner', 'trader', or null (both)
   const cat = ['partner', 'trader'].includes(category) ? category : null;
 
+  if (!['member', 'partner'].includes(req.user.role)) {
+    throw new AppError(403, 'FORBIDDEN', 'Only members and partners can submit lead requests.');
+  }
+  await validateLeadAssignee({ query }, req.user.id, { actor: req.user });
+
   // Check for existing pending request
   const { rows: existing } = await query(
     `SELECT id FROM lead_requests WHERE user_id = $1 AND status = 'pending' LIMIT 1`,
@@ -710,42 +715,8 @@ router.post('/lead-requests', authenticate, asyncHandler(async (req, res) => {
     [req.user.id, qty, cat, note || null]
   );
 
-  // STRICT round-robin: new request joins active queue (FIFO by created_at,
-  // so it sits at the tail of the rotation), engine assigns ONE lead per
-  // request per cycle until queue exhausts. Replaces the old greedy-fill
-  // that handed the entire requested quantity to this single request first.
   let assigned = 0;
-  const { isDistributionActive: isActive } = require('../services/distributionScheduler');
-  const { distributeRoundRobin } = require('../services/requestDistributionEngine');
-  const distActive = await isActive();
-  if (distActive) {
-    try {
-      const result = await distributeRoundRobin();
-      // Re-read this request's row to see how many it got
-      const { rows: [updated] } = await query(
-        `SELECT status, leads_assigned FROM lead_requests WHERE id = $1`,
-        [r.id],
-      );
-      if (updated) {
-        r.status = updated.status;
-        r.leads_assigned = updated.leads_assigned;
-        assigned = updated.leads_assigned;
-      }
-      logger.info({
-        requestId: r.id, requested_qty: qty, leads_assigned: assigned,
-        final_status: r.status, totalFilledThisCycle: result.totalFilled,
-        rotations: result.rotations, requestsInQueue: result.processed,
-      }, '[auto-distribute] round-robin completed (new request joined queue)');
-    } catch (err) {
-      logger.error({ requestId: r.id, err: err.message },
-        '[auto-distribute] round-robin failed; request stays pending');
-    }
-  } else {
-    logger.info({
-      requestId: r.id, requested_qty: qty,
-      reason: 'auto_distribution_inactive_now',
-    }, '[auto-distribute] new request stays pending — outside active window or auto-dist disabled');
-  }
+  logger.info({ requestId: r.id, requested_qty: qty }, '[lead-request] created pending admin approval');
 
   // Audit log
   await query(
@@ -789,7 +760,7 @@ router.get('/lead-requests/my', authenticate, asyncHandler(async (req, res) => {
 }));
 
 // RM/Admin: list pending requests (scoped by role)
-router.get('/lead-requests', authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (req, res) => {
+router.get('/lead-requests', authenticate, requireRole('super_admin', 'admin', 'rm'), asyncHandler(async (req, res) => {
   const status = req.query.status || 'pending';
   let scopeSql = '';
   const params = [status];
@@ -813,7 +784,7 @@ router.get('/lead-requests', authenticate, requireRole('super_admin', 'rm'), asy
 }));
 
 // RM/Admin: approve a request — assigns leads from queue
-router.post('/lead-requests/:id/approve', authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (req, res) => {
+router.post('/lead-requests/:id/approve', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
   if (true) {
     const result = await assignmentEngine.approveLeadRequest({
       requestId: req.params.id,
@@ -851,7 +822,7 @@ router.post('/lead-requests/:id/approve', authenticate, requireRole('super_admin
         approved_quantity: approved,
         fulfilled_quantity: fulfilled,
         assigned_now: assignedNow,
-        available_leads: result.available_count,
+        remaining: result.remaining,
         note: req.body.note || null,
       },
     });
@@ -866,7 +837,11 @@ router.post('/lead-requests/:id/approve', authenticate, requireRole('super_admin
         approved_quantity: approved,
         assigned_now: assignedNow,
         remaining: Math.max(0, approved - fulfilled),
-        available_leads: result.available_count,
+        requestId: result.requestId,
+        memberId: result.memberId,
+        approvedQuantity: result.approvedQuantity,
+        assignedNow: result.assignedNow,
+        remainingQuota: result.remaining,
         status,
         partial: status === 'approved' || status === 'partially_fulfilled',
       },
@@ -999,18 +974,8 @@ router.post('/lead-requests/:id/approve', authenticate, requireRole('super_admin
 }));
 
 // RM/Admin: reject a request
-router.post('/lead-requests/:id/reject', authenticate, requireRole('super_admin', 'rm'), asyncHandler(async (req, res) => {
+router.post('/lead-requests/:id/reject', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
   const { id } = req.params;
-
-  // RM scope check
-  if (req.user.role === 'rm') {
-    const { rows: [lr] } = await query(
-      `SELECT lr.user_id FROM lead_requests lr
-         JOIN users u ON u.id = lr.user_id AND u.report_to_id = $1
-        WHERE lr.id = $2 AND lr.status = 'pending'`, [req.user.id, id]
-    );
-    if (!lr) throw new AppError(403, 'FORBIDDEN', 'Request not found or not your team');
-  }
 
   const { rows: [r] } = await query(
     `UPDATE lead_requests SET status = 'rejected', resolved_by = $1, resolved_at = NOW(),
@@ -1039,7 +1004,7 @@ router.post('/lead-requests/:id/reject', authenticate, requireRole('super_admin'
       metadata: { note: req.body.note || null },
     });
   }
-  res.json({ success: true });
+  res.json({ success: true, data: { requestId: id, status: 'rejected' } });
 }));
 
 // Member: cancel own pending request

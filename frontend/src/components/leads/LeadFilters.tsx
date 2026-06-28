@@ -90,7 +90,7 @@ export function LeadFilters({ value, onChange }: Props) {
         />
       </div>
 
-      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-6">
+      <div className="mt-3 grid grid-cols-1 flex items-center gap-3 sm:grid-cols-6">
         <Select
           value={value.category || ''}
           options={CATEGORY_OPTS}
@@ -110,12 +110,6 @@ export function LeadFilters({ value, onChange }: Props) {
           type="date" label="To"
           value={value.to || ''}
           onChange={(e: ChangeEvent<HTMLInputElement>) => set('to', e.target.value)}
-        />
-        <Input
-          label="Source"
-          placeholder="e.g. meta, manual"
-          value={value.source || ''}
-          onChange={(e: ChangeEvent<HTMLInputElement>) => set('source', e.target.value)}
         />
         <div className="flex items-end">
           {hasFilters && (

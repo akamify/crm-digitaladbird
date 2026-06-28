@@ -47,6 +47,7 @@ async function getAssignmentSettings(client = null) {
     isDistributionRunning: asBool(s.is_distribution_running, false),
     lastDistributionStatus: s.last_distribution_status || null,
     lastDistributionError: s.last_distribution_error || null,
+    autoAssignApprovedRequests: asBool(s.auto_assign_approved_requests, false),
     autoReassignEnabled: asBool(s.auto_reassign_enabled, false),
     reassignAfterHours: Math.max(1, asInt(s.reassign_after_hours, 24)),
     reassignToHighPerformers: asBool(s.reassign_to_high_performers, true),
@@ -536,8 +537,7 @@ async function countAvailableLeadsForRequest(request, actor, client = null) {
   return Number(row?.available_count || 0);
 }
 
-async function runApprovedRequestFulfillment({ limit = 100, actor = null } = {}) {
-  return withTransaction(async (client) => {
+async function fulfillApprovedRequestsInTransaction(client, { limit = 100, actor = null } = {}) {
     const { rows: requests } = await client.query(`
       SELECT lr.*, u.role AS user_role, u.status AS user_status,
              u.report_to_id AS user_report_to_id, u.is_available,
@@ -623,7 +623,14 @@ async function runApprovedRequestFulfillment({ limit = 100, actor = null } = {})
     }
 
     return { processed: requests.length, assigned, requests: requestResults };
-  });
+}
+
+async function runApprovedRequestFulfillment({ limit = 100, actor = null, bypassEnabled = false } = {}) {
+  const settings = await getAssignmentSettings();
+  if (!settings.autoAssignApprovedRequests && !bypassEnabled) {
+    return { processed: 0, assigned: 0, skipped: true, reason: 'AUTO_ASSIGN_APPROVED_REQUESTS_DISABLED', requests: [] };
+  }
+  return withTransaction((client) => fulfillApprovedRequestsInTransaction(client, { limit, actor }));
 }
 
 async function runAutoAssignment({ limit = 100, reason = 'auto_round_robin', actor = null, bypassWindow = false, bypassEnabled = false } = {}) {
@@ -635,19 +642,45 @@ async function runAutoAssignment({ limit = 100, reason = 'auto_round_robin', act
     return { success: true, skipped: true, reason: 'OUTSIDE_DISTRIBUTION_WINDOW', assigned: 0, scanned: 0, results: [] };
   }
   return withTransaction(async (client) => {
+    let approvedRequestFulfillment = { processed: 0, assigned: 0, requests: [] };
+    let remainingLimit = limit;
+    if (settings.autoAssignApprovedRequests && remainingLimit > 0) {
+      approvedRequestFulfillment = await fulfillApprovedRequestsInTransaction(client, { limit: remainingLimit, actor });
+      remainingLimit = Math.max(0, remainingLimit - Number(approvedRequestFulfillment.assigned || 0));
+    }
+
     const teams = await getEligibleRmTeams(client);
     if (!teams.length) {
+      if (Number(approvedRequestFulfillment.assigned || 0) > 0) {
+        return {
+          success: true,
+          assigned: Number(approvedRequestFulfillment.assigned || 0),
+          requestFulfillment: approvedRequestFulfillment,
+          scanned: 0,
+          results: [],
+        };
+      }
       return {
         success: false,
         code: 'NO_ELIGIBLE_ASSIGNEES',
         message: 'No available team members found for lead distribution.',
-        assigned: 0,
+        assigned: Number(approvedRequestFulfillment.assigned || 0),
+        requestFulfillment: approvedRequestFulfillment,
         scanned: 0,
         results: [],
       };
     }
 
-    const leads = await pickAssignableLeads(client, { limit });
+    if (remainingLimit <= 0) {
+      return {
+        assigned: Number(approvedRequestFulfillment.assigned || 0),
+        scanned: 0,
+        requestFulfillment: approvedRequestFulfillment,
+        results: [],
+      };
+    }
+
+    const leads = await pickAssignableLeads(client, { limit: remainingLimit });
     let assigned = 0;
     const results = [];
     const assignedByMember = new Map();
@@ -681,7 +714,13 @@ async function runAutoAssignment({ limit = 100, reason = 'auto_round_robin', act
     for (const [memberId, leadIds] of assignedByMember.entries()) {
       await notifyAssigned(client, memberId, leadIds.length, { assignment_type: 'auto', reason, lead_ids: leadIds, assigned_by: actor?.id || null });
     }
-    return { assigned, scanned: leads.length, results };
+    return {
+      assigned: assigned + Number(approvedRequestFulfillment.assigned || 0),
+      normalAssigned: assigned,
+      scanned: leads.length,
+      requestFulfillment: approvedRequestFulfillment,
+      results,
+    };
   });
 }
 
@@ -791,13 +830,16 @@ async function runAutoReassignment({ limit = 50, actor = null, bypassWindow = fa
 
 async function approveLeadRequest({ requestId, approvedQuantity, adminNotes = null, actor }) {
   if (!actor) throw new AppError(401, 'NO_USER', 'Not authenticated');
+  if (!['super_admin', 'admin'].includes(actor.role)) {
+    throw new AppError(403, 'FORBIDDEN', 'Only admin users can approve lead requests.');
+  }
   const qty = Math.max(1, Math.min(500, Number.parseInt(approvedQuantity, 10) || 0));
   if (!qty) throw new AppError(400, 'INVALID', 'approvedQuantity must be greater than 0');
 
-  let availableCount = 0;
+  let requestUserId = null;
   await withTransaction(async (client) => {
     const { rows: [req] } = await client.query(
-      `SELECT lr.*, u.report_to_id
+      `SELECT lr.*, u.report_to_id, u.role AS user_role
          FROM lead_requests lr
          JOIN users u ON u.id = lr.user_id
         WHERE lr.id = $1 AND lr.status = 'pending'
@@ -805,20 +847,10 @@ async function approveLeadRequest({ requestId, approvedQuantity, adminNotes = nu
       [requestId],
     );
     if (!req) throw new AppError(404, 'NOT_FOUND', 'Request not found or already resolved');
-    if (actor.role === 'rm' && req.report_to_id !== actor.id) {
-      throw new AppError(403, 'FORBIDDEN', 'You can only approve requests from your team');
+    if (!['member', 'partner'].includes(req.user_role)) {
+      throw new AppError(400, 'INVALID_REQUEST_USER', 'Only member or partner lead requests can be approved.');
     }
-    availableCount = await countAvailableLeadsForRequest(req, actor, client);
-    if (availableCount <= 0) {
-      throw new AppError(409, 'NO_AVAILABLE_LEADS', 'No available leads are currently available for this request.');
-    }
-    if (qty > availableCount) {
-      throw new AppError(409, 'INSUFFICIENT_AVAILABLE_LEADS', `Only ${availableCount} leads are currently available.`, {
-        available_leads: availableCount,
-        requested_quantity: Number(req.requested_quantity || req.quantity || 0),
-        approved_quantity: qty,
-      });
-    }
+    requestUserId = req.user_id;
     await client.query(
       `UPDATE lead_requests
           SET status = 'approved',
@@ -836,9 +868,23 @@ async function approveLeadRequest({ requestId, approvedQuantity, adminNotes = nu
     );
   });
 
-  const fulfillment = await runApprovedRequestFulfillment({ limit: qty, actor });
+  const settings = await getAssignmentSettings();
+  const fulfillment = settings.autoAssignApprovedRequests
+    ? await runApprovedRequestFulfillment({ limit: qty, actor })
+    : { processed: 0, assigned: 0, skipped: true, reason: 'AUTO_ASSIGN_APPROVED_REQUESTS_DISABLED', requests: [] };
   const { rows: [updated] } = await query(`SELECT * FROM lead_requests WHERE id = $1`, [requestId]);
-  return { request: updated, fulfillment, available_count: availableCount };
+  const assignedNow = fulfillment.requests?.find(r => r.requestId === requestId)?.assigned || 0;
+  const fulfilled = Number(updated?.fulfilled_quantity ?? updated?.leads_assigned ?? 0);
+  const approved = Number(updated?.approved_quantity ?? qty);
+  return {
+    request: updated,
+    fulfillment,
+    requestId,
+    memberId: requestUserId,
+    approvedQuantity: approved,
+    assignedNow,
+    remaining: Math.max(0, approved - fulfilled),
+  };
 }
 
 async function getAssignmentOverview() {

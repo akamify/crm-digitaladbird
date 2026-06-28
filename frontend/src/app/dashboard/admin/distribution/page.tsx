@@ -95,6 +95,25 @@ function DistributionInner() {
           <InfoCard label="Last Error" value={settings?.lastDistributionError || 'No error'} />
         </div>
 
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+          <div>
+            <div className="text-sm font-semibold text-slate-900">Auto assign approved requests</div>
+            <p className="mt-1 text-xs text-slate-500">Approved member request quotas are filled before normal saved-lead distribution.</p>
+          </div>
+          <label className="flex items-center gap-3 rounded-full border border-slate-200 bg-white px-3 py-2">
+            <span className={clsx('text-sm font-medium', settings?.autoAssignApprovedRequests ? 'text-emerald-700' : 'text-slate-600')}>
+              {settings?.autoAssignApprovedRequests ? 'ON' : 'OFF'}
+            </span>
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={!!settings?.autoAssignApprovedRequests}
+              onChange={(e) => saveSetting({ autoAssignApprovedRequests: e.target.checked })}
+              disabled={updateSettings.isPending || overview.isLoading}
+            />
+          </label>
+        </div>
+
         {Number(stats.unassigned_leads || 0) === 0 && (
           <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
             No saved/unassigned leads are waiting for distribution.
