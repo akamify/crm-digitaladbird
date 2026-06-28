@@ -1086,7 +1086,10 @@ router.get('/lead-requests/stats', authenticate, asyncHandler(async (req, res) =
       WHERE user_id = $1
         AND (
           status IN ('pending', 'approved', 'partially_fulfilled')
-          OR (status IN ('fulfilled', 'rejected', 'cancelled') AND updated_at > NOW() - INTERVAL '7 days')
+          OR (
+            status IN ('fulfilled', 'rejected', 'cancelled')
+            AND COALESCE(updated_at, fulfilled_at, resolved_at, approved_at, created_at) > NOW() - INTERVAL '7 days'
+          )
         )
       ORDER BY
         CASE status

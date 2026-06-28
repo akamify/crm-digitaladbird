@@ -5,7 +5,13 @@ import { ArrowLeft, GitBranch, Loader2, Play, RotateCcw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useEffect, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
-import { useAssignmentOverview, useRunDistributionNow, useRunReassignmentNow, useUpdateAssignmentSettings } from '@/hooks/useAdminEnterprise';
+import {
+  useAssignmentOverview,
+  useRunApprovedRequestAssignmentNow,
+  useRunDistributionNow,
+  useRunReassignmentNow,
+  useUpdateAssignmentSettings,
+} from '@/hooks/useAdminEnterprise';
 import { clsx } from '@/lib/format';
 import { formatISTDateTime } from '@/lib/date';
 
@@ -21,6 +27,7 @@ function DistributionInner() {
   const overview = useAssignmentOverview();
   const updateSettings = useUpdateAssignmentSettings();
   const runDistribution = useRunDistributionNow();
+  const runApprovedRequests = useRunApprovedRequestAssignmentNow();
   const runReassignment = useRunReassignmentNow();
 
   const settings = overview.data?.settings;
@@ -199,6 +206,30 @@ function DistributionInner() {
               ? 'Approved request quota will be filled first.'
               : 'Approved request quota will stay pending until manual action or setting is enabled.'}
           />
+        </div>
+        <div className="mt-5 flex flex-wrap gap-2">
+          <button
+            onClick={() => runApprovedRequests.mutate(undefined, {
+              onSuccess: (data: unknown) => {
+                const payload = data as { data?: { assigned?: number; skipped?: boolean; reason?: string }; assigned?: number; skipped?: boolean; reason?: string };
+                const result = payload?.data || payload;
+                const assigned = Number(result?.assigned || 0);
+                if (result?.skipped) {
+                  toast.error(result.reason === 'AUTO_ASSIGN_APPROVED_REQUESTS_DISABLED'
+                    ? 'Approved Request Auto Assignment is off.'
+                    : 'Approved request assignment skipped.');
+                  return;
+                }
+                toast.success(assigned > 0 ? `Assigned ${assigned} approved request lead(s)` : 'No approved request leads assigned');
+              },
+              onError: (error) => toast.error(errorMessage(error, 'Approved request assignment failed')),
+            })}
+            disabled={runApprovedRequests.isPending || !settings?.autoAssignApprovedRequests}
+            className="btn-primary inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {runApprovedRequests.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+            Run Approved Requests Now
+          </button>
         </div>
       </section>
 

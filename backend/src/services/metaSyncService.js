@@ -445,17 +445,19 @@ async function ingestGraphLead(lead, formId) {
 
   if (!inserted) return { status: 'duplicate' };
 
-  // Distribute if within active hours
-  let assigned = { reason: 'QUEUED_OUTSIDE_HOURS' };
-  if (await isDistributionActive()) {
-    try {
-      const request = await assignmentEngine.runApprovedRequestFulfillment({ limit: 100 });
-      const auto = await assignmentEngine.runAutoAssignment({ limit: 100, reason: 'meta_periodic_sync' });
-      assigned = { request, auto };
-    } catch (err) {
-      logger.error({ leadId: inserted, err: err.message }, 'Distribution failed for synced lead');
-      assigned = { reason: 'DISTRIBUTION_ERROR', error: err.message };
+  // Approved request fulfillment is controlled by its own setting. Normal
+  // saved-lead distribution remains behind the scheduled distribution gate.
+  let assigned = { request: null, auto: { reason: 'QUEUED_OUTSIDE_HOURS' } };
+  try {
+    const request = await assignmentEngine.runApprovedRequestFulfillment({ limit: 100 });
+    let auto = { reason: 'QUEUED_OUTSIDE_HOURS' };
+    if (await isDistributionActive()) {
+      auto = await assignmentEngine.runAutoAssignment({ limit: 100, reason: 'meta_periodic_sync' });
     }
+    assigned = { request, auto };
+  } catch (err) {
+    logger.error({ leadId: inserted, err: err.message }, 'Distribution failed for synced lead');
+    assigned = { reason: 'DISTRIBUTION_ERROR', error: err.message };
   }
 
   // Real-time broadcast + Google Sheet append (non-blocking).

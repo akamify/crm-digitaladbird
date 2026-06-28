@@ -57,6 +57,19 @@ export function useRunDistributionNow() {
   });
 }
 
+export function useRunApprovedRequestAssignmentNow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiPost('/admin/assignment/approved-requests/run-now'),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'assignment-overview'] });
+      qc.invalidateQueries({ queryKey: ['lead-request-stats'] });
+      qc.invalidateQueries({ queryKey: ['lead-requests'] });
+    },
+  });
+}
+
 export function useRunReassignmentNow() {
   const qc = useQueryClient();
   return useMutation({

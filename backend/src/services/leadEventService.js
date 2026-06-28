@@ -121,12 +121,13 @@ function onLeadCreated(leadId, { source = 'unknown' } = {}) {
         try {
           const assignmentEngine = require('./leadAssignmentEngine');
           const scheduler = require('./distributionScheduler');
+          const request = await assignmentEngine.runApprovedRequestFulfillment({ limit: 100 });
+          let auto = { assigned: 0, skipped: true, reason: 'SCHEDULED_DISTRIBUTION_INACTIVE' };
           if (await scheduler.isDistributionActive()) {
-            const request = await assignmentEngine.runApprovedRequestFulfillment({ limit: 100 });
-            const auto = await assignmentEngine.runAutoAssignment({ limit: 100, reason: `${source}_fanout` });
-            if ((request.assigned || 0) > 0 || (auto.assigned || 0) > 0) {
-              logger.info({ leadId, source, requestAssigned: request.assigned, autoAssigned: auto.assigned }, '[lead-fanout] assignment engine topped up on new lead');
-            }
+            auto = await assignmentEngine.runAutoAssignment({ limit: 100, reason: `${source}_fanout` });
+          }
+          if ((request.assigned || 0) > 0 || (auto.assigned || 0) > 0) {
+            logger.info({ leadId, source, requestAssigned: request.assigned, autoAssigned: auto.assigned }, '[lead-fanout] assignment engine topped up on new lead');
           }
         } catch (err) {
           logger.warn({ err: err.message, leadId }, '[lead-fanout] request top-up failed (non-fatal)');

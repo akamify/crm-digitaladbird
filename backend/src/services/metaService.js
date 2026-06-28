@@ -237,15 +237,17 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
 
   // Only distribute immediately if within active distribution hours (08:00–22:00 IST).
   // Outside those hours the lead stays in the queue and will be distributed at 8 AM.
-  let assigned = { reason: 'QUEUED_OUTSIDE_HOURS' };
+  const request = await assignmentEngine.runApprovedRequestFulfillment({ limit: 100 });
+  let auto = { reason: 'QUEUED_OUTSIDE_HOURS' };
   if (await isDistributionActive()) {
-    const request = await assignmentEngine.runApprovedRequestFulfillment({ limit: 100 });
-    const auto = await assignmentEngine.runAutoAssignment({ limit: 100, reason: 'meta_webhook' });
-    assigned = { request, auto };
+    auto = await assignmentEngine.runAutoAssignment({ limit: 100, reason: 'meta_webhook' });
+    const assigned = { request, auto };
     logger.info({ ...ctx, step: 'H.assigned', leadId: inserted, assigned }, '[meta-ingest]');
   } else {
     logger.info({ ...ctx, step: 'H.queued_off_hours', leadId: inserted }, '[meta-ingest] distribution paused — lead stays unassigned until 08:00 IST');
   }
+
+  const assigned = { request, auto };
 
   // Fan out: broadcast to Socket.IO + append to Google Sheet (both non-blocking)
   onLeadCreated(inserted, { source: 'meta_webhook' });

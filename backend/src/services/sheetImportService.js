@@ -374,8 +374,8 @@ async function importFromConfig(opts) {
 
       if (assign) {
         try {
+          await assignmentEngine.runApprovedRequestFulfillment({ limit: 100 });
           if (await isDistributionActive()) {
-            await assignmentEngine.runApprovedRequestFulfillment({ limit: 100 });
             await assignmentEngine.runAutoAssignment({ limit: 100, reason: 'sheet_import' });
           }
         } catch (e) {

@@ -29,7 +29,6 @@ router.get('/admin/assignment/settings', authenticate, requireRole(...ADMINS), a
 }));
 
 router.patch('/admin/assignment/settings', authenticate, requireRole(...ADMINS), asyncHandler(async (req, res) => {
-  const before = await assignment.getAssignmentSettings();
   const map = {
     autoAssignEnabled: ['auto_assign_enabled', 'auto_distribution_enabled'],
     assignStartHour: ['assign_start_hour', 'distribution_start_hour'],
@@ -74,20 +73,32 @@ router.patch('/admin/assignment/settings', authenticate, requireRole(...ADMINS),
   });
 
   let approvedRequestFulfillment = null;
-  if (
-    req.body.autoAssignApprovedRequests === true
-    && before.autoAssignApprovedRequests !== true
-  ) {
+  const approvedRequestToggleSavedOn = Object.prototype.hasOwnProperty.call(req.body, 'autoAssignApprovedRequests')
+    && String(req.body.autoAssignApprovedRequests).toLowerCase() === 'true';
+  if (approvedRequestToggleSavedOn) {
     const latest = await assignment.getAssignmentSettings();
     approvedRequestFulfillment = await assignment.runApprovedRequestFulfillment({
       limit: Number(latest.requestFulfillmentLimit || latest.assignmentTickLimit || 100),
       actor: req.user,
-      bypassEnabled: true,
     });
   }
 
   const settings = await assignment.getAssignmentSettings();
   res.json({ success: true, data: { ...settings, approvedRequestFulfillment } });
+}));
+
+router.post('/admin/assignment/approved-requests/run-now', authenticate, requireRole(...ADMINS), asyncHandler(async (req, res) => {
+  const settings = await assignment.getAssignmentSettings();
+  const result = await assignment.runApprovedRequestFulfillment({
+    limit: Number(req.body?.limit || settings.requestFulfillmentLimit || settings.assignmentTickLimit || 100),
+    actor: req.user,
+  });
+  await logActivity(req, {
+    entity: 'lead_request',
+    action: 'approved_request_assignment_run_now',
+    metadata: result,
+  });
+  res.json({ success: true, data: result });
 }));
 
 async function runBulkAssignment(req, res, type) {
