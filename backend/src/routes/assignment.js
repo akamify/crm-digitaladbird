@@ -88,17 +88,35 @@ router.patch('/admin/assignment/settings', authenticate, requireRole(...ADMINS),
 }));
 
 router.post('/admin/assignment/approved-requests/run-now', authenticate, requireRole(...ADMINS), asyncHandler(async (req, res) => {
-  const settings = await assignment.getAssignmentSettings();
-  const result = await assignment.runApprovedRequestFulfillment({
-    limit: Number(req.body?.limit || settings.requestFulfillmentLimit || settings.assignmentTickLimit || 100),
-    actor: req.user,
-  });
-  await logActivity(req, {
-    entity: 'lead_request',
-    action: 'approved_request_assignment_run_now',
-    metadata: result,
-  });
-  res.json({ success: true, data: result });
+  try {
+    const settings = await assignment.getAssignmentSettings();
+    const result = await assignment.runApprovedRequestFulfillment({
+      limit: Number(req.body?.limit || settings.requestFulfillmentLimit || settings.assignmentTickLimit || 100),
+      actor: req.user,
+    });
+    await logActivity(req, {
+      entity: 'lead_request',
+      action: 'approved_request_assignment_run_now',
+      metadata: result,
+    });
+    res.json({ success: true, data: result });
+  } catch (err) {
+    throw new AppError(
+      500,
+      'APPROVED_REQUEST_ASSIGNMENT_FAILED',
+      err.message || 'Approved request assignment failed.',
+      {
+        step: err.assignment_step || 'run_approved_request_fulfillment',
+        db_code: err.code || null,
+        db_detail: err.detail || null,
+        db_hint: err.hint || null,
+        db_table: err.table || null,
+        db_column: err.column || null,
+        db_constraint: err.constraint || null,
+        routine: err.routine || null,
+      },
+    );
+  }
 }));
 
 async function runBulkAssignment(req, res, type) {

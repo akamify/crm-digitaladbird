@@ -577,6 +577,8 @@ async function countAvailableLeadsForRequest(request, actor, client = null) {
 }
 
 async function fulfillApprovedRequestsInTransaction(client, { limit = 100, actor = null } = {}) {
+    let currentStep = 'select_approved_requests';
+    try {
     const { rows: requests } = await client.query(`
       SELECT lr.*, u.role AS user_role, u.status AS user_status,
              u.report_to_id AS user_report_to_id, u.is_available,
@@ -601,6 +603,7 @@ async function fulfillApprovedRequestsInTransaction(client, { limit = 100, actor
     const requestResults = [];
     const notificationJobs = [];
     for (const req of requests) {
+      currentStep = `process_request:${req.id}`;
       if (assigned >= limit) break;
       try {
         assertLeadAssigneeUser({
@@ -625,10 +628,12 @@ async function fulfillApprovedRequestsInTransaction(client, { limit = 100, actor
       const fulfilled = Number(req.fulfilled_quantity ?? req.leads_assigned ?? 0);
       const need = Math.min(approved - fulfilled, limit - assigned);
       if (need <= 0) continue;
+      currentStep = `pick_assignable_leads:${req.id}`;
       const leads = await pickAssignableLeads(client, { limit: need, category: req.category });
       let filled = 0;
       const leadIds = [];
       for (const lead of leads) {
+        currentStep = `assign_lead:${req.id}:${lead.id}`;
         const upd = await client.query(
           `UPDATE leads
               SET assigned_to_user_id = $1, assigned_at = NOW(), updated_at = NOW()
@@ -636,6 +641,7 @@ async function fulfillApprovedRequestsInTransaction(client, { limit = 100, actor
           [req.user_id, lead.id],
         );
         if (!upd.rowCount) continue;
+        currentStep = `insert_assignment_history:${req.id}:${lead.id}`;
         await insertAssignmentHistory(client, {
           leadId: lead.id,
           memberId: req.user_id,
@@ -656,6 +662,7 @@ async function fulfillApprovedRequestsInTransaction(client, { limit = 100, actor
           metadata: { request_id: req.id, assignment_type: 'request_fulfillment', lead_ids: leadIds, assigned_by: actor?.id || req.approved_by || req.resolved_by || null },
         });
       }
+      currentStep = `mark_request_after_fulfillment:${req.id}`;
       const status = await markRequestAfterFulfillment(client, req, filled);
       if (filled || status.status === 'fulfilled') {
         notificationJobs.push({
@@ -675,6 +682,10 @@ async function fulfillApprovedRequestsInTransaction(client, { limit = 100, actor
     }
 
     return { processed: requests.length, assigned, requests: requestResults, _notificationJobs: notificationJobs };
+    } catch (err) {
+      err.assignment_step = currentStep;
+      throw err;
+    }
 }
 
 async function runApprovedRequestFulfillment({ limit = 100, actor = null, bypassEnabled = false } = {}) {
