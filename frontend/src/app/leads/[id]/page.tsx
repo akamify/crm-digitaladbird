@@ -16,6 +16,7 @@ import { RemarkModal } from '@/components/leads/RemarkModal';
 import { ReassignModal } from '@/components/leads/ReassignModal';
 import { WorkflowPanel } from '@/components/leads/WorkflowPanel';
 import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
+import { LeadSessionsCard } from '@/components/leads/LeadSessionsCard';
 import { useLead, useLockLead, useUnlockLead } from '@/hooks/useLeads';
 import { useLeadCommunication } from '@/hooks/useLeadCommunication';
 import { useAuth } from '@/lib/auth';
@@ -108,6 +109,7 @@ function LeadDetailInner() {
           <LeadSummaryCard lead={lead} />
           <AssignmentCard lead={lead} />
           <FollowUpCard lead={lead} />
+          <LeadSessionsCard leadId={id} canManage={!readOnlyAccess} />
           {canSeeTechnical && <TechnicalMetaDetails lead={lead} />}
         </aside>
       </div>

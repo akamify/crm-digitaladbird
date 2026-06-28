@@ -8,6 +8,7 @@ const logger = require('../utils/logger');
 const config = require('../config/env');
 const { resolveLeadCategory } = require('../services/leadCategory/leadCategoryResolver');
 const { validateCallStatus, validateLeadStage } = require('../constants/leadStatusOptions');
+const leadSessionService = require('../services/leadSessionService');
 
 function humanizeValue(value) {
   return String(value || '')
@@ -326,6 +327,35 @@ exports.getOne = asyncHandler(async (req, res) => {
   );
 
   res.json({ success: true, data: { ...rows[0], remarks: remarks.rows, history: history.rows } });
+});
+
+exports.listSessions = asyncHandler(async (req, res) => {
+  const data = await leadSessionService.listLeadSessions({ user: req.user, leadId: req.params.leadId });
+  res.json({ success: true, data });
+});
+
+exports.createSession = asyncHandler(async (req, res) => {
+  const data = await leadSessionService.createLeadSession({ user: req.user, leadId: req.params.leadId, body: req.body });
+  res.status(201).json({ success: true, data });
+});
+
+exports.updateSession = asyncHandler(async (req, res) => {
+  const data = await leadSessionService.updateLeadSession({
+    user: req.user,
+    leadId: req.params.leadId,
+    sessionId: req.params.sessionId,
+    body: req.body,
+  });
+  res.json({ success: true, data });
+});
+
+exports.deleteSession = asyncHandler(async (req, res) => {
+  const data = await leadSessionService.deleteLeadSession({
+    user: req.user,
+    leadId: req.params.leadId,
+    sessionId: req.params.sessionId,
+  });
+  res.json({ success: true, data });
 });
 
 /**

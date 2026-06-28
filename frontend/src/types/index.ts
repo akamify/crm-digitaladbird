@@ -109,6 +109,23 @@ export interface LeadAssignment {
   user_name: string | null;
 }
 
+export interface LeadSession {
+  id: string;
+  leadId: string;
+  sessionName: string;
+  webinarName?: string;
+  sessionDate: string;
+  sessionTime: string;
+  timezone: string;
+  notes: string | null;
+  createdBy: string | null;
+  updatedBy: string | null;
+  createdByUserId?: string | null;
+  updatedByUserId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface LeadDetail extends Lead {
   remarks: LeadRemark[];
   history: LeadAssignment[];

@@ -1,8 +1,8 @@
 'use client';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
-import { apiGet, apiPost } from '@/lib/api';
+import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api';
 import type {
-  Lead, LeadDetail, LeadFilters, PageResult, CallStatus,
+  Lead, LeadDetail, LeadFilters, PageResult, CallStatus, LeadSession,
 } from '@/types';
 
 function toQueryString(f: LeadFilters): string {
@@ -75,6 +75,57 @@ export function useAddRemark() {
       qc.invalidateQueries({ queryKey: ['lead', id] });
       qc.invalidateQueries({ queryKey: ['leads'] });
       qc.invalidateQueries({ queryKey: ['reports'] });
+    },
+  });
+}
+
+export interface LeadSessionInput {
+  session_name: string;
+  session_date: string;
+  session_time: string;
+  timezone?: string;
+  notes?: string | null;
+}
+
+export function useLeadSessions(leadId: string | null | undefined) {
+  return useQuery({
+    queryKey: ['lead', leadId, 'sessions'],
+    queryFn: () => apiGet<LeadSession[]>(`/leads/${leadId}/sessions`),
+    enabled: !!leadId,
+    staleTime: 15_000,
+    retry: 2,
+  });
+}
+
+export function useCreateLeadSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ leadId, body }: { leadId: string; body: LeadSessionInput }) =>
+      apiPost<LeadSession>(`/leads/${leadId}/sessions`, body),
+    onSuccess: (_data, { leadId }) => {
+      qc.invalidateQueries({ queryKey: ['lead', leadId, 'sessions'] });
+    },
+  });
+}
+
+export function useUpdateLeadSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ leadId, sessionId, body }: { leadId: string; sessionId: string; body: Partial<LeadSessionInput> }) =>
+      apiPatch<LeadSession>(`/leads/${leadId}/sessions/${sessionId}`, body),
+    onSuccess: (_data, { leadId }) => {
+      qc.invalidateQueries({ queryKey: ['lead', leadId, 'sessions'] });
+    },
+  });
+}
+
+export function useDeleteLeadSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ leadId, sessionId }: { leadId: string; sessionId: string }) =>
+      apiDelete(`/leads/${leadId}/sessions/${sessionId}`),
+    onSuccess: (_data, { leadId }) => {
+      qc.invalidateQueries({ queryKey: ['lead', leadId, 'sessions'] });
     },
   });
 }

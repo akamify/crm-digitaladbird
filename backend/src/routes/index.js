@@ -88,6 +88,10 @@ router.delete('/users/:id',       authenticate, requireRole('super_admin', 'admi
 // ---- Leads --------------------------------------------------------
 router.get  ('/leads',            authenticate, leads.list);
 router.post ('/leads/bulk/remarks', authenticate, leads.bulkAddRemarks);
+router.get  ('/leads/:leadId/sessions', authenticate, leads.listSessions);
+router.post ('/leads/:leadId/sessions', authenticate, leads.createSession);
+router.patch('/leads/:leadId/sessions/:sessionId', authenticate, leads.updateSession);
+router.delete('/leads/:leadId/sessions/:sessionId', authenticate, leads.deleteSession);
 router.get  ('/leads/:id',        authenticate, leads.getOne);
 router.post ('/leads',            authenticate, requireRole('super_admin', 'rm'), leads.create);
 router.post ('/leads/:id/lock',   authenticate, leads.lock);
