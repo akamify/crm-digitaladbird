@@ -520,9 +520,9 @@ async function markRequestAfterFulfillment(client, request, fulfilledNow) {
     `UPDATE lead_requests
         SET fulfilled_quantity = $1,
             leads_assigned = $1,
-            status = $2,
-            fulfilled_at = CASE WHEN $2 = 'fulfilled' THEN NOW() ELSE fulfilled_at END,
-            resolved_at = CASE WHEN $2 = 'fulfilled' THEN NOW() ELSE resolved_at END,
+            status = $2::varchar,
+            fulfilled_at = CASE WHEN $2::varchar = 'fulfilled' THEN NOW() ELSE fulfilled_at END,
+            resolved_at = CASE WHEN $2::varchar = 'fulfilled' THEN NOW() ELSE resolved_at END,
             updated_at = NOW()
       WHERE id = $3`,
     [fulfilled, status, request.id],

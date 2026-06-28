@@ -18,6 +18,24 @@ function memberIdFromBody(body) {
   return body.memberId || body.member_id || body.user_id || body.newMemberId || body.new_member_id;
 }
 
+function approvedRequestAssignmentError(err) {
+  return new AppError(
+    500,
+    'APPROVED_REQUEST_ASSIGNMENT_FAILED',
+    err.message || 'Approved request assignment failed.',
+    {
+      step: err.assignment_step || 'run_approved_request_fulfillment',
+      db_code: err.code || null,
+      db_detail: err.detail || null,
+      db_hint: err.hint || null,
+      db_table: err.table || null,
+      db_column: err.column || null,
+      db_constraint: err.constraint || null,
+      routine: err.routine || null,
+    },
+  );
+}
+
 router.get('/admin/assignment/overview', authenticate, requireRole(...ADMINS), asyncHandler(async (_req, res) => {
   const data = await assignment.getAssignmentOverview();
   res.json({ success: true, data });
@@ -77,10 +95,14 @@ router.patch('/admin/assignment/settings', authenticate, requireRole(...ADMINS),
     && String(req.body.autoAssignApprovedRequests).toLowerCase() === 'true';
   if (approvedRequestToggleSavedOn) {
     const latest = await assignment.getAssignmentSettings();
-    approvedRequestFulfillment = await assignment.runApprovedRequestFulfillment({
-      limit: Number(latest.requestFulfillmentLimit || latest.assignmentTickLimit || 100),
-      actor: req.user,
-    });
+    try {
+      approvedRequestFulfillment = await assignment.runApprovedRequestFulfillment({
+        limit: Number(latest.requestFulfillmentLimit || latest.assignmentTickLimit || 100),
+        actor: req.user,
+      });
+    } catch (err) {
+      throw approvedRequestAssignmentError(err);
+    }
   }
 
   const settings = await assignment.getAssignmentSettings();
@@ -101,21 +123,7 @@ router.post('/admin/assignment/approved-requests/run-now', authenticate, require
     });
     res.json({ success: true, data: result });
   } catch (err) {
-    throw new AppError(
-      500,
-      'APPROVED_REQUEST_ASSIGNMENT_FAILED',
-      err.message || 'Approved request assignment failed.',
-      {
-        step: err.assignment_step || 'run_approved_request_fulfillment',
-        db_code: err.code || null,
-        db_detail: err.detail || null,
-        db_hint: err.hint || null,
-        db_table: err.table || null,
-        db_column: err.column || null,
-        db_constraint: err.constraint || null,
-        routine: err.routine || null,
-      },
-    );
+    throw approvedRequestAssignmentError(err);
   }
 }));
 
