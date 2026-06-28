@@ -404,8 +404,9 @@ function LeadAvailabilityPanel({
   const isAvailable = Boolean(user.is_available);
   const accountRestricted = ['blocked', 'disabled', 'inactive', 'deleted'].includes(user.status) || Boolean(user.distribution_blocked);
 
-  function toggleAvailability() {
-    const status = isAvailable ? 'unavailable' : 'available';
+  function setAvailability(nextAvailable: boolean) {
+    if (nextAvailable === isAvailable || updateAvailability.isPending || accountRestricted) return;
+    const status = nextAvailable ? 'available' : 'unavailable';
     updateAvailability.mutate({ userId: user.id, status, reason: '' }, {
       onSuccess: () => {
         toast.success(`Lead assignment marked ${status}.`);
@@ -423,21 +424,41 @@ function LeadAvailabilityPanel({
           {accountRestricted && <p className="mt-1 text-sm text-rose-600">Account status prevents new lead assignment.</p>}
         </div>
         {canManage ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={clsx('rounded-lg px-3 py-2 text-sm font-semibold', isAvailable ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800')}>
-              Currently {isAvailable ? 'Available' : 'Unavailable'}
-            </span>
+          <div className="flex flex-col items-end gap-2">
+            <div className="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-1 shadow-inner">
+              <button
+                type="button"
+                onClick={() => setAvailability(true)}
+                disabled={updateAvailability.isPending || accountRestricted}
+                aria-pressed={isAvailable}
+                className={clsx(
+                  'min-w-28 rounded-lg px-3 py-1.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50',
+                  isAvailable ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-600 hover:bg-white',
+                )}
+              >
+                Available
+              </button>
+              <button
+                type="button"
+                onClick={() => setAvailability(false)}
+                disabled={updateAvailability.isPending || accountRestricted}
+                aria-pressed={!isAvailable}
+                className={clsx(
+                  'min-w-28 rounded-lg px-3 py-1.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50',
+                  !isAvailable ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:bg-white',
+                )}
+              >
+                Unavailable
+              </button>
+            </div>
             <button
               type="button"
-              onClick={toggleAvailability}
+              onClick={() => setAvailability(!isAvailable)}
               disabled={updateAvailability.isPending || accountRestricted}
-              className={clsx(
-                'min-w-40 rounded-lg px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50',
-                isAvailable ? 'bg-amber-500 text-white hover:bg-amber-600' : 'bg-emerald-600 text-white hover:bg-emerald-700',
-              )}
+              className="text-xs font-medium text-slate-500 underline-offset-2 hover:text-slate-700 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
               title={isAvailable ? 'Click to stop future lead assignment' : 'Click to allow future lead assignment'}
             >
-              {updateAvailability.isPending ? 'Updating...' : isAvailable ? 'Mark Unavailable' : 'Mark Available'}
+              {updateAvailability.isPending ? 'Updating...' : isAvailable ? 'Switch to unavailable' : 'Switch to available'}
             </button>
           </div>
         ) : (
