@@ -166,7 +166,7 @@ export function NotificationBell() {
                   <>
                     <div className="shrink-0 mt-0.5">
                       <div className={clsx(
-                        'grid h-8 w-8 place-items-start rounded-full text-xs font-bold',
+                        'grid h-8 w-8 place-items-center rounded-full text-xs font-bold',
                         TYPE_COLORS[n.type] || 'bg-slate-100 text-slate-600'
                       )}>
                         {!n.is_read ? (
@@ -176,7 +176,7 @@ export function NotificationBell() {
                         )}
                       </div>
                     </div>
-                    <div className="min-w-0 flex-1">
+                    <div className="min-w-0 flex-1 items-start">
                       <div className="flex items-start justify-between gap-2">
                         <span className={clsx('text-sm', !n.is_read ? 'font-semibold text-slate-900' : 'font-medium text-slate-700')}>
                           {n.title}
