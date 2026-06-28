@@ -42,6 +42,8 @@ const SCOPES = [
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1500;
+const SHEET_SYNC_FAILURE_NOTIFY_TTL_MS = 10 * 60 * 1000;
+const sheetSyncFailureNotifyCache = new Map();
 
 function parseServiceAccountJson(raw) {
   if (!raw) return null;
@@ -411,19 +413,59 @@ async function updateLeadSheetSyncMeta(leadId, sync) {
   ).catch(() => {});
 }
 
+function normalizeSyncError(error) {
+  return String(error || 'unknown_error').replace(/\s+/g, ' ').trim().slice(0, 160);
+}
+
+function sheetSyncFailureDedupeKey({ sheetName, spreadsheetId, error }) {
+  return [
+    'google_sheet_sync_failed',
+    spreadsheetId || 'no_spreadsheet',
+    sheetName || 'unknown_sheet',
+    normalizeSyncError(error),
+  ].join(':');
+}
+
+function shouldNotifySheetSyncFailure(input) {
+  const dedupeKey = sheetSyncFailureDedupeKey(input);
+  const now = Date.now();
+  const existingUntil = sheetSyncFailureNotifyCache.get(dedupeKey) || 0;
+  if (existingUntil > now) return { notify: false, dedupeKey };
+
+  sheetSyncFailureNotifyCache.set(dedupeKey, now + SHEET_SYNC_FAILURE_NOTIFY_TTL_MS);
+
+  if (sheetSyncFailureNotifyCache.size > 200) {
+    for (const [key, until] of sheetSyncFailureNotifyCache.entries()) {
+      if (until <= now) sheetSyncFailureNotifyCache.delete(key);
+    }
+  }
+
+  return { notify: true, dedupeKey };
+}
+
 async function notifySheetSyncFailure({ lead, sheetName, spreadsheetId, error }) {
   try {
+    const { notify, dedupeKey } = shouldNotifySheetSyncFailure({ sheetName, spreadsheetId, error });
+    if (!notify) {
+      logger.warn(
+        { leadId: lead?.id, sheetName, spreadsheetId, error },
+        '[Sheets] Repeated sync failure notification suppressed',
+      );
+      return;
+    }
+
     await notificationService.notifyAdmins(
       'google_sheet_sync_failed',
       'Google Sheet Sync Failed',
-      `Lead ${lead.full_name || lead.id} could not be saved to sheet tab ${sheetName}.`,
+      `Google Sheet sync failed for one or more leads on sheet tab ${sheetName}.`,
       {
         event_type: 'google_sheet_sync_failed',
-        lead_id: lead.id,
-        lead_category: normalizeCategory(lead.category),
+        dedupe_key: dedupeKey,
+        lead_id: lead?.id || null,
+        lead_category: normalizeCategory(lead?.category),
         spreadsheet_id: spreadsheetId || null,
         sheet_name: sheetName || null,
-        error_message: error,
+        error_message: normalizeSyncError(error),
       },
     );
   } catch (_) {

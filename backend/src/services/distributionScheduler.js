@@ -86,19 +86,45 @@ function ranToday(lastRunAt, timezone) {
   return last === now;
 }
 
+function scheduledRunSignature(settings) {
+  const enabled = asBool(settings.auto_assign_enabled ?? settings.auto_distribution_enabled);
+  const scheduledTime = normalizeTime(settings.scheduled_assignment_time);
+  const timezone = settings.scheduled_timezone || DEFAULT_TZ;
+  const maxLeads = Math.max(1, Number.parseInt(settings.max_leads_per_scheduled_run || settings.assignment_tick_limit || '100', 10));
+  return JSON.stringify({
+    enabled,
+    scheduledTime,
+    timezone,
+    maxLeads,
+    method: 'rm_team_round_robin',
+  });
+}
+
 async function shouldRunNow(settings) {
   const enabled = asBool(settings.auto_assign_enabled ?? settings.auto_distribution_enabled);
   const scheduledTime = normalizeTime(settings.scheduled_assignment_time);
   const timezone = settings.scheduled_timezone || DEFAULT_TZ;
+  const signature = scheduledRunSignature(settings);
   if (!enabled || !scheduledTime) {
+    logger.debug({ reason: enabled ? 'NO_SCHEDULED_TIME' : 'AUTO_DISTRIBUTION_DISABLED' }, '[Scheduler] scheduled distribution skipped');
     return { due: false, reason: enabled ? 'NO_SCHEDULED_TIME' : 'AUTO_DISTRIBUTION_DISABLED' };
-  }
-  if (ranToday(settings.last_scheduled_run_at, timezone)) {
-    return { due: false, reason: 'ALREADY_RAN_TODAY' };
   }
   const now = istParts(new Date(), timezone);
   if (now.time < scheduledTime) return { due: false, reason: 'WAITING_FOR_SCHEDULE' };
-  return { due: true, timezone, scheduledTime };
+  if (ranToday(settings.last_scheduled_run_at, timezone)) {
+    const lastSignature = String(settings.last_scheduled_run_signature || '');
+    if (lastSignature === signature) {
+      logger.info({ scheduledTime, timezone }, '[Scheduler] skipped: already ran today with same settings');
+      return { due: false, reason: 'ALREADY_RAN_TODAY' };
+    }
+    logger.info({
+      scheduledTime,
+      timezone,
+      previousSignature: lastSignature || null,
+      currentSignature: signature,
+    }, '[Scheduler] settings changed after today run; same-day scheduled rerun allowed');
+  }
+  return { due: true, timezone, scheduledTime, signature };
 }
 
 async function runScheduledDistribution({ actor = null, manual = false } = {}) {
@@ -114,6 +140,7 @@ async function runScheduledDistribution({ actor = null, manual = false } = {}) {
 
   try {
     const limit = Math.max(1, Number.parseInt(settings.max_leads_per_scheduled_run || settings.assignment_tick_limit || '100', 10));
+    logger.info({ manual, limit, scheduledTime: normalizeTime(settings.scheduled_assignment_time), timezone }, '[Scheduler] scheduled distribution starting');
     const result = await assignmentEngine.runAutoAssignment({
       limit,
       reason: manual ? 'manual_run_now' : 'scheduled_assignment',
@@ -124,6 +151,9 @@ async function runScheduledDistribution({ actor = null, manual = false } = {}) {
     const assigned = Number(result.assigned || 0);
     const status = assigned > 0 ? `assigned:${assigned}` : 'completed_no_leads';
     await setSetting('last_scheduled_run_at', new Date().toISOString());
+    if (!manual) {
+      await setSetting('last_scheduled_run_signature', due.signature || scheduledRunSignature(settings));
+    }
     await setSetting('next_scheduled_run_at', '');
     await releaseRunLock({ status });
     logger.info({ assigned, scanned: result.scanned || 0, manual }, '[Scheduler] scheduled distribution complete');
