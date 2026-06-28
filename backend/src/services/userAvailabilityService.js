@@ -97,9 +97,21 @@ async function setAvailabilityForIds(client, userIds, isAvailable, actorId, reas
   if (rows.length !== userIds.length) {
     throw new AppError(409, 'LEAD_AVAILABILITY_UPDATE_INCOMPLETE', 'Could not update lead availability for every selected user.');
   }
-  const stale = rows.find(row => row.is_available !== isAvailable || row.lead_assignment_status !== status || row.lead_assignment_enabled !== isAvailable);
+  const stale = rows.find(row => (
+    normalizeAvailability(row.is_available) !== isAvailable
+    || normalizeAvailability(row.lead_assignment_enabled) !== isAvailable
+    || String(row.lead_assignment_status || '').trim().toLowerCase() !== status
+  ));
   if (stale) {
-    throw new AppError(409, 'LEAD_AVAILABILITY_UPDATE_FAILED', 'Lead availability did not save correctly. Please retry.');
+    throw new AppError(409, 'LEAD_AVAILABILITY_UPDATE_FAILED', 'Lead availability did not save correctly. Please retry.', {
+      expected: { is_available: isAvailable, lead_assignment_enabled: isAvailable, lead_assignment_status: status },
+      actual: {
+        user_id: stale.id,
+        is_available: stale.is_available,
+        lead_assignment_enabled: stale.lead_assignment_enabled,
+        lead_assignment_status: stale.lead_assignment_status,
+      },
+    });
   }
   return rows;
 }

@@ -425,6 +425,9 @@ function LeadAvailabilityPanel({
         </div>
         {canManage ? (
           <div className="flex flex-col items-end gap-2">
+            <div className={clsx('text-xs font-semibold', isAvailable ? 'text-emerald-700' : 'text-amber-700')}>
+              Current status: {isAvailable ? 'Available' : 'Unavailable'}
+            </div>
             <div className="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-1 shadow-inner">
               <button
                 type="button"
