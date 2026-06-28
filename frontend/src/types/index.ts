@@ -127,6 +127,7 @@ export interface LeadFilters {
   from?: string;
   to?: string;
   pending?: 'true' | 'false' | '';
+  unworked?: 'true' | 'false' | '';
   followup?: 'today' | 'overdue' | 'upcoming' | '';
   reassignment?: 'to_me' | 'to_others' | '';
   assigned_to?: string;

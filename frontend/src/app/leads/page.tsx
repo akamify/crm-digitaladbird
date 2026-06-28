@@ -38,6 +38,7 @@ function LeadsInner() {
     call_status: (sp.get('call_status') as LeadFilterType['call_status']) || '',
     followup: (sp.get('followup') as LeadFilterType['followup']) || '',
     reassignment: (sp.get('reassignment') as LeadFilterType['reassignment']) || '',
+    unworked: (sp.get('unworked') as LeadFilterType['unworked']) || '',
     source: sp.get('source') || '',
     from: sp.get('from') || '',
     to: sp.get('to') || '',
@@ -118,16 +119,24 @@ function LeadsInner() {
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
         {[
-          { value: '', label: 'Current Leads' },
-          { value: 'to_me', label: 'Reassigned To Me' },
-          { value: 'to_others', label: 'Reassigned To Others' },
+          { key: 'current', label: 'Current Leads', next: { reassignment: '', unworked: '' } },
+          { key: 'to_me', label: 'Reassigned To Me', next: { reassignment: 'to_me', unworked: '' } },
+          { key: 'to_others', label: 'Reassigned To Others', next: { reassignment: 'to_others', unworked: '' } },
+          { key: 'unworked', label: 'Unworked Leads', next: { reassignment: '', unworked: 'true' } },
         ].map(tab => {
-          const active = (filters.reassignment || '') === tab.value;
+          const active = tab.key === 'unworked'
+            ? filters.unworked === 'true'
+            : (filters.reassignment || '') === tab.next.reassignment && filters.unworked !== 'true';
           return (
             <button
-              key={tab.value || 'current'}
+              key={tab.key}
               type="button"
-              onClick={() => setFilters(f => ({ ...f, reassignment: tab.value as LeadFilterType['reassignment'], page: 1 }))}
+              onClick={() => setFilters(f => ({
+                ...f,
+                reassignment: tab.next.reassignment as LeadFilterType['reassignment'],
+                unworked: tab.next.unworked as LeadFilterType['unworked'],
+                page: 1,
+              }))}
               className={clsx(
                 'rounded-lg px-3 py-2 text-sm font-medium transition',
                 active ? 'bg-brand-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50',
@@ -142,6 +151,11 @@ function LeadsInner() {
       {filters.reassignment === 'to_others' && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           These leads were reassigned away from you or your team. You can open the profile for reference, but editing actions are disabled.
+        </div>
+      )}
+      {filters.unworked === 'true' && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+          Unworked leads are leads with no call log or remark saved yet.
         </div>
       )}
 

@@ -205,6 +205,12 @@ exports.list = asyncHandler(async (req, res) => {
   if (req.query.from) { params.push(req.query.from); where.push(`l.created_at >= $${params.length}`); }
   if (req.query.to) { params.push(req.query.to); where.push(`l.created_at <= $${params.length}`); }
   if (req.query.pending === 'true') where.push(`l.is_pending = TRUE`);
+  if (req.query.unworked === 'true') {
+    where.push(`NOT EXISTS (
+      SELECT 1 FROM lead_remarks lr
+       WHERE lr.lead_id = l.id
+    )`);
+  }
   if (req.query.category && ['partner', 'trader', 'unknown'].includes(req.query.category)) {
     params.push(req.query.category);
     where.push(`l.category = $${params.length}`);
