@@ -29,6 +29,7 @@ function UsersInner() {
   const [search, setSearch] = useState(() => searchParams.get('search') || '');
   const [roleFilter, setRoleFilter] = useState<string>(() => searchParams.get('role') || 'all');
   const [statusFilter, setStatusFilter] = useState<string>(() => searchParams.get('status') || 'all');
+  const [availabilityFilter, setAvailabilityFilter] = useState<string>(() => searchParams.get('availability') || 'all');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkConfirm, setBulkConfirm] = useState<{ isAvailable: boolean } | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -52,8 +53,12 @@ function UsersInner() {
     .filter(u => roleFilter === 'all' || u.role === roleFilter)
     .filter(u => {
       if (statusFilter === 'all') return true;
-      if (statusFilter === 'unavailable') return effectiveStatus(u) === 'active' && !isLeadAvailable(u);
       return effectiveStatus(u) === statusFilter;
+    })
+    .filter(u => {
+      if (availabilityFilter === 'all') return true;
+      if (!isBulkSelectable(u)) return false;
+      return availabilityFilter === 'available' ? isLeadAvailable(u) : !isLeadAvailable(u);
     })
     .filter(u => !search || u.full_name?.toLowerCase().includes(search.toLowerCase()) || u.email?.toLowerCase().includes(search.toLowerCase()) || u.phone?.includes(search));
 
@@ -78,17 +83,19 @@ function UsersInner() {
     if (search.trim()) params.set('search', search.trim());
     if (roleFilter !== 'all') params.set('role', roleFilter);
     if (statusFilter !== 'all') params.set('status', statusFilter);
+    if (availabilityFilter !== 'all') params.set('availability', availabilityFilter);
     const next = params.toString();
     const current = searchParams.toString();
     if (next !== current) {
       router.replace(`/dashboard/admin/users${next ? `?${next}` : ''}`, { scroll: false });
     }
-  }, [roleFilter, router, search, searchParams, statusFilter]);
+  }, [availabilityFilter, roleFilter, router, search, searchParams, statusFilter]);
 
   function clearFilters() {
     setSearch('');
     setRoleFilter('all');
     setStatusFilter('all');
+    setAvailabilityFilter('all');
   }
 
   function toggleSelection(user: User, checked: boolean) {
@@ -215,10 +222,14 @@ function UsersInner() {
           <option value="all">All Status</option>
           <option value="active">Active</option>
           <option value="blocked">Blocked</option>
-          <option value="unavailable">Unavailable</option>
           <option value="disabled">Disabled</option>
           <option value="inactive">Inactive</option>
           <option value="unknown">Unknown</option>
+        </select>
+        <select className="input w-44" value={availabilityFilter} onChange={e => setAvailabilityFilter(e.target.value)}>
+          <option value="all">All Availability</option>
+          <option value="available">Lead Available</option>
+          <option value="unavailable">Lead Unavailable</option>
         </select>
         <button onClick={clearFilters} className="btn-outline rounded-lg px-3 py-2 text-sm">Clear Filters</button>
         <button onClick={() => refetch()} disabled={isFetching} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm"><RefreshCw className={clsx('h-4 w-4', isFetching && 'animate-spin')} />Refresh</button>
