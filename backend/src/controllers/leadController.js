@@ -9,6 +9,36 @@ const config = require('../config/env');
 const { resolveLeadCategory } = require('../services/leadCategory/leadCategoryResolver');
 const { validateCallStatus, validateLeadStage } = require('../constants/leadStatusOptions');
 
+function humanizeValue(value) {
+  return String(value || '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, char => char.toUpperCase());
+}
+
+function buildRemarkText({ remark, callStatus, stage, nextFollowupAt }) {
+  const note = String(remark || '').trim();
+  if (note) return note;
+  const parts = [];
+  if (callStatus) parts.push(`Call status: ${humanizeValue(callStatus)}`);
+  if (stage) parts.push(`Stage: ${humanizeValue(stage)}`);
+  if (nextFollowupAt) parts.push('Follow-up scheduled');
+  return parts.length ? parts.join(' | ') : 'Lead activity updated';
+}
+
+async function enqueueLeadSheetSync(leadId, payload) {
+  try {
+    const userSheets = require('../services/userGoogleSheetsService');
+    await userSheets.enqueueLeadSync(leadId, payload);
+  } catch (error) {
+    logger.warn({
+      leadId,
+      eventType: payload?.eventType,
+      code: error?.code || 'GOOGLE_SHEETS_SYNC_ENQUEUE_FAILED',
+      message: error?.message,
+    }, '[LeadRemarks] Google Sheets sync enqueue failed');
+  }
+}
+
 /**
  * GET /api/leads — paginated, filterable list scoped by role.
  *
@@ -221,12 +251,17 @@ exports.unlock = asyncHandler(async (req, res) => {
  */
 exports.addRemark = asyncHandler(async (req, res) => {
   const { remark, call_status, next_followup_at, stage, release_lock = true } = req.body;
-  if (!remark || !remark.trim()) throw new AppError(400, 'REMARK_REQUIRED', 'Remark is required');
   const normalizedCallStatus = call_status ? validateCallStatus(call_status) : '';
   const normalizedStage = stage ? validateLeadStage(stage) : '';
   if ((call_status && normalizedCallStatus === null) || (stage && normalizedStage === null)) {
     throw new AppError(400, 'INVALID_LEAD_STATUS_VALUE', 'Invalid status value. Please select one of the available CRM statuses.');
   }
+  const remarkText = buildRemarkText({
+    remark,
+    callStatus: normalizedCallStatus,
+    stage: normalizedStage,
+    nextFollowupAt: next_followup_at,
+  });
 
   const result = await withTransaction(async (client) => {
     const { rows: [lead] } = await client.query(
@@ -241,7 +276,7 @@ exports.addRemark = asyncHandler(async (req, res) => {
     const { rows: [r] } = await client.query(
       `INSERT INTO lead_remarks(lead_id, user_id, remark, call_status, next_followup_at)
          VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [req.params.id, req.user.id, remark.trim(), normalizedCallStatus || null, next_followup_at || null]
+      [req.params.id, req.user.id, remarkText, normalizedCallStatus || null, next_followup_at || null]
     );
 
     const updates = [];
@@ -256,6 +291,7 @@ exports.addRemark = asyncHandler(async (req, res) => {
     if (normalizedStage) { params.push(normalizedStage); updates.push(`stage = $${params.length}`); }
     // release lock for this user after they've worked the lead
     if (release_lock !== false) updates.push(`locked_by_user_id = NULL`, `locked_until = NULL`);
+    updates.push(`updated_at = NOW()`);
 
     if (updates.length > 0) {
       await client.query(`UPDATE leads SET ${updates.join(', ')} WHERE id = $1`, params);
@@ -263,8 +299,7 @@ exports.addRemark = asyncHandler(async (req, res) => {
     return r;
   });
 
-  const userSheets = require('../services/userGoogleSheetsService');
-  await userSheets.enqueueLeadSync(req.params.id, { eventType: 'lead_remark_updated', source: 'crm_remark', userId: req.user.id });
+  await enqueueLeadSheetSync(req.params.id, { eventType: 'lead_remark_updated', source: 'crm_remark', userId: req.user.id });
 
   res.status(201).json({ success: true, data: result });
 });
@@ -278,13 +313,18 @@ exports.bulkAddRemarks = asyncHandler(async (req, res) => {
   const leadIds = Array.isArray(req.body?.lead_ids) ? req.body.lead_ids : req.body?.leadIds;
   const { remark, call_status, next_followup_at, stage } = req.body;
   if (!Array.isArray(leadIds) || leadIds.length === 0) throw new AppError(400, 'LEAD_IDS_REQUIRED', 'Select at least one lead.');
-  if (!remark || !remark.trim()) throw new AppError(400, 'REMARK_REQUIRED', 'Remark is required');
 
   const normalizedCallStatus = call_status ? validateCallStatus(call_status) : '';
   const normalizedStage = stage ? validateLeadStage(stage) : '';
   if ((call_status && normalizedCallStatus === null) || (stage && normalizedStage === null)) {
     throw new AppError(400, 'INVALID_LEAD_STATUS_VALUE', 'Invalid status value. Please select one of the available CRM statuses.');
   }
+  const remarkText = buildRemarkText({
+    remark,
+    callStatus: normalizedCallStatus,
+    stage: normalizedStage,
+    nextFollowupAt: next_followup_at,
+  });
 
   const uniqueLeadIds = [...new Set(leadIds.map(String).filter(Boolean))].slice(0, 500);
   const visible = await getVisibleUserIds(req.user);
@@ -316,7 +356,7 @@ exports.bulkAddRemarks = asyncHandler(async (req, res) => {
       await client.query(
         `INSERT INTO lead_remarks(lead_id, user_id, remark, call_status, next_followup_at)
            VALUES ($1, $2, $3, $4, $5)`,
-        [leadId, req.user.id, remark.trim(), normalizedCallStatus || null, next_followup_at || null],
+        [leadId, req.user.id, remarkText, normalizedCallStatus || null, next_followup_at || null],
       );
 
       const updates = ['updated_at = NOW()'];
@@ -348,9 +388,8 @@ exports.bulkAddRemarks = asyncHandler(async (req, res) => {
     };
   });
 
-  const userSheets = require('../services/userGoogleSheetsService');
   for (const leadId of result.updatedLeadIds) {
-    await userSheets.enqueueLeadSync(leadId, { eventType: 'lead_bulk_remark_updated', source: 'crm_bulk_remark', userId: req.user.id });
+    await enqueueLeadSheetSync(leadId, { eventType: 'lead_bulk_remark_updated', source: 'crm_bulk_remark', userId: req.user.id });
   }
 
   res.status(201).json({ success: true, data: result });
