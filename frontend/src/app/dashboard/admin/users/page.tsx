@@ -275,6 +275,7 @@ function UsersInner() {
                 <th className="py-2 pr-3 font-medium">CP ID</th>
                 <th className="py-2 pr-3 font-medium">Team</th>
                 <th className="py-2 pr-3 font-medium">Status</th>
+                <th className="py-2 pr-3 font-medium">Lead Availability</th>
                 <th className="py-2 pr-3 font-medium">Lead Cap</th>
                 <th className="py-2 pr-3 font-medium">Joined</th>
                 <th className="py-2 font-medium text-right">Actions</th>
@@ -308,6 +309,11 @@ function UsersInner() {
                   <td className="py-3 pr-3 text-slate-600">{u.team_name || '—'}</td>
                   <td className="py-3 pr-3">
                     <span className={getUserStatusBadgeVariant(effectiveStatus(u))}>{formatUserStatus(effectiveStatus(u))}</span>
+                  </td>
+                  <td className="py-3 pr-3">
+                    <span className={isLeadAvailable(u) ? 'chip-green' : 'chip-amber'}>
+                      {isLeadAvailable(u) ? 'Available' : 'Unavailable'}
+                    </span>
                   </td>
                   <td className="py-3 pr-3 text-slate-600 tabular-nums">{u.daily_lead_cap ?? '—'}</td>
                   <td className="py-3 pr-3 text-xs text-slate-500">{fmtDate(u.created_at, 'dd MMM yyyy')}</td>
