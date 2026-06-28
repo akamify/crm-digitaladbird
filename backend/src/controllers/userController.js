@@ -33,7 +33,13 @@ function normalizePhoneInput(phone) {
 }
 
 function mapUserRow(row) {
-  return row ? { ...row, role: normalizeRole(row.role) } : row;
+  if (!row) return row;
+  const mapped = { ...row, role: normalizeRole(row.role) };
+  if (mapped.status === 'active') {
+    mapped.lead_assignment_status = mapped.is_available === false ? 'unavailable' : 'available';
+    mapped.lead_assignment_enabled = mapped.is_available !== false;
+  }
+  return mapped;
 }
 
 async function assertReservedIdentity({ email, phone }, excludeUserId = null) {

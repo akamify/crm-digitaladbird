@@ -46,7 +46,7 @@ router.post('/auth/logout',      auth.logout);
 router.get ('/auth/me',          authenticate, auth.me);
 
 // ---- Users --------------------------------------------------------
-router.get   ('/users',           authenticate, responseCache(10000), users.list);
+router.get   ('/users',           authenticate, users.list);
 router.get   ('/users/hierarchy', authenticate, requireRole('super_admin', 'rm'), users.hierarchy);
 router.post  ('/users',           authenticate, requireRole('super_admin', 'admin'), users.create);
 router.get   ('/users/deleted',   authenticate, requireRole('super_admin', 'admin'), users.deleted);

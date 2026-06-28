@@ -95,25 +95,6 @@ function DistributionInner() {
           <InfoCard label="Last Error" value={settings?.lastDistributionError || 'No error'} />
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-          <div>
-            <div className="text-sm font-semibold text-slate-900">Auto assign approved requests</div>
-            <p className="mt-1 text-xs text-slate-500">Approved member request quotas are filled before normal saved-lead distribution.</p>
-          </div>
-          <label className="flex items-center gap-3 rounded-full border border-slate-200 bg-white px-3 py-2">
-            <span className={clsx('text-sm font-medium', settings?.autoAssignApprovedRequests ? 'text-emerald-700' : 'text-slate-600')}>
-              {settings?.autoAssignApprovedRequests ? 'ON' : 'OFF'}
-            </span>
-            <input
-              type="checkbox"
-              className="h-4 w-4"
-              checked={!!settings?.autoAssignApprovedRequests}
-              onChange={(e) => saveSetting({ autoAssignApprovedRequests: e.target.checked })}
-              disabled={updateSettings.isPending || overview.isLoading}
-            />
-          </label>
-        </div>
-
         {Number(stats.unassigned_leads || 0) === 0 && (
           <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
             No saved/unassigned leads are waiting for distribution.
@@ -182,6 +163,38 @@ function DistributionInner() {
             {runDistribution.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
             Run Distribution Now
           </button>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="space-y-1">
+            <h2 className="text-sm font-semibold text-slate-900">Approved Request Auto Assignment</h2>
+            <p className="text-sm text-slate-500">Fill admin-approved member request quotas before normal saved-lead distribution.</p>
+            <p className="text-xs text-slate-500">When disabled, approvals save the quota but do not assign leads automatically.</p>
+          </div>
+          <label className="flex items-center gap-3 rounded-full border border-slate-200 px-3 py-2">
+            <span className={clsx('text-sm font-medium', settings?.autoAssignApprovedRequests ? 'text-emerald-700' : 'text-slate-600')}>
+              {settings?.autoAssignApprovedRequests ? 'ON' : 'OFF'}
+            </span>
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={!!settings?.autoAssignApprovedRequests}
+              onChange={(e) => saveSetting({ autoAssignApprovedRequests: e.target.checked })}
+              disabled={updateSettings.isPending || overview.isLoading}
+            />
+          </label>
+        </div>
+        <div className="mt-5 grid gap-3 md:grid-cols-3">
+          <InfoCard label="Approved Requests" value={String(stats.approved_requests ?? 0)} hint="Waiting or ready for fulfillment" />
+          <InfoCard label="Partially Fulfilled" value={String(stats.partially_fulfilled_requests ?? 0)} hint="Remaining quota pending" />
+          <InfoCard
+            label="Current State"
+            value={settings?.autoAssignApprovedRequests
+              ? 'Approved request quota will be filled first.'
+              : 'Approved request quota will stay pending until manual action or setting is enabled.'}
+          />
         </div>
       </section>
 
