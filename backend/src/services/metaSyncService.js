@@ -193,6 +193,12 @@ function deriveCampaignLabel(name) {
  */
 async function syncAllCampaigns() {
   const results = {};
+  try {
+    await syncAdAccounts();
+  } catch (err) {
+    logger.warn({ err: err.message }, 'Ad account refresh skipped before campaign sync');
+  }
+
   const { rows } = await query(`SELECT account_id FROM meta_ad_accounts WHERE is_active = TRUE ORDER BY account_id`);
   const adAccounts = rows.map(r => normalizeGraphAdAccountId(r.account_id));
 

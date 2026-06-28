@@ -21,7 +21,7 @@ import { fmtRelative, fmtDate, humanize, clsx } from '@/lib/format';
 import {
   useMetaPagesEnriched, useMetaFormsEnriched, useFormLeads, usePageLeads,
   useMetaWebhookLogs, useSheetsEnriched, useMetaTokenStatus,
-  useMetaSubscriptionStatus, useCampaignsEnriched,
+  useMetaSubscriptionStatus, useCampaignsEnriched, useMetaAdAccounts,
   useSyncCampaigns, useSyncLeads, useUpdateMetaToken, useSubscribePage,
   useTestPageToken, useUpdatePageToken, useSyncMetaPageForms, useSetMetaPageActivation,
   // Dynamic Google Sheets credential management
@@ -30,7 +30,7 @@ import {
   // Sheet → CRM import
 } from '@/hooks/useAdminEnterprise';
 
-type SettingsTab = 'overview' | 'meta-pages' | 'meta-forms' | 'campaigns' | 'sheets' | 'admin-tools' | 'webhook-logs';
+type SettingsTab = 'overview' | 'meta-pages' | 'meta-forms' | 'ad-accounts' | 'campaigns' | 'sheets' | 'admin-tools' | 'webhook-logs';
 
 type LeadPreviewRow = {
   id: string;
@@ -99,6 +99,7 @@ function SettingsInner() {
     { key: 'overview', label: 'Overview', Icon: Cog },
     { key: 'meta-pages', label: 'Meta Pages', Icon: Facebook },
     { key: 'meta-forms', label: 'Lead Forms', Icon: FileText },
+    { key: 'ad-accounts', label: 'Ad Accounts', Icon: Database },
     { key: 'campaigns', label: 'Campaigns', Icon: Megaphone },
     { key: 'sheets', label: 'Google Sheets', Icon: Sheet },
     { key: 'admin-tools', label: 'Admin Tools', Icon: Shield },
@@ -123,6 +124,7 @@ function SettingsInner() {
       {tab === 'overview' && <OverviewTab onNavigate={setTab} />}
       {tab === 'meta-pages' && <MetaPagesTab />}
       {tab === 'meta-forms' && <MetaFormsTab />}
+      {tab === 'ad-accounts' && <AdAccountsTab />}
       {tab === 'campaigns' && <CampaignsTab />}
       {tab === 'sheets' && <SheetsTab />}
       {tab === 'admin-tools' && <AdminToolsTab />}
@@ -1076,6 +1078,111 @@ function FormDetailsModal({ formId, onClose }: { formId: string | null; onClose:
 }
 
 /* ═══════════════════ CAMPAIGNS TAB ═══════════════════ */
+function metaAdAccountStatusLabel(status?: number | null) {
+  switch (Number(status)) {
+    case 1: return 'Active';
+    case 2: return 'Disabled';
+    case 3: return 'Unsettled';
+    case 7: return 'Pending review';
+    case 8: return 'Pending settlement';
+    case 9: return 'In grace period';
+    case 100: return 'Pending closure';
+    case 101: return 'Closed';
+    case 201: return 'Any active';
+    case 202: return 'Any closed';
+    default: return status === null || status === undefined ? 'Unknown' : `Status ${status}`;
+  }
+}
+
+function metaCampaignStatusLabel(c: { effective_status?: string | null; configured_status?: string | null; meta_status?: string | null; is_active?: boolean }) {
+  return c.effective_status || c.configured_status || c.meta_status || (c.is_active ? 'ACTIVE' : 'UNKNOWN');
+}
+
+function metaStatusClass(status?: string | null) {
+  const value = String(status || '').toUpperCase();
+  if (value === 'ACTIVE') return 'chip-green';
+  if (value === 'PAUSED' || value === 'IN_PROCESS' || value === 'PENDING_REVIEW') return 'chip-amber';
+  if (value === 'DELETED' || value === 'ARCHIVED' || value === 'DISAPPROVED' || value === 'WITH_ISSUES') return 'chip-red';
+  return 'chip-slate';
+}
+
+function categoryChipClass(category?: string | null) {
+  if (category === 'partner') return 'chip-blue';
+  if (category === 'trader') return 'chip-green';
+  return 'chip-slate';
+}
+
+function AdAccountsTab() {
+  const { data: accounts, isLoading, refetch, isFetching } = useMetaAdAccounts();
+  const syncCampaigns = useSyncCampaigns();
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Database className="h-5 w-5 text-blue-600" />
+          <h1 className="text-lg font-semibold text-slate-900">Meta Ad Accounts</h1>
+          <span className="chip-slate">{accounts?.length || 0} total</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => refetch()} disabled={isFetching}>
+            {isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Refresh
+          </Button>
+          <Button
+            onClick={() => syncCampaigns.mutate(undefined, { onSuccess: () => toast.success('Ad accounts and campaigns synced'), onError: () => toast.error('Meta sync failed') })}
+            disabled={syncCampaigns.isPending}
+          >
+            {syncCampaigns.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Sync from Meta
+          </Button>
+        </div>
+      </div>
+
+      {isLoading ? <Skeleton className="h-64" /> : !accounts?.length ? (
+        <EmptyState title="No ad accounts found" description="Click Sync from Meta after connecting a valid Meta user token." icon={<Database className="h-6 w-6" />} />
+      ) : (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {accounts.map(account => {
+            const status = metaAdAccountStatusLabel(account.account_status);
+            const isActive = account.is_active && account.account_status === 1;
+            return (
+              <div key={account.account_id} className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h2 className="truncate text-sm font-semibold text-slate-900">{account.account_name || account.account_id}</h2>
+                    <p className="mt-1 truncate text-xs text-slate-500">{account.account_id}</p>
+                  </div>
+                  <span className={isActive ? 'chip-green' : 'chip-slate'}>{status}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <p className="text-slate-500">Currency</p>
+                    <p className="font-medium text-slate-800">{account.currency || 'Not available'}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">Business</p>
+                    <p className="font-medium text-slate-800">{account.business_name || account.business_id || 'Not available'}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">CRM active</p>
+                    <p className="font-medium text-slate-800">{account.is_active ? 'Yes' : 'No'}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">Last synced</p>
+                    <p className="font-medium text-slate-800">{account.last_synced_at ? fmtRelative(account.last_synced_at) : 'Not synced'}</p>
+                  </div>
+                </div>
+                {account.last_sync_error && (
+                  <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{account.last_sync_error}</p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CampaignsTab() {
   const { data: campaigns, isLoading } = useCampaignsEnriched();
   const [search, setSearch] = useState('');
@@ -1122,11 +1229,11 @@ function CampaignsTab() {
                   <div className={clsx('h-2.5 w-2.5 rounded-full', c.is_active ? 'bg-emerald-500' : 'bg-slate-300')} />
                   <span className="font-semibold text-slate-900 truncate max-w-[250px]">{c.campaign_name}</span>
                 </div>
-                <span className={c.is_active ? 'chip-green' : 'chip-slate'}>{c.effective_status || (c.is_active ? 'ACTIVE' : 'INACTIVE')}</span>
+                <span className={metaStatusClass(metaCampaignStatusLabel(c))}>{humanize(metaCampaignStatusLabel(c))}</span>
               </div>
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 {c.internal_label && <span className="chip-blue text-[10px]">{c.internal_label}</span>}
-                {c.category && <span className="chip-slate text-[10px]">{c.category}</span>}
+                <span className={clsx(categoryChipClass(c.category), 'text-[10px]')}>{humanize(c.category || 'unknown')}</span>
                 <span className={clsx('chip-blue text-[10px]', c.source === 'meta_api' ? 'chip-blue' : 'chip-red')}>{c.source === 'meta_api' ? 'Meta API' : 'Lead-derived legacy'}</span>
                 {c.ad_account_id && <span className="chip-slate text-[10px]">Ad account {c.ad_account_id}</span>}
               </div>
@@ -1139,7 +1246,8 @@ function CampaignsTab() {
               </div>
 
               <div className="text-xs text-slate-500 space-y-0.5">
-                {c.meta_status && <div>Configured status: <strong className="text-slate-700">{c.meta_status}</strong></div>}
+                {c.meta_status && <div>Meta status: <strong className="text-slate-700">{humanize(c.meta_status)}</strong></div>}
+                {c.configured_status && <div>Configured: <strong className="text-slate-700">{humanize(c.configured_status)}</strong></div>}
                 {c.objective && <div>Objective: <strong className="text-slate-700">{humanize(c.objective)}</strong></div>}
                 {c.connected_form && <div>Form: <strong className="text-slate-700">{c.connected_form}</strong></div>}
                 {c.connected_page && <div>Page: <strong className="text-slate-700">{c.connected_page}</strong></div>}

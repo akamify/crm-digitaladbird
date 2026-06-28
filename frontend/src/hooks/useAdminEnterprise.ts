@@ -898,11 +898,36 @@ export function useCampaignsEnriched() {
 }
 
 // ── Meta Sync Mutations ─────────────────────────────────────────
+export interface MetaAdAccount {
+  id?: string;
+  account_id: string;
+  account_name: string | null;
+  account_status: number | null;
+  currency: string | null;
+  business_id: string | null;
+  business_name: string | null;
+  is_active: boolean;
+  last_synced_at: string | null;
+  last_sync_error: string | null;
+  updated_at?: string | null;
+}
+
+export function useMetaAdAccounts() {
+  return useQuery({
+    queryKey: ['admin', 'meta-ad-accounts'],
+    queryFn: () => apiGet<MetaAdAccount[]>('/meta/ad-accounts'),
+    staleTime: 60_000,
+  });
+}
+
 export function useSyncCampaigns() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => apiPost('/meta/sync-campaigns', {}),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['admin'] }); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'meta-ad-accounts'] });
+    },
   });
 }
 

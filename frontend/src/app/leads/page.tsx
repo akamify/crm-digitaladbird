@@ -268,7 +268,14 @@ function LeadsInner() {
                           {lead.campaign_label || 'Not available'}
                         </div>
                       </td>
-                      <td className="px-4 py-3"><LeadCategoryBadge category={lead.category} /></td>
+                      <td className="px-4 py-3">
+                        <div className="space-y-1">
+                          <LeadCategoryBadge category={lead.category} />
+                          <div className="text-[11px] text-slate-500">
+                            {lead.category_source ? humanize(lead.category_source) : 'No category rule'}
+                          </div>
+                        </div>
+                      </td>
                       <td className="px-4 py-3 text-slate-700 max-w-[220px]">
                         <div className="truncate text-sm" title={lead.campaign_name || lead.ad_name || lead.meta_form_id || 'No campaign'}>
                           {lead.campaign_name || lead.ad_name || lead.meta_form_id || 'No campaign'}
