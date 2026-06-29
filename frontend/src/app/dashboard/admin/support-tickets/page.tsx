@@ -91,7 +91,7 @@ function AdminSupportTicketsInner() {
           type="button"
           onClick={() => tickets.refetch()}
           disabled={tickets.isFetching}
-          className="btn-outline inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+          className="btn-outline inline-flex items-center gap-2 rounded-l px-3.5 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
         >
           <RefreshCw className={clsx('h-4 w-4', tickets.isFetching && 'animate-spin')} />
           Refresh
@@ -198,7 +198,7 @@ function AdminSupportTicketsInner() {
                 <div>Status</div>
                 <div>Submitted</div>
                 <div>Resolved</div>
-                <div className="text-right">Action</div>
+                <div>Action</div>
               </div>
 
               <div className="divide-y divide-slate-100">
@@ -308,7 +308,7 @@ function TicketRow({
             event.stopPropagation();
             onOpen();
           }}
-          className="btn-outline rounded-xl px-3 py-1.5 text-xs"
+          className="btn-outline rounded-l px-3 py-1.5 text-xs"
         >
           View
         </button>
