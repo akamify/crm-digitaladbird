@@ -93,12 +93,12 @@ function AdminSupportTicketsInner() {
             <table className="w-full min-w-[1280px] table-fixed text-sm">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-                  <th className="w-32 px-4 py-3 font-medium">Ticket No</th>
-                  <th className="w-64 px-4 py-3 font-medium">Name</th>
-                  <th className="w-60 px-4 py-3 font-medium">Email</th>
-                  <th className="w-48 px-4 py-3 font-medium">Phone / CP ID</th>
+                  <th className="w-42 px-4 py-3 font-medium">Ticket No</th>
+                  <th className="w-54 px-4 py-3 font-medium">Name</th>
+                  <th className="w-65 px-4 py-3 font-medium">Email</th>
+                  <th className="w-68 px-4 py-3 font-medium">Phone / CP ID</th>
                   <th className="w-28 px-4 py-3 font-medium">Role</th>
-                  <th className="w-72 px-4 py-3 font-medium">Subject</th>
+                  <th className="w-52 px-4 py-3 font-medium">Subject</th>
                   <th className="w-32 px-4 py-3 font-medium">Status</th>
                   <th className="w-36 px-4 py-3 font-medium">Submitted</th>
                   <th className="w-40 px-4 py-3 font-medium">Updated</th>
