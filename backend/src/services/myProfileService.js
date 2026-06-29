@@ -1,5 +1,6 @@
 const { query } = require('../config/database');
 const { AppError } = require('../utils/errors');
+const logger = require('../utils/logger');
 
 function normalizeRole(role) {
   return role === 'partner' ? 'member' : role;
@@ -71,7 +72,7 @@ async function memberStats(userId) {
         COUNT(*) FILTER (WHERE assigned_at::date = CURRENT_DATE)::int AS today_assigned_leads,
         COUNT(*) FILTER (WHERE COALESCE(call_status, 'not_called') <> 'not_called')::int AS contacted_leads,
         COUNT(*) FILTER (WHERE COALESCE(call_status, 'not_called') = 'not_called')::int AS pending_not_called_leads,
-        COUNT(*) FILTER (WHERE call_status = 'converted' OR stage = 'won' OR stage = 'converted')::int AS converted_leads,
+        COUNT(*) FILTER (WHERE call_status = 'converted' OR stage::text = 'won')::int AS converted_leads,
         COUNT(*) FILTER (WHERE next_followup_at::date = CURRENT_DATE)::int AS followups_today,
         COUNT(*) FILTER (WHERE next_followup_at IS NOT NULL AND next_followup_at <= NOW())::int AS followups_due
        FROM leads
@@ -103,7 +104,7 @@ async function rmStats(userId) {
        (SELECT COUNT(*)::int FROM team WHERE status = 'active' AND COALESCE(is_available, TRUE) = TRUE AND COALESCE(lead_assignment_status, 'available') = 'available') AS available_team_members,
        COUNT(l.id)::int AS total_team_assigned_leads,
        COUNT(l.id) FILTER (WHERE l.assigned_at::date = CURRENT_DATE)::int AS today_team_assigned_leads,
-       COUNT(l.id) FILTER (WHERE l.call_status = 'converted' OR l.stage = 'won' OR l.stage = 'converted')::int AS team_converted_leads,
+       COUNT(l.id) FILTER (WHERE l.call_status = 'converted' OR l.stage::text = 'won')::int AS team_converted_leads,
        (SELECT COUNT(*)::int FROM lead_requests lr JOIN team t ON t.id = lr.user_id WHERE lr.status = 'pending') AS pending_lead_requests
       FROM leads l
       JOIN team t ON t.id = l.assigned_to_user_id
@@ -124,7 +125,40 @@ async function getMyProfile(actor) {
   if (!actor?.id) throw new AppError(401, 'NO_USER', 'Not authenticated.');
   const row = await getProfileRow(actor.id);
   const role = normalizeRole(row.role);
-  const stats = role === 'rm' ? await rmStats(actor.id) : await memberStats(actor.id);
+  let stats;
+  try {
+    stats = role === 'rm' ? await rmStats(actor.id) : await memberStats(actor.id);
+  } catch (err) {
+    logger.warn({
+      userId: actor.id,
+      role,
+      err_message: err.message,
+      db_code: err.code,
+      db_detail: err.detail,
+      db_table: err.table,
+      db_column: err.column,
+    }, '[MyProfile] stats query failed; returning zeroed stats');
+    stats = role === 'rm'
+      ? {
+          total_team_members: 0,
+          available_team_members: 0,
+          total_team_assigned_leads: 0,
+          today_team_assigned_leads: 0,
+          team_converted_leads: 0,
+          pending_lead_requests: 0,
+          open_support_tickets: 0,
+        }
+      : {
+          total_assigned_leads: 0,
+          today_assigned_leads: 0,
+          contacted_leads: 0,
+          pending_not_called_leads: 0,
+          converted_leads: 0,
+          followups_today: 0,
+          followups_due: 0,
+          open_support_tickets: 0,
+        };
+  }
   return { profile: mapProfile(row), stats };
 }
 
