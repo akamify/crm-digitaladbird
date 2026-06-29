@@ -1,6 +1,6 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
-import { LogOut, ChevronDown, Menu } from 'lucide-react';
+import { LogOut, ChevronDown, Menu, UserCircle } from 'lucide-react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth';
 import { useChatUnread } from '@/hooks/useChat';
@@ -99,6 +99,13 @@ export function Topbar({ title, subtitle, onMenuClick, right }: TopbarProps) {
               <div className="truncate text-xs text-slate-500">{user?.email}</div>
               <div className="mt-1 inline-flex rounded-full bg-brand-50 px-2 py-0.5 text-[10px] uppercase tracking-wider text-brand-700">{user?.role}</div>
             </div>
+            <Link
+              href="/profile"
+              onClick={() => setOpen(false)}
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+            >
+              <UserCircle className="h-4 w-4 text-slate-400" /> My Profile
+            </Link>
             <button
               onClick={() => logout()}
               className="flex w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"

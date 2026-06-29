@@ -10,6 +10,7 @@ export interface AuthUser {
   name: string;
   email: string;
   phone: string;
+  cpId?: string | null;
   role: Role;
   memberType?: MemberType | null;
   reportToId?: string | null;
@@ -46,6 +47,7 @@ function scheduleSessionExpiry(onExpire: () => void) {
 function toUser(me: any): AuthUser {
   return {
     id: me.id, name: me.name, email: me.email, phone: me.phone,
+    cpId: me.cpId ?? me.cp_id ?? null,
     role: me.role, memberType: me.memberType ?? null,
     reportToId: me.reportToId ?? null, team: me.team ?? null,
   };
@@ -54,7 +56,7 @@ function toUser(me: any): AuthUser {
 function userChanged(a: AuthUser | null, b: AuthUser): boolean {
   if (!a) return true;
   return a.id !== b.id || a.name !== b.name || a.email !== b.email
-    || a.phone !== b.phone || a.role !== b.role
+    || a.phone !== b.phone || a.cpId !== b.cpId || a.role !== b.role
     || a.memberType !== b.memberType || a.reportToId !== b.reportToId
     || a.team !== b.team;
 }

@@ -17,6 +17,8 @@ const { normalizeRole } = require('../services/userIdentityService');
 const notifications = require('../services/notificationService');
 const leadStatusOptions = require('../constants/leadStatusOptions');
 const { updateLeadAvailability, updateSingleLeadAvailability } = require('../services/userAvailabilityService');
+const supportTickets = require('../services/supportTicketService');
+const myProfile = require('../services/myProfileService');
 
 // Loads a lead-request enriched with user + RM context and emits the
 // appropriate `lead-request:<kind>` Socket.IO event so admin + RM + the
@@ -45,7 +47,42 @@ router.post('/auth/refresh',     auth.refresh);
 router.post('/auth/logout',      auth.logout);
 router.get ('/auth/me',          authenticate, auth.me);
 
+// ---- Support Tickets -------------------------------------------------
+router.get('/support/tickets', authenticate, asyncHandler(async (req, res) => {
+  const result = await supportTickets.listMyTickets(req.user, req.query);
+  res.json({ success: true, data: result.rows, pagination: result.pagination });
+}));
+router.post('/support/tickets', authenticate, asyncHandler(async (req, res) => {
+  const ticket = await supportTickets.createTicket(req.user, req.body);
+  res.status(201).json({ success: true, data: ticket, message: 'Support ticket submitted successfully.' });
+}));
+router.get('/support/tickets/:ticketId', authenticate, asyncHandler(async (req, res) => {
+  const ticket = await supportTickets.getTicket(req.user, req.params.ticketId);
+  res.json({ success: true, data: ticket });
+}));
+router.get('/admin/support-tickets', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  const result = await supportTickets.listAdminTickets(req.user, req.query);
+  res.json({ success: true, data: result.rows, pagination: result.pagination });
+}));
+router.get('/admin/support-tickets/:ticketId', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  const ticket = await supportTickets.getTicket(req.user, req.params.ticketId);
+  res.json({ success: true, data: ticket });
+}));
+router.patch('/admin/support-tickets/:ticketId/status', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  const ticket = await supportTickets.updateTicketStatus(req.user, req.params.ticketId, req.body?.status, req.body?.admin_note || req.body?.note);
+  res.json({ success: true, data: ticket, message: 'Support ticket updated.' });
+}));
+
 // ---- Users --------------------------------------------------------
+router.get('/users/me/profile', authenticate, asyncHandler(async (req, res) => {
+  const data = await myProfile.getMyProfile(req.user);
+  res.json({ success: true, data });
+}));
+router.patch('/users/me/profile', authenticate, asyncHandler(async (req, res) => {
+  const data = await myProfile.updateMyProfile(req.user, req.body);
+  invalidateUser(req.user.id);
+  res.json({ success: true, data, message: 'Profile updated.' });
+}));
 router.get   ('/users',           authenticate, users.list);
 router.get   ('/users/hierarchy', authenticate, requireRole('super_admin', 'rm'), users.hierarchy);
 router.post  ('/users',           authenticate, requireRole('super_admin', 'admin'), users.create);
