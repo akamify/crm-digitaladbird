@@ -184,21 +184,14 @@ function SettingsUiPolish() {
       }
 
       .settings-tab-scroll {
-        scrollbar-width: thin;
-        scrollbar-color: rgba(100, 116, 139, 0.35) transparent;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
       }
 
       .settings-tab-scroll::-webkit-scrollbar {
-        height: 6px;
-      }
-
-      .settings-tab-scroll::-webkit-scrollbar-track {
-        background: transparent;
-      }
-
-      .settings-tab-scroll::-webkit-scrollbar-thumb {
-        border-radius: 999px;
-        background: rgba(100, 116, 139, 0.35);
+        display: none;
+        width: 0;
+        height: 0;
       }
     `}</style>
   );
