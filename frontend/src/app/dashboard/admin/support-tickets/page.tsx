@@ -29,6 +29,9 @@ const STATUS_CLASS: Record<string, string> = {
   not_solved: 'bg-rose-100 text-rose-800 ring-rose-200',
 };
 
+const CONTROL_CLASS =
+  'input h-12 w-full rounded-2xl border-slate-200 bg-white text-sm shadow-sm transition focus:border-brand-400 focus:ring-2 focus:ring-brand-500/15';
+
 export default function AdminSupportTicketsPage() {
   return (
     <AppShell
@@ -70,7 +73,7 @@ function AdminSupportTicketsInner() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-l bg-brand-100 text-brand-700">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-brand-100 text-brand-700">
             <LifeBuoy className="h-5 w-5" />
           </div>
 
@@ -88,20 +91,20 @@ function AdminSupportTicketsInner() {
           type="button"
           onClick={() => tickets.refetch()}
           disabled={tickets.isFetching}
-          className="btn-outline inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+          className="btn-outline inline-flex items-center gap-2 rounded-2xl px-3.5 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
         >
           <RefreshCw className={clsx('h-4 w-4', tickets.isFetching && 'animate-spin')} />
           Refresh
         </button>
       </div>
 
-      <div className="rounded-l border border-slate-200/80 bg-white p-4 shadow-sm">
-        <div className="grid min-w-0 gap-3 xl:grid-cols-[minmax(260px,1fr)_180px_180px_160px]">
-          <div className="relative min-w-0">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+      <div className="rounded-3xl border border-slate-200/80 bg-white p-4 shadow-sm sm:p-5">
+        <div className="mx-auto flex w-full max-w-6xl flex-col items-stretch justify-center gap-3 lg:flex-row lg:items-center">
+          <div className="relative min-w-0 flex-1 lg:max-w-[520px]">
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
 
             <input
-              className="input h-12 w-full min-w-0 pl-10 pr-3 text-sm"
+              className={clsx(CONTROL_CLASS, 'min-w-0 pl-11 pr-4')}
               value={filters.search}
               onChange={(event) =>
                 setFilters((prev) => ({
@@ -114,63 +117,65 @@ function AdminSupportTicketsInner() {
             />
           </div>
 
-          <select
-            className="input h-12 w-full text-sm"
-            value={filters.status}
-            onChange={(event) =>
-              setFilters((prev) => ({
-                ...prev,
-                status: event.target.value,
-                page: 1,
-              }))
-            }
-          >
-            <option value="">All Status</option>
-            <option value="open">Open</option>
-            <option value="solved">Solved</option>
-            <option value="not_solved">Not Solved</option>
-          </select>
+          <div className="grid gap-3 sm:grid-cols-3 lg:flex lg:shrink-0 lg:items-center lg:justify-center">
+            <select
+              className={clsx(CONTROL_CLASS, 'lg:w-[180px]')}
+              value={filters.status}
+              onChange={(event) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  status: event.target.value,
+                  page: 1,
+                }))
+              }
+            >
+              <option value="">All Status</option>
+              <option value="open">Open</option>
+              <option value="solved">Solved</option>
+              <option value="not_solved">Not Solved</option>
+            </select>
 
-          <select
-            className="input h-12 w-full text-sm"
-            value={filters.role}
-            onChange={(event) =>
-              setFilters((prev) => ({
-                ...prev,
-                role: event.target.value,
-                page: 1,
-              }))
-            }
-          >
-            <option value="">All Roles</option>
-            <option value="rm">RM</option>
-            <option value="member">Member</option>
-            <option value="partner">Partner</option>
-          </select>
+            <select
+              className={clsx(CONTROL_CLASS, 'lg:w-[180px]')}
+              value={filters.role}
+              onChange={(event) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  role: event.target.value,
+                  page: 1,
+                }))
+              }
+            >
+              <option value="">All Roles</option>
+              <option value="rm">RM</option>
+              <option value="member">Member</option>
+              <option value="partner">Partner</option>
+            </select>
 
-          <select
-            className="input h-12 w-full text-sm"
-            value={filters.sort}
-            onChange={(event) =>
-              setFilters((prev) => ({
-                ...prev,
-                sort: event.target.value,
-                page: 1,
-              }))
-            }
-          >
-            <option value="newest">Newest</option>
-            <option value="oldest">Oldest</option>
-            <option value="status">Status</option>
-          </select>
+            <select
+              className={clsx(CONTROL_CLASS, 'lg:w-[160px]')}
+              value={filters.sort}
+              onChange={(event) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  sort: event.target.value,
+                  page: 1,
+                }))
+              }
+            >
+              <option value="newest">Newest</option>
+              <option value="oldest">Oldest</option>
+              <option value="status">Status</option>
+            </select>
+          </div>
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-l border border-slate-200/80 bg-white shadow-sm">
+      <div className="overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-sm">
         {tickets.isLoading ? (
           <div className="space-y-2 p-4">
             {Array.from({ length: 6 }).map((_, index) => (
-              <Skeleton key={index} className="h-16 rounded-l" />
+              <Skeleton key={index} className="h-16 rounded-2xl" />
             ))}
           </div>
         ) : rows.length === 0 ? (
@@ -246,26 +251,16 @@ function TicketRow({
       className="grid cursor-pointer grid-cols-[160px_minmax(220px,1.1fr)_170px_95px_minmax(190px,1fr)_115px_125px_125px_80px] items-center gap-4 px-5 py-4 transition hover:bg-slate-50"
     >
       <div className="min-w-0">
-        <div
-          className="truncate text-sm font-semibold text-slate-950"
-          title={ticketNo}
-        >
+        <div className="truncate text-sm font-semibold text-slate-950" title={ticketNo}>
           {ticketNo}
         </div>
       </div>
 
       <div className="min-w-0">
-        <div
-          className="truncate text-sm font-semibold text-slate-900"
-          title={ticket.name || '-'}
-        >
+        <div className="truncate text-sm font-semibold text-slate-900" title={ticket.name || '-'}>
           {ticket.name || '-'}
         </div>
-
-        <div
-          className="mt-0.5 truncate text-xs text-slate-500"
-          title={ticket.email || '-'}
-        >
+        <div className="mt-0.5 truncate text-xs text-slate-500" title={ticket.email || '-'}>
           {ticket.email || '-'}
         </div>
       </div>
@@ -274,7 +269,6 @@ function TicketRow({
         <div className="truncate" title={ticket.phone || '-'}>
           {ticket.phone || '-'}
         </div>
-
         <div className="truncate font-medium text-slate-500" title={cpId}>
           {cpId}
         </div>
@@ -287,10 +281,7 @@ function TicketRow({
       </div>
 
       <div className="min-w-0">
-        <div
-          className="truncate text-sm font-medium text-slate-900"
-          title={ticket.subject || '-'}
-        >
+        <div className="truncate text-sm font-medium text-slate-900" title={ticket.subject || '-'}>
           {ticket.subject || '-'}
         </div>
       </div>
@@ -317,7 +308,7 @@ function TicketRow({
             event.stopPropagation();
             onOpen();
           }}
-          className="btn-outline rounded-xl px-3 py-1.5 text-xs"
+          className="btn-outline rounded-2xl px-3 py-1.5 text-xs"
         >
           View
         </button>
@@ -371,14 +362,9 @@ function TicketDetailModal({
   }
 
   return (
-    <Modal
-      open={Boolean(ticketId)}
-      onClose={onClose}
-      title="Support Ticket Details"
-      size="xl"
-    >
+    <Modal open={Boolean(ticketId)} onClose={onClose} title="Support Ticket Details" size="xl">
       {detail.isLoading || !ticket ? (
-        <Skeleton className="h-72 rounded-l" />
+        <Skeleton className="h-72 rounded-2xl" />
       ) : (
         <div className="space-y-5">
           <div className="grid min-w-0 gap-3 md:grid-cols-2">
@@ -389,10 +375,7 @@ function TicketDetailModal({
             <Info label="Email" value={ticket.email || '-'} />
             <Info label="Phone" value={ticket.phone || '-'} />
             <Info label="CP ID" value={ticket.cpId || ticket.cp_id || '-'} />
-            <Info
-              label="Submitted At"
-              value={formatISTCompact(ticket.createdAt || ticket.created_at)}
-            />
+            <Info label="Submitted At" value={formatISTCompact(ticket.createdAt || ticket.created_at)} />
             <Info
               label="Solved At"
               value={
@@ -411,28 +394,24 @@ function TicketDetailModal({
             />
           </div>
 
-          <div className="rounded-l border border-slate-200 bg-white p-4">
-            <h3 className="break-words font-semibold text-slate-950">
-              {ticket.subject}
-            </h3>
-
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <h3 className="break-words font-semibold text-slate-950">{ticket.subject}</h3>
             <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">
               {ticket.body}
             </p>
           </div>
 
-          <div className="rounded-l border border-amber-200 bg-amber-50 p-4">
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
             <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">
               Last admin note
             </div>
-
             <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-amber-950">
               {ticket.lastAdminNote || ticket.last_admin_note || 'No admin note yet.'}
             </p>
           </div>
 
           {isClosed ? (
-            <div className="rounded-l border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
               This ticket is already {humanize(ticket.status)}. The final status can be updated only once.
             </div>
           ) : (
@@ -440,7 +419,7 @@ function TicketDetailModal({
               <button
                 type="button"
                 onClick={() => setAction('solved')}
-                className="btn-primary inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm"
+                className="btn-primary inline-flex items-center gap-2 rounded-2xl px-3.5 py-2 text-sm"
               >
                 <CheckCircle2 className="h-4 w-4" />
                 Mark as Solved
@@ -449,7 +428,7 @@ function TicketDetailModal({
               <button
                 type="button"
                 onClick={() => setAction('not_solved')}
-                className="btn-outline inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm"
+                className="btn-outline inline-flex items-center gap-2 rounded-2xl px-3.5 py-2 text-sm"
               >
                 <XCircle className="h-4 w-4" />
                 Mark as Not Solved
@@ -458,14 +437,13 @@ function TicketDetailModal({
           )}
 
           {action && !isClosed && (
-            <div className="rounded-l border border-slate-200 bg-white p-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
               <label className="block space-y-1.5 text-sm">
                 <span className="font-semibold text-slate-700">
                   Admin note for {humanize(action)}
                 </span>
-
                 <textarea
-                  className="input min-h-[110px] w-full resize-y"
+                  className={clsx(CONTROL_CLASS, 'min-h-[110px] resize-y py-3')}
                   value={note}
                   onChange={(event) => setNote(event.target.value)}
                   placeholder="Required note for the ticket creator"
@@ -475,7 +453,7 @@ function TicketDetailModal({
               <div className="mt-3 flex flex-wrap justify-end gap-2">
                 <button
                   type="button"
-                  className="btn-outline rounded-xl px-3.5 py-2 text-sm"
+                  className="btn-outline rounded-2xl px-3.5 py-2 text-sm"
                   onClick={() => {
                     setAction(null);
                     setNote('');
@@ -487,7 +465,7 @@ function TicketDetailModal({
                 <button
                   type="button"
                   disabled={updateStatus.isPending}
-                  className="btn-primary inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                  className="btn-primary inline-flex items-center gap-2 rounded-2xl px-3.5 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={submit}
                 >
                   {updateStatus.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -498,21 +476,15 @@ function TicketDetailModal({
           )}
 
           <div>
-            <h3 className="mb-2 text-sm font-semibold text-slate-950">
-              History
-            </h3>
+            <h3 className="mb-2 text-sm font-semibold text-slate-950">History</h3>
 
             <div className="space-y-2">
               {(ticket.history || []).map((item) => (
-                <div
-                  key={item.id}
-                  className="rounded-l border border-slate-100 bg-slate-50 p-3 text-sm"
-                >
+                <div key={item.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-3 text-sm">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-semibold text-slate-800">
                       {humanize(item.action)} {item.status ? `- ${humanize(item.status)}` : ''}
                     </span>
-
                     <span className="text-xs text-slate-500">
                       {formatISTCompact(item.createdAt || item.created_at)}
                     </span>
@@ -525,9 +497,7 @@ function TicketDetailModal({
                   ) : null}
 
                   {item.actorName && (
-                    <p className="mt-1 text-xs text-slate-500">
-                      By {item.actorName}
-                    </p>
+                    <p className="mt-1 text-xs text-slate-500">By {item.actorName}</p>
                   )}
                 </div>
               ))}
@@ -539,15 +509,9 @@ function TicketDetailModal({
   );
 }
 
-function Info({
-  label,
-  value,
-}: {
-  label: string;
-  value: ReactNode;
-}) {
+function Info({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="min-w-0 rounded-l border border-slate-100 bg-slate-50 px-3 py-2.5">
+    <div className="min-w-0 rounded-2xl border border-slate-100 bg-slate-50 px-3 py-2.5">
       <div className="text-xs font-medium text-slate-500">{label}</div>
       <div className="mt-1 min-w-0 break-words text-sm font-semibold text-slate-950">
         {value}
@@ -556,11 +520,7 @@ function Info({
   );
 }
 
-function StatusBadge({
-  status,
-}: {
-  status: SupportTicketStatus | string;
-}) {
+function StatusBadge({ status }: { status: SupportTicketStatus | string }) {
   return (
     <span
       className={clsx(
@@ -597,20 +557,20 @@ function Pagination({
     <div className="flex flex-wrap items-center justify-end gap-2 text-sm">
       <button
         type="button"
-        className="btn-outline rounded-xl px-3.5 py-2 disabled:cursor-not-allowed disabled:opacity-50"
+        className="btn-outline rounded-2xl px-3.5 py-2 disabled:cursor-not-allowed disabled:opacity-50"
         disabled={page <= 1}
         onClick={() => onChange(page - 1)}
       >
         Previous
       </button>
 
-      <span className="rounded-xl bg-white px-3.5 py-2 font-medium text-slate-500 shadow-sm ring-1 ring-slate-200">
+      <span className="rounded-2xl bg-white px-3.5 py-2 font-medium text-slate-500 shadow-sm ring-1 ring-slate-200">
         Page {page} of {totalPages}
       </span>
 
       <button
         type="button"
-        className="btn-outline rounded-xl px-3.5 py-2 disabled:cursor-not-allowed disabled:opacity-50"
+        className="btn-outline rounded-2xl px-3.5 py-2 disabled:cursor-not-allowed disabled:opacity-50"
         disabled={page >= totalPages}
         onClick={() => onChange(page + 1)}
       >
