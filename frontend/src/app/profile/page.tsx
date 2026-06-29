@@ -14,7 +14,7 @@ import { useMyProfile, useUpdateMyProfile, type MyProfile, type MyProfileStats }
 
 export default function MyProfilePage() {
   return (
-    <AppShell title="My Profile" subtitle="Your CRM account, work details, and performance summary" roles={['super_admin', 'admin', 'rm', 'member', 'partner']}>
+    <AppShell title="My Profile" subtitle="Your CRM account, work details, and performance summary" roles={['rm', 'member', 'partner']}>
       <MyProfileInner />
     </AppShell>
   );
@@ -25,6 +25,13 @@ function MyProfileInner() {
   const [editOpen, setEditOpen] = useState(false);
   const profile = profileQuery.data?.profile;
   const stats = profileQuery.data?.stats || {};
+
+  useEffect(() => {
+    if (profileQuery.error) {
+      // Keep the UI clean while preserving enough context for browser debugging.
+      console.error('GET /api/users/me/profile failed', profileQuery.error);
+    }
+  }, [profileQuery.error]);
 
   if (profileQuery.isLoading) {
     return (
@@ -39,8 +46,15 @@ function MyProfileInner() {
     );
   }
 
-  if (!profile) {
-    return <EmptyState title="Profile not found" description="Refresh the page or sign in again." icon={<UserCircle className="h-6 w-6" />} />;
+  if (profileQuery.isError || !profile) {
+    return (
+      <EmptyState
+        title="Profile could not be loaded"
+        description="Please retry. If this continues, admin can check PM2 logs for the exact backend error."
+        icon={<UserCircle className="h-6 w-6" />}
+        action={<Button variant="outline" onClick={() => profileQuery.refetch()}>Retry</Button>}
+      />
+    );
   }
 
   return (

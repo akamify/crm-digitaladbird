@@ -96,7 +96,7 @@ export function useSupportTicket(ticketId?: string | null, admin = false) {
 export function useCreateSupportTicket() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (body: { phone: string; cp_id?: string; subject: string; description: string }) => {
+    mutationFn: async (body: { phone: string; subject: string; description: string }) => {
       const { data } = await api.post('/support/tickets', body);
       return data.data as SupportTicket;
     },

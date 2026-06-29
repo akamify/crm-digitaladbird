@@ -96,7 +96,7 @@ async function rmStats(userId) {
          FROM users
         WHERE report_to_id = $1
           AND deleted_at IS NULL
-          AND role IN ('member', 'partner')
+          AND role::text IN ('member', 'partner')
      )
      SELECT
        (SELECT COUNT(*)::int FROM team) AS total_team_members,

@@ -44,15 +44,15 @@ const NAV: NavItem[] = [
   { href: '/leads', label: 'Leads', Icon: Briefcase },
   { href: '/chat', label: 'Messages', Icon: MessageSquare },
   { href: '/notifications', label: 'Notifications', Icon: Bell },
-  { href: '/profile', label: 'My Profile', Icon: UserCircle, roles: ['super_admin', 'admin', 'rm', 'member', 'partner'] },
   { href: '/my-google-sheet', label: 'My Google Sheet', Icon: FileSpreadsheet, roles: ['rm', 'member', 'partner'] },
   { href: '/reports', label: 'Reports', Icon: BarChart3, roles: ['super_admin', 'rm'] },
   { href: '/lead-requests', label: 'Lead Requests', Icon: HandMetal, roles: ['super_admin', 'admin', 'rm', 'member', 'partner'] },
-  { href: '/support', label: 'Support', Icon: LifeBuoy, roles: ['super_admin', 'admin', 'rm', 'member', 'partner'] },
   { href: '/leaderboard', label: 'Leaderboard', Icon: Trophy },
   { href: '/users', label: 'Team', Icon: Users, roles: ['super_admin', 'rm'] },
   { href: '/rm-teams', label: 'RM Teams', Icon: UsersRound, roles: ['super_admin'] },
   { href: '/settings', label: 'Settings', Icon: Settings, roles: ['super_admin'] },
+  { href: '/support', label: 'Support', Icon: LifeBuoy, roles: ['rm', 'member', 'partner'] },
+  { href: '/profile', label: 'My Profile', Icon: UserCircle, roles: ['rm', 'member', 'partner'] },
 ];
 
 const ADMIN_NAV = [

@@ -5,7 +5,7 @@ const notifications = require('./notifications/notificationService');
 const templates = require('./notifications/notificationTemplates');
 
 const ADMIN_ROLES = new Set(['super_admin', 'admin']);
-const ALLOWED_CREATOR_ROLES = new Set(['super_admin', 'admin', 'rm', 'member', 'partner']);
+const ALLOWED_CREATOR_ROLES = new Set(['rm', 'member', 'partner']);
 const STATUS_VALUES = new Set(['open', 'solved', 'not_solved']);
 
 function isAdmin(user) {
@@ -84,12 +84,11 @@ async function getUser(userId, runner = null) {
   return user || null;
 }
 
-function validateCreateInput(actor, body = {}) {
+function validateCreateInput(actor, user, body = {}) {
   if (!ALLOWED_CREATOR_ROLES.has(actor?.role)) {
     throw new AppError(403, 'SUPPORT_TICKET_FORBIDDEN', 'You are not allowed to raise support tickets.');
   }
-  const phone = trim(body.phone);
-  const cpId = trim(body.cp_id || body.cpId);
+  const phone = trim(body.phone || user?.phone);
   const subject = trim(body.subject);
   const description = trim(body.body || body.description || body.problem);
 
@@ -100,7 +99,7 @@ function validateCreateInput(actor, body = {}) {
   if (!description) throw new AppError(400, 'SUPPORT_DESCRIPTION_REQUIRED', 'Problem description is required.');
   if (description.length > 3000) throw new AppError(400, 'SUPPORT_DESCRIPTION_TOO_LONG', 'Problem description must be 3000 characters or less.');
 
-  return { phone, cpId, subject, description };
+  return { phone, subject, description };
 }
 
 async function bestEffortTicketCreated(ticket) {
@@ -126,6 +125,12 @@ async function bestEffortTicketCreated(ticket) {
       entityType: 'support_ticket',
       entityId: ticket.id,
       dedupeKey: `support_ticket_submitted:${ticket.id}`,
+      email: templates.shell({
+        title: `Support ticket submitted: ${ticket.ticket_no}`,
+        body: `Your support ticket has been submitted successfully.\n\nSubject: ${ticket.subject}\n\nStatus: Open`,
+        actionUrl: templates.frontendUrl('/support'),
+      }),
+      emailType: 'support_ticket_created',
     });
   } catch (err) {
     logger.warn({ ticketId: ticket.id, err: err.message }, '[Support] creator notification failed');
@@ -186,7 +191,7 @@ async function bestEffortTicketUpdated(ticket, actor) {
 async function createTicket(actor, body = {}) {
   const user = await getUser(actor.id);
   if (!user) throw new AppError(404, 'USER_NOT_FOUND', 'User not found.');
-  const input = validateCreateInput(actor, body);
+  const input = validateCreateInput(actor, user, body);
 
   const { rows: [created] } = await query(
     `INSERT INTO support_tickets(created_by_user_id, name, email, phone, cp_id, role, subject, body)
@@ -197,7 +202,7 @@ async function createTicket(actor, body = {}) {
       trim(body.name) || user.full_name || actor.name || 'CRM User',
       trim(body.email) || user.email,
       input.phone,
-      input.cpId || user.cp_id || null,
+      user.cp_id || null,
       user.role,
       input.subject,
       input.description,
