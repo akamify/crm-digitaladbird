@@ -7,6 +7,7 @@ import {
   Inbox, UserX, HandMetal, Check, X, Trophy, Crown, Star, Award,
   Megaphone, Globe, GitBranch, ScrollText, FileSpreadsheet, PieChart,
   BarChart3, Target, Zap, RefreshCw,
+  LifeBuoy,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
@@ -56,10 +57,10 @@ interface DistStats {
 }
 
 const ADMIN_MODULES = [
-  { href: '/dashboard/admin/campaigns',     label: 'Campaigns',      Icon: Megaphone,       color: 'text-rose-600',    bg: 'bg-rose-50',    border: 'border-rose-200',    desc: 'Edit campaigns' },
+  { href: '/dashboard/admin/campaigns',     label: 'Campaigns',       Icon: Megaphone,       color: 'text-rose-600',    bg: 'bg-rose-50',    border: 'border-rose-200',    desc: 'Edit campaigns' },
   { href: '/dashboard/admin/users',         label: 'User Management', Icon: Users,           color: 'text-violet-600',  bg: 'bg-violet-50',  border: 'border-violet-200',  desc: 'Block, edit, caps' },
   { href: '/dashboard/admin/leads-manager', label: 'Lead Management', Icon: Briefcase,       color: 'text-brand-600',   bg: 'bg-brand-50',   border: 'border-brand-200',   desc: 'Bulk actions, assign' },
-  { href: '/dashboard/admin/sources',       label: 'Lead Sources',    Icon: Globe,           color: 'text-cyan-600',    bg: 'bg-cyan-50',    border: 'border-cyan-200',    desc: 'Source monitoring' },
+  { href: '/dashboard/admin/support-tickets',label: 'Raised Tickets', Icon: LifeBuoy,        color: 'text-cyan-600',    bg: 'bg-cyan-50',    border: 'border-cyan-200',    desc: 'View raised tickets' },
   { href: '/dashboard/admin/distribution',  label: 'Distribution',    Icon: GitBranch,       color: 'text-amber-600',   bg: 'bg-amber-50',   border: 'border-amber-200',   desc: 'Auto-assign rules' },
   { href: '/dashboard/admin/analytics',     label: 'Analytics',       Icon: PieChart,        color: 'text-emerald-600', bg: 'bg-emerald-50', border: 'border-emerald-200', desc: 'Deep insights' },
   { href: '/dashboard/admin/sheets',        label: 'Google Sheets',   Icon: FileSpreadsheet, color: 'text-green-600',   bg: 'bg-green-50',   border: 'border-green-200',   desc: 'Sync & import' },
