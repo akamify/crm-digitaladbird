@@ -1150,14 +1150,15 @@ function AdAccountsTab() {
           {!!staleAccounts.length && <span className="chip-amber">{staleAccounts.length} stale</span>}
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => refetch()} disabled={isFetching}>
+          <Button variant="outline" className='flex items-center gap-2' onClick={() => refetch()} disabled={isFetching}>
             {isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Refresh
           </Button>
           <Button
             onClick={() => syncCampaigns.mutate(undefined, { onSuccess: () => toast.success('Ad accounts and campaigns synced'), onError: () => toast.error('Meta sync failed') })}
             disabled={syncCampaigns.isPending}
+            className='flex items-center gap-2'
           >
-            {syncCampaigns.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Sync from Meta
+            {syncCampaigns.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Sync from Meta
           </Button>
         </div>
       </div>
@@ -1267,14 +1268,15 @@ function CampaignsTab() {
           {isFetching && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" onClick={() => refetch()} disabled={isFetching}>
+          <Button variant="outline" className='flex items-center gap-2' onClick={() => refetch()} disabled={isFetching}>
             {isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Refresh
           </Button>
-          <Button variant="outline" onClick={() => setShowDebug(value => !value)}>
+          <Button variant="outline" className='flex items-center gap-2' onClick={() => setShowDebug(value => !value)}>
             <Activity className="h-4 w-4" /> Meta Debug
           </Button>
           <Button
             variant="outline"
+            className='flex items-center gap-2'
             onClick={() => {
               if (selectedAccount === 'all') {
                 syncCampaigns.mutate(undefined, { onSuccess: () => toast.success('All accounts synced'), onError: () => toast.error('Meta sync failed') });
@@ -1312,7 +1314,7 @@ function CampaignsTab() {
               <h2 className="text-sm font-semibold text-slate-900">Meta Debug</h2>
               <p className="text-xs text-slate-500">Shows API-returned accounts and campaigns. Tokens are never shown.</p>
             </div>
-            <Button variant="outline" size="sm" onClick={() => debug.refetch()} disabled={debug.isFetching}>
+            <Button variant="outline" className='flex items-center gap-2' size="sm" onClick={() => debug.refetch()} disabled={debug.isFetching}>
               {debug.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Refresh debug
             </Button>
           </div>
