@@ -146,6 +146,7 @@ export interface LeadFilters {
   pending?: 'true' | 'false' | '';
   unworked?: 'true' | 'false' | '';
   followup?: 'today' | 'overdue' | 'upcoming' | '';
+  followup_strict?: 'true' | '';
   reassignment?: 'to_me' | 'to_others' | '';
   assignment?: 'assigned' | 'unassigned' | '';
   assigned_today?: 'true' | '';

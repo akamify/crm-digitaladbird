@@ -229,7 +229,9 @@ exports.list = asyncHandler(async (req, res) => {
     OR EXISTS (SELECT 1 FROM lead_workflow wf_follow WHERE wf_follow.lead_id = l.id)
   )`;
 
-  if (req.query.followup === 'today') {
+  if (req.query.followup === 'today' && req.query.followup_strict === 'true') {
+    where.push(`(l.next_followup_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date`);
+  } else if (req.query.followup === 'today') {
     where.push(`(
       (l.next_followup_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
       OR ${hasWorkflowOrRemark}
