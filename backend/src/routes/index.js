@@ -2195,8 +2195,40 @@ router.get('/meta/campaign-stats', authenticate, requireRole('super_admin', 'rm'
 
 // List ad accounts from DB
 router.get('/meta/ad-accounts', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
-  const { rows } = await query(`SELECT * FROM meta_ad_accounts ORDER BY account_id`);
+  const { rows } = await query(`
+    SELECT a.*,
+      COALESCE(a.campaign_count, c.total_campaigns, 0)::int AS campaign_count,
+      COALESCE(a.active_campaign_count, c.active_campaigns, 0)::int AS active_campaign_count,
+      COALESCE(a.paused_campaign_count, c.paused_campaigns, 0)::int AS paused_campaign_count,
+      COALESCE(a.draft_campaign_count, c.draft_campaigns, 0)::int AS draft_campaign_count,
+      COALESCE(a.archived_campaign_count, c.archived_campaigns, 0)::int AS archived_campaign_count,
+      COALESCE(a.deleted_campaign_count, c.deleted_campaigns, 0)::int AS deleted_campaign_count
+    FROM meta_ad_accounts a
+    LEFT JOIN LATERAL (
+      SELECT
+        COUNT(*)::int AS total_campaigns,
+        COUNT(*) FILTER (WHERE COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status) = 'ACTIVE')::int AS active_campaigns,
+        COUNT(*) FILTER (WHERE COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status) = 'PAUSED')::int AS paused_campaigns,
+        COUNT(*) FILTER (WHERE COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status) IN ('IN_PROCESS', 'PENDING_REVIEW', 'DRAFT', 'IN_DRAFT', 'WITH_ISSUES'))::int AS draft_campaigns,
+        COUNT(*) FILTER (WHERE COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status) = 'ARCHIVED')::int AS archived_campaigns,
+        COUNT(*) FILTER (WHERE COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status) = 'DELETED')::int AS deleted_campaigns
+      FROM meta_campaigns mc
+      WHERE mc.ad_account_id = a.account_id
+    ) c ON TRUE
+    ORDER BY a.account_name NULLS LAST, a.account_id
+  `);
   res.json({ success: true, data: rows });
+}));
+
+// Sync campaigns for a selected ad account
+router.post('/meta/ad-accounts/:accountId/sync-campaigns', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  try {
+    const accountId = String(req.params.accountId || '').replace(/^act_/, '');
+    const result = await metaSync.syncCampaigns(`act_${accountId}`);
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(502).json({ success: false, error: metaGraphError(err, 'Campaign sync failed'), data: null });
+  }
 }));
 
 // Fetch ad accounts from Meta API
@@ -5060,13 +5092,50 @@ router.get('/admin/meta/subscription-status', authenticate, requireRole('super_a
 }));
 
 // Campaign enriched list (with lead stats from DB)
-router.get('/admin/meta/campaigns-enriched', authenticate, requireRole('super_admin'), responseCache(15000), asyncHandler(async (_req, res) => {
+router.get('/admin/meta/campaigns-enriched', authenticate, requireRole('super_admin'), responseCache(15000), asyncHandler(async (req, res) => {
+  const params = [];
+  const where = [];
+  const account = req.query.account ? String(req.query.account).replace(/^act_/, '') : '';
+  const status = req.query.status ? String(req.query.status).toUpperCase() : '';
+  const search = req.query.search ? String(req.query.search).trim() : '';
+  if (account) {
+    params.push(account);
+    where.push(`mc.ad_account_id = $${params.length}`);
+  }
+  if (status && status !== 'ALL') {
+    params.push(status);
+    where.push(`UPPER(COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status, 'UNKNOWN')) = $${params.length}`);
+  }
+  if (search) {
+    params.push(`%${search.toLowerCase()}%`);
+    where.push(`(LOWER(mc.campaign_name) LIKE $${params.length} OR LOWER(mc.campaign_id) LIKE $${params.length} OR LOWER(COALESCE(mc.internal_label, '')) LIKE $${params.length})`);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
   const { rows } = await query(`
     SELECT mc.id, mc.campaign_id, mc.campaign_name, mc.internal_label, mc.ad_account_id,
       mc.is_active, mc.category, mc.description, mc.created_at,
-      mc.meta_status, mc.effective_status, mc.configured_status, mc.objective,
+      mc.status, mc.meta_status, mc.effective_status, mc.configured_status,
+      COALESCE(mc.ui_status,
+        CASE COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status)
+          WHEN 'ACTIVE' THEN 'Active / On'
+          WHEN 'PAUSED' THEN 'Off / Paused'
+          WHEN 'ARCHIVED' THEN 'Archived'
+          WHEN 'DELETED' THEN 'Deleted'
+          WHEN 'IN_PROCESS' THEN 'In draft'
+          WHEN 'PENDING_REVIEW' THEN 'In draft'
+          ELSE COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status, 'Unknown')
+        END
+      ) AS ui_status,
+      mc.objective,
       mc.buying_type, mc.start_time, mc.stop_time, mc.meta_created_time,
-      mc.meta_updated_time, mc.source, mc.last_meta_status_checked_at,
+      mc.meta_updated_time, mc.daily_budget, mc.lifetime_budget, mc.budget_remaining,
+      mc.spend_cap, mc.special_ad_categories, mc.source, mc.last_meta_status_checked_at,
+      mc.last_synced_at, mc.sync_status, mc.last_sync_error,
+      mc.impressions, mc.reach, mc.spend, mc.leads AS meta_leads,
+      mc.cost_per_result, mc.last_metrics_synced_at, mc.metrics_error,
+      aa.account_name, aa.account_status, aa.sync_status AS ad_account_sync_status,
+      aa.last_sync_error AS ad_account_sync_error,
       (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_campaign_id = mc.campaign_id) AS lead_count,
       (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_campaign_id = mc.campaign_id AND (COALESCE(l.meta_created_time, l.created_at) AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS today_leads,
       (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_campaign_id = mc.campaign_id AND l.call_status = 'converted') AS conversions,
@@ -5077,8 +5146,10 @@ router.get('/admin/meta/campaigns-enriched', authenticate, requireRole('super_ad
         SELECT f2.page_id FROM meta_forms f2 WHERE f2.campaign_label = mc.internal_label LIMIT 1
       )) AS connected_page
     FROM meta_campaigns mc
-    ORDER BY mc.is_active DESC, mc.last_meta_status_checked_at DESC NULLS LAST, lead_count DESC
-  `);
+    LEFT JOIN meta_ad_accounts aa ON aa.account_id = mc.ad_account_id
+    ${whereSql}
+    ORDER BY mc.meta_updated_time DESC NULLS LAST, mc.last_meta_status_checked_at DESC NULLS LAST, lead_count DESC
+  `, params);
   res.json({ success: true, data: rows });
 }));
 

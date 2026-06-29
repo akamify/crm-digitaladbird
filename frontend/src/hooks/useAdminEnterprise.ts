@@ -883,15 +883,23 @@ export interface CampaignEnriched {
   description: string | null; lead_count: number; today_leads: number; conversions: number;
   pending_leads: number; last_lead_at: string | null; connected_form: string | null;
   connected_page: string | null; created_at: string;
-  meta_status?: string | null; effective_status?: string | null; configured_status?: string | null;
+  status?: string | null; meta_status?: string | null; effective_status?: string | null; configured_status?: string | null; ui_status?: string | null;
   objective?: string | null; buying_type?: string | null; source?: string | null;
-  last_meta_status_checked_at?: string | null;
+  daily_budget?: number | null; lifetime_budget?: number | null; budget_remaining?: number | null; spend_cap?: number | null;
+  impressions?: number | null; reach?: number | null; spend?: number | null; meta_leads?: number | null; cost_per_result?: number | null;
+  account_name?: string | null; account_status?: number | null; ad_account_sync_status?: string | null; ad_account_sync_error?: string | null;
+  meta_updated_time?: string | null; last_meta_status_checked_at?: string | null; last_synced_at?: string | null; sync_status?: string | null; last_sync_error?: string | null;
+  last_metrics_synced_at?: string | null; metrics_error?: string | null;
 }
 
-export function useCampaignsEnriched() {
+export function useCampaignsEnriched(filters?: { account?: string; status?: string; search?: string }) {
   return useQuery({
-    queryKey: ['admin', 'campaigns-enriched'],
-    queryFn: () => apiGet<CampaignEnriched[]>('/admin/meta/campaigns-enriched'),
+    queryKey: ['admin', 'campaigns-enriched', filters?.account || 'all', filters?.status || 'all', filters?.search || ''],
+    queryFn: () => apiGet<CampaignEnriched[]>('/admin/meta/campaigns-enriched', {
+      account: filters?.account || undefined,
+      status: filters?.status && filters.status !== 'all' ? filters.status : undefined,
+      search: filters?.search || undefined,
+    }),
     staleTime: 30_000,
     refetchInterval: 60_000,
   });
@@ -909,6 +917,17 @@ export interface MetaAdAccount {
   is_active: boolean;
   last_synced_at: string | null;
   last_sync_error: string | null;
+  timezone_name?: string | null;
+  amount_spent?: number | null;
+  balance?: number | null;
+  disable_reason?: number | null;
+  campaign_count?: number;
+  active_campaign_count?: number;
+  paused_campaign_count?: number;
+  draft_campaign_count?: number;
+  archived_campaign_count?: number;
+  deleted_campaign_count?: number;
+  sync_status?: string | null;
   updated_at?: string | null;
 }
 
@@ -924,6 +943,17 @@ export function useSyncCampaigns() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => apiPost('/meta/sync-campaigns', {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'meta-ad-accounts'] });
+    },
+  });
+}
+
+export function useSyncMetaAdAccountCampaigns() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (accountId: string) => apiPost(`/meta/ad-accounts/${accountId}/sync-campaigns`, {}),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin'] });
       qc.invalidateQueries({ queryKey: ['admin', 'meta-ad-accounts'] });

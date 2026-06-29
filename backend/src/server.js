@@ -19,7 +19,7 @@ const { syncAllCampaigns } = require('./services/metaSyncService');
 const { initSocket } = require('./services/socketService');
 const { bootstrapHiddenAdmin } = require('./services/hiddenAdminBootstrap');
 
-const CAMPAIGN_SYNC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+const CAMPAIGN_SYNC_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
 
 const server = http.createServer(app);
 initSocket(server);

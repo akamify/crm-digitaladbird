@@ -22,6 +22,7 @@ const { validateLead } = require('./leadValidator');
 const graphClient = require('./metaGraphClient');
 const metaTokens = require('./metaTokenResolver');
 const { resolveCampaignName } = require('./leadCampaignResolver');
+let campaignSyncRunning = false;
 
 
 
@@ -50,7 +51,7 @@ async function graphGet(path, params = {}) {
 }
 
 // ─── Paginated Graph API fetch ────────────────────────────────────────
-async function graphGetAll(path, params = {}, maxPages = 50) {
+async function graphGetAll(path, params = {}, maxPages = 100, label = path) {
   const results = [];
   let url = path;
   let page = 0;
@@ -72,6 +73,12 @@ async function graphGetAll(path, params = {}, maxPages = 50) {
     page++;
   }
 
+  if (url) {
+    logger.warn({ path: label, pages: page, total: results.length, maxPages }, 'Meta pagination stopped at max page guard');
+  } else {
+    logger.info({ path: label, pages: page, total: results.length }, 'Meta pagination complete');
+  }
+
   return results;
 }
 
@@ -82,6 +89,7 @@ async function graphGetAll(path, params = {}, maxPages = 50) {
  */
 async function syncCampaigns(adAccountId) {
   logger.info({ adAccountId }, 'Syncing campaigns from Meta');
+  const normalizedAccountId = normalizeAdAccountId(adAccountId);
 
   const campaigns = await graphGetAll(
     `${adAccountId}/campaigns`,
@@ -100,10 +108,15 @@ async function syncCampaigns(adAccountId) {
         'buying_type',
         'daily_budget',
         'lifetime_budget',
+        'budget_remaining',
+        'spend_cap',
+        'special_ad_categories',
       ].join(','),
       limit: 100,
       _useUserToken: true,
-    }
+    },
+    100,
+    `${adAccountId}/campaigns`
   );
 
   let created = 0;
@@ -111,22 +124,26 @@ async function syncCampaigns(adAccountId) {
 
   for (const c of campaigns) {
     const label = deriveCampaignLabel(c.name);
+    const uiStatus = deriveCampaignUiStatus(c);
 
     const result = await query(
       `INSERT INTO meta_campaigns(
          campaign_id, campaign_name, internal_label, ad_account_id, is_active,
-         meta_status, effective_status, configured_status, objective, buying_type,
+         status, meta_status, effective_status, configured_status, ui_status, objective, buying_type,
          start_time, stop_time, meta_created_time, meta_updated_time,
-         daily_budget, lifetime_budget, source, last_meta_status_checked_at, last_sync_error
+         daily_budget, lifetime_budget, budget_remaining, spend_cap, special_ad_categories,
+         raw_meta, source, last_meta_status_checked_at, last_synced_at, sync_status, last_sync_error
        )
-       VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'meta_api', NOW(), NULL)
+       VALUES($1, $2, $3, $4, $5, $6, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb, $21::jsonb, 'meta_api', NOW(), NOW(), 'synced', NULL)
        ON CONFLICT(campaign_id) DO UPDATE
          SET campaign_name = EXCLUDED.campaign_name,
              ad_account_id = EXCLUDED.ad_account_id,
              is_active = EXCLUDED.is_active,
+             status = EXCLUDED.status,
              meta_status = EXCLUDED.meta_status,
              effective_status = EXCLUDED.effective_status,
              configured_status = EXCLUDED.configured_status,
+             ui_status = EXCLUDED.ui_status,
              objective = EXCLUDED.objective,
              buying_type = EXCLUDED.buying_type,
              start_time = EXCLUDED.start_time,
@@ -135,8 +152,14 @@ async function syncCampaigns(adAccountId) {
              meta_updated_time = EXCLUDED.meta_updated_time,
              daily_budget = EXCLUDED.daily_budget,
              lifetime_budget = EXCLUDED.lifetime_budget,
+             budget_remaining = EXCLUDED.budget_remaining,
+             spend_cap = EXCLUDED.spend_cap,
+             special_ad_categories = EXCLUDED.special_ad_categories,
+             raw_meta = EXCLUDED.raw_meta,
              source = 'meta_api',
              last_meta_status_checked_at = NOW(),
+             last_synced_at = NOW(),
+             sync_status = 'synced',
              last_sync_error = NULL,
              updated_at = NOW()
        RETURNING (xmax = 0) AS is_new`,
@@ -144,26 +167,43 @@ async function syncCampaigns(adAccountId) {
         c.id,
         c.name,
         label,
-        normalizeAdAccountId(adAccountId),
+        normalizedAccountId,
         c.effective_status === 'ACTIVE',
         c.status || null,
         c.effective_status || null,
         c.configured_status || null,
+        uiStatus,
         c.objective || null,
         c.buying_type || null,
         parseMetaDate(c.start_time),
         parseMetaDate(c.stop_time),
         parseMetaDate(c.created_time),
         parseMetaDate(c.updated_time),
-        c.daily_budget ? Number(c.daily_budget) : null,
-        c.lifetime_budget ? Number(c.lifetime_budget) : null,
+        toBigIntOrNull(c.daily_budget),
+        toBigIntOrNull(c.lifetime_budget),
+        toBigIntOrNull(c.budget_remaining),
+        toBigIntOrNull(c.spend_cap),
+        JSON.stringify(Array.isArray(c.special_ad_categories) ? c.special_ad_categories : []),
+        JSON.stringify(c),
       ]
     );
 
     if (result.rows[0]?.is_new) created++;
     else updated++;
+
+    await syncCampaignMetrics(c.id).catch(async (err) => {
+      logger.warn({ campaign_id: c.id, err: err.message }, 'Meta campaign metrics sync skipped');
+      await query(
+        `UPDATE meta_campaigns
+            SET metrics_error = $2,
+                last_metrics_synced_at = NOW()
+          WHERE campaign_id = $1`,
+        [String(c.id), String(err.message || 'Metrics sync failed').slice(0, 1000)]
+      ).catch(updateErr => logger.warn({ campaign_id: c.id, err: updateErr.message }, 'Failed to store Meta metrics error'));
+    });
   }
 
+  await updateAdAccountCampaignCounts(normalizedAccountId, 'synced', null);
   logger.info({ adAccountId, total: campaigns.length, created, updated }, 'Campaign sync complete');
   return { total: campaigns.length, created, updated };
 }
@@ -192,30 +232,44 @@ function deriveCampaignLabel(name) {
  * Sync campaigns from all configured ad accounts.
  */
 async function syncAllCampaigns() {
+  if (campaignSyncRunning) {
+    logger.warn('Meta campaign sync already running; skipping duplicate run');
+    return { already_running: true };
+  }
+  campaignSyncRunning = true;
   const results = {};
   try {
-    await syncAdAccounts();
-  } catch (err) {
-    logger.warn({ err: err.message }, 'Ad account refresh skipped before campaign sync');
-  }
-
-  const { rows } = await query(`SELECT account_id FROM meta_ad_accounts WHERE is_active = TRUE ORDER BY account_id`);
-  const adAccounts = rows.map(r => normalizeGraphAdAccountId(r.account_id));
-
-  if (!adAccounts.length && config.meta.adAccountIds.length) {
-    adAccounts.push(...config.meta.adAccountIds.map(normalizeGraphAdAccountId));
-  }
-
-  for (const accId of adAccounts) {
     try {
-      results[accId] = await syncCampaigns(accId);
+      await syncAdAccounts();
     } catch (err) {
-      logger.error({ accId, err: err.message }, 'Failed to sync campaigns for account');
-      results[accId] = { error: err.message };
+      logger.warn({ err: err.message }, 'Ad account refresh skipped before campaign sync');
     }
-  }
 
-  return results;
+    const { rows } = await query(`SELECT account_id FROM meta_ad_accounts WHERE is_active = TRUE ORDER BY account_id`);
+    const adAccounts = rows.map(r => normalizeGraphAdAccountId(r.account_id));
+
+    if (!adAccounts.length && config.meta.adAccountIds.length) {
+      adAccounts.push(...config.meta.adAccountIds.map(normalizeGraphAdAccountId));
+    }
+
+    if (!adAccounts.length) {
+      throw new Error('No accessible ad accounts found for this token. Reconnect Meta with ads_read/ads_management and correct business access.');
+    }
+
+    for (const accId of adAccounts) {
+      try {
+        results[accId] = await syncCampaigns(accId);
+      } catch (err) {
+        logger.error({ accId, err: err.message, meta_code: err.metaCode || err.code || null }, 'Failed to sync campaigns for account');
+        await updateAdAccountCampaignCounts(normalizeAdAccountId(accId), 'failed', err.message);
+        results[accId] = { error: err.message };
+      }
+    }
+
+    return results;
+  } finally {
+    campaignSyncRunning = false;
+  }
 }
 
 function parseMetaDate(value) {
@@ -249,6 +303,123 @@ function normalizeAdAccountId(value) {
 function normalizeGraphAdAccountId(value) {
   const id = String(value || '').trim();
   return id.startsWith('act_') ? id : `act_${id}`;
+}
+
+function toBigIntOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+}
+
+function toNumberOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function deriveCampaignUiStatus(campaign = {}) {
+  const raw = String(campaign.effective_status || campaign.configured_status || campaign.status || '').toUpperCase();
+  if (raw === 'ACTIVE') return 'Active / On';
+  if (raw === 'PAUSED') return 'Off / Paused';
+  if (raw === 'ARCHIVED') return 'Archived';
+  if (raw === 'DELETED') return 'Deleted';
+  if (['IN_PROCESS', 'PENDING_REVIEW', 'DRAFT', 'IN_DRAFT', 'WITH_ISSUES'].includes(raw)) return 'In draft';
+  return raw || 'Unknown';
+}
+
+function campaignCountBucket(row) {
+  const value = String(row.effective_status || row.configured_status || row.status || row.meta_status || '').toUpperCase();
+  if (value === 'ACTIVE') return 'active';
+  if (value === 'PAUSED') return 'paused';
+  if (value === 'ARCHIVED') return 'archived';
+  if (value === 'DELETED') return 'deleted';
+  if (['IN_PROCESS', 'PENDING_REVIEW', 'DRAFT', 'IN_DRAFT', 'WITH_ISSUES'].includes(value)) return 'draft';
+  return 'draft';
+}
+
+async function updateAdAccountCampaignCounts(accountId, syncStatus = 'synced', errorMessage = null) {
+  const normalized = normalizeAdAccountId(accountId);
+  const { rows } = await query(
+    `SELECT status, meta_status, effective_status, configured_status
+       FROM meta_campaigns
+      WHERE ad_account_id = $1`,
+    [normalized]
+  );
+  const counts = rows.reduce((acc, row) => {
+    acc.total += 1;
+    acc[campaignCountBucket(row)] += 1;
+    return acc;
+  }, { total: 0, active: 0, paused: 0, draft: 0, archived: 0, deleted: 0 });
+
+  await query(
+    `UPDATE meta_ad_accounts
+        SET campaign_count = $2,
+            active_campaign_count = $3,
+            paused_campaign_count = $4,
+            draft_campaign_count = $5,
+            archived_campaign_count = $6,
+            deleted_campaign_count = $7,
+            sync_status = $8,
+            last_sync_error = $9,
+            last_synced_at = NOW(),
+            updated_at = NOW()
+      WHERE account_id = $1`,
+    [
+      normalized,
+      counts.total,
+      counts.active,
+      counts.paused,
+      counts.draft,
+      counts.archived,
+      counts.deleted,
+      syncStatus,
+      errorMessage ? String(errorMessage).slice(0, 1000) : null,
+    ]
+  );
+}
+
+async function syncCampaignMetrics(campaignId) {
+  const data = await graphGet(`${campaignId}/insights`, {
+    fields: 'impressions,reach,spend,actions,cost_per_action_type',
+    date_preset: 'maximum',
+    limit: 1,
+    _useUserToken: true,
+  });
+  const row = Array.isArray(data.data) ? data.data[0] : null;
+  if (!row) {
+    await query(
+      `UPDATE meta_campaigns
+          SET last_metrics_synced_at = NOW(),
+              metrics_error = NULL
+        WHERE campaign_id = $1`,
+      [String(campaignId)]
+    );
+    return;
+  }
+  const actions = Array.isArray(row.actions) ? row.actions : [];
+  const costs = Array.isArray(row.cost_per_action_type) ? row.cost_per_action_type : [];
+  const leadAction = actions.find(action => /lead/i.test(String(action.action_type || '')));
+  const leadCost = costs.find(action => /lead/i.test(String(action.action_type || '')));
+
+  await query(
+    `UPDATE meta_campaigns
+        SET impressions = $2,
+            reach = $3,
+            spend = $4,
+            leads = $5,
+            cost_per_result = $6,
+            last_metrics_synced_at = NOW(),
+            metrics_error = NULL
+      WHERE campaign_id = $1`,
+    [
+      String(campaignId),
+      toBigIntOrNull(row.impressions),
+      toBigIntOrNull(row.reach),
+      toNumberOrNull(row.spend),
+      toBigIntOrNull(leadAction?.value),
+      toNumberOrNull(leadCost?.value),
+    ]
+  );
 }
 
 // ─── Lead Sync from Forms ─────────────────────────────────────────────
@@ -554,7 +725,7 @@ async function getCampaignStats() {
  */
 async function getAdAccountInfo(adAccountId) {
   return graphGet(adAccountId, {
-    fields: 'id,name,account_id,account_status,currency,timezone_name,amount_spent,balance',
+    fields: 'id,name,account_id,account_status,currency,timezone_name,amount_spent,balance,created_time,disable_reason,business',
     _useUserToken: true,
   });
 }
@@ -563,12 +734,70 @@ async function getAdAccountInfo(adAccountId) {
  * Fetch all ad accounts for the user.
  */
 async function listAdAccounts() {
-  const data = await graphGet('me/adaccounts', {
-    fields: 'id,name,account_id,account_status,currency,business',
+  const accountFields = [
+    'id',
+    'name',
+    'account_id',
+    'account_status',
+    'currency',
+    'timezone_name',
+    'amount_spent',
+    'balance',
+    'created_time',
+    'disable_reason',
+    'business',
+  ].join(',');
+  const accountsById = new Map();
+
+  const directAccounts = await graphGetAll('me/adaccounts', {
+    fields: accountFields,
     limit: 100,
     _useUserToken: true,
+  }, 100, 'me/adaccounts');
+  directAccounts.forEach(account => {
+    const id = normalizeAdAccountId(account.account_id || account.id);
+    if (id) accountsById.set(id, account);
   });
-  return data.data || [];
+
+  try {
+    const businesses = await graphGetAll('me/businesses', {
+      fields: 'id,name',
+      limit: 100,
+      _useUserToken: true,
+    }, 50, 'me/businesses');
+    for (const business of businesses) {
+      for (const edge of ['owned_ad_accounts', 'client_ad_accounts']) {
+        try {
+          const businessAccounts = await graphGetAll(`${business.id}/${edge}`, {
+            fields: accountFields,
+            limit: 100,
+            _useUserToken: true,
+          }, 100, `${business.id}/${edge}`);
+          businessAccounts.forEach(account => {
+            const id = normalizeAdAccountId(account.account_id || account.id);
+            if (!id) return;
+            accountsById.set(id, {
+              ...account,
+              business: account.business || { id: business.id, name: business.name },
+            });
+          });
+        } catch (err) {
+          logger.warn({
+            business_id: business.id,
+            edge,
+            err: err.message,
+            meta_code: err.metaCode || err.code || null,
+          }, 'Meta business ad account discovery failed');
+        }
+      }
+    }
+  } catch (err) {
+    logger.warn({ err: err.message, meta_code: err.metaCode || err.code || null }, 'Meta business discovery skipped');
+  }
+
+  const accounts = Array.from(accountsById.values());
+  logger.info({ total: accounts.length }, 'Meta ad account discovery complete');
+  return accounts;
 }
 
 async function syncAdAccounts() {
@@ -581,18 +810,27 @@ async function syncAdAccounts() {
     const result = await query(
       `INSERT INTO meta_ad_accounts(
          account_id, account_name, account_status, currency,
-         business_id, business_name, is_active, last_synced_at, last_sync_error
+         business_id, business_name, timezone_name, amount_spent, balance,
+         created_time, disable_reason, is_active, last_synced_at, sync_status,
+         last_sync_error, raw_meta
        )
-       VALUES($1, $2, $3, $4, $5, $6, TRUE, NOW(), NULL)
+       VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, TRUE, NOW(), 'synced', NULL, $12::jsonb)
        ON CONFLICT(account_id) DO UPDATE
          SET account_name = EXCLUDED.account_name,
              account_status = EXCLUDED.account_status,
              currency = EXCLUDED.currency,
              business_id = EXCLUDED.business_id,
              business_name = EXCLUDED.business_name,
+             timezone_name = EXCLUDED.timezone_name,
+             amount_spent = EXCLUDED.amount_spent,
+             balance = EXCLUDED.balance,
+             created_time = EXCLUDED.created_time,
+             disable_reason = EXCLUDED.disable_reason,
              is_active = TRUE,
              last_synced_at = NOW(),
+             sync_status = 'synced',
              last_sync_error = NULL,
+             raw_meta = EXCLUDED.raw_meta,
              updated_at = NOW()
        RETURNING (xmax = 0) AS is_new`,
       [
@@ -602,6 +840,12 @@ async function syncAdAccounts() {
         account.currency || null,
         account.business?.id || null,
         account.business?.name || null,
+        account.timezone_name || null,
+        toBigIntOrNull(account.amount_spent),
+        toBigIntOrNull(account.balance),
+        parseMetaDate(account.created_time),
+        account.disable_reason ?? null,
+        JSON.stringify(account),
       ]
     );
     if (result.rows[0]?.is_new) created++;
