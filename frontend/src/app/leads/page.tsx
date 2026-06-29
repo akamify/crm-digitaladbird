@@ -99,6 +99,12 @@ function LeadsInner() {
     setCommunicationTab(tab);
   }
 
+  function openLeadFromRow(event: React.MouseEvent<HTMLTableRowElement>, leadId: string) {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('a,button,input,select,textarea,[role="button"]')) return;
+    router.push(`/leads/${leadId}`);
+  }
+
   function toggleLeadSelection(leadId: string, checked: boolean) {
     setSelectedIds(ids => checked ? [...new Set([...ids, leadId])] : ids.filter(id => id !== leadId));
   }
@@ -289,7 +295,11 @@ function LeadsInner() {
                 {rows.map((lead) => {
                   const locked = Boolean(lead.locked_until && new Date(lead.locked_until) > new Date());
                   return (
-                    <tr key={lead.id} className="table-row">
+                    <tr
+                      key={lead.id}
+                      className="table-row cursor-pointer"
+                      onClick={event => openLeadFromRow(event, lead.id)}
+                    >
                       <td className="px-4 py-3">
                         <input
                           type="checkbox"

@@ -213,8 +213,8 @@ function LeadDetailInner() {
           />
         </main>
 
-        <aside className="min-w-0">
-          <div className="space-y-4 lg:sticky lg:top-24 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto lg:pr-1">
+        <aside className="min-w-0 lg:sticky lg:top-20 lg:h-fit lg:self-start">
+          <div className="space-y-4">
             <LeadSummaryCard lead={lead} />
             <AssignmentCard lead={lead} />
             <FollowUpCard lead={lead} />

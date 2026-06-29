@@ -215,6 +215,7 @@ export function LeadSessionsCard({ leadId, canManage, createSignal = 0 }: { lead
         onClose={closeModal}
         title={editing ? 'Edit Session' : 'Add Session'}
         description="Save the webinar or session this lead attended."
+        size="lg"
         footer={(
           <>
             <Button variant="outline" onClick={closeModal} disabled={isSaving}>Cancel</Button>
