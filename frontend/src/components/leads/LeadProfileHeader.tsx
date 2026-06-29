@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowLeft, Lock, MapPin, Phone } from 'lucide-react';
+import { ArrowLeft, MapPin, Phone } from 'lucide-react';
 import Link from 'next/link';
 import type { LeadDetail } from '@/types';
 import { LeadCategoryBadge } from './LeadCategoryBadge';
@@ -9,12 +9,10 @@ import { getStatusBadgeVariant, isMeaningfulValue } from './leadProfileUtils';
 
 interface Props {
   lead: LeadDetail;
-  lockedByMe: boolean;
-  lockedByOther: boolean;
   actions: React.ReactNode;
 }
 
-export function LeadProfileHeader({ lead, lockedByMe, lockedByOther, actions }: Props) {
+export function LeadProfileHeader({ lead, actions }: Props) {
   const location = [lead.city, lead.state].filter(isMeaningfulValue).join(', ');
   return (
     <header className="sticky top-0 z-20 -mx-3 border-b border-slate-200 bg-white/95 px-3 py-3 backdrop-blur sm:mx-0 sm:rounded-lg sm:border lg:static lg:px-5 lg:py-4">

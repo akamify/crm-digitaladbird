@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { CalendarClock, Edit2, Plus, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/Button';
@@ -81,7 +81,7 @@ function sessionToForm(session: LeadSession): LeadSessionInput {
   };
 }
 
-export function LeadSessionsCard({ leadId, canManage }: { leadId: string; canManage: boolean }) {
+export function LeadSessionsCard({ leadId, canManage, createSignal = 0 }: { leadId: string; canManage: boolean; createSignal?: number }) {
   const sessionsQuery = useLeadSessions(leadId);
   const createSession = useCreateLeadSession();
   const updateSession = useUpdateLeadSession();
@@ -92,6 +92,11 @@ export function LeadSessionsCard({ leadId, canManage }: { leadId: string; canMan
 
   const isSaving = createSession.isPending || updateSession.isPending;
   const sessions = useMemo(() => sessionsQuery.data || [], [sessionsQuery.data]);
+
+  useEffect(() => {
+    if (createSignal > 0 && canManage) openCreate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createSignal, canManage]);
 
   function openCreate() {
     setEditing(null);

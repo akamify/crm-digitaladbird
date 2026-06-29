@@ -16,6 +16,7 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useBulkAddRemark, useLeadList } from '@/hooks/useLeads';
 import { formatISTCompact, formatISTTooltip, formatStageUpdatedAt } from '@/lib/date';
 import { clsx, fmtPhone, humanize, isDueToday, isOverdue, stageChip } from '@/lib/format';
+import { useAuth } from '@/lib/auth';
 import type { Lead, LeadFilters as LeadFilterType } from '@/types';
 
 type CommunicationTab = 'chat' | 'calls';
@@ -31,6 +32,7 @@ export default function LeadsPage() {
 function LeadsInner() {
   const router = useRouter();
   const sp = useSearchParams();
+  const { user } = useAuth();
   const initial = useMemo<LeadFilterType>(() => ({
     q: sp.get('q') || '',
     category: (sp.get('category') as LeadFilterType['category']) || '',
@@ -67,6 +69,7 @@ function LeadsInner() {
   }, [filters, debouncedSearch]);
   const { data, isLoading, isFetching } = useLeadList(effectiveFilters);
   const bulkAddRemark = useBulkAddRemark();
+  const isAdminLeadsView = user?.role === 'super_admin' || user?.role === 'admin';
 
   const rows = data?.rows ?? [];
   const total = data?.total ?? 0;
@@ -124,36 +127,68 @@ function LeadsInner() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
-        {[
-          { key: 'current', label: 'Current Leads', next: { reassignment: '', unworked: '' } },
-          { key: 'to_me', label: 'Reassigned To Me', next: { reassignment: 'to_me', unworked: '' } },
-          { key: 'to_others', label: 'Reassigned To Others', next: { reassignment: 'to_others', unworked: '' } },
-          { key: 'unworked', label: 'Unworked Leads', next: { reassignment: '', unworked: 'true' } },
-        ].map(tab => {
-          const active = tab.key === 'unworked'
-            ? filters.unworked === 'true'
-            : (filters.reassignment || '') === tab.next.reassignment && filters.unworked !== 'true';
-          return (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => setFilters(f => ({
-                ...f,
-                reassignment: tab.next.reassignment as LeadFilterType['reassignment'],
-                unworked: tab.next.unworked as LeadFilterType['unworked'],
-                page: 1,
-              }))}
-              className={clsx(
-                'rounded-lg px-3 py-2 text-sm font-medium transition',
-                active ? 'bg-brand-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50',
-              )}
-            >
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
+      {isAdminLeadsView ? (
+        <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
+          {[
+            { key: 'all', label: 'Leads', assignment: '' },
+            { key: 'unassigned', label: 'Unassigned Leads', assignment: 'unassigned' },
+            { key: 'assigned', label: 'Assigned Leads', assignment: 'assigned' },
+          ].map(tab => {
+            const active = (filters.assignment || '') === tab.assignment && !filters.reassignment && filters.unworked !== 'true';
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setFilters(f => ({
+                  ...f,
+                  assignment: tab.assignment as LeadFilterType['assignment'],
+                  reassignment: '',
+                  unworked: '',
+                  page: 1,
+                }))}
+                className={clsx(
+                  'rounded-lg px-3 py-2 text-sm font-medium transition',
+                  active ? 'bg-brand-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50',
+                )}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
+          {[
+            { key: 'current', label: 'Current Leads', next: { reassignment: '', unworked: '' } },
+            { key: 'to_me', label: 'Reassigned To Me', next: { reassignment: 'to_me', unworked: '' } },
+            { key: 'to_others', label: 'Reassigned To Others', next: { reassignment: 'to_others', unworked: '' } },
+            { key: 'unworked', label: 'Unworked Leads', next: { reassignment: '', unworked: 'true' } },
+          ].map(tab => {
+            const active = tab.key === 'unworked'
+              ? filters.unworked === 'true'
+              : (filters.reassignment || '') === tab.next.reassignment && filters.unworked !== 'true';
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setFilters(f => ({
+                  ...f,
+                  reassignment: tab.next.reassignment as LeadFilterType['reassignment'],
+                  unworked: tab.next.unworked as LeadFilterType['unworked'],
+                  assignment: '',
+                  page: 1,
+                }))}
+                className={clsx(
+                  'rounded-lg px-3 py-2 text-sm font-medium transition',
+                  active ? 'bg-brand-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50',
+                )}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {filters.reassignment === 'to_others' && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">

@@ -3,7 +3,7 @@
 import { Component, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { Lock, MessageCircle, MessageSquarePlus, Phone, Unlock, UserCog } from 'lucide-react';
+import { CalendarClock, MessageCircle, MessageSquarePlus, Phone, UserCog } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/Button';
@@ -17,7 +17,7 @@ import { ReassignModal } from '@/components/leads/ReassignModal';
 import { WorkflowPanel } from '@/components/leads/WorkflowPanel';
 import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
 import { LeadSessionsCard } from '@/components/leads/LeadSessionsCard';
-import { useLead, useLockLead, useUnlockLead } from '@/hooks/useLeads';
+import { useLead } from '@/hooks/useLeads';
 import { useLeadCommunication } from '@/hooks/useLeadCommunication';
 import { useAuth } from '@/lib/auth';
 import { useUpdateLeadCategory } from '@/hooks/useAdminEnterprise';
@@ -33,11 +33,10 @@ function LeadDetailInner() {
   const { user } = useAuth();
   const comm = useLeadCommunication(id);
   const leadQuery = useLead(id);
-  const lock = useLockLead();
-  const unlock = useUnlockLead();
   const updateCategory = useUpdateLeadCategory();
   const [remarkOpen, setRemarkOpen] = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
+  const [sessionCreateSignal, setSessionCreateSignal] = useState(0);
 
   if (!user) return <PageLoader />;
   if (leadQuery.isLoading) return <LeadDetailSkeleton />;
@@ -45,8 +44,6 @@ function LeadDetailInner() {
   const lead = leadQuery.data;
   if (!lead) return <EmptyState title="Lead not found" description="It may have been deleted or you may not have access." action={<Button onClick={() => router.push('/leads')}>Back to leads</Button>} />;
 
-  const lockedByMe = lead.locked_by_user_id === user.id;
-  const lockedByOther = Boolean(lead.locked_until && new Date(lead.locked_until) > new Date() && !lockedByMe);
   const canReassign = user.role === 'super_admin' || user.role === 'rm';
   const canEditCategory = user.role === 'super_admin' || user.role === 'admin';
   const canSeeTechnical = user.role === 'super_admin' || user.role === 'admin';
@@ -81,14 +78,14 @@ function LeadDetailInner() {
       <Button variant="outline" leftIcon={<Phone className="h-4 w-4" />} onClick={callLead} disabled={!lead.phone || readOnlyAccess}>Call</Button>
       {!readOnlyAccess && <Button variant="outline" leftIcon={<MessageCircle className="h-4 w-4" />} onClick={() => router.push(`/chat?leadId=${id}`)}>Chat</Button>}
       {!readOnlyAccess && <Button leftIcon={<MessageSquarePlus className="h-4 w-4" />} onClick={() => setRemarkOpen(true)}>Add Remark</Button>}
+      {!readOnlyAccess && <Button variant="outline" leftIcon={<CalendarClock className="h-4 w-4" />} onClick={() => setSessionCreateSignal(value => value + 1)}>Add Session</Button>}
       {canReassign && !readOnlyAccess && <Button variant="ghost" leftIcon={<UserCog className="h-4 w-4" />} onClick={() => setReassignOpen(true)}>Reassign</Button>}
-      {!readOnlyAccess && (lockedByMe ? <Button variant="ghost" leftIcon={<Unlock className="h-4 w-4" />} loading={unlock.isPending} onClick={() => unlock.mutate({ id }, { onSuccess: () => toast.success('Lock released'), onError: () => toast.error('Failed to release lock') })}>Release lock</Button> : <Button variant="ghost" leftIcon={<Lock className="h-4 w-4" />} loading={lock.isPending} disabled={lockedByOther} onClick={() => lock.mutate({ id, minutes: 10 }, { onSuccess: () => toast.success('Lead locked for 10 minutes'), onError: () => toast.error('Could not acquire lock') })}>{lockedByOther ? 'Locked' : 'Lock'}</Button>)}
     </>
   );
 
   return (
     <div className="space-y-5 pb-20 lg:pb-0">
-      <LeadProfileHeader lead={lead} lockedByMe={lockedByMe} lockedByOther={lockedByOther} actions={desktopActions} />
+      <LeadProfileHeader lead={lead} actions={desktopActions} />
       {readOnlyAccess && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           This lead was reassigned to another member. You can review the profile, remarks, and history, but editing actions are disabled.
@@ -105,11 +102,11 @@ function LeadDetailInner() {
           {!readOnlyAccess && <LeadCommunicationPanel leadId={id} lead={lead} remarks={lead.remarks} />}
           <LeadRemarkTimeline remarks={lead.remarks} onAdd={() => setRemarkOpen(true)} canAdd={!readOnlyAccess} />
         </main>
-        <aside className="lg:sticky lg:top-20 lg:self-start min-w-0 space-y-4 lg:overflow-y-auto lg:pr-1">
+        <aside className="min-w-0 space-y-4 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:self-start lg:overflow-y-auto lg:pr-1">
           <LeadSummaryCard lead={lead} />
           <AssignmentCard lead={lead} />
           <FollowUpCard lead={lead} />
-          <LeadSessionsCard leadId={id} canManage={!readOnlyAccess} />
+          <LeadSessionsCard leadId={id} canManage={!readOnlyAccess} createSignal={sessionCreateSignal} />
           {canSeeTechnical && <TechnicalMetaDetails lead={lead} />}
         </aside>
       </div>
