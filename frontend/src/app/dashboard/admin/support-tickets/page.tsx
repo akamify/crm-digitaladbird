@@ -30,7 +30,7 @@ const STATUS_CLASS: Record<string, string> = {
 };
 
 const CONTROL_CLASS =
-  'input h-12 w-full rounded-2xl border-slate-200 bg-white text-sm shadow-sm transition focus:border-brand-400 focus:ring-2 focus:ring-brand-500/15';
+  'input h-12 w-full rounded-xl border-slate-200 bg-white text-sm shadow-sm transition focus:border-brand-400 focus:ring-2 focus:ring-brand-500/15';
 
 export default function AdminSupportTicketsPage() {
   return (
@@ -73,7 +73,7 @@ function AdminSupportTicketsInner() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-brand-100 text-brand-700">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-100 text-brand-700">
             <LifeBuoy className="h-5 w-5" />
           </div>
 
@@ -91,14 +91,14 @@ function AdminSupportTicketsInner() {
           type="button"
           onClick={() => tickets.refetch()}
           disabled={tickets.isFetching}
-          className="btn-outline inline-flex items-center gap-2 rounded-2xl px-3.5 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+          className="btn-outline inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
         >
           <RefreshCw className={clsx('h-4 w-4', tickets.isFetching && 'animate-spin')} />
           Refresh
         </button>
       </div>
 
-      <div className="rounded-3xl border border-slate-200/80 bg-white p-4 shadow-sm sm:p-5">
+      <div className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-sm sm:p-5">
         <div className="mx-auto flex w-full max-w-6xl flex-col items-stretch justify-center gap-3 lg:flex-row lg:items-center">
           <div className="relative min-w-0 flex-1 lg:max-w-[520px]">
             <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -171,11 +171,11 @@ function AdminSupportTicketsInner() {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-sm">
+      <div className="overflow-hidden rounded-xl border border-slate-200/80 bg-white shadow-sm">
         {tickets.isLoading ? (
           <div className="space-y-2 p-4">
             {Array.from({ length: 6 }).map((_, index) => (
-              <Skeleton key={index} className="h-16 rounded-2xl" />
+              <Skeleton key={index} className="h-16 rounded-xl" />
             ))}
           </div>
         ) : rows.length === 0 ? (
@@ -308,7 +308,7 @@ function TicketRow({
             event.stopPropagation();
             onOpen();
           }}
-          className="btn-outline rounded-2xl px-3 py-1.5 text-xs"
+          className="btn-outline rounded-xl px-3 py-1.5 text-xs"
         >
           View
         </button>
@@ -364,7 +364,7 @@ function TicketDetailModal({
   return (
     <Modal open={Boolean(ticketId)} onClose={onClose} title="Support Ticket Details" size="xl">
       {detail.isLoading || !ticket ? (
-        <Skeleton className="h-72 rounded-2xl" />
+        <Skeleton className="h-72 rounded-xl" />
       ) : (
         <div className="space-y-5">
           <div className="grid min-w-0 gap-3 md:grid-cols-2">
@@ -394,14 +394,14 @@ function TicketDetailModal({
             />
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
             <h3 className="break-words font-semibold text-slate-950">{ticket.subject}</h3>
             <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">
               {ticket.body}
             </p>
           </div>
 
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
             <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">
               Last admin note
             </div>
@@ -411,7 +411,7 @@ function TicketDetailModal({
           </div>
 
           {isClosed ? (
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
               This ticket is already {humanize(ticket.status)}. The final status can be updated only once.
             </div>
           ) : (
@@ -419,7 +419,7 @@ function TicketDetailModal({
               <button
                 type="button"
                 onClick={() => setAction('solved')}
-                className="btn-primary inline-flex items-center gap-2 rounded-2xl px-3.5 py-2 text-sm"
+                className="btn-primary inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm"
               >
                 <CheckCircle2 className="h-4 w-4" />
                 Mark as Solved
@@ -428,7 +428,7 @@ function TicketDetailModal({
               <button
                 type="button"
                 onClick={() => setAction('not_solved')}
-                className="btn-outline inline-flex items-center gap-2 rounded-2xl px-3.5 py-2 text-sm"
+                className="btn-outline inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm"
               >
                 <XCircle className="h-4 w-4" />
                 Mark as Not Solved
@@ -437,7 +437,7 @@ function TicketDetailModal({
           )}
 
           {action && !isClosed && (
-            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
               <label className="block space-y-1.5 text-sm">
                 <span className="font-semibold text-slate-700">
                   Admin note for {humanize(action)}
@@ -453,7 +453,7 @@ function TicketDetailModal({
               <div className="mt-3 flex flex-wrap justify-end gap-2">
                 <button
                   type="button"
-                  className="btn-outline rounded-2xl px-3.5 py-2 text-sm"
+                  className="btn-outline rounded-xl px-3.5 py-2 text-sm"
                   onClick={() => {
                     setAction(null);
                     setNote('');
@@ -465,7 +465,7 @@ function TicketDetailModal({
                 <button
                   type="button"
                   disabled={updateStatus.isPending}
-                  className="btn-primary inline-flex items-center gap-2 rounded-2xl px-3.5 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                  className="btn-primary inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={submit}
                 >
                   {updateStatus.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -480,7 +480,7 @@ function TicketDetailModal({
 
             <div className="space-y-2">
               {(ticket.history || []).map((item) => (
-                <div key={item.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-3 text-sm">
+                <div key={item.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-sm">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-semibold text-slate-800">
                       {humanize(item.action)} {item.status ? `- ${humanize(item.status)}` : ''}
@@ -511,7 +511,7 @@ function TicketDetailModal({
 
 function Info({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="min-w-0 rounded-2xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+    <div className="min-w-0 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
       <div className="text-xs font-medium text-slate-500">{label}</div>
       <div className="mt-1 min-w-0 break-words text-sm font-semibold text-slate-950">
         {value}
@@ -557,20 +557,20 @@ function Pagination({
     <div className="flex flex-wrap items-center justify-end gap-2 text-sm">
       <button
         type="button"
-        className="btn-outline rounded-2xl px-3.5 py-2 disabled:cursor-not-allowed disabled:opacity-50"
+        className="btn-outline rounded-xl px-3.5 py-2 disabled:cursor-not-allowed disabled:opacity-50"
         disabled={page <= 1}
         onClick={() => onChange(page - 1)}
       >
         Previous
       </button>
 
-      <span className="rounded-2xl bg-white px-3.5 py-2 font-medium text-slate-500 shadow-sm ring-1 ring-slate-200">
+      <span className="rounded-xl bg-white px-3.5 py-2 font-medium text-slate-500 shadow-sm ring-1 ring-slate-200">
         Page {page} of {totalPages}
       </span>
 
       <button
         type="button"
-        className="btn-outline rounded-2xl px-3.5 py-2 disabled:cursor-not-allowed disabled:opacity-50"
+        className="btn-outline rounded-xl px-3.5 py-2 disabled:cursor-not-allowed disabled:opacity-50"
         disabled={page >= totalPages}
         onClick={() => onChange(page + 1)}
       >
