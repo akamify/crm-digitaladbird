@@ -101,7 +101,7 @@ function AdminSupportTicketsInner() {
                   <th className="w-72 px-4 py-3 font-medium">Subject</th>
                   <th className="w-32 px-4 py-3 font-medium">Status</th>
                   <th className="w-36 px-4 py-3 font-medium">Submitted</th>
-                  <th className="w-40 px-4 py-3 font-medium">Solved / Not solved</th>
+                  <th className="w-40 px-4 py-3 font-medium">Updated</th>
                   <th className="w-28 px-4 py-3 font-medium">Action</th>
                 </tr>
               </thead>
