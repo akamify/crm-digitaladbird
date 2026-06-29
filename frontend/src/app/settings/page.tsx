@@ -34,6 +34,8 @@ import {
 
 type SettingsTab = 'overview' | 'meta-pages' | 'meta-forms' | 'ad-accounts' | 'campaigns' | 'sheets' | 'admin-tools' | 'webhook-logs';
 
+const settingsActionButtonClass = 'settings-action-button';
+
 type LeadPreviewRow = {
   id: string;
   full_name?: string | null;
@@ -109,9 +111,11 @@ function SettingsInner() {
   ];
 
   return (
-    <div className="space-y-6">
+    <>
+      <SettingsUiPolish />
+      <div className="space-y-6">
       {/* Tab bar */}
-      <div className="flex items-center gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1">
+      <div className="settings-tab-scroll flex items-center gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1">
         {tabs.map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             className={clsx(
@@ -131,7 +135,72 @@ function SettingsInner() {
       {tab === 'sheets' && <SheetsTab />}
       {tab === 'admin-tools' && <AdminToolsTab />}
       {tab === 'webhook-logs' && <WebhookLogsTab />}
-    </div>
+      </div>
+    </>
+  );
+}
+
+function SettingsUiPolish() {
+  return (
+    <style jsx global>{`
+      .settings-action-button {
+        display: inline-flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
+        justify-content: center !important;
+        gap: 0.5rem !important;
+        white-space: nowrap !important;
+        text-align: center !important;
+        line-height: 1 !important;
+        vertical-align: middle !important;
+      }
+
+      .settings-action-button-wide {
+        min-height: 2.5rem;
+      }
+
+      .settings-action-button svg,
+      .settings-icon-link svg {
+        display: block !important;
+        flex-shrink: 0 !important;
+      }
+
+      .settings-action-button > span,
+      .settings-icon-link > span {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1.1;
+      }
+
+      .settings-icon-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.375rem;
+        white-space: nowrap;
+        line-height: 1;
+        text-align: center;
+      }
+
+      .settings-tab-scroll {
+        scrollbar-width: thin;
+        scrollbar-color: rgba(100, 116, 139, 0.35) transparent;
+      }
+
+      .settings-tab-scroll::-webkit-scrollbar {
+        height: 6px;
+      }
+
+      .settings-tab-scroll::-webkit-scrollbar-track {
+        background: transparent;
+      }
+
+      .settings-tab-scroll::-webkit-scrollbar-thumb {
+        border-radius: 999px;
+        background: rgba(100, 116, 139, 0.35);
+      }
+    `}</style>
   );
 }
 
@@ -183,8 +252,9 @@ function OverviewTab({ onNavigate }: { onNavigate: (tab: SettingsTab) => void })
       {/* Integration status cards */}
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-slate-900">Integration Status</h2>
-        <button onClick={() => refetch()} className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">
-          <RefreshCw className="h-3 w-3" /> Refresh
+        <button onClick={() => refetch()} className="settings-icon-link rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">
+          <RefreshCw className="h-3 w-3" />
+          <span>Refresh</span>
         </button>
       </div>
 
@@ -240,7 +310,7 @@ function OverviewTab({ onNavigate }: { onNavigate: (tab: SettingsTab) => void })
                 <span className="text-slate-600">Total leads in DB</span>
                 <span className="text-xs font-bold tabular-nums text-slate-900">{data.leads.total}</span>
               </div>
-              <Button size="sm" variant="outline" className="mt-2 w-full" leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
+              <Button size="sm" variant="outline" className={clsx('mt-2 w-full', settingsActionButtonClass)} leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
                 onClick={(e) => { e.stopPropagation(); sheetSync.mutate(); }} loading={sheetSync.isPending}>
                 Sync all leads to sheet
               </Button>
@@ -476,7 +546,7 @@ function MetaPagesTab() {
           <span className="chip-slate">{pages?.filter(page => page.is_active).length || 0} active</span>
           <span className="chip-slate">{pages?.filter(page => !page.is_active).length || 0} inactive</span>
         </div>
-        <Button size="sm" onClick={() => setAddOpen(true)} leftIcon={<Plus className="h-3.5 w-3.5" />}>Add Page</Button>
+        <Button size="sm" className={settingsActionButtonClass} onClick={() => setAddOpen(true)} leftIcon={<Plus className="h-3.5 w-3.5" />}>Add Page</Button>
       </div>
 
       {isLoading ? <Skeleton className="h-64" /> : !pages?.length ? (
@@ -777,7 +847,7 @@ function MetaFormsTab() {
           <h1 className="text-lg font-semibold text-slate-900">Meta Lead Forms</h1>
           <span className="chip-slate">{forms?.length || 0} forms</span>
         </div>
-        <Button size="sm" onClick={() => setAddOpen(true)} leftIcon={<Plus className="h-3.5 w-3.5" />}>Register Form</Button>
+        <Button size="sm" className={settingsActionButtonClass} onClick={() => setAddOpen(true)} leftIcon={<Plus className="h-3.5 w-3.5" />}>Register Form</Button>
       </div>
 
       {isLoading ? <Skeleton className="h-64" /> : !forms?.length ? (
@@ -1149,16 +1219,18 @@ function AdAccountsTab() {
           <span className="chip-green">{accessibleAccounts.length} API-discovered</span>
           {!!staleAccounts.length && <span className="chip-amber">{staleAccounts.length} stale</span>}
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" className='flex items-center gap-2' onClick={() => refetch()} disabled={isFetching}>
-            {isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Refresh
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button variant="outline" className={settingsActionButtonClass} onClick={() => refetch()} disabled={isFetching}>
+            {isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            <span>Refresh</span>
           </Button>
           <Button
             onClick={() => syncCampaigns.mutate(undefined, { onSuccess: () => toast.success('Ad accounts and campaigns synced'), onError: () => toast.error('Meta sync failed') })}
             disabled={syncCampaigns.isPending}
-            className='flex items-center gap-2'
+            className={settingsActionButtonClass}
           >
-            {syncCampaigns.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Sync from Meta
+            {syncCampaigns.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            <span>Sync from Meta</span>
           </Button>
         </div>
       </div>
@@ -1268,15 +1340,17 @@ function CampaignsTab() {
           {isFetching && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" className='flex items-center gap-2' onClick={() => refetch()} disabled={isFetching}>
-            {isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Refresh
+          <Button variant="outline" className={settingsActionButtonClass} onClick={() => refetch()} disabled={isFetching}>
+            {isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            <span>Refresh</span>
           </Button>
-          <Button variant="outline" className='flex items-center gap-2' onClick={() => setShowDebug(value => !value)}>
-            <Activity className="h-4 w-4" /> Meta Debug
+          <Button variant="outline" className={settingsActionButtonClass} onClick={() => setShowDebug(value => !value)}>
+            <Activity className="h-4 w-4" />
+            <span>Meta Debug</span>
           </Button>
           <Button
             variant="outline"
-            className='flex items-center gap-2'
+            className={settingsActionButtonClass}
             onClick={() => {
               if (selectedAccount === 'all') {
                 syncCampaigns.mutate(undefined, { onSuccess: () => toast.success('All accounts synced'), onError: () => toast.error('Meta sync failed') });
@@ -1287,7 +1361,7 @@ function CampaignsTab() {
             disabled={syncCampaigns.isPending || syncAccount.isPending}
           >
             {(syncCampaigns.isPending || syncAccount.isPending) ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-            {selectedAccount === 'all' ? 'Sync All' : 'Sync Selected'}
+            <span>{selectedAccount === 'all' ? 'Sync All' : 'Sync Selected'}</span>
           </Button>
         </div>
       </div>
@@ -1314,8 +1388,9 @@ function CampaignsTab() {
               <h2 className="text-sm font-semibold text-slate-900">Meta Debug</h2>
               <p className="text-xs text-slate-500">Shows API-returned accounts and campaigns. Tokens are never shown.</p>
             </div>
-            <Button variant="outline" className='flex items-center gap-2' size="sm" onClick={() => debug.refetch()} disabled={debug.isFetching}>
-              {debug.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Refresh debug
+            <Button variant="outline" className={settingsActionButtonClass} size="sm" onClick={() => debug.refetch()} disabled={debug.isFetching}>
+              {debug.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              <span>Refresh debug</span>
             </Button>
           </div>
           {debug.isLoading ? <Skeleton className="h-32" /> : debug.data ? (
@@ -1569,16 +1644,19 @@ function SheetCredentialsManager() {
         <Sheet className="h-4 w-4 text-emerald-600" />
         <h2 className="text-sm font-semibold text-slate-900">Credentials & Sheets</h2>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           {sheetUrl && (
             <a href={sheetUrl} target="_blank" rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition">
-              <Sheet className="h-3.5 w-3.5" /> Open Sheet <ExternalLink className="h-3 w-3" />
+              className="settings-icon-link rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition">
+              <Sheet className="h-3.5 w-3.5" />
+              <span>Open Sheet</span>
+              <ExternalLink className="h-3 w-3" />
             </a>
           )}
           <Button
             size="sm"
             variant="outline"
+            className={settingsActionButtonClass}
             onClick={() => createTabs.mutate(undefined, {
               onSuccess: (result) => {
                 const created = result.created?.length ? `Created: ${result.created.join(', ')}` : '';
@@ -1591,7 +1669,7 @@ function SheetCredentialsManager() {
           >
             Create Missing Tabs
           </Button>
-          <Button size="sm" leftIcon={<Pencil className="h-3.5 w-3.5" />} onClick={() => setOpen(true)}>
+          <Button size="sm" className={settingsActionButtonClass} leftIcon={<Pencil className="h-3.5 w-3.5" />} onClick={() => setOpen(true)}>
             Update Sheet Names
           </Button>
         </div>
@@ -1629,12 +1707,12 @@ function SheetCredentialsManager() {
         )}
 
         {/* Actions */}
-        <div className="mt-4 flex flex-wrap gap-2">
-          <Button size="sm" variant="outline" leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <Button size="sm" variant="outline" className={settingsActionButtonClass} leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
             onClick={() => sheetSync.mutate()} loading={sheetSync.isPending}>
             Sync All Leads to Sheet
           </Button>
-          <Button size="sm" variant="outline" leftIcon={<Zap className="h-3.5 w-3.5" />}
+          <Button size="sm" variant="outline" className={settingsActionButtonClass} leftIcon={<Zap className="h-3.5 w-3.5" />}
             onClick={() => triggerSync.mutate()} loading={triggerSync.isPending}>
             Manual Sync Trigger
           </Button>
@@ -1820,7 +1898,7 @@ function AdminToolsTab() {
       <div className="card-padded">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-semibold text-slate-900">Token & Connectivity Status</h2>
-          <button onClick={() => tokenStatus.refetch()} className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">
+          <button onClick={() => tokenStatus.refetch()} className="settings-icon-link rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">
             <RefreshCw className="h-3 w-3" /> Check
           </button>
         </div>
@@ -1952,8 +2030,9 @@ function WebhookLogsTab() {
           <Activity className="h-5 w-5 text-slate-600" />
           <h1 className="text-lg font-semibold text-slate-900">Sync & Webhook Logs</h1>
         </div>
-        <button onClick={() => refetch()} className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">
-          <RefreshCw className="h-3 w-3" /> Refresh
+        <button onClick={() => refetch()} className="settings-icon-link rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">
+          <RefreshCw className="h-3 w-3" />
+          <span>Refresh</span>
         </button>
       </div>
 
