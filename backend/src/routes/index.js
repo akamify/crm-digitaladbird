@@ -4693,17 +4693,30 @@ router.get('/admin/followups', authenticate, requireRole('super_admin'), asyncHa
   const type = req.query.type || 'all';
   let filter = '';
   if (type === 'overdue') filter = `AND l.next_followup_at < NOW() AND l.next_followup_at::date < CURRENT_DATE`;
-  else if (type === 'today') filter = `AND l.next_followup_at::date = CURRENT_DATE`;
-  else if (type === 'upcoming') filter = `AND l.next_followup_at::date > CURRENT_DATE AND l.next_followup_at::date <= CURRENT_DATE + INTERVAL '7 days'`;
+  else if (type === 'today') filter = `AND (
+    l.next_followup_at::date = CURRENT_DATE
+    OR EXISTS (SELECT 1 FROM lead_remarks lr_follow WHERE lr_follow.lead_id = l.id)
+    OR EXISTS (SELECT 1 FROM lead_workflow wf_follow WHERE wf_follow.lead_id = l.id)
+  )`;
+  else if (type === 'upcoming') filter = `AND (
+    (l.next_followup_at::date > CURRENT_DATE AND l.next_followup_at::date <= CURRENT_DATE + INTERVAL '7 days')
+    OR EXISTS (SELECT 1 FROM lead_remarks lr_follow WHERE lr_follow.lead_id = l.id)
+    OR EXISTS (SELECT 1 FROM lead_workflow wf_follow WHERE wf_follow.lead_id = l.id)
+  )`;
 
   const { rows } = await query(`
     SELECT l.id, l.full_name, l.phone, l.source, l.campaign_name, l.stage, l.call_status,
       l.next_followup_at, l.assigned_to_user_id, u.full_name AS assigned_to_name
     FROM leads l
     LEFT JOIN users u ON u.id = l.assigned_to_user_id
-    WHERE l.deleted_at IS NULL AND l.next_followup_at IS NOT NULL
-      AND l.stage NOT IN ('won', 'lost') ${filter}
-    ORDER BY l.next_followup_at ASC LIMIT 100
+    WHERE l.deleted_at IS NULL
+      AND (
+        l.next_followup_at IS NOT NULL
+        OR EXISTS (SELECT 1 FROM lead_remarks lr_follow WHERE lr_follow.lead_id = l.id)
+        OR EXISTS (SELECT 1 FROM lead_workflow wf_follow WHERE wf_follow.lead_id = l.id)
+      )
+      AND COALESCE(l.stage, '') NOT IN ('won', 'lost') ${filter}
+    ORDER BY l.next_followup_at ASC NULLS LAST, l.updated_at DESC LIMIT 100
   `);
   res.json({ success: true, data: rows });
 }));

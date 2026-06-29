@@ -224,12 +224,23 @@ exports.list = asyncHandler(async (req, res) => {
     where.push(`l.category = $${params.length}`);
   }
 
+  const hasWorkflowOrRemark = `(
+    EXISTS (SELECT 1 FROM lead_remarks lr_follow WHERE lr_follow.lead_id = l.id)
+    OR EXISTS (SELECT 1 FROM lead_workflow wf_follow WHERE wf_follow.lead_id = l.id)
+  )`;
+
   if (req.query.followup === 'today') {
-    where.push(`(l.next_followup_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date`);
+    where.push(`(
+      (l.next_followup_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+      OR ${hasWorkflowOrRemark}
+    )`);
   } else if (req.query.followup === 'overdue') {
     where.push(`l.next_followup_at < NOW()`);
   } else if (req.query.followup === 'week') {
-    where.push(`l.next_followup_at BETWEEN NOW() AND NOW() + INTERVAL '7 days'`);
+    where.push(`(
+      l.next_followup_at BETWEEN NOW() AND NOW() + INTERVAL '7 days'
+      OR ${hasWorkflowOrRemark}
+    )`);
   }
 
   const allowedSort = new Set(['created_at', 'assigned_at', 'next_followup_at', 'updated_at']);
