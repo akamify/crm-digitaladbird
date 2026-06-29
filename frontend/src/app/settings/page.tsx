@@ -22,6 +22,7 @@ import {
   useMetaPagesEnriched, useMetaFormsEnriched, useFormLeads, usePageLeads,
   useMetaWebhookLogs, useSheetsEnriched, useMetaTokenStatus,
   useMetaSubscriptionStatus, useCampaignsEnriched, useMetaAdAccounts,
+  useMetaDebugAccountsCampaigns,
   useSyncCampaigns, useSyncLeads, useUpdateMetaToken, useSubscribePage,
   useSyncMetaAdAccountCampaigns,
   useTestPageToken, useUpdatePageToken, useSyncMetaPageForms, useSetMetaPageActivation,
@@ -1169,7 +1170,7 @@ function AdAccountsTab() {
                   </div>
                   <div>
                     <p className="text-slate-500">Draft</p>
-                    <p className="font-medium text-slate-800">{account.draft_campaign_count || 0}</p>
+                    <p className="font-medium text-slate-800">{account.draft_count_api_available ? (account.draft_campaign_count || 0) : 'Not available from API'}</p>
                   </div>
                   <div>
                     <p className="text-slate-500">Archived / Deleted</p>
@@ -1188,10 +1189,15 @@ function AdAccountsTab() {
                     <p className="font-medium text-slate-800">{humanize(account.sync_status || 'pending')}</p>
                   </div>
                   <div>
-                    <p className="text-slate-500">Last synced</p>
-                    <p className="font-medium text-slate-800">{account.last_synced_at ? fmtRelative(account.last_synced_at) : 'Not synced'}</p>
+                    <p className="text-slate-500">Last successful sync</p>
+                    <p className="font-medium text-slate-800">{account.last_successful_sync_at ? fmtRelative(account.last_successful_sync_at) : account.last_synced_at ? fmtRelative(account.last_synced_at) : 'Not synced'}</p>
                   </div>
                 </div>
+                {!!account.discovery_sources?.length && (
+                  <p className="mt-3 text-xs text-slate-500">
+                    Sources: {account.discovery_sources.map(source => humanize(source.source || 'meta')).join(', ')}
+                  </p>
+                )}
                 {account.last_sync_error && (
                   <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{account.last_sync_error}</p>
                 )}
@@ -1209,14 +1215,17 @@ function CampaignsTab() {
   const [search, setSearch] = useState('');
   const [selectedAccount, setSelectedAccount] = useState('all');
   const [filter, setFilter] = useState<'all' | 'ACTIVE' | 'PAUSED' | 'IN_PROCESS' | 'ARCHIVED' | 'DELETED'>('all');
+  const [showDebug, setShowDebug] = useState(false);
   const { data: campaigns, isLoading, isFetching, refetch } = useCampaignsEnriched({
     account: selectedAccount === 'all' ? undefined : selectedAccount,
     status: filter,
     search,
   });
+  const debug = useMetaDebugAccountsCampaigns(showDebug);
   const syncCampaigns = useSyncCampaigns();
   const syncAccount = useSyncMetaAdAccountCampaigns();
   const totalCampaigns = accounts?.reduce((sum, account) => sum + (account.campaign_count || 0), 0) || campaigns?.length || 0;
+  const selectedAccountRow = selectedAccount === 'all' ? null : accounts?.find(account => account.account_id === selectedAccount) || null;
 
   return (
     <div className="space-y-6">
@@ -1230,6 +1239,9 @@ function CampaignsTab() {
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" onClick={() => refetch()} disabled={isFetching}>
             {isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Refresh
+          </Button>
+          <Button variant="outline" onClick={() => setShowDebug(value => !value)}>
+            <Activity className="h-4 w-4" /> Meta Debug
           </Button>
           <Button
             variant="outline"
@@ -1247,6 +1259,73 @@ function CampaignsTab() {
           </Button>
         </div>
       </div>
+
+      {selectedAccountRow && (
+        <div className={clsx('rounded-xl border p-4 text-sm', selectedAccountRow.sync_status === 'stale_failed' || selectedAccountRow.sync_status === 'failed' ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-blue-200 bg-blue-50 text-blue-800')}>
+          <div className="flex flex-wrap items-center gap-2">
+            <strong>{selectedAccountRow.account_name || selectedAccountRow.account_id}</strong>
+            <span className={selectedAccountRow.sync_status === 'stale_failed' || selectedAccountRow.sync_status === 'failed' ? 'chip-red' : 'chip-green'}>{humanize(selectedAccountRow.sync_status || 'pending')}</span>
+            {selectedAccountRow.total_returned_by_api !== null && selectedAccountRow.total_returned_by_api !== undefined && <span className="chip-slate">{selectedAccountRow.total_returned_by_api} returned by API</span>}
+            {!!selectedAccountRow.missing_from_latest_sync_count && <span className="chip-amber">{selectedAccountRow.missing_from_latest_sync_count} stale/missing</span>}
+          </div>
+          <p className="mt-2 text-xs">
+            Draft/unpublished campaigns may not be returned by the standard campaigns edge for this token/API access. Published, paused, active, archived, and deleted objects returned by Meta API are synced.
+          </p>
+          {selectedAccountRow.last_sync_error && <p className="mt-2 text-xs font-medium">{selectedAccountRow.last_sync_error}</p>}
+        </div>
+      )}
+
+      {showDebug && (
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">Meta Debug</h2>
+              <p className="text-xs text-slate-500">Shows API-returned accounts and campaigns. Tokens are never shown.</p>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => debug.refetch()} disabled={debug.isFetching}>
+              {debug.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Refresh debug
+            </Button>
+          </div>
+          {debug.isLoading ? <Skeleton className="h-32" /> : debug.data ? (
+            <div className="space-y-3">
+              <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
+                Token source: <strong>{debug.data.token.source || 'not configured'}</strong>
+              </div>
+              {debug.data.discovery.errors?.length > 0 && (
+                <div className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
+                  Discovery warnings: {debug.data.discovery.errors.map((error, index) => <span key={index} className="block">{String(error.endpoint || error.source)}: {String(error.error || 'Unknown error')}</span>)}
+                </div>
+              )}
+              <div className="max-h-96 overflow-y-auto space-y-3">
+                {debug.data.accounts.map(account => (
+                  <div key={account.account_id} className="rounded-lg border border-slate-100 p-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <strong className="text-sm text-slate-900">{account.name || account.account_id}</strong>
+                      <span className={account.status === 'ok' ? 'chip-green' : 'chip-red'}>{account.status}</span>
+                      {account.campaign_count !== undefined && <span className="chip-slate">{account.campaign_count} API campaigns</span>}
+                    </div>
+                    {account.error && <p className="mt-2 text-xs text-rose-700">{account.error}</p>}
+                    {account.action && <p className="mt-1 text-xs text-slate-600">{account.action}</p>}
+                    {account.campaigns?.length ? (
+                      <div className="mt-2 grid gap-1 text-xs text-slate-600">
+                        {account.campaigns.map(campaign => (
+                          <div key={campaign.id} className="flex flex-wrap gap-2 rounded bg-slate-50 px-2 py-1">
+                            <span className="font-medium text-slate-800">{campaign.name}</span>
+                            <span>{campaign.id}</span>
+                            <span>{campaign.effective_status || campaign.configured_status || campaign.status || 'Unknown'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500">Click refresh debug to fetch Meta API diagnostics.</p>
+          )}
+        </div>
+      )}
 
       {accountsLoading ? <Skeleton className="h-24" /> : (
         <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
@@ -1279,8 +1358,9 @@ function CampaignsTab() {
                 <MiniStat label="Total" value={account.campaign_count || 0} color="text-slate-900" />
                 <MiniStat label="On" value={account.active_campaign_count || 0} color="text-emerald-700" />
                 <MiniStat label="Off" value={account.paused_campaign_count || 0} color="text-amber-700" />
-                <MiniStat label="Draft" value={account.draft_campaign_count || 0} color="text-violet-700" />
+                <MiniStat label="Draft" value={account.draft_count_api_available ? (account.draft_campaign_count || 0) : 0} color="text-violet-700" />
               </div>
+              {!account.draft_count_api_available && <p className="mt-2 text-xs text-slate-500">Draft: not available from API</p>}
               {account.last_sync_error && <p className="mt-3 line-clamp-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{account.last_sync_error}</p>}
             </button>
           ))}

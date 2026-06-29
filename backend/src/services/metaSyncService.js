@@ -12,6 +12,7 @@
  *   - Manual sync triggers
  */
 const config = require('../config/env');
+const { randomUUID } = require('crypto');
 const { query, withTransaction } = require('../config/database');
 const logger = require('../utils/logger');
 const { isDistributionActive } = require('./distributionScheduler');
@@ -65,11 +66,23 @@ async function graphGetAll(path, params = {}, maxPages = 100, label = path) {
   delete requestParams._pageId;
   delete requestParams._useUserToken;
   if (!token) throw new Error('No required Meta token configured');
+  const logParams = { ...requestParams };
 
   while (url && page < maxPages) {
     const data = await graphClient.graphGet(url, page === 0 ? requestParams : {}, token, { tokenSource, pageId });
-    if (data.data) results.push(...data.data);
+    const items = Array.isArray(data.data) ? data.data : [];
+    if (items.length) results.push(...items);
     url = data.paging?.next || null;
+    logger.info({
+      endpoint: label,
+      requested_fields: page === 0 ? logParams.fields || null : null,
+      params: page === 0 ? logParams : {},
+      page: page + 1,
+      page_item_count: items.length,
+      total_item_count: results.length,
+      has_next: Boolean(url),
+      token_source: tokenSource || 'unknown',
+    }, 'Meta Graph paginated page fetched');
     page++;
   }
 
@@ -90,6 +103,15 @@ async function graphGetAll(path, params = {}, maxPages = 100, label = path) {
 async function syncCampaigns(adAccountId) {
   logger.info({ adAccountId }, 'Syncing campaigns from Meta');
   const normalizedAccountId = normalizeAdAccountId(adAccountId);
+  const syncRunId = randomUUID();
+  await query(
+    `UPDATE meta_ad_accounts
+        SET last_sync_attempted_at = NOW(),
+            sync_status = CASE WHEN sync_status = 'failed' THEN 'stale' ELSE sync_status END,
+            updated_at = NOW()
+      WHERE account_id = $1`,
+    [normalizedAccountId]
+  );
 
   const campaigns = await graphGetAll(
     `${adAccountId}/campaigns`,
@@ -121,10 +143,12 @@ async function syncCampaigns(adAccountId) {
 
   let created = 0;
   let updated = 0;
+  const seenCampaignIds = [];
 
   for (const c of campaigns) {
     const label = deriveCampaignLabel(c.name);
     const uiStatus = deriveCampaignUiStatus(c);
+    seenCampaignIds.push(String(c.id));
 
     const result = await query(
       `INSERT INTO meta_campaigns(
@@ -132,9 +156,10 @@ async function syncCampaigns(adAccountId) {
          status, meta_status, effective_status, configured_status, ui_status, objective, buying_type,
          start_time, stop_time, meta_created_time, meta_updated_time,
          daily_budget, lifetime_budget, budget_remaining, spend_cap, special_ad_categories,
-         raw_meta, source, last_meta_status_checked_at, last_synced_at, sync_status, last_sync_error
+         raw_meta, source, last_meta_status_checked_at, last_synced_at, sync_status, last_sync_error,
+         last_seen_sync_run_id, missing_from_latest_sync, last_seen_at
        )
-       VALUES($1, $2, $3, $4, $5, $6, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb, $21::jsonb, 'meta_api', NOW(), NOW(), 'synced', NULL)
+       VALUES($1, $2, $3, $4, $5, $6, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb, $21::jsonb, 'meta_api', NOW(), NOW(), 'synced', NULL, $22, FALSE, NOW())
        ON CONFLICT(campaign_id) DO UPDATE
          SET campaign_name = EXCLUDED.campaign_name,
              ad_account_id = EXCLUDED.ad_account_id,
@@ -161,6 +186,9 @@ async function syncCampaigns(adAccountId) {
              last_synced_at = NOW(),
              sync_status = 'synced',
              last_sync_error = NULL,
+             last_seen_sync_run_id = EXCLUDED.last_seen_sync_run_id,
+             missing_from_latest_sync = FALSE,
+             last_seen_at = NOW(),
              updated_at = NOW()
        RETURNING (xmax = 0) AS is_new`,
       [
@@ -185,6 +213,7 @@ async function syncCampaigns(adAccountId) {
         toBigIntOrNull(c.spend_cap),
         JSON.stringify(Array.isArray(c.special_ad_categories) ? c.special_ad_categories : []),
         JSON.stringify(c),
+        syncRunId,
       ]
     );
 
@@ -203,8 +232,29 @@ async function syncCampaigns(adAccountId) {
     });
   }
 
-  await updateAdAccountCampaignCounts(normalizedAccountId, 'synced', null);
-  logger.info({ adAccountId, total: campaigns.length, created, updated }, 'Campaign sync complete');
+  await query(
+    `UPDATE meta_campaigns
+        SET missing_from_latest_sync = TRUE,
+            sync_status = CASE WHEN sync_status = 'synced' THEN 'missing_from_latest_sync' ELSE sync_status END
+      WHERE ad_account_id = $1
+        AND (last_seen_sync_run_id IS DISTINCT FROM $2 OR last_seen_sync_run_id IS NULL)`,
+    [normalizedAccountId, syncRunId]
+  );
+
+  logger.info({
+    adAccountId,
+    total: campaigns.length,
+    created,
+    updated,
+    campaigns: campaigns.map(c => ({
+      id: c.id,
+      name: c.name,
+      status: c.status,
+      configured_status: c.configured_status,
+      effective_status: c.effective_status,
+    })),
+  }, 'Campaign sync complete');
+  await updateAdAccountCampaignCounts(normalizedAccountId, 'synced', null, { returnedByApi: campaigns.length, syncRunId });
   return { total: campaigns.length, created, updated };
 }
 
@@ -261,7 +311,7 @@ async function syncAllCampaigns() {
         results[accId] = await syncCampaigns(accId);
       } catch (err) {
         logger.error({ accId, err: err.message, meta_code: err.metaCode || err.code || null }, 'Failed to sync campaigns for account');
-        await updateAdAccountCampaignCounts(normalizeAdAccountId(accId), 'failed', err.message);
+        await updateAdAccountCampaignCounts(normalizeAdAccountId(accId), 'stale_failed', err.message);
         results[accId] = { error: err.message };
       }
     }
@@ -334,22 +384,31 @@ function campaignCountBucket(row) {
   if (value === 'ARCHIVED') return 'archived';
   if (value === 'DELETED') return 'deleted';
   if (['IN_PROCESS', 'PENDING_REVIEW', 'DRAFT', 'IN_DRAFT', 'WITH_ISSUES'].includes(value)) return 'draft';
-  return 'draft';
+  return null;
 }
 
-async function updateAdAccountCampaignCounts(accountId, syncStatus = 'synced', errorMessage = null) {
+async function updateAdAccountCampaignCounts(accountId, syncStatus = 'synced', errorMessage = null, options = {}) {
   const normalized = normalizeAdAccountId(accountId);
   const { rows } = await query(
     `SELECT status, meta_status, effective_status, configured_status
        FROM meta_campaigns
-      WHERE ad_account_id = $1`,
+      WHERE ad_account_id = $1
+        AND missing_from_latest_sync IS NOT TRUE`,
     [normalized]
   );
   const counts = rows.reduce((acc, row) => {
     acc.total += 1;
-    acc[campaignCountBucket(row)] += 1;
+    const bucket = campaignCountBucket(row);
+    if (bucket) acc[bucket] += 1;
     return acc;
   }, { total: 0, active: 0, paused: 0, draft: 0, archived: 0, deleted: 0 });
+  const missing = await query(
+    `SELECT COUNT(*)::int AS count
+       FROM meta_campaigns
+      WHERE ad_account_id = $1
+        AND missing_from_latest_sync IS TRUE`,
+    [normalized]
+  );
 
   await query(
     `UPDATE meta_ad_accounts
@@ -361,7 +420,13 @@ async function updateAdAccountCampaignCounts(accountId, syncStatus = 'synced', e
             deleted_campaign_count = $7,
             sync_status = $8,
             last_sync_error = $9,
-            last_synced_at = NOW(),
+            last_synced_at = CASE WHEN $8 = 'synced' THEN NOW() ELSE last_synced_at END,
+            last_successful_sync_at = CASE WHEN $8 = 'synced' THEN NOW() ELSE last_successful_sync_at END,
+            last_sync_attempted_at = NOW(),
+            draft_count_api_available = $10,
+            total_returned_by_api = $11,
+            missing_from_latest_sync_count = $12,
+            last_campaign_sync_run_id = $13,
             updated_at = NOW()
       WHERE account_id = $1`,
     [
@@ -374,6 +439,10 @@ async function updateAdAccountCampaignCounts(accountId, syncStatus = 'synced', e
       counts.deleted,
       syncStatus,
       errorMessage ? String(errorMessage).slice(0, 1000) : null,
+      counts.draft > 0,
+      options.returnedByApi ?? counts.total,
+      missing.rows[0]?.count || 0,
+      options.syncRunId || null,
     ]
   );
 }
@@ -734,6 +803,26 @@ async function getAdAccountInfo(adAccountId) {
  * Fetch all ad accounts for the user.
  */
 async function listAdAccounts() {
+  const detailed = await discoverAdAccountsDetailed();
+  return detailed.accounts;
+}
+
+function addDiscoveredAccount(accountsById, account, source) {
+  const id = normalizeAdAccountId(account?.account_id || account?.id);
+  if (!id) return;
+  const existing = accountsById.get(id) || {};
+  const sources = Array.isArray(existing.discovery_sources) ? existing.discovery_sources : [];
+  const nextSources = [...sources, source].filter(Boolean);
+  accountsById.set(id, {
+    ...existing,
+    ...account,
+    account_id: id,
+    graph_id: normalizeGraphAdAccountId(id),
+    discovery_sources: nextSources.filter((item, index, arr) => arr.findIndex(other => JSON.stringify(other) === JSON.stringify(item)) === index),
+  });
+}
+
+async function discoverAdAccountsDetailed() {
   const accountFields = [
     'id',
     'name',
@@ -748,15 +837,20 @@ async function listAdAccounts() {
     'business',
   ].join(',');
   const accountsById = new Map();
+  const discovery = {
+    token_source: null,
+    sources: [],
+    errors: [],
+  };
 
   const directAccounts = await graphGetAll('me/adaccounts', {
     fields: accountFields,
     limit: 100,
     _useUserToken: true,
   }, 100, 'me/adaccounts');
+  discovery.sources.push({ source: 'user_adaccounts', endpoint: 'me/adaccounts', count: directAccounts.length });
   directAccounts.forEach(account => {
-    const id = normalizeAdAccountId(account.account_id || account.id);
-    if (id) accountsById.set(id, account);
+    addDiscoveredAccount(accountsById, account, { source: 'user_adaccounts', endpoint: 'me/adaccounts' });
   });
 
   try {
@@ -765,6 +859,7 @@ async function listAdAccounts() {
       limit: 100,
       _useUserToken: true,
     }, 50, 'me/businesses');
+    discovery.sources.push({ source: 'businesses', endpoint: 'me/businesses', count: businesses.length, businesses: businesses.map(b => ({ id: b.id, name: b.name })) });
     for (const business of businesses) {
       for (const edge of ['owned_ad_accounts', 'client_ad_accounts']) {
         try {
@@ -773,15 +868,22 @@ async function listAdAccounts() {
             limit: 100,
             _useUserToken: true,
           }, 100, `${business.id}/${edge}`);
+          discovery.sources.push({ source: edge, endpoint: `${business.id}/${edge}`, business_id: business.id, business_name: business.name, count: businessAccounts.length });
           businessAccounts.forEach(account => {
-            const id = normalizeAdAccountId(account.account_id || account.id);
-            if (!id) return;
-            accountsById.set(id, {
+            addDiscoveredAccount(accountsById, {
               ...account,
               business: account.business || { id: business.id, name: business.name },
-            });
+            }, { source: edge, endpoint: `${business.id}/${edge}`, business_id: business.id, business_name: business.name });
           });
         } catch (err) {
+          discovery.errors.push({
+            source: edge,
+            endpoint: `${business.id}/${edge}`,
+            business_id: business.id,
+            business_name: business.name,
+            error: err.message,
+            meta_code: err.metaCode || err.code || null,
+          });
           logger.warn({
             business_id: business.id,
             edge,
@@ -792,12 +894,20 @@ async function listAdAccounts() {
       }
     }
   } catch (err) {
+    discovery.errors.push({ source: 'businesses', endpoint: 'me/businesses', error: err.message, meta_code: err.metaCode || err.code || null });
     logger.warn({ err: err.message, meta_code: err.metaCode || err.code || null }, 'Meta business discovery skipped');
   }
 
   const accounts = Array.from(accountsById.values());
-  logger.info({ total: accounts.length }, 'Meta ad account discovery complete');
-  return accounts;
+  logger.info({
+    total: accounts.length,
+    accounts: accounts.map(account => ({
+      account_id: account.account_id,
+      name: account.name,
+      sources: account.discovery_sources,
+    })),
+  }, 'Meta ad account discovery complete');
+  return { accounts, discovery };
 }
 
 async function syncAdAccounts() {
@@ -812,9 +922,10 @@ async function syncAdAccounts() {
          account_id, account_name, account_status, currency,
          business_id, business_name, timezone_name, amount_spent, balance,
          created_time, disable_reason, is_active, last_synced_at, sync_status,
-         last_sync_error, raw_meta
+         last_sync_error, raw_meta, discovery_sources, graph_id,
+         last_sync_attempted_at, last_successful_sync_at
        )
-       VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, TRUE, NOW(), 'synced', NULL, $12::jsonb)
+       VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, TRUE, NOW(), 'synced', NULL, $12::jsonb, $13::jsonb, $14, NOW(), NOW())
        ON CONFLICT(account_id) DO UPDATE
          SET account_name = EXCLUDED.account_name,
              account_status = EXCLUDED.account_status,
@@ -831,6 +942,10 @@ async function syncAdAccounts() {
              sync_status = 'synced',
              last_sync_error = NULL,
              raw_meta = EXCLUDED.raw_meta,
+             discovery_sources = EXCLUDED.discovery_sources,
+             graph_id = EXCLUDED.graph_id,
+             last_sync_attempted_at = NOW(),
+             last_successful_sync_at = NOW(),
              updated_at = NOW()
        RETURNING (xmax = 0) AS is_new`,
       [
@@ -846,6 +961,8 @@ async function syncAdAccounts() {
         parseMetaDate(account.created_time),
         account.disable_reason ?? null,
         JSON.stringify(account),
+        JSON.stringify(account.discovery_sources || []),
+        normalizeGraphAdAccountId(accountId),
       ]
     );
     if (result.rows[0]?.is_new) created++;
@@ -1020,6 +1137,84 @@ async function checkConnectivity() {
   }
 }
 
+async function debugAccountsCampaigns() {
+  const token = await metaTokens.getUserToken().catch(() => null);
+  const discovered = await discoverAdAccountsDetailed();
+  const accounts = [];
+
+  for (const account of discovered.accounts) {
+    const accountId = normalizeAdAccountId(account.account_id || account.id);
+    try {
+      const campaigns = await graphGetAll(
+        `${normalizeGraphAdAccountId(accountId)}/campaigns`,
+        {
+          fields: [
+            'id',
+            'name',
+            'status',
+            'effective_status',
+            'configured_status',
+            'objective',
+            'created_time',
+            'updated_time',
+            'start_time',
+            'stop_time',
+            'buying_type',
+            'daily_budget',
+            'lifetime_budget',
+            'budget_remaining',
+            'special_ad_categories',
+          ].join(','),
+          limit: 100,
+          _useUserToken: true,
+        },
+        100,
+        `${normalizeGraphAdAccountId(accountId)}/campaigns:debug`
+      );
+      accounts.push({
+        account_id: accountId,
+        graph_id: normalizeGraphAdAccountId(accountId),
+        name: account.name || null,
+        discovery_sources: account.discovery_sources || [],
+        status: 'ok',
+        campaign_count: campaigns.length,
+        draft_unpublished_note: 'Draft/unpublished campaigns may not be returned by the standard campaigns edge for this token/API access. Published, paused, active, archived, and deleted objects returned by Meta API are listed here.',
+        campaigns: campaigns.map(campaign => ({
+          id: campaign.id,
+          name: campaign.name,
+          status: campaign.status || null,
+          configured_status: campaign.configured_status || null,
+          effective_status: campaign.effective_status || null,
+          ui_status: deriveCampaignUiStatus(campaign),
+        })),
+      });
+    } catch (err) {
+      accounts.push({
+        account_id: accountId,
+        graph_id: normalizeGraphAdAccountId(accountId),
+        name: account.name || null,
+        discovery_sources: account.discovery_sources || [],
+        status: 'error',
+        error: err.message,
+        meta_code: err.metaCode || err.code || null,
+        action: /ads_management|ads_read|permission/i.test(String(err.message))
+          ? 'Reconnect Meta with ads_read/ads_management and ensure the token user/system user has access to this ad account in Business Manager.'
+          : 'Check Meta token and Business Manager access for this ad account.',
+      });
+    }
+  }
+
+  return {
+    token: {
+      configured: Boolean(token?.token),
+      source: token?.source || null,
+      expires_at: token?.expires_at || null,
+    },
+    discovery: discovered.discovery,
+    accounts,
+  };
+}
+
 module.exports = {
   syncFormLeads,
   syncAllFormLeads,
@@ -1035,6 +1230,7 @@ module.exports = {
   unsubscribePageFromLeadgen,
   getPageSubscriptions,
   debugToken,
+  debugAccountsCampaigns,
   checkConnectivity,
   deriveCampaignLabel,
   ingestGraphLead, // exposed for recovery scripts that need per-page tokens

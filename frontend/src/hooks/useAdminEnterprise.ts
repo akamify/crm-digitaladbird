@@ -890,6 +890,7 @@ export interface CampaignEnriched {
   account_name?: string | null; account_status?: number | null; ad_account_sync_status?: string | null; ad_account_sync_error?: string | null;
   meta_updated_time?: string | null; last_meta_status_checked_at?: string | null; last_synced_at?: string | null; sync_status?: string | null; last_sync_error?: string | null;
   last_metrics_synced_at?: string | null; metrics_error?: string | null;
+  missing_from_latest_sync?: boolean | null; last_seen_at?: string | null;
 }
 
 export function useCampaignsEnriched(filters?: { account?: string; status?: string; search?: string }) {
@@ -928,6 +929,13 @@ export interface MetaAdAccount {
   archived_campaign_count?: number;
   deleted_campaign_count?: number;
   sync_status?: string | null;
+  discovery_sources?: Array<{ source?: string; endpoint?: string; business_id?: string; business_name?: string }>;
+  graph_id?: string | null;
+  last_sync_attempted_at?: string | null;
+  last_successful_sync_at?: string | null;
+  draft_count_api_available?: boolean;
+  total_returned_by_api?: number | null;
+  missing_from_latest_sync_count?: number;
   updated_at?: string | null;
 }
 
@@ -936,6 +944,34 @@ export function useMetaAdAccounts() {
     queryKey: ['admin', 'meta-ad-accounts'],
     queryFn: () => apiGet<MetaAdAccount[]>('/meta/ad-accounts'),
     staleTime: 60_000,
+  });
+}
+
+export interface MetaDebugAccountsCampaigns {
+  token: { configured: boolean; source: string | null; expires_at: string | null };
+  discovery: {
+    sources: Array<Record<string, unknown>>;
+    errors: Array<Record<string, unknown>>;
+  };
+  accounts: Array<{
+    account_id: string;
+    graph_id: string;
+    name: string | null;
+    discovery_sources: Array<Record<string, unknown>>;
+    status: 'ok' | 'error';
+    campaign_count?: number;
+    error?: string;
+    action?: string;
+    campaigns?: Array<{ id: string; name: string; status: string | null; configured_status: string | null; effective_status: string | null; ui_status: string }>;
+  }>;
+}
+
+export function useMetaDebugAccountsCampaigns(enabled: boolean) {
+  return useQuery({
+    queryKey: ['admin', 'meta-debug-accounts-campaigns'],
+    queryFn: () => apiGet<MetaDebugAccountsCampaigns>('/admin/meta/debug/accounts-campaigns'),
+    enabled,
+    staleTime: 0,
   });
 }
 

@@ -2214,6 +2214,7 @@ router.get('/meta/ad-accounts', authenticate, requireRole('super_admin'), asyncH
         COUNT(*) FILTER (WHERE COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status) = 'DELETED')::int AS deleted_campaigns
       FROM meta_campaigns mc
       WHERE mc.ad_account_id = a.account_id
+        AND mc.missing_from_latest_sync IS NOT TRUE
     ) c ON TRUE
     ORDER BY a.account_name NULLS LAST, a.account_id
   `);
@@ -2227,6 +2228,16 @@ router.post('/meta/ad-accounts/:accountId/sync-campaigns', authenticate, require
     const result = await metaSync.syncCampaigns(`act_${accountId}`);
     res.json({ success: true, data: result });
   } catch (err) {
+    const accountId = String(req.params.accountId || '').replace(/^act_/, '');
+    await query(
+      `UPDATE meta_ad_accounts
+          SET sync_status = 'stale_failed',
+              last_sync_error = $2,
+              last_sync_attempted_at = NOW(),
+              updated_at = NOW()
+        WHERE account_id = $1`,
+      [accountId, String(err.message || 'Campaign sync failed').slice(0, 1000)]
+    ).catch(() => {});
     res.status(502).json({ success: false, error: metaGraphError(err, 'Campaign sync failed'), data: null });
   }
 }));
@@ -2238,6 +2249,15 @@ router.get('/meta/ad-accounts/discover', authenticate, requireRole('super_admin'
     res.json({ success: true, data: accounts });
   } catch (err) {
     res.status(502).json({ success: false, error: metaGraphError(err, 'Failed to list ad accounts'), data: [] });
+  }
+}));
+
+router.get('/admin/meta/debug/accounts-campaigns', authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
+  try {
+    const data = await metaSync.debugAccountsCampaigns();
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(502).json({ success: false, error: metaGraphError(err, 'Meta debug failed'), data: null });
   }
 }));
 
@@ -5116,8 +5136,12 @@ router.get('/admin/meta/campaigns-enriched', authenticate, requireRole('super_ad
     where.push(`mc.ad_account_id = $${params.length}`);
   }
   if (status && status !== 'ALL') {
-    params.push(status);
-    where.push(`UPPER(COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status, 'UNKNOWN')) = $${params.length}`);
+    if (status === 'DRAFT' || status === 'IN_PROCESS') {
+      where.push(`UPPER(COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status, 'UNKNOWN')) IN ('IN_PROCESS', 'PENDING_REVIEW', 'DRAFT', 'IN_DRAFT', 'WITH_ISSUES')`);
+    } else {
+      params.push(status);
+      where.push(`UPPER(COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status, 'UNKNOWN')) = $${params.length}`);
+    }
   }
   if (search) {
     params.push(`%${search.toLowerCase()}%`);
@@ -5147,6 +5171,7 @@ router.get('/admin/meta/campaigns-enriched', authenticate, requireRole('super_ad
       mc.last_synced_at, mc.sync_status, mc.last_sync_error,
       mc.impressions, mc.reach, mc.spend, mc.leads AS meta_leads,
       mc.cost_per_result, mc.last_metrics_synced_at, mc.metrics_error,
+      mc.missing_from_latest_sync, mc.last_seen_at,
       aa.account_name, aa.account_status, aa.sync_status AS ad_account_sync_status,
       aa.last_sync_error AS ad_account_sync_error,
       (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_campaign_id = mc.campaign_id) AS lead_count,
