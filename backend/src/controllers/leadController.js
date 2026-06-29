@@ -168,6 +168,11 @@ exports.list = asyncHandler(async (req, res) => {
       where.push(`l.assigned_to_user_id = $${params.length}`);
     }
   }
+  if (req.query.assigned_today === 'true') {
+    where.push(`l.assigned_to_user_id IS NOT NULL`);
+    where.push(`l.assigned_at IS NOT NULL`);
+    where.push(`(l.assigned_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date`);
+  }
 
   if (req.query.q) {
     params.push(`%${req.query.q.trim()}%`);

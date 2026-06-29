@@ -148,6 +148,7 @@ export interface LeadFilters {
   followup?: 'today' | 'overdue' | 'upcoming' | '';
   reassignment?: 'to_me' | 'to_others' | '';
   assignment?: 'assigned' | 'unassigned' | '';
+  assigned_today?: 'true' | '';
   assigned_to?: string;
   page?: number;
   page_size?: number;

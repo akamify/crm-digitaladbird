@@ -41,6 +41,7 @@ function LeadsInner() {
     followup: (sp.get('followup') as LeadFilterType['followup']) || '',
     reassignment: (sp.get('reassignment') as LeadFilterType['reassignment']) || '',
     assignment: (sp.get('assignment') as LeadFilterType['assignment']) || '',
+    assigned_today: (sp.get('assigned_today') as LeadFilterType['assigned_today']) || '',
     unworked: (sp.get('unworked') as LeadFilterType['unworked']) || '',
     source: sp.get('source') || '',
     from: sp.get('from') || '',
@@ -133,8 +134,11 @@ function LeadsInner() {
             { key: 'all', label: 'Leads', assignment: '' },
             { key: 'unassigned', label: 'Unassigned Leads', assignment: 'unassigned' },
             { key: 'assigned', label: 'Assigned Leads', assignment: 'assigned' },
+            { key: 'today', label: 'Today Assigned', assignment: '', assigned_today: 'true' },
           ].map(tab => {
-            const active = (filters.assignment || '') === tab.assignment && !filters.reassignment && filters.unworked !== 'true';
+            const active = tab.key === 'today'
+              ? filters.assigned_today === 'true'
+              : (filters.assignment || '') === tab.assignment && !filters.reassignment && filters.unworked !== 'true' && filters.assigned_today !== 'true';
             return (
               <button
                 key={tab.key}
@@ -142,6 +146,7 @@ function LeadsInner() {
                 onClick={() => setFilters(f => ({
                   ...f,
                   assignment: tab.assignment as LeadFilterType['assignment'],
+                  assigned_today: (tab.assigned_today || '') as LeadFilterType['assigned_today'],
                   reassignment: '',
                   unworked: '',
                   page: 1,
@@ -163,10 +168,13 @@ function LeadsInner() {
             { key: 'to_me', label: 'Reassigned To Me', next: { reassignment: 'to_me', unworked: '' } },
             { key: 'to_others', label: 'Reassigned To Others', next: { reassignment: 'to_others', unworked: '' } },
             { key: 'unworked', label: 'Unworked Leads', next: { reassignment: '', unworked: 'true' } },
+            { key: 'today', label: 'Today Assigned', next: { reassignment: '', unworked: '', assigned_today: 'true' } },
           ].map(tab => {
             const active = tab.key === 'unworked'
               ? filters.unworked === 'true'
-              : (filters.reassignment || '') === tab.next.reassignment && filters.unworked !== 'true';
+              : tab.key === 'today'
+                ? filters.assigned_today === 'true'
+                : (filters.reassignment || '') === tab.next.reassignment && filters.unworked !== 'true' && filters.assigned_today !== 'true';
             return (
               <button
                 key={tab.key}
@@ -175,6 +183,7 @@ function LeadsInner() {
                   ...f,
                   reassignment: tab.next.reassignment as LeadFilterType['reassignment'],
                   unworked: tab.next.unworked as LeadFilterType['unworked'],
+                  assigned_today: (tab.next.assigned_today || '') as LeadFilterType['assigned_today'],
                   assignment: '',
                   page: 1,
                 }))}
@@ -453,4 +462,3 @@ function LeadsInner() {
     </div>
   );
 }
-
