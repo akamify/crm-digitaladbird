@@ -950,6 +950,7 @@ export function useMetaAdAccounts() {
 export interface MetaDebugAccountsCampaigns {
   token: { configured: boolean; source: string | null; expires_at: string | null };
   discovery: {
+    token_source?: string | null;
     sources: Array<Record<string, unknown>>;
     errors: Array<Record<string, unknown>>;
   };

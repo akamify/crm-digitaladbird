@@ -737,10 +737,11 @@ function MetaPagesTab() {
   );
 }
 
-function MiniStat({ label, value, color }: { label: string; value: number; color: string }) {
+function MiniStat({ label, value, color }: { label: string; value: number | string; color: string }) {
+  const displayValue = typeof value === 'number' ? value.toLocaleString() : value;
   return (
     <div className="rounded-lg bg-slate-50 px-2 py-1.5 text-center">
-      <div className={clsx('text-sm font-bold tabular-nums', color)}>{value?.toLocaleString?.() ?? 0}</div>
+      <div className={clsx('text-sm font-bold tabular-nums', color)}>{displayValue || 0}</div>
       <div className="text-[9px] uppercase tracking-wide text-slate-500">{label}</div>
     </div>
   );
@@ -1112,6 +1113,20 @@ function metaStatusClass(status?: string | null) {
   return 'chip-slate';
 }
 
+function metaAccountSyncClass(status?: string | null) {
+  const value = String(status || '').toLowerCase();
+  if (value === 'synced') return 'chip-green';
+  if (value === 'not_accessible' || value === 'stale' || value === 'missing_from_latest_sync') return 'chip-amber';
+  if (value === 'failed' || value === 'stale_failed') return 'chip-red';
+  return 'chip-slate';
+}
+
+function metaAccountSyncLabel(status?: string | null) {
+  if (status === 'not_accessible') return 'Not accessible with current token';
+  if (status === 'stale_failed') return 'Stale / sync failed';
+  return humanize(status || 'pending');
+}
+
 function categoryChipClass(category?: string | null) {
   if (category === 'partner') return 'chip-blue';
   if (category === 'trader') return 'chip-green';
@@ -1121,6 +1136,8 @@ function categoryChipClass(category?: string | null) {
 function AdAccountsTab() {
   const { data: accounts, isLoading, refetch, isFetching } = useMetaAdAccounts();
   const syncCampaigns = useSyncCampaigns();
+  const accessibleAccounts = (accounts || []).filter(account => account.sync_status !== 'not_accessible');
+  const staleAccounts = (accounts || []).filter(account => account.sync_status === 'not_accessible');
 
   return (
     <div className="space-y-6">
@@ -1129,6 +1146,8 @@ function AdAccountsTab() {
           <Database className="h-5 w-5 text-blue-600" />
           <h1 className="text-lg font-semibold text-slate-900">Meta Ad Accounts</h1>
           <span className="chip-slate">{accounts?.length || 0} total</span>
+          <span className="chip-green">{accessibleAccounts.length} API-discovered</span>
+          {!!staleAccounts.length && <span className="chip-amber">{staleAccounts.length} stale</span>}
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={() => refetch()} disabled={isFetching}>
@@ -1150,6 +1169,7 @@ function AdAccountsTab() {
           {accounts.map(account => {
             const status = metaAdAccountStatusLabel(account.account_status);
             const isActive = account.is_active && account.account_status === 1;
+            const notAccessible = account.sync_status === 'not_accessible';
             return (
               <div key={account.account_id} className="rounded-xl border border-slate-200 bg-white p-4">
                 <div className="mb-3 flex items-start justify-between gap-3">
@@ -1157,7 +1177,7 @@ function AdAccountsTab() {
                     <h2 className="truncate text-sm font-semibold text-slate-900">{account.account_name || account.account_id}</h2>
                     <p className="mt-1 truncate text-xs text-slate-500">{account.account_id}</p>
                   </div>
-                  <span className={isActive ? 'chip-green' : 'chip-slate'}>{status}</span>
+                  <span className={notAccessible ? 'chip-amber' : isActive ? 'chip-green' : 'chip-slate'}>{notAccessible ? 'Stale' : status}</span>
                 </div>
                 <div className="grid grid-cols-2 gap-3 text-xs">
                   <div>
@@ -1186,7 +1206,7 @@ function AdAccountsTab() {
                   </div>
                   <div>
                     <p className="text-slate-500">Sync status</p>
-                    <p className="font-medium text-slate-800">{humanize(account.sync_status || 'pending')}</p>
+                    <p className="font-medium text-slate-800">{metaAccountSyncLabel(account.sync_status)}</p>
                   </div>
                   <div>
                     <p className="text-slate-500">Last successful sync</p>
@@ -1198,8 +1218,13 @@ function AdAccountsTab() {
                     Sources: {account.discovery_sources.map(source => humanize(source.source || 'meta')).join(', ')}
                   </p>
                 )}
+                {notAccessible && (
+                  <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    This ad account was previously stored but is not returned by the current Meta token. Reconnect Meta with a user/system user that has access.
+                  </p>
+                )}
                 {account.last_sync_error && (
-                  <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{account.last_sync_error}</p>
+                  <p className={clsx('mt-3 rounded-lg px-3 py-2 text-xs', notAccessible ? 'bg-amber-50 text-amber-800' : 'bg-rose-50 text-rose-700')}>{account.last_sync_error}</p>
                 )}
               </div>
             );
@@ -1226,6 +1251,11 @@ function CampaignsTab() {
   const syncAccount = useSyncMetaAdAccountCampaigns();
   const totalCampaigns = accounts?.reduce((sum, account) => sum + (account.campaign_count || 0), 0) || campaigns?.length || 0;
   const selectedAccountRow = selectedAccount === 'all' ? null : accounts?.find(account => account.account_id === selectedAccount) || null;
+  const selectedAccountProblem = selectedAccountRow?.sync_status === 'failed' || selectedAccountRow?.sync_status === 'stale_failed' || selectedAccountRow?.sync_status === 'not_accessible';
+  const debugSources = debug.data?.discovery.sources || [];
+  const meAdAccountsCount = Number(debugSources.find(source => source.endpoint === 'me/adaccounts')?.count ?? 0);
+  const businessesCount = Number(debugSources.find(source => source.endpoint === 'me/businesses')?.count ?? 0);
+  const discoveredDebugCount = debug.data?.accounts.length ?? 0;
 
   return (
     <div className="space-y-6">
@@ -1261,10 +1291,10 @@ function CampaignsTab() {
       </div>
 
       {selectedAccountRow && (
-        <div className={clsx('rounded-xl border p-4 text-sm', selectedAccountRow.sync_status === 'stale_failed' || selectedAccountRow.sync_status === 'failed' ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-blue-200 bg-blue-50 text-blue-800')}>
+        <div className={clsx('rounded-xl border p-4 text-sm', selectedAccountProblem ? selectedAccountRow.sync_status === 'not_accessible' ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-rose-200 bg-rose-50 text-rose-800' : 'border-blue-200 bg-blue-50 text-blue-800')}>
           <div className="flex flex-wrap items-center gap-2">
             <strong>{selectedAccountRow.account_name || selectedAccountRow.account_id}</strong>
-            <span className={selectedAccountRow.sync_status === 'stale_failed' || selectedAccountRow.sync_status === 'failed' ? 'chip-red' : 'chip-green'}>{humanize(selectedAccountRow.sync_status || 'pending')}</span>
+            <span className={metaAccountSyncClass(selectedAccountRow.sync_status)}>{metaAccountSyncLabel(selectedAccountRow.sync_status)}</span>
             {selectedAccountRow.total_returned_by_api !== null && selectedAccountRow.total_returned_by_api !== undefined && <span className="chip-slate">{selectedAccountRow.total_returned_by_api} returned by API</span>}
             {!!selectedAccountRow.missing_from_latest_sync_count && <span className="chip-amber">{selectedAccountRow.missing_from_latest_sync_count} stale/missing</span>}
           </div>
@@ -1288,9 +1318,17 @@ function CampaignsTab() {
           </div>
           {debug.isLoading ? <Skeleton className="h-32" /> : debug.data ? (
             <div className="space-y-3">
-              <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
-                Token source: <strong>{debug.data.token.source || 'not configured'}</strong>
+              <div className="grid grid-cols-1 gap-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-600 md:grid-cols-4">
+                <div>Token source: <strong>{debug.data.token.source || debug.data.discovery.token_source || 'not configured'}</strong></div>
+                <div>/me/adaccounts: <strong>{meAdAccountsCount}</strong></div>
+                <div>/me/businesses: <strong>{businessesCount}</strong></div>
+                <div>Discovered accounts: <strong>{discoveredDebugCount}</strong></div>
               </div>
+              {businessesCount === 0 && (
+                <div className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
+                  No Business Manager portfolios are accessible to this token. To see all business ad accounts, reconnect Meta with a user/system user that has business access and ads_read/ads_management.
+                </div>
+              )}
               {debug.data.discovery.errors?.length > 0 && (
                 <div className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
                   Discovery warnings: {debug.data.discovery.errors.map((error, index) => <span key={index} className="block">{String(error.endpoint || error.source)}: {String(error.error || 'Unknown error')}</span>)}
@@ -1352,13 +1390,13 @@ function CampaignsTab() {
                   <p className="truncate text-sm font-semibold text-slate-900">{account.account_name || account.account_id}</p>
                   <p className="mt-1 truncate text-xs text-slate-500">{account.account_id}</p>
                 </div>
-                <span className={account.sync_status === 'failed' ? 'chip-red' : 'chip-green'}>{humanize(account.sync_status || 'synced')}</span>
+                <span className={metaAccountSyncClass(account.sync_status)}>{metaAccountSyncLabel(account.sync_status)}</span>
               </div>
               <div className="mt-3 grid grid-cols-4 gap-2 text-center text-xs">
                 <MiniStat label="Total" value={account.campaign_count || 0} color="text-slate-900" />
                 <MiniStat label="On" value={account.active_campaign_count || 0} color="text-emerald-700" />
                 <MiniStat label="Off" value={account.paused_campaign_count || 0} color="text-amber-700" />
-                <MiniStat label="Draft" value={account.draft_count_api_available ? (account.draft_campaign_count || 0) : 0} color="text-violet-700" />
+                <MiniStat label="Draft" value={account.draft_count_api_available ? (account.draft_campaign_count || 0) : 'N/A'} color="text-violet-700" />
               </div>
               {!account.draft_count_api_available && <p className="mt-2 text-xs text-slate-500">Draft: not available from API</p>}
               {account.last_sync_error && <p className="mt-3 line-clamp-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{account.last_sync_error}</p>}

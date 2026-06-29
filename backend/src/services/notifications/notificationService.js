@@ -66,8 +66,8 @@ async function createUserNotification({
       });
       await query(
         `UPDATE user_notifications
-            SET email_status = $2,
-                email_sent_at = CASE WHEN $2 = 'sent' THEN NOW() ELSE email_sent_at END
+            SET email_status = $2::text,
+                email_sent_at = CASE WHEN $2::text = 'sent' THEN NOW() ELSE email_sent_at END
           WHERE id = $1`,
         [created.id, result.status],
       ).catch(() => {});

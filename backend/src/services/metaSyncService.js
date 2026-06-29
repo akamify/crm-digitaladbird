@@ -295,7 +295,13 @@ async function syncAllCampaigns() {
       logger.warn({ err: err.message }, 'Ad account refresh skipped before campaign sync');
     }
 
-    const { rows } = await query(`SELECT account_id FROM meta_ad_accounts WHERE is_active = TRUE ORDER BY account_id`);
+    const { rows } = await query(`
+      SELECT account_id
+        FROM meta_ad_accounts
+       WHERE is_active = TRUE
+         AND COALESCE(sync_status, '') <> 'not_accessible'
+       ORDER BY account_id
+    `);
     const adAccounts = rows.map(r => normalizeGraphAdAccountId(r.account_id));
 
     if (!adAccounts.length && config.meta.adAccountIds.length) {
@@ -418,15 +424,15 @@ async function updateAdAccountCampaignCounts(accountId, syncStatus = 'synced', e
             draft_campaign_count = $5,
             archived_campaign_count = $6,
             deleted_campaign_count = $7,
-            sync_status = $8,
-            last_sync_error = $9,
-            last_synced_at = CASE WHEN $8 = 'synced' THEN NOW() ELSE last_synced_at END,
-            last_successful_sync_at = CASE WHEN $8 = 'synced' THEN NOW() ELSE last_successful_sync_at END,
+            sync_status = $8::text,
+            last_sync_error = $9::text,
+            last_synced_at = CASE WHEN $8::text = 'synced' THEN NOW() ELSE last_synced_at END,
+            last_successful_sync_at = CASE WHEN $8::text = 'synced' THEN NOW() ELSE last_successful_sync_at END,
             last_sync_attempted_at = NOW(),
-            draft_count_api_available = $10,
-            total_returned_by_api = $11,
-            missing_from_latest_sync_count = $12,
-            last_campaign_sync_run_id = $13,
+            draft_count_api_available = $10::boolean,
+            total_returned_by_api = $11::int,
+            missing_from_latest_sync_count = $12::int,
+            last_campaign_sync_run_id = $13::uuid,
             updated_at = NOW()
       WHERE account_id = $1`,
     [
@@ -842,6 +848,8 @@ async function discoverAdAccountsDetailed() {
     sources: [],
     errors: [],
   };
+  const tokenInfo = await metaTokens.getUserToken().catch(() => null);
+  discovery.token_source = tokenInfo?.source || null;
 
   const directAccounts = await graphGetAll('me/adaccounts', {
     fields: accountFields,
@@ -914,6 +922,7 @@ async function syncAdAccounts() {
   const accounts = await listAdAccounts();
   let created = 0;
   let updated = 0;
+  const discoveredAccountIds = accounts.map(account => normalizeAdAccountId(account.account_id || account.id)).filter(Boolean);
 
   for (const account of accounts) {
     const accountId = normalizeAdAccountId(account.account_id || account.id);
@@ -969,7 +978,24 @@ async function syncAdAccounts() {
     else updated++;
   }
 
-  return { total: accounts.length, created, updated, accounts: accounts.map(account => normalizeAdAccountId(account.account_id || account.id)) };
+  if (discoveredAccountIds.length) {
+    const staleMessage = 'This ad account was previously stored but is not returned by the current Meta token. Reconnect Meta with a user/system user that has access.';
+    const staleResult = await query(
+      `UPDATE meta_ad_accounts
+          SET sync_status = 'not_accessible',
+              last_sync_error = $2::text,
+              last_sync_attempted_at = NOW(),
+              updated_at = NOW()
+        WHERE NOT (account_id = ANY($1::text[]))
+          AND COALESCE(sync_status, '') <> 'not_accessible'`,
+      [discoveredAccountIds, staleMessage]
+    );
+    if (staleResult.rowCount) {
+      logger.warn({ count: staleResult.rowCount, discovered_account_ids: discoveredAccountIds }, 'Meta stored ad accounts marked not accessible with current token');
+    }
+  }
+
+  return { total: accounts.length, created, updated, accounts: discoveredAccountIds };
 }
 
 // ─── Forms Discovery ──────────────────────────────────────────────────
