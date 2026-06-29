@@ -70,7 +70,7 @@ function AdminSupportTicketsInner() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-brand-100 text-brand-700">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-l bg-brand-100 text-brand-700">
             <LifeBuoy className="h-5 w-5" />
           </div>
 
@@ -95,7 +95,7 @@ function AdminSupportTicketsInner() {
         </button>
       </div>
 
-      <div className="rounded-3xl border border-slate-200/80 bg-white p-4 shadow-sm">
+      <div className="rounded-l border border-slate-200/80 bg-white p-4 shadow-sm">
         <div className="grid min-w-0 gap-3 xl:grid-cols-[minmax(260px,1fr)_180px_180px_160px]">
           <div className="relative min-w-0">
             <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -166,11 +166,11 @@ function AdminSupportTicketsInner() {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-sm">
+      <div className="overflow-hidden rounded-l border border-slate-200/80 bg-white shadow-sm">
         {tickets.isLoading ? (
           <div className="space-y-2 p-4">
             {Array.from({ length: 6 }).map((_, index) => (
-              <Skeleton key={index} className="h-16 rounded-2xl" />
+              <Skeleton key={index} className="h-16 rounded-l" />
             ))}
           </div>
         ) : rows.length === 0 ? (
@@ -378,7 +378,7 @@ function TicketDetailModal({
       size="xl"
     >
       {detail.isLoading || !ticket ? (
-        <Skeleton className="h-72 rounded-2xl" />
+        <Skeleton className="h-72 rounded-l" />
       ) : (
         <div className="space-y-5">
           <div className="grid min-w-0 gap-3 md:grid-cols-2">
@@ -411,7 +411,7 @@ function TicketDetailModal({
             />
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          <div className="rounded-l border border-slate-200 bg-white p-4">
             <h3 className="break-words font-semibold text-slate-950">
               {ticket.subject}
             </h3>
@@ -421,7 +421,7 @@ function TicketDetailModal({
             </p>
           </div>
 
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+          <div className="rounded-l border border-amber-200 bg-amber-50 p-4">
             <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">
               Last admin note
             </div>
@@ -432,7 +432,7 @@ function TicketDetailModal({
           </div>
 
           {isClosed ? (
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+            <div className="rounded-l border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
               This ticket is already {humanize(ticket.status)}. The final status can be updated only once.
             </div>
           ) : (
@@ -458,7 +458,7 @@ function TicketDetailModal({
           )}
 
           {action && !isClosed && (
-            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="rounded-l border border-slate-200 bg-white p-4">
               <label className="block space-y-1.5 text-sm">
                 <span className="font-semibold text-slate-700">
                   Admin note for {humanize(action)}
@@ -506,7 +506,7 @@ function TicketDetailModal({
               {(ticket.history || []).map((item) => (
                 <div
                   key={item.id}
-                  className="rounded-2xl border border-slate-100 bg-slate-50 p-3 text-sm"
+                  className="rounded-l border border-slate-100 bg-slate-50 p-3 text-sm"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-semibold text-slate-800">
@@ -547,7 +547,7 @@ function Info({
   value: ReactNode;
 }) {
   return (
-    <div className="min-w-0 rounded-2xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+    <div className="min-w-0 rounded-l border border-slate-100 bg-slate-50 px-3 py-2.5">
       <div className="text-xs font-medium text-slate-500">{label}</div>
       <div className="mt-1 min-w-0 break-words text-sm font-semibold text-slate-950">
         {value}
