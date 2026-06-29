@@ -236,7 +236,22 @@ function LeadsInner() {
           />
         ) : (
           <div className="overflow-x-auto scroll-thin">
-            <table className="w-full min-w-[1120px] text-sm">
+            <table className="w-full min-w-[1320px] table-fixed text-sm">
+              <colgroup>
+                <col className="w-10" />
+                <col className="w-[220px]" />
+                <col className="w-[190px]" />
+                <col className="w-[150px]" />
+                <col className="w-[160px]" />
+                <col className="w-[210px]" />
+                <col className="w-[140px]" />
+                <col className="w-[130px]" />
+                <col className="w-[150px]" />
+                <col className="w-[115px]" />
+                <col className="w-[145px]" />
+                <col className="w-[115px]" />
+                <col className="w-[125px]" />
+              </colgroup>
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/60 text-left text-xs uppercase tracking-wider text-slate-500">
                   <th className="w-10 px-4 py-2.5 font-medium">
@@ -247,18 +262,18 @@ function LeadsInner() {
                       aria-label="Select all leads on current page"
                     />
                   </th>
-                  <th className="px-4 py-2.5 font-medium">Lead</th>
-                  <th className="px-4 py-2.5 font-medium">Contact</th>
-                  <th className="px-4 py-2.5 font-medium">Source</th>
-                  <th className="px-4 py-2.5 font-medium">Category</th>
-                  <th className="px-4 py-2.5 font-medium">Campaign</th>
-                  <th className="px-4 py-2.5 font-medium">Stage</th>
-                  <th className="px-4 py-2.5 font-medium">Call status</th>
-                  <th className="px-4 py-2.5 font-medium">Assigned</th>
-                  <th className="px-4 py-2.5 font-medium">Reassigned</th>
-                  <th className="px-4 py-2.5 font-medium">Follow-up</th>
-                  <th className="px-4 py-2.5 font-medium">Created</th>
-                  <th className="px-4 py-2.5 font-medium">Actions</th>
+                  <th className="px-4 py-2.5 font-medium whitespace-nowrap">Lead</th>
+                  <th className="px-4 py-2.5 font-medium whitespace-nowrap">Contact</th>
+                  <th className="px-4 py-2.5 font-medium whitespace-nowrap">Source</th>
+                  <th className="px-4 py-2.5 font-medium whitespace-nowrap">Category</th>
+                  <th className="px-4 py-2.5 font-medium whitespace-nowrap">Campaign</th>
+                  <th className="px-4 py-2.5 font-medium whitespace-nowrap">Stage</th>
+                  <th className="px-4 py-2.5 font-medium whitespace-nowrap">Call status</th>
+                  <th className="px-4 py-2.5 font-medium whitespace-nowrap">Assigned</th>
+                  <th className="px-4 py-2.5 font-medium whitespace-nowrap">Reassigned</th>
+                  <th className="px-4 py-2.5 font-medium whitespace-nowrap">Follow-up</th>
+                  <th className="px-4 py-2.5 font-medium whitespace-nowrap">Created</th>
+                  <th className="px-4 py-2.5 font-medium whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -278,11 +293,11 @@ function LeadsInner() {
                       </td>
                       <td className="px-4 py-3">
                         <Link href={`/leads/${lead.id}`} className="block">
-                          <div className="flex items-center gap-2 font-medium text-slate-900 hover:text-brand-700">
-                            {lead.full_name || <span className="italic text-slate-500">No name</span>}
+                          <div className="flex min-w-0 items-center gap-2 font-medium text-slate-900 hover:text-brand-700">
+                            <span className="truncate">{lead.full_name || 'No name'}</span>
                             {locked && <Lock className="h-3 w-3 text-amber-500" aria-label="Locked" />}
                           </div>
-                          <div className="text-xs text-slate-500">
+                          <div className="truncate text-xs text-slate-500">
                             {[lead.city, lead.state].filter(Boolean).join(', ') || 'Not available'}
                           </div>
                         </Link>
@@ -294,24 +309,24 @@ function LeadsInner() {
                         </div>
                         <div className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500">
                           <Mail className="h-3 w-3 text-slate-400" />
-                          <span className="truncate">{lead.email || 'Not available'}</span>
+                          <span className="truncate" title={lead.email || undefined}>{lead.email || 'Not available'}</span>
                         </div>
                       </td>
                       <td className="px-4 py-3 text-slate-700">
-                        <div>{humanize(lead.source)}</div>
-                        <div className="truncate text-xs text-slate-500 max-w-[180px]" title={lead.campaign_label || undefined}>
+                        <div className="truncate">{humanize(lead.source)}</div>
+                        <div className="truncate text-xs text-slate-500" title={lead.campaign_label || undefined}>
                           {lead.campaign_label || 'Not available'}
                         </div>
                       </td>
                       <td className="px-4 py-3">
                         <div className="space-y-1">
                           <LeadCategoryBadge category={lead.category} />
-                          <div className="text-[11px] text-slate-500">
+                          <div className="truncate text-[11px] text-slate-500">
                             {lead.category_source ? humanize(lead.category_source) : 'No category rule'}
                           </div>
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-slate-700 max-w-[220px]">
+                      <td className="px-4 py-3 text-slate-700">
                         <div className="truncate text-sm" title={lead.campaign_name || lead.ad_name || lead.meta_form_id || 'No campaign'}>
                           {lead.campaign_name || lead.ad_name || lead.meta_form_id || 'No campaign'}
                         </div>
@@ -322,13 +337,15 @@ function LeadsInner() {
                       <td className="px-4 py-3">
                         <div className="space-y-1">
                           <span className={stageChip[lead.stage] || 'chip-slate'} title={formatISTTooltip(lead.stage_updated_at || lead.updated_at)}>{humanize(lead.stage)}</span>
-                          <div className="text-[11px] text-slate-500" title={formatISTTooltip(lead.stage_updated_at || lead.updated_at)}>
+                          <div className="truncate text-[11px] text-slate-500" title={formatISTTooltip(lead.stage_updated_at || lead.updated_at)}>
                             {formatStageUpdatedAt(lead.stage_updated_at || lead.updated_at || lead.created_at)}
                           </div>
                         </div>
                       </td>
                       <td className="px-4 py-3"><StatusChip status={lead.call_status} /></td>
-                      <td className="px-4 py-3 text-slate-700">{lead.assigned_to_name || <span className="italic text-slate-400">Unassigned</span>}</td>
+                      <td className="px-4 py-3 text-slate-700">
+                        <div className="truncate" title={lead.assigned_to_name || undefined}>{lead.assigned_to_name || <span className="italic text-slate-400">Unassigned</span>}</div>
+                      </td>
                       <td className="px-4 py-3">
                         {lead.read_only_access ? (
                           <span className="chip-amber">To others</span>
