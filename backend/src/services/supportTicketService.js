@@ -337,11 +337,21 @@ async function updateTicketStatus(actor, ticketId, statusValue, noteValue) {
               not_solved_at = CASE WHEN $2::text = 'not_solved' THEN NOW() ELSE not_solved_at END,
               resolved_by_user_id = $4,
               updated_at = NOW()
-        WHERE id::text = $1 OR ticket_no = $1
+        WHERE (id::text = $1 OR ticket_no = $1)
+          AND status = 'open'
         RETURNING *`,
       [ticketId, status, note, actor.id],
     );
-    if (!ticket) throw new AppError(404, 'SUPPORT_TICKET_NOT_FOUND', 'Support ticket not found.');
+    if (!ticket) {
+      const { rows: [existing] } = await client.query(
+        `SELECT id, status
+           FROM support_tickets
+          WHERE id::text = $1 OR ticket_no = $1`,
+        [ticketId],
+      );
+      if (!existing) throw new AppError(404, 'SUPPORT_TICKET_NOT_FOUND', 'Support ticket not found.');
+      throw new AppError(409, 'SUPPORT_TICKET_ALREADY_CLOSED', 'This ticket has already been marked solved or not solved.');
+    }
     await client.query(
       `INSERT INTO support_ticket_history(ticket_id, actor_user_id, action, status, admin_note)
          VALUES($1,$2,'status_update',$3,$4)`,

@@ -90,38 +90,49 @@ function AdminSupportTicketsInner() {
           <EmptyState title="No support tickets found" description="Raised support tickets will appear here." icon={<LifeBuoy className="h-6 w-6" />} />
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1120px] text-sm">
+            <table className="w-full min-w-[1280px] table-fixed text-sm">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-                  <th className="px-4 py-3 font-medium">Ticket No</th>
-                  <th className="px-4 py-3 font-medium">Name</th>
-                  <th className="px-4 py-3 font-medium">Email</th>
-                  <th className="px-4 py-3 font-medium">Phone / CP ID</th>
-                  <th className="px-4 py-3 font-medium">Role</th>
-                  <th className="px-4 py-3 font-medium">Subject</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium">Submitted</th>
-                  <th className="px-4 py-3 font-medium">Solved / Not solved</th>
-                  <th className="px-4 py-3 font-medium">Action</th>
+                  <th className="w-32 px-4 py-3 font-medium">Ticket No</th>
+                  <th className="w-44 px-4 py-3 font-medium">Name</th>
+                  <th className="w-60 px-4 py-3 font-medium">Email</th>
+                  <th className="w-48 px-4 py-3 font-medium">Phone / CP ID</th>
+                  <th className="w-28 px-4 py-3 font-medium">Role</th>
+                  <th className="w-72 px-4 py-3 font-medium">Subject</th>
+                  <th className="w-32 px-4 py-3 font-medium">Status</th>
+                  <th className="w-36 px-4 py-3 font-medium">Submitted</th>
+                  <th className="w-40 px-4 py-3 font-medium">Solved / Not solved</th>
+                  <th className="w-28 px-4 py-3 font-medium">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {rows.map(ticket => (
-                  <tr key={ticket.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-3 font-medium text-slate-900">{ticket.ticketNo || ticket.ticket_no}</td>
-                    <td className="px-4 py-3">{ticket.name}</td>
-                    <td className="px-4 py-3 text-slate-600">{ticket.email}</td>
+                  <tr
+                    key={ticket.id}
+                    className="cursor-pointer hover:bg-slate-50"
+                    onClick={() => setSelectedId(ticket.id)}
+                    tabIndex={0}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        setSelectedId(ticket.id);
+                      }
+                    }}
+                  >
+                    <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-900">{ticket.ticketNo || ticket.ticket_no}</td>
+                    <td className="px-4 py-3"><div className="truncate" title={ticket.name}>{ticket.name}</div></td>
+                    <td className="px-4 py-3 text-slate-600"><div className="truncate" title={ticket.email}>{ticket.email}</div></td>
                     <td className="px-4 py-3 text-xs text-slate-600">
-                      <div>{ticket.phone}</div>
-                      <div>{ticket.cpId || ticket.cp_id || '-'}</div>
+                      <div className="truncate" title={ticket.phone}>{ticket.phone}</div>
+                      <div className="truncate" title={ticket.cpId || ticket.cp_id || '-'}>{ticket.cpId || ticket.cp_id || '-'}</div>
                     </td>
-                    <td className="px-4 py-3"><span className="chip-blue">{humanize(ticket.role)}</span></td>
-                    <td className="px-4 py-3"><div className="max-w-[220px] truncate">{ticket.subject}</div></td>
-                    <td className="px-4 py-3"><StatusBadge status={ticket.status} /></td>
-                    <td className="px-4 py-3 text-xs text-slate-500" title={formatISTTooltip(ticket.createdAt || ticket.created_at)}>{formatISTCompact(ticket.createdAt || ticket.created_at)}</td>
-                    <td className="px-4 py-3 text-xs text-slate-500">{resolvedAtLabel(ticket)}</td>
+                    <td className="whitespace-nowrap px-4 py-3"><span className="chip-blue">{humanize(ticket.role)}</span></td>
+                    <td className="px-4 py-3"><div className="truncate" title={ticket.subject}>{ticket.subject}</div></td>
+                    <td className="whitespace-nowrap px-4 py-3"><StatusBadge status={ticket.status} /></td>
+                    <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500" title={formatISTTooltip(ticket.createdAt || ticket.created_at)}>{formatISTCompact(ticket.createdAt || ticket.created_at)}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500">{resolvedAtLabel(ticket)}</td>
                     <td className="px-4 py-3">
-                      <button type="button" onClick={() => setSelectedId(ticket.id)} className="btn-outline rounded-lg px-3 py-1.5 text-xs">View</button>
+                      <button type="button" onClick={(event) => { event.stopPropagation(); setSelectedId(ticket.id); }} className="btn-outline rounded-lg px-3 py-1.5 text-xs">View</button>
                     </td>
                   </tr>
                 ))}
@@ -143,6 +154,7 @@ function TicketDetailModal({ ticketId, onClose }: { ticketId: string | null; onC
   const [action, setAction] = useState<'solved' | 'not_solved' | null>(null);
   const [note, setNote] = useState('');
   const ticket = detail.data;
+  const isClosed = ticket?.status === 'solved' || ticket?.status === 'not_solved';
 
   function submit() {
     if (!ticket || !action) return;
@@ -190,16 +202,22 @@ function TicketDetailModal({ ticketId, onClose }: { ticketId: string | null; onC
             <p className="mt-1 whitespace-pre-wrap text-sm text-amber-900">{ticket.lastAdminNote || ticket.last_admin_note || 'No admin note yet.'}</p>
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => setAction('solved')} className="btn-primary inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
-              <CheckCircle2 className="h-4 w-4" /> Mark as Solved
-            </button>
-            <button type="button" onClick={() => setAction('not_solved')} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
-              <XCircle className="h-4 w-4" /> Mark as Not Solved
-            </button>
-          </div>
+          {isClosed ? (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+              This ticket is already {humanize(ticket.status)}. The final status can be updated only once.
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => setAction('solved')} className="btn-primary inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
+                <CheckCircle2 className="h-4 w-4" /> Mark as Solved
+              </button>
+              <button type="button" onClick={() => setAction('not_solved')} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
+                <XCircle className="h-4 w-4" /> Mark as Not Solved
+              </button>
+            </div>
+          )}
 
-          {action && (
+          {action && !isClosed && (
             <div className="rounded-xl border border-slate-200 p-4">
               <label className="space-y-1 text-sm">
                 <span className="font-medium text-slate-700">Admin note for {humanize(action)}</span>
