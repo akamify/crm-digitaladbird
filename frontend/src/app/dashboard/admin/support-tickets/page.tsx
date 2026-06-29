@@ -301,7 +301,7 @@ function TicketRow({
         {resolvedAtLabel(ticket)}
       </div>
 
-      <div className="flex justify-end">
+      <div className="flex justify-start">
         <button
           type="button"
           onClick={(event) => {
