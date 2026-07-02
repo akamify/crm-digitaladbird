@@ -16,6 +16,21 @@ function required(name, fallback) {
   return val;
 }
 
+function csv(value) {
+  return String(value || '').split(',').map(s => s.trim()).filter(Boolean);
+}
+
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+const defaultAllowedOrigins = [
+  'https://www.crm.digitaladbird.com',
+  'https://crm.digitaladbird.com',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+];
+
 const config = {
   env:       process.env.NODE_ENV || 'development',
   port:      parseInt(process.env.PORT || '4000', 10),
@@ -83,7 +98,11 @@ const config = {
   },
 
   cors: {
-    origins: (process.env.CORS_ORIGINS || 'http://localhost:3000').split(',').map(s => s.trim()),
+    origins: unique([
+      ...defaultAllowedOrigins,
+      ...csv(process.env.CORS_ORIGINS),
+      ...csv(process.env.ALLOWED_ORIGINS),
+    ]),
   },
 
   email: {

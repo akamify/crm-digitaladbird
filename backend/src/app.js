@@ -92,14 +92,22 @@ app.set('trust proxy', 1);
 
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(compression());
-app.use(cors({
+
+const allowedOrigins = new Set(config.cors.origins);
+const corsOptions = {
   origin: (origin, cb) => {
     if (!origin) return cb(null, true);
-    if (config.cors.origins.includes(origin) || config.cors.origins.includes('*')) return cb(null, true);
-    cb(new Error('CORS blocked'));
+    if (allowedOrigins.has(origin)) return cb(null, true);
+    logger.warn({ origin, path: 'cors' }, '[CORS] blocked origin');
+    return cb(null, false);
   },
   credentials: true,
-}));
+  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Request-Id'],
+  optionsSuccessStatus: 204,
+};
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(morgan('tiny', { stream: { write: m => logger.info(m.trim()) } }));
 
 // rate limiting (per-IP); auth endpoints have an extra tighter limit
