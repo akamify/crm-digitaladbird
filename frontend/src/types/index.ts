@@ -143,6 +143,7 @@ export interface LeadFilters {
   adset?: string;
   from?: string;
   to?: string;
+  created_preset?: 'today' | 'yesterday' | 'day_before' | '';
   pending?: 'true' | 'false' | '';
   unworked?: 'true' | 'false' | '';
   followup?: 'today' | 'overdue' | 'upcoming' | '';

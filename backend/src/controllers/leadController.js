@@ -107,6 +107,7 @@ async function assertLeadWriteAccess(client, leadId, user) {
  *   form_id           Meta form ID
  *   assigned_to       user id  (admin only — RM auto-scoped, members locked to self)
  *   from, to          ISO dates (filters created_at)
+ *   created_preset    today|yesterday|day_before (IST created_at date)
  *   pending           true => only is_pending leads
  *   followup          today|overdue|week
  *   page, page_size
@@ -210,6 +211,13 @@ exports.list = asyncHandler(async (req, res) => {
     )`);
   }
   if (req.query.adset) { params.push(req.query.adset); where.push(`l.adset_name = $${params.length}`); }
+  if (req.query.created_preset) {
+    const preset = String(req.query.created_preset);
+    const offsets = { today: 0, yesterday: 1, day_before: 2 };
+    if (Object.prototype.hasOwnProperty.call(offsets, preset)) {
+      where.push(`(l.created_at AT TIME ZONE 'Asia/Kolkata')::date = ((NOW() AT TIME ZONE 'Asia/Kolkata')::date - INTERVAL '${offsets[preset]} days')`);
+    }
+  }
   if (req.query.from) { params.push(req.query.from); where.push(`l.created_at >= $${params.length}`); }
   if (req.query.to) { params.push(req.query.to); where.push(`l.created_at <= $${params.length}`); }
   if (req.query.pending === 'true') where.push(`l.is_pending = TRUE`);

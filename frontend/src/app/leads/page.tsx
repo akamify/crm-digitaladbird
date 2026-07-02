@@ -43,6 +43,7 @@ function LeadsInner() {
     assignment: (sp.get('assignment') as LeadFilterType['assignment']) || '',
     assigned_today: (sp.get('assigned_today') as LeadFilterType['assigned_today']) || '',
     unworked: (sp.get('unworked') as LeadFilterType['unworked']) || '',
+    created_preset: (sp.get('created_preset') as LeadFilterType['created_preset']) || '',
     source: sp.get('source') || '',
     from: sp.get('from') || '',
     to: sp.get('to') || '',
@@ -140,19 +141,31 @@ function LeadsInner() {
             { key: 'all', label: 'Leads', assignment: '' },
             { key: 'unassigned', label: 'Unassigned Leads', assignment: 'unassigned' },
             { key: 'assigned', label: 'Assigned Leads', assignment: 'assigned' },
-            { key: 'today', label: 'Today Assigned', assignment: '', assigned_today: 'true' },
+            { key: 'today_assigned', label: 'Today Assigned', assignment: '', assigned_today: 'true' },
+            { key: 'today_created', label: 'Today Leads', created_preset: 'today' },
+            { key: 'yesterday_created', label: 'Yesterday Leads', created_preset: 'yesterday' },
+            { key: 'day_before_created', label: 'Day Before Leads', created_preset: 'day_before' },
           ].map(tab => {
-            const active = tab.key === 'today'
+            const active = tab.key === 'today_assigned'
               ? filters.assigned_today === 'true'
-              : (filters.assignment || '') === tab.assignment && !filters.reassignment && filters.unworked !== 'true' && filters.assigned_today !== 'true';
+              : tab.created_preset
+                ? filters.created_preset === tab.created_preset
+                : (filters.assignment || '') === tab.assignment
+                  && !filters.reassignment
+                  && filters.unworked !== 'true'
+                  && filters.assigned_today !== 'true'
+                  && !filters.created_preset;
             return (
               <button
                 key={tab.key}
                 type="button"
                 onClick={() => setFilters(f => ({
                   ...f,
-                  assignment: tab.assignment as LeadFilterType['assignment'],
+                  assignment: (tab.assignment || '') as LeadFilterType['assignment'],
                   assigned_today: (tab.assigned_today || '') as LeadFilterType['assigned_today'],
+                  created_preset: (tab.created_preset || '') as LeadFilterType['created_preset'],
+                  from: tab.created_preset ? '' : f.from,
+                  to: tab.created_preset ? '' : f.to,
                   reassignment: '',
                   unworked: '',
                   page: 1,

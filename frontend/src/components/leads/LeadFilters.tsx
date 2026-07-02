@@ -66,7 +66,7 @@ export function LeadFilters({ value, onChange }: Props) {
     ...(campaignNames || []).map(n => ({ value: n, label: n })),
   ];
 
-  const hasFilters = !!(value.q || value.category || value.stage || value.call_status || value.followup || value.source || value.campaign || value.from || value.to || value.pending || value.assignment);
+  const hasFilters = !!(value.q || value.category || value.stage || value.call_status || value.followup || value.source || value.campaign || value.from || value.to || value.created_preset || value.pending || value.assignment);
 
   return (
     <div className="card p-4">
@@ -115,12 +115,12 @@ export function LeadFilters({ value, onChange }: Props) {
         <Input
           type="date" label="From"
           value={value.from || ''}
-          onChange={(e: ChangeEvent<HTMLInputElement>) => set('from', e.target.value)}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => onChange({ ...value, from: e.target.value, created_preset: '', page: 1 })}
         />
         <Input
           type="date" label="To"
           value={value.to || ''}
-          onChange={(e: ChangeEvent<HTMLInputElement>) => set('to', e.target.value)}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => onChange({ ...value, to: e.target.value, created_preset: '', page: 1 })}
         />
         <div className="flex items-end">
           {hasFilters && (
