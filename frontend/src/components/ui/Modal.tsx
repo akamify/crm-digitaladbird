@@ -193,7 +193,7 @@ export function EmptyState({
 }
 
 export function Skeleton({ className }: { className?: string }) {
-  return <div className={clsx('animate-pulse rounded-lg bg-slate-200/70', className)} />;
+  return <div className={clsx('skeleton-shimmer rounded-lg bg-slate-200/70', className)} />;
 }
 
 export function StatusChip({ status }: { status: string | null | undefined }) {

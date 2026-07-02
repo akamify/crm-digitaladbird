@@ -19,6 +19,8 @@ import {
   PieChart,
   ChevronDown,
   ChevronRight,
+  PanelLeftClose,
+  PanelLeftOpen,
   MessageSquare,
   Bell,
   LifeBuoy,
@@ -67,7 +69,15 @@ const ADMIN_NAV = [
   { href: '/dashboard/admin/activity', label: 'Activity Logs', Icon: ScrollText },
 ];
 
-export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
+export function Sidebar({
+  onNavigate,
+  collapsed = false,
+  onToggleCollapse,
+}: {
+  onNavigate?: () => void;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
+}) {
   const pathname = usePathname();
   const { user } = useAuth();
   const { data: chatUnread } = useChatUnread();
@@ -83,7 +93,10 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const isAdmin = user.role === 'super_admin';
 
   return (
-    <aside className="flex h-full w-60 shrink-0 flex-col border-r border-slate-200 bg-white">
+    <aside className={clsx(
+      'flex h-full shrink-0 flex-col border-r border-slate-200 bg-white transition-[width] duration-200',
+      collapsed ? 'w-20' : 'w-60',
+    )}>
       <style jsx>{`
         .sidebar-scroll-area {
           scrollbar-width: none;
@@ -98,11 +111,25 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         }
       `}</style>
 
-      <div className="flex h-16 shrink-0 items-center border-b border-slate-100 px-4">
-        <LogoLockup tone="dark" />
+      <div className={clsx('relative flex h-16 shrink-0 items-center border-b border-slate-100 px-4', collapsed ? 'justify-center gap-3' : 'justify-between gap-1')}>
+        <LogoLockup tone="dark" showTagline={!collapsed} className={collapsed ? '[&>div:last-child]:hidden' : ''} />
+        {onToggleCollapse && (
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className={clsx(
+              'hidden h-9 w-8 shrink-0 place-items-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 md:grid',
+              collapsed && 'absolute left-[62px] z-10 border border-slate-200 bg-white shadow-sm',
+            )}
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+          </button>
+        )}
       </div>
 
-      <nav className="sidebar-scroll-area flex-1 space-y-1 overflow-y-auto px-3 py-4">
+      <nav className={clsx('sidebar-scroll-area flex-1 space-y-1 overflow-y-auto py-4', collapsed ? 'px-2' : 'px-3')}>
         {items.map(({ href, label, Icon }) => {
           const active = label === 'Dashboard'
             ? pathname === href
@@ -115,8 +142,10 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               key={href}
               href={href}
               onClick={onNavigate}
+              title={collapsed ? label : undefined}
               className={clsx(
-                'group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-all duration-150',
+                'group flex items-center rounded-xl text-sm transition-all duration-150',
+                collapsed ? 'justify-center px-2 py-3' : 'gap-3 px-3 py-2.5',
                 active
                   ? 'sidebar-active font-semibold'
                   : 'font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900',
@@ -129,12 +158,13 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                 )}
               />
 
-              <span className="flex-1">{label}</span>
+              {!collapsed && <span className="flex-1 truncate">{label}</span>}
 
               {showBadge && (
                 <span
                   className={clsx(
                     'grid h-5 min-w-[20px] place-items-center rounded-full px-1.5 text-[10px] font-bold',
+                    collapsed && 'absolute ml-8 -mt-7',
                     active ? 'bg-white/25 text-white' : 'bg-brand-600 text-white',
                   )}
                 >
@@ -151,18 +181,22 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               <button
                 type="button"
                 onClick={() => setAdminOpen((v) => !v)}
-                className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-700 transition hover:text-violet-700"
+                title={collapsed ? 'Admin Control' : undefined}
+                className={clsx(
+                  'flex w-full items-center rounded-lg py-2 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-700 transition hover:text-violet-700',
+                  collapsed ? 'justify-center px-2' : 'justify-between px-3',
+                )}
               >
                 <span className="inline-flex items-center gap-2">
                   <span className="h-1.5 w-1.5 rounded-full bg-violet-500" />
-                  Admin Control
+                  {!collapsed && 'Admin Control'}
                 </span>
 
-                {adminOpen ? (
+                {!collapsed && (adminOpen ? (
                   <ChevronDown className="h-4 w-4 shrink-0" />
                 ) : (
                   <ChevronRight className="h-4 w-4 shrink-0" />
-                )}
+                ))}
               </button>
             </div>
 
@@ -174,8 +208,10 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                   key={href}
                   href={href}
                   onClick={onNavigate}
+                  title={collapsed ? label : undefined}
                   className={clsx(
-                    'group ml-1 flex items-center gap-3 rounded-xl px-3 py-2 text-[13px] transition-all duration-150',
+                    'group flex items-center rounded-xl text-[13px] transition-all duration-150',
+                    collapsed ? 'justify-center px-2 py-3' : 'ml-1 gap-3 px-3 py-2',
                     active
                       ? 'sidebar-active-sub font-semibold'
                       : 'font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900',
@@ -187,7 +223,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                       active ? 'text-white' : 'text-slate-400 group-hover:text-violet-600',
                     )}
                   />
-                  <span className="flex-1">{label}</span>
+                  {!collapsed && <span className="flex-1 truncate">{label}</span>}
                 </Link>
               );
             })}
