@@ -46,7 +46,7 @@ const NAV: NavItem[] = [
   { href: '/leads', label: 'Leads', Icon: Briefcase },
   { href: '/chat', label: 'Messages', Icon: MessageSquare },
   { href: '/notifications', label: 'Notifications', Icon: Bell },
-  { href: '/my-google-sheet', label: 'My Google Sheet', Icon: FileSpreadsheet, roles: ['rm', 'member', 'partner'] },
+  // { href: '/my-google-sheet', label: 'My Google Sheet', Icon: FileSpreadsheet, roles: ['rm', 'member', 'partner'] },
   { href: '/reports', label: 'Reports', Icon: BarChart3, roles: ['super_admin', 'rm'] },
   { href: '/lead-requests', label: 'Lead Requests', Icon: HandMetal, roles: ['super_admin', 'admin', 'rm', 'member', 'partner'] },
   { href: '/leaderboard', label: 'Leaderboard', Icon: Trophy },
