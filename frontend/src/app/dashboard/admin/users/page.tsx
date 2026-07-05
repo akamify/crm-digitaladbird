@@ -74,7 +74,9 @@ function UsersInner() {
     total: users?.length ?? 0,
     admin: users?.filter(u => u.role === 'super_admin').length ?? 0,
     rm: users?.filter(u => u.role === 'rm').length ?? 0,
+    availableRm: users?.filter(u => u.role === 'rm' && isLeadAvailable(u)).length ?? 0,
     member: users?.filter(u => u.role === 'member').length ?? 0,
+    availableMember: users?.filter(u => u.role === 'member' && isLeadAvailable(u)).length ?? 0,
     blocked: users?.filter(u => u.status === 'blocked').length ?? 0,
   };
 
@@ -198,11 +200,13 @@ function UsersInner() {
       </div>
 
       {/* Count cards */}
-      <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-7">
         <CountCard label="Total" value={counts.total} color="text-slate-900" />
         <CountCard label="Admins" value={counts.admin} color="text-violet-700" />
         <CountCard label="RMs" value={counts.rm} color="text-blue-700" />
+        <CountCard label="Available RMs" value={counts.availableRm} color="text-emerald-700" />
         <CountCard label="Members" value={counts.member} color="text-sky-700" />
+        <CountCard label="Available Members" value={counts.availableMember} color="text-emerald-700" />
         <CountCard label="Blocked" value={counts.blocked} color="text-red-700" />
       </div>
 

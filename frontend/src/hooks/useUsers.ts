@@ -7,6 +7,8 @@ export function useUsers() {
   return useQuery({
     queryKey: ['users'],
     queryFn: () => apiGet<User[]>('/users'),
+    refetchInterval: 30000,
+    refetchIntervalInBackground: false,
   });
 }
 
