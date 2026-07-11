@@ -17,7 +17,7 @@ export type CallStatus =
   | 'rnr' | 'busy' | 'switched_off' | 'invalid_number'
   | 'callback_requested' | 'wrong_number' | 'language_barrier'
   | 'communication_completed' | 'respond_hi' | 'recall'
-  | 'in' | 'session_730_attend' | 'session_after_730';
+  | 'in' | 'session_730_attend' | 'session_after_730' | 'yes_after_730_session';
 
 export type LeadLevel = 'hot' | 'warm' | 'cold';
 export type CustomerType = 'new' | 'existing';

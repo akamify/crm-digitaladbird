@@ -51,6 +51,7 @@ export interface ConversionData {
   part_payment: string | null;
   customer_type: 'partner' | 'trader';
   services: string | null;
+  transaction_id: string | null;
   submitted_at: string;
 }
 
@@ -61,6 +62,8 @@ export interface WorkflowResponse {
   current_step: number;
   remark_options: string[];
   lead_level_options: string[];
+  lead_category: 'partner' | 'trader' | 'unknown' | null;
+  workflow_remark_completed: boolean;
 }
 
 export interface WorkflowHistoryEntry {
@@ -158,8 +161,8 @@ export function useSaveConversion() {
       address?: string;
       total_payment?: number;
       part_payment?: number;
-      customer_type: 'partner' | 'trader';
       services?: string;
+      transaction_id?: string;
     }) => apiPost<ConversionData>(`/leads/${leadId}/workflow/conversion`, data),
     onSuccess: (_d, { leadId }) => {
       qc.invalidateQueries({ queryKey: ['workflow', leadId] });

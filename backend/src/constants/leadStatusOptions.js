@@ -35,6 +35,7 @@ const callStatuses = [
   'converted',
   'follow_up',
   'session_730_attend',
+  'yes_after_730_session',
   'session_after_730',
   'custom_remark',
 ];
@@ -71,6 +72,9 @@ const aliases = new Map([
   ['follow up', 'follow_up'],
   ['talk response', 'talk_response'],
   ['custom remark', 'custom_remark'],
+  ['yes after 7:30 session', 'yes_after_730_session'],
+  ['session after 7:30', 'yes_after_730_session'],
+  ['session_after_730', 'yes_after_730_session'],
 ]);
 
 function normalizeOptionValue(value) {

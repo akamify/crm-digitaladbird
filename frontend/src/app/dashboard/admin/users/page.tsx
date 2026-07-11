@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
+import { BulkUserImportModal } from '@/components/users/BulkUserImportModal';
 import { Modal, Skeleton, EmptyState } from '@/components/ui/Modal';
 import { useUsers, useCreateUser, useUpdateUser, useBulkUpdateLeadAvailability } from '@/hooks/useUsers';
 import { useUpdateUserSettings, useAdminUserDetail } from '@/hooks/useAdminEnterprise';
@@ -33,6 +34,7 @@ function UsersInner() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkConfirm, setBulkConfirm] = useState<{ isAvailable: boolean } | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [editUser, setEditUser] = useState<User | null>(null);
   const [detailUserId, setDetailUserId] = useState<string | null>(null);
   const [settingsUser, setSettingsUser] = useState<User | null>(null);
@@ -240,6 +242,9 @@ function UsersInner() {
         <button onClick={openCreate} className="btn-primary rounded-lg px-4 py-2 text-sm inline-flex items-center gap-2">
           <Plus className="h-4 w-4" /> Add User
         </button>
+        <button onClick={() => setBulkImportOpen(true)} className="btn-outline rounded-lg px-4 py-2 text-sm inline-flex items-center gap-2">
+          <Users className="h-4 w-4" /> Import CSV
+        </button>
       </div>
 
       {selectedIds.length > 0 && (
@@ -384,6 +389,8 @@ function UsersInner() {
           </button>
         </div>
       </Modal>
+
+      <BulkUserImportModal open={bulkImportOpen} onClose={() => setBulkImportOpen(false)} />
 
       <Modal open={!!bulkConfirm} onClose={() => setBulkConfirm(null)} title={bulkConfirm?.isAvailable ? 'Mark users available?' : 'Mark users unavailable?'} size="sm">
         <div className="space-y-3 text-sm text-slate-700">

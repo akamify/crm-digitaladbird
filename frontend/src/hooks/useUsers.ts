@@ -31,6 +31,33 @@ export interface CreateUserInput {
   sendWelcomeEmail?: boolean;
 }
 
+export interface BulkUserImportRow {
+  row_number: number;
+  full_name?: string;
+  email?: string;
+  phone?: string;
+  role?: string;
+  reporting_rm?: string;
+  report_to_id?: string;
+  team_name?: string;
+}
+
+export interface BulkUserImportResult {
+  role: 'rm' | 'member';
+  requested: number;
+  created: number;
+  failed: number;
+  results: Array<{
+    row_number: number;
+    status: 'created' | 'failed';
+    user?: User;
+    emailWarning?: string | null;
+    code?: string;
+    reason?: string;
+    input?: { full_name: string | null; email: string | null };
+  }>;
+}
+
 export function useCreateUser() {
   const qc = useQueryClient();
   return useMutation({
@@ -52,6 +79,15 @@ export function useDeleteUser() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, reason }: { id: string; reason?: string }) => apiPost(`/users/${id}/delete`, { reason }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  });
+}
+
+export function useBulkImportUsers() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { role: 'rm' | 'member'; rows: BulkUserImportRow[]; sendWelcomeEmail?: boolean }) =>
+      apiPost<BulkUserImportResult>('/users/bulk-import', body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
   });
 }

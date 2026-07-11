@@ -74,6 +74,9 @@ export function useAddRemark() {
     onSuccess: (_d, { id }) => {
       qc.invalidateQueries({ queryKey: ['lead', id] });
       qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['workflow', id] });
+      qc.invalidateQueries({ queryKey: ['workflow-history', id] });
+      qc.invalidateQueries({ queryKey: ['workflow-stats'] });
       qc.invalidateQueries({ queryKey: ['reports'] });
     },
   });

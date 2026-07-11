@@ -13,6 +13,7 @@ import {
   type ConversionAttachment,
 } from '@/hooks/useWorkflow';
 import { fmtDate, humanize, clsx } from '@/lib/format';
+import { COMPLETED_REMARK_STATUS_VALUES, LEAD_REMARK_GROUPS } from '@/constants/leadRemarkOptions';
 
 /* ── Remark display labels + colors ─────────────────────────────────── */
 
@@ -51,7 +52,7 @@ const LEVEL_DISPLAY: Record<string, { label: string; bg: string; text: string; r
 
 const STEP_CONFIG = [
   { label: 'Remark', icon: MessageSquare, gradient: 'from-violet-500 to-purple-600', light: 'bg-violet-50 border-violet-200', badge: 'bg-violet-100 text-violet-700' },
-  { label: 'Lead Level', icon: BarChart3, gradient: 'from-blue-500 to-indigo-600', light: 'bg-blue-50 border-blue-200', badge: 'bg-blue-100 text-blue-700' },
+  { label: 'Lead Category', icon: BarChart3, gradient: 'from-blue-500 to-indigo-600', light: 'bg-blue-50 border-blue-200', badge: 'bg-blue-100 text-blue-700' },
   { label: 'Follow-up Tracker', icon: Target, gradient: 'from-emerald-500 to-teal-600', light: 'bg-emerald-50 border-emerald-200', badge: 'bg-emerald-100 text-emerald-700' },
   { label: 'Conversion', icon: Trophy, gradient: 'from-amber-500 to-orange-600', light: 'bg-amber-50 border-amber-200', badge: 'bg-amber-100 text-amber-700' },
 ];
@@ -120,7 +121,7 @@ export function WorkflowPanel({ leadId, isAdmin }: Props) {
   }
 
   const completedSteps = [
-    !!wfData.workflow?.remark_status,
+    !!wfData.workflow_remark_completed,
     !!wfData.workflow?.lead_level,
     !!wfData.workflow?.followup_completed,
     !!wfData.workflow?.conversion_completed,
@@ -191,7 +192,12 @@ export function WorkflowPanel({ leadId, isAdmin }: Props) {
           savedValue={wfData.workflow?.remark_status ? (REMARK_DISPLAY[wfData.workflow.remark_status]?.label || humanize(wfData.workflow.remark_status)) : undefined}
           savedAt={wfData.workflow?.remark_saved_at || undefined}
         >
-          <Step1Remark leadId={leadId} current={wfData.workflow?.remark_status || null} options={wfData.remark_options} />
+          <Step1Remark
+            leadId={leadId}
+            current={wfData.workflow?.remark_status || null}
+            options={wfData.remark_options}
+            completed={!!wfData.workflow_remark_completed}
+          />
         </StepCard>
 
         <StepCard
@@ -201,7 +207,12 @@ export function WorkflowPanel({ leadId, isAdmin }: Props) {
           savedValue={wfData.workflow?.lead_level ? (LEVEL_DISPLAY[wfData.workflow.lead_level]?.label || humanize(wfData.workflow.lead_level)) : undefined}
           savedAt={wfData.workflow?.lead_level_saved_at || undefined}
         >
-          <Step2Level leadId={leadId} current={wfData.workflow?.lead_level || null} options={wfData.lead_level_options} />
+          <Step2Level
+            leadId={leadId}
+            current={wfData.workflow?.lead_level || null}
+            options={wfData.lead_level_options}
+            leadCategory={wfData.lead_category}
+          />
         </StepCard>
 
         <StepCard
@@ -221,7 +232,12 @@ export function WorkflowPanel({ leadId, isAdmin }: Props) {
           savedValue={wfData.conversion?.customer_type ? `${humanize(wfData.conversion.customer_type)} — ₹${Number(wfData.conversion.total_payment || 0).toLocaleString()}` : undefined}
           savedAt={wfData.conversion?.submitted_at || undefined}
         >
-          <Step4Conversion leadId={leadId} conversion={wfData.conversion} completed={completedSteps[3]} />
+          <Step4Conversion
+            leadId={leadId}
+            conversion={wfData.conversion}
+            completed={completedSteps[3]}
+            leadCategory={wfData.lead_category}
+          />
         </StepCard>
       </div>
 
@@ -340,39 +356,60 @@ function StepCard({ step, config, unlocked, completed, isOpen, onToggle, savedVa
 
 /* ── Step 1: Remark System ───────────────────────────────────────── */
 
-function Step1Remark({ leadId, current, options }: {
-  leadId: string; current: string | null; options: string[];
+function Step1Remark({ leadId, current, options, completed }: {
+  leadId: string; current: string | null; options: string[]; completed: boolean;
 }) {
   const save = useSaveRemark();
+  const availableGroups = LEAD_REMARK_GROUPS.map(group => ({
+    ...group,
+    options: group.options.filter(option => options.includes(option.value)),
+  })).filter(group => group.options.length > 0);
 
   return (
     <div>
-      <p className="text-xs text-slate-500 mb-3">Select the remark status for this lead:</p>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        {options.map(opt => {
-          const display = REMARK_DISPLAY[opt] || { label: humanize(opt), bg: 'bg-slate-50', text: 'text-slate-700', ring: 'ring-slate-400' };
-          const selected = current === opt;
-          return (
-            <button
-              key={opt}
-              disabled={save.isPending}
-              onClick={() => save.mutate({ leadId, remark_status: opt }, {
-                onSuccess: () => toast.success(`Remark: ${display.label}`),
-                onError: () => toast.error('Failed to save remark'),
+      <p className="text-xs text-slate-500 mb-3">
+        {completed
+          ? 'The completed remark is locked. Earlier and later remark activity remains in workflow history.'
+          : 'Select a remark. Completed outcomes unlock the lead category step.'}
+      </p>
+      <div className="space-y-4">
+        {availableGroups.map(group => (
+          <div key={group.key}>
+            <p className={clsx('mb-2 text-[11px] font-semibold uppercase tracking-wide', {
+              emerald: 'text-emerald-700', sky: 'text-sky-700', amber: 'text-amber-700', slate: 'text-slate-500',
+            }[group.tone])}>{group.label}</p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {group.options.map(option => {
+                const display = REMARK_DISPLAY[option.value] || { label: option.label, bg: 'bg-slate-50', text: 'text-slate-700', ring: 'ring-slate-400' };
+                const selected = current === option.value;
+                const isCompletingOption = COMPLETED_REMARK_STATUS_VALUES.has(option.value);
+                return (
+                  <button
+                    key={option.value}
+                    disabled={save.isPending || completed}
+                    onClick={() => save.mutate({ leadId, remark_status: option.value }, {
+                      onSuccess: () => toast.success(`Remark: ${display.label}`),
+                      onError: () => toast.error('Failed to save remark'),
+                    })}
+                    className={clsx(
+                      'relative rounded-xl border-2 px-3 py-2.5 text-left text-xs font-semibold transition-all duration-200',
+                      selected
+                        ? `${display.bg} ${display.text} border-current ring-2 ${display.ring} shadow-md scale-[1.02]`
+                        : completed
+                          ? 'cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400'
+                          : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:shadow-sm hover:scale-[1.01]'
+                    )}
+                  >
+                    {save.isPending && <Loader2 className="absolute top-1 right-1 h-3 w-3 animate-spin text-slate-400" />}
+                    {selected && <CheckCircle2 className="absolute top-1 right-1 h-3.5 w-3.5 text-green-500" />}
+                    {option.label}
+                    {isCompletingOption && !selected && <span className="mt-1 block text-[9px] font-medium uppercase tracking-wide text-emerald-600">Completes step</span>}
+                  </button>
+                );
               })}
-              className={clsx(
-                'relative rounded-xl border-2 px-3 py-2.5 text-left text-xs font-semibold transition-all duration-200',
-                selected
-                  ? `${display.bg} ${display.text} border-current ring-2 ${display.ring} shadow-md scale-[1.02]`
-                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:shadow-sm hover:scale-[1.01]'
-              )}
-            >
-              {save.isPending && <Loader2 className="absolute top-1 right-1 h-3 w-3 animate-spin text-slate-400" />}
-              {selected && <CheckCircle2 className="absolute top-1 right-1 h-3.5 w-3.5 text-green-500" />}
-              {display.label}
-            </button>
-          );
-        })}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -380,14 +417,18 @@ function Step1Remark({ leadId, current, options }: {
 
 /* ── Step 2: Lead Level ──────────────────────────────────────────── */
 
-function Step2Level({ leadId, current, options }: {
-  leadId: string; current: string | null; options: string[];
+function Step2Level({ leadId, current, options, leadCategory }: {
+  leadId: string; current: string | null; options: string[]; leadCategory: 'partner' | 'trader' | 'unknown' | null;
 }) {
   const save = useSaveLeadLevel();
+  const isCold = current === 'cold_partner' || current === 'cold_trader';
 
   return (
     <div>
-      <p className="text-xs text-slate-500 mb-3">Classify the lead level:</p>
+      <p className="text-xs text-slate-500 mb-3">
+        Classify this {leadCategory ? `${humanize(leadCategory)} lead` : 'lead'} using its profile category.
+      </p>
+      {isCold && <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">Cold leads remain editable, but do not unlock the follow-up step.</p>}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {options.map(opt => {
           const display = LEVEL_DISPLAY[opt] || { label: humanize(opt), bg: 'bg-slate-50', text: 'text-slate-700', ring: 'ring-slate-400' };
@@ -529,8 +570,8 @@ function Step3Followup({ leadId, tracker }: {
 
 /* ── Step 4: Conversion ───────────────────────────────────────────── */
 
-function Step4Conversion({ leadId, conversion, completed }: {
-  leadId: string; conversion: any; completed: boolean;
+function Step4Conversion({ leadId, conversion, completed, leadCategory }: {
+  leadId: string; conversion: any; completed: boolean; leadCategory: 'partner' | 'trader' | 'unknown' | null;
 }) {
   const save = useSaveConversion();
   const [form, setForm] = useState({
@@ -538,20 +579,23 @@ function Step4Conversion({ leadId, conversion, completed }: {
     address: conversion?.address || '',
     total_payment: conversion?.total_payment || '',
     part_payment: conversion?.part_payment || '',
-    customer_type: conversion?.customer_type || 'partner',
     services: conversion?.services || '',
+    transaction_id: conversion?.transaction_id || '',
   });
 
   function handleSave(markComplete: boolean) {
-    if (!form.customer_type) { toast.error('Select customer type'); return; }
+    if (!leadCategory || !['partner', 'trader'].includes(leadCategory)) {
+      toast.error('A Partner or Trader lead category is required for conversion');
+      return;
+    }
     save.mutate({
       leadId,
       followup_status: form.followup_status || undefined,
       address: form.address || undefined,
       total_payment: form.total_payment ? Number(form.total_payment) : undefined,
       part_payment: form.part_payment ? Number(form.part_payment) : undefined,
-      customer_type: form.customer_type as 'partner' | 'trader',
       services: form.services || undefined,
+      transaction_id: form.transaction_id || undefined,
     }, {
       onSuccess: () => toast.success(markComplete ? 'Conversion complete! Lead marked as won.' : 'Conversion saved!'),
       onError: (e: any) => toast.error(e?.message || 'Failed'),
@@ -571,6 +615,7 @@ function Step4Conversion({ leadId, conversion, completed }: {
           <InfoPill label="Total Payment" value={conversion.total_payment ? `₹${Number(conversion.total_payment).toLocaleString()}` : '—'} />
           <InfoPill label="Part Payment" value={conversion.part_payment ? `₹${Number(conversion.part_payment).toLocaleString()}` : '—'} />
           <InfoPill label="Services" value={conversion.services || '—'} />
+          {conversion.transaction_id && <InfoPill label="Transaction ID" value={conversion.transaction_id} />}
           {conversion.address && <div className="col-span-2"><InfoPill label="Address" value={conversion.address} /></div>}
         </div>
         <p className="mt-3 text-[10px] text-slate-400 text-right">Submitted {fmtDate(conversion.submitted_at)}</p>
@@ -593,24 +638,10 @@ function Step4Conversion({ leadId, conversion, completed }: {
           />
         </div>
 
-        <div>
-          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Customer Type *</label>
-          <div className="mt-1.5 flex gap-2">
-            {(['partner', 'trader'] as const).map(type => (
-              <button
-                key={type}
-                onClick={() => setForm(f => ({ ...f, customer_type: type }))}
-                className={clsx(
-                  'flex-1 rounded-xl border-2 py-3 text-sm font-bold transition-all',
-                  form.customer_type === type
-                    ? 'border-brand-400 bg-brand-50 text-brand-700 shadow-md'
-                    : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'
-                )}
-              >
-                {type === 'partner' ? '🤝' : '📈'} {humanize(type)}
-              </button>
-            ))}
-          </div>
+        <div className="rounded-xl border border-brand-200 bg-brand-50 px-3 py-2.5">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-brand-600">Customer Type</p>
+          <p className="mt-0.5 text-sm font-semibold text-brand-900">{leadCategory ? humanize(leadCategory) : 'Not set on lead profile'}</p>
+          <p className="mt-0.5 text-xs text-brand-700">Taken from the lead profile and cannot be changed here.</p>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
@@ -634,6 +665,18 @@ function Step4Conversion({ leadId, conversion, completed }: {
               onChange={e => setForm(f => ({ ...f, part_payment: e.target.value }))}
             />
           </div>
+        </div>
+
+        <div>
+          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Transaction ID</label>
+          <input
+            className="input mt-1 text-sm font-mono"
+            placeholder="Payment transaction / UTR / reference ID"
+            value={form.transaction_id}
+            maxLength={128}
+            onChange={e => setForm(f => ({ ...f, transaction_id: e.target.value.replace(/\s/g, '') }))}
+          />
+          <p className="mt-1 text-[10px] text-slate-500">Required when a payment amount is recorded.</p>
         </div>
 
         <div>

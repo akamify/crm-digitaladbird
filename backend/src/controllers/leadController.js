@@ -9,6 +9,7 @@ const config = require('../config/env');
 const { resolveLeadCategory } = require('../services/leadCategory/leadCategoryResolver');
 const { validateCallStatus, validateLeadStage } = require('../constants/leadStatusOptions');
 const leadSessionService = require('../services/leadSessionService');
+const { normalizeWorkflowRemarkStatus, saveWorkflowRemark } = require('../services/leadWorkflowRemarkService');
 
 function humanizeValue(value) {
   return String(value || '')
@@ -59,6 +60,7 @@ async function toDbCallStatus(client, normalizedCallStatus) {
     in: 'invalid_number',
     session_730_attend: 'follow_up',
     session_after_730: 'follow_up',
+    yes_after_730_session: 'follow_up',
     custom_remark: null,
   };
   const fallback = Object.prototype.hasOwnProperty.call(fallbackMap, normalizedCallStatus)
@@ -453,6 +455,17 @@ exports.addRemark = asyncHandler(async (req, res) => {
          VALUES ($1, $2, $3, $4, $5) RETURNING *`,
       [req.params.id, req.user.id, remarkText, dbCallStatus, next_followup_at || null]
     );
+
+    const workflowRemark = normalizeWorkflowRemarkStatus(normalizedCallStatus);
+    if (workflowRemark) {
+      await saveWorkflowRemark({
+        leadId: req.params.id,
+        userId: req.user.id,
+        remarkStatus: workflowRemark,
+        client,
+        source: 'lead_remark',
+      });
+    }
 
     const updates = [];
     const params = [req.params.id];

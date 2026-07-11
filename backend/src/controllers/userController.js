@@ -32,6 +32,28 @@ function normalizePhoneInput(phone) {
   return String(phone || '').trim();
 }
 
+function normalizeIndianPhone(phone) {
+  const digits = normalizePhoneInput(phone).replace(/\D/g, '');
+  const localNumber = digits.length === 12 && digits.startsWith('91') ? digits.slice(2) : digits;
+  return /^[6-9]\d{9}$/.test(localNumber) ? `+91${localNumber}` : '';
+}
+
+function validateUserInput({ full_name, email, phone }) {
+  const name = String(full_name || '').trim();
+  if (name.length < 2 || name.length > 120 || !/^[\p{L}][\p{L}\s.'-]*$/u.test(name)) {
+    throw new AppError(400, 'INVALID_FULL_NAME', 'Enter a valid full name.');
+  }
+
+  const normalizedEmail = normalizeEmail(email);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) || normalizedEmail.length > 190) {
+    throw new AppError(400, 'INVALID_EMAIL', 'Enter a valid email address.');
+  }
+
+  if (!normalizeIndianPhone(phone)) {
+    throw new AppError(400, 'INVALID_PHONE', 'Enter a valid 10-digit Indian mobile number.');
+  }
+}
+
 function mapUserRow(row) {
   if (!row) return row;
   const mapped = { ...row, role: normalizeRole(row.role) };
@@ -52,18 +74,19 @@ function mapUserRow(row) {
 
 async function assertReservedIdentity({ email, phone }, excludeUserId = null) {
   const normalizedEmail = normalizeEmail(email);
-  const normalizedPhone = normalizePhoneInput(phone);
+  const normalizedPhone = normalizeIndianPhone(phone);
   if (!normalizedEmail && !normalizedPhone) return;
 
   const { rows: [existing] } = await query(
     `SELECT id,
             CASE
               WHEN $1 <> '' AND LOWER(email) = $1 THEN 'email'
-              WHEN $2 <> '' AND phone = $2 THEN 'phone'
+              WHEN $2 <> '' AND RIGHT(REGEXP_REPLACE(COALESCE(phone, ''), '[^0-9]', '', 'g'), 10) = RIGHT($2, 10) THEN 'phone'
             END AS field
        FROM users
       WHERE ($3::uuid IS NULL OR id <> $3::uuid)
-        AND (($1 <> '' AND LOWER(email) = $1) OR ($2 <> '' AND phone = $2))
+        AND (($1 <> '' AND LOWER(email) = $1)
+          OR ($2 <> '' AND RIGHT(REGEXP_REPLACE(COALESCE(phone, ''), '[^0-9]', '', 'g'), 10) = RIGHT($2, 10)))
       LIMIT 1`,
     [normalizedEmail, normalizedPhone, excludeUserId],
   );
@@ -87,6 +110,109 @@ async function assertActiveRm(rmId) {
   );
   if (!rm) throw new AppError(400, 'INVALID_REPORTING_RM', 'Member must report to an active RM.');
   return rm;
+}
+
+async function resolveReportingRm(reference) {
+  const value = String(reference || '').trim();
+  if (!value) throw new AppError(400, 'REPORTING_RM_REQUIRED', 'Member must include a reporting RM.');
+  const { rows } = await query(
+    `SELECT id, team_name
+       FROM users
+      WHERE role = 'rm'
+        AND status = 'active'
+        AND deleted_at IS NULL
+        AND (id::text = $1 OR LOWER(email) = LOWER($1) OR LOWER(cp_id) = LOWER($1) OR LOWER(full_name) = LOWER($1))
+      LIMIT 2`,
+    [value],
+  );
+  if (rows.length === 0) throw new AppError(400, 'INVALID_REPORTING_RM', 'Reporting RM was not found or is not active.');
+  if (rows.length > 1) throw new AppError(400, 'AMBIGUOUS_REPORTING_RM', 'Reporting RM matches more than one user. Use RM email or CP ID.');
+  return rows[0];
+}
+
+async function createUserRecord({ input, actor, requestContext }) {
+  assertCpIdNotEditable(input);
+  const {
+    emp_code, full_name, email, phone, role: rawRole, report_to_id, reporting_rm, team_name,
+    daily_lead_cap, distribution_weight, password, sendWelcomeEmail,
+  } = input;
+
+  if (rawRole === 'partner') throw new AppError(400, 'PARTNER_ROLE_DEPRECATED', 'Partner users are now created as members.');
+  const role = normalizeRole(rawRole);
+  if (!['super_admin', 'admin', 'rm', 'member'].includes(role)) throw new AppError(400, 'INVALID_ROLE', 'Invalid user role.');
+  if (!full_name || !email || !phone || !role) {
+    throw new AppError(400, 'INVALID_INPUT', 'full_name, email, phone and role are required');
+  }
+  validateUserInput({ full_name, email, phone });
+  const canonicalPhone = normalizeIndianPhone(phone);
+
+  let resolvedReportTo = null;
+  let resolvedTeamName = String(team_name || '').trim() || null;
+  if (role === 'rm') {
+    if (!resolvedTeamName) throw new AppError(400, 'TEAM_NAME_REQUIRED', 'RM must have a team name.');
+    if (resolvedTeamName.length < 2 || resolvedTeamName.length > 120) {
+      throw new AppError(400, 'INVALID_TEAM_NAME', 'Team name must be between 2 and 120 characters.');
+    }
+  } else if (role === 'member') {
+    const rm = report_to_id ? await assertActiveRm(report_to_id) : await resolveReportingRm(reporting_rm);
+    resolvedReportTo = rm.id;
+    resolvedTeamName = rm.team_name || null;
+  }
+
+  await assertReservedIdentity({ email, phone });
+  const cpId = await generateUniqueCpId();
+  const pwHash = password ? await bcrypt.hash(password, 10) : null;
+  let user;
+  try {
+    const result = await query(
+      `INSERT INTO users (emp_code, cp_id, full_name, email, phone, role, report_to_id, team_name,
+                          daily_lead_cap, distribution_weight, password_hash)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, 50), COALESCE($10, 1), $11)
+          RETURNING id, cp_id, full_name, email, phone, role, report_to_id, team_name`,
+      [emp_code || cpId, cpId, full_name.trim(), normalizeEmail(email), canonicalPhone, role,
+        resolvedReportTo, resolvedTeamName, daily_lead_cap, distribution_weight, pwHash],
+    );
+    [user] = result.rows;
+  } catch (error) {
+    if (error?.code === '23505') {
+      const constraint = String(error.constraint || '').toLowerCase();
+      if (constraint.includes('email')) throw new AppError(409, 'EMAIL_ALREADY_EXISTS', 'This email is already assigned to another user.');
+      if (constraint.includes('phone')) throw new AppError(409, 'PHONE_ALREADY_EXISTS', 'This phone is already assigned to another user.');
+      throw new AppError(409, 'USER_ALREADY_EXISTS', 'This user conflicts with an existing user record.');
+    }
+    throw error;
+  }
+
+  let emailWarning = null;
+  if (sendWelcomeEmail !== false && user.email) {
+    try {
+      await passwordResetService.sendNewUserSetupLink({
+        userId: user.id,
+        createdByUser: actor,
+        ipAddress: requestContext.ip,
+        userAgent: requestContext.userAgent,
+      });
+    } catch (error) {
+      logger.warn({ userId: user.id, code: error.code || 'ONBOARDING_EMAIL_FAILED' }, 'User created but onboarding email failed');
+      emailWarning = error.code === 'EMAIL_PROVIDER_NOT_CONFIGURED'
+        ? 'User created, but the email provider is not configured.'
+        : 'User created, but onboarding email could not be sent.';
+    }
+  }
+
+  return { user: mapUserRow(user), emailWarning };
+}
+
+async function logBulkImportActivity({ actor, request, entityId = null, action, metadata }) {
+  try {
+    await query(
+      `INSERT INTO activity_logs(user_id, user_name, user_role, entity, entity_id, action, metadata, ip_address)
+       VALUES ($1, $2, $3, 'user', $4, $5, $6::jsonb, $7)`,
+      [actor.id, actor.full_name || actor.name || 'Admin', actor.role, entityId, action, JSON.stringify(metadata), request.ip || null],
+    );
+  } catch (error) {
+    logger.warn({ action, code: error.code, message: error.message }, 'Bulk user import activity log failed');
+  }
 }
 
 async function revokeUserSessions(userId) {
@@ -202,62 +328,80 @@ exports.hierarchy = asyncHandler(async (_req, res) => {
 
 exports.create = asyncHandler(async (req, res) => {
   if (!ADMIN_ROLES.has(req.user.role)) throw new AppError(403, 'FORBIDDEN', 'Admin only');
-  assertCpIdNotEditable(req.body);
+  const { user, emailWarning } = await createUserRecord({
+    input: req.body,
+    actor: req.user,
+    requestContext: { ip: req.ip, userAgent: req.headers['user-agent'] || null },
+  });
+  res.status(201).json({ success: true, data: { ...user, emailWarning } });
+});
 
-  const {
-    emp_code, full_name, email, phone, role: rawRole, report_to_id, team_name,
-    daily_lead_cap, distribution_weight, password, sendWelcomeEmail,
-  } = req.body;
-
-  if (rawRole === 'partner') throw new AppError(400, 'PARTNER_ROLE_DEPRECATED', 'Partner users are now created as members.');
-  const role = normalizeRole(rawRole);
-  if (!['super_admin', 'admin', 'rm', 'member'].includes(role)) throw new AppError(400, 'INVALID_ROLE', 'Invalid user role.');
-  if (!full_name || !email || !phone || !role) {
-    throw new AppError(400, 'INVALID_INPUT', 'full_name, email, phone and role are required');
+exports.bulkImport = asyncHandler(async (req, res) => {
+  if (!ADMIN_ROLES.has(req.user.role)) throw new AppError(403, 'FORBIDDEN', 'Admin only');
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+  const batchRole = normalizeRole(req.body?.role);
+  const sendWelcomeEmail = req.body?.sendWelcomeEmail !== false;
+  if (!['rm', 'member'].includes(batchRole)) {
+    throw new AppError(400, 'INVALID_IMPORT_ROLE', 'Bulk import supports either RM or Member users.');
   }
+  if (!rows.length) throw new AppError(400, 'IMPORT_ROWS_REQUIRED', 'Upload a CSV with at least one user row.');
+  if (rows.length > 500) throw new AppError(400, 'IMPORT_LIMIT_EXCEEDED', 'A maximum of 500 users can be imported at once.');
 
-  let resolvedReportTo = null;
-  let resolvedTeamName = String(team_name || '').trim() || null;
-  if (role === 'rm') {
-    if (!resolvedTeamName) throw new AppError(400, 'TEAM_NAME_REQUIRED', 'RM must have a team name.');
-  } else if (role === 'member') {
-    if (!report_to_id) throw new AppError(400, 'REPORTING_RM_REQUIRED', 'Member must report to an RM.');
-    const rm = await assertActiveRm(report_to_id);
-    resolvedReportTo = rm.id;
-    resolvedTeamName = rm.team_name || null;
-  }
-
-  await assertReservedIdentity({ email, phone });
-  const cpId = await generateUniqueCpId();
-  const pwHash = password ? await bcrypt.hash(password, 10) : null;
-
-  const { rows: [user] } = await query(
-    `INSERT INTO users (emp_code, cp_id, full_name, email, phone, role, report_to_id, team_name,
-                        daily_lead_cap, distribution_weight, password_hash)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, 50), COALESCE($10, 1), $11)
-        RETURNING id, cp_id, full_name, email, phone, role, report_to_id, team_name`,
-    [emp_code || cpId, cpId, full_name.trim(), normalizeEmail(email), normalizePhoneInput(phone), role,
-      resolvedReportTo, resolvedTeamName, daily_lead_cap, distribution_weight, pwHash],
-  );
-
-  let emailWarning = null;
-  if (sendWelcomeEmail !== false && user.email) {
+  const results = [];
+  const requestContext = { ip: req.ip, userAgent: req.headers['user-agent'] || null };
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index] || {};
+    const rowNumber = Number(row.row_number) || index + 2;
+    const metadata = {
+      import_role: batchRole,
+      row_number: rowNumber,
+      full_name: String(row.full_name || '').trim() || null,
+      email: normalizeEmail(row.email) || null,
+    };
     try {
-      await passwordResetService.sendNewUserSetupLink({
-        userId: user.id,
-        createdByUser: req.user,
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent'] || null,
+      const { user, emailWarning } = await createUserRecord({
+        input: {
+          full_name: row.full_name,
+          email: row.email,
+          phone: row.phone,
+          role: batchRole,
+          team_name: row.team_name,
+          report_to_id: row.report_to_id,
+          reporting_rm: row.reporting_rm,
+          sendWelcomeEmail,
+        },
+        actor: req.user,
+        requestContext,
       });
+      await logBulkImportActivity({
+        actor: req.user,
+        request: req,
+        entityId: user.id,
+        action: 'user_bulk_imported',
+        metadata: { ...metadata, created_role: user.role, cp_id: user.cp_id, onboarding_email_warning: emailWarning || null },
+      });
+      results.push({ row_number: rowNumber, status: 'created', user, emailWarning });
     } catch (error) {
-      logger.warn({ userId: user.id, code: error.code || 'ONBOARDING_EMAIL_FAILED' }, 'User created but onboarding email failed');
-      emailWarning = error.code === 'EMAIL_PROVIDER_NOT_CONFIGURED'
-        ? 'User created, but the email provider is not configured.'
-        : 'User created, but onboarding email could not be sent.';
+      const reason = error instanceof AppError ? error.message : 'User could not be created.';
+      const code = error instanceof AppError ? error.code : 'USER_IMPORT_FAILED';
+      logger.warn({ rowNumber, code, email: metadata.email }, 'Bulk user import row failed');
+      await logBulkImportActivity({
+        actor: req.user,
+        request: req,
+        action: 'user_bulk_import_failed',
+        metadata: { ...metadata, code, reason },
+      });
+      results.push({ row_number: rowNumber, status: 'failed', code, reason, input: { full_name: metadata.full_name, email: metadata.email } });
     }
   }
 
-  res.status(201).json({ success: true, data: { ...mapUserRow(user), emailWarning } });
+  const created = results.filter(result => result.status === 'created').length;
+  const failed = results.length - created;
+  res.status(201).json({
+    success: true,
+    data: { role: batchRole, requested: rows.length, created, failed, results },
+    message: `${created} user(s) created${failed ? `, ${failed} failed` : ''}.`,
+  });
 });
 
 exports.update = asyncHandler(async (req, res) => {

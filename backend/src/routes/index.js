@@ -9,7 +9,7 @@ const { requireRole, requireMemberType }  = require('../middleware/rbac');
 const { responseCache }                   = require('../middleware/cache');
 const { broadcastLeadRequest }            = require('../services/socketService');
 const logger                              = require('../utils/logger');
-const { query } = require('../config/database');
+const { query, withTransaction } = require('../config/database');
 const { asyncHandler, AppError } = require('../utils/errors');
 const assignmentEngine = require('../services/leadAssignmentEngine');
 const { validateLeadAssignee } = require('../services/leadAssigneeValidator');
@@ -19,6 +19,11 @@ const leadStatusOptions = require('../constants/leadStatusOptions');
 const { updateLeadAvailability, updateSingleLeadAvailability } = require('../services/userAvailabilityService');
 const supportTickets = require('../services/supportTicketService');
 const myProfile = require('../services/myProfileService');
+const {
+  WORKFLOW_REMARK_OPTIONS,
+  isWorkflowRemarkCompleted,
+  saveWorkflowRemark,
+} = require('../services/leadWorkflowRemarkService');
 
 // Loads a lead-request enriched with user + RM context and emits the
 // appropriate `lead-request:<kind>` Socket.IO event so admin + RM + the
@@ -120,6 +125,7 @@ router.patch('/users/me/profile', authenticate, requireRole('rm', 'member', 'par
 router.get   ('/users',           authenticate, users.list);
 router.get   ('/users/hierarchy', authenticate, requireRole('super_admin', 'rm'), users.hierarchy);
 router.post  ('/users',           authenticate, requireRole('super_admin', 'admin'), users.create);
+router.post  ('/users/bulk-import', authenticate, requireRole('super_admin', 'admin'), users.bulkImport);
 router.get   ('/users/deleted',   authenticate, requireRole('super_admin', 'admin'), users.deleted);
 router.post  ('/users/:id/block', authenticate, requireRole('super_admin', 'admin'), users.block);
 router.post  ('/users/:id/unblock', authenticate, requireRole('super_admin', 'admin'), users.unblock);
@@ -5266,11 +5272,19 @@ router.get('/admin/meta/campaigns-enriched', authenticate, requireRole('super_ad
 // MEMBER LEAD WORKFLOW — 4-step sequential workflow system
 // ══════════════════════════════════════════════════════════════════════
 
-const REMARK_OPTIONS = [
-  'communication_completed', 'recall', 'respond_hi', 'cnr',
-  'so', 'cw', 'nn', 'nc', 'ni', 'in', 'cb',
-  'session_730_attend', 'yes_after_730_session'
-];
+const REMARK_OPTIONS = WORKFLOW_REMARK_OPTIONS;
+const COLD_LEAD_LEVELS = ['cold_partner', 'cold_trader'];
+
+function levelOptionsForCategory(category) {
+  const normalized = String(category || '').toLowerCase();
+  if (normalized === 'partner') {
+    return LEAD_LEVEL_OPTIONS.filter(level => level.endsWith('_partner') || ['advance_payment', 'closed'].includes(level));
+  }
+  if (normalized === 'trader') {
+    return LEAD_LEVEL_OPTIONS.filter(level => level.endsWith('_trader') || ['advance_payment', 'closed'].includes(level));
+  }
+  return LEAD_LEVEL_OPTIONS;
+}
 
 // Final lead-level set — UH and HU removed; ALL Partner/ALL Trader are the
 // canonical "everyone" buckets. Order matches the admin-spec final list.
@@ -5286,7 +5300,7 @@ router.get('/leads/:id/workflow', authenticate, asyncHandler(async (req, res) =>
   const leadId = req.params.id;
 
   const { rows: [lead] } = await query(
-    `SELECT id, assigned_to_user_id FROM leads WHERE id = $1 AND deleted_at IS NULL`, [leadId]
+    `SELECT id, assigned_to_user_id, category FROM leads WHERE id = $1 AND deleted_at IS NULL`, [leadId]
   );
   if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
 
@@ -5304,8 +5318,9 @@ router.get('/leads/:id/workflow', authenticate, asyncHandler(async (req, res) =>
     `SELECT * FROM lead_conversion WHERE lead_id = $1`, [leadId]
   );
 
-  const currentStep = !wf?.remark_status ? 1
+  const currentStep = !isWorkflowRemarkCompleted(wf?.remark_status) ? 1
     : !wf?.lead_level ? 2
+    : COLD_LEAD_LEVELS.includes(wf.lead_level) ? 2
     : !wf?.followup_completed ? 3
     : !wf?.conversion_completed ? 4
     : 5;
@@ -5318,7 +5333,9 @@ router.get('/leads/:id/workflow', authenticate, asyncHandler(async (req, res) =>
       conversion: conv || null,
       current_step: currentStep,
       remark_options: REMARK_OPTIONS,
-      lead_level_options: LEAD_LEVEL_OPTIONS,
+      lead_level_options: levelOptionsForCategory(lead.category),
+      lead_category: lead.category || null,
+      workflow_remark_completed: isWorkflowRemarkCompleted(wf?.remark_status),
     },
   });
 }));
@@ -5330,31 +5347,26 @@ router.post('/leads/:id/workflow/remark', authenticate, asyncHandler(async (req,
   if (!remark_status) throw new AppError(400, 'INVALID', 'remark_status required');
 
   const { rows: [lead] } = await query(
-    `SELECT id, assigned_to_user_id FROM leads WHERE id = $1 AND deleted_at IS NULL`, [leadId]
+    `SELECT id, assigned_to_user_id, category FROM leads WHERE id = $1 AND deleted_at IS NULL`, [leadId]
   );
   if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
   if (req.user.role === 'member' && lead.assigned_to_user_id !== req.user.id) {
     throw new AppError(403, 'FORBIDDEN', 'Lead not assigned to you');
   }
 
-  const { rows: [wf] } = await query(`
-    INSERT INTO lead_workflow (lead_id, user_id, remark_status, remark_saved_at)
-    VALUES ($1, $2, $3, NOW())
-    ON CONFLICT (lead_id) DO UPDATE SET
-      remark_status = $3, remark_saved_at = NOW(), updated_at = NOW()
-    RETURNING *
-  `, [leadId, req.user.id, remark_status]);
-
-  await query(`
-    INSERT INTO lead_workflow_history (lead_id, user_id, step, action, new_value)
-    VALUES ($1, $2, 1, 'remark_saved', $3)
-  `, [leadId, req.user.id, remark_status]);
+  const wf = await withTransaction((client) => saveWorkflowRemark({
+    leadId,
+    userId: req.user.id,
+    remarkStatus: remark_status,
+    client,
+    source: 'workflow_step',
+  }));
 
   {
     const { logActivity } = require('../utils/auditLog');
     await logActivity(req, {
       entity: 'lead', entity_id: leadId, action: 'remark_saved',
-      new_value: remark_status,
+      new_value: wf.remark_status,
       metadata: { step: 1 },
     });
   }
@@ -5369,18 +5381,22 @@ router.post('/leads/:id/workflow/level', authenticate, asyncHandler(async (req, 
   if (!lead_level) throw new AppError(400, 'INVALID', 'lead_level required');
 
   const { rows: [lead] } = await query(
-    `SELECT id, assigned_to_user_id FROM leads WHERE id = $1 AND deleted_at IS NULL`, [leadId]
+    `SELECT id, assigned_to_user_id, category FROM leads WHERE id = $1 AND deleted_at IS NULL`, [leadId]
   );
   if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
   if (req.user.role === 'member' && lead.assigned_to_user_id !== req.user.id) {
     throw new AppError(403, 'FORBIDDEN', 'Lead not assigned to you');
   }
 
+  if (!levelOptionsForCategory(lead.category).includes(lead_level)) {
+    throw new AppError(400, 'INVALID_LEAD_LEVEL', 'Select a lead category option that matches this lead profile.');
+  }
+
   const { rows: [existing] } = await query(
     `SELECT remark_status FROM lead_workflow WHERE lead_id = $1`, [leadId]
   );
-  if (!existing?.remark_status) {
-    throw new AppError(400, 'STEP_LOCKED', 'Complete Step 1 (Remark) first');
+  if (!isWorkflowRemarkCompleted(existing?.remark_status)) {
+    throw new AppError(400, 'STEP_LOCKED', 'Select a completed Step 1 remark before classifying this lead.');
   }
 
   const { rows: [wf] } = await query(`
@@ -5424,6 +5440,9 @@ router.patch('/leads/:id/workflow/followup', authenticate, asyncHandler(async (r
   );
   if (!existing?.lead_level) {
     throw new AppError(400, 'STEP_LOCKED', 'Complete Step 2 (Lead Level) first');
+  }
+  if (COLD_LEAD_LEVELS.includes(existing.lead_level)) {
+    throw new AppError(400, 'COLD_LEAD_WORKFLOW_PAUSED', 'Cold leads do not unlock follow-up. Change the lead category to continue this workflow.');
   }
 
   const allowed = [
@@ -5514,18 +5533,25 @@ router.post('/leads/:id/workflow/followup/complete', authenticate, requireRole('
 // Step 4: Save conversion data
 router.post('/leads/:id/workflow/conversion', authenticate, asyncHandler(async (req, res) => {
   const leadId = req.params.id;
-  const { followup_status, address, total_payment, part_payment, customer_type, services } = req.body;
-
-  if (!customer_type || !['partner', 'trader'].includes(customer_type)) {
-    throw new AppError(400, 'INVALID', 'customer_type must be partner or trader');
-  }
+  const { followup_status, address, total_payment, part_payment, services } = req.body;
+  const transactionId = String(req.body.transaction_id || '').trim();
 
   const { rows: [lead] } = await query(
-    `SELECT id, assigned_to_user_id FROM leads WHERE id = $1 AND deleted_at IS NULL`, [leadId]
+    `SELECT id, assigned_to_user_id, category FROM leads WHERE id = $1 AND deleted_at IS NULL`, [leadId]
   );
   if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
   if (req.user.role === 'member' && lead.assigned_to_user_id !== req.user.id) {
     throw new AppError(403, 'FORBIDDEN', 'Lead not assigned to you');
+  }
+  const customerType = String(lead.category || '').toLowerCase();
+  if (!['partner', 'trader'].includes(customerType)) {
+    throw new AppError(400, 'INVALID_LEAD_CATEGORY', 'Conversion requires a Partner or Trader lead category.');
+  }
+  if (transactionId && !/^[A-Za-z0-9._/-]{6,128}$/.test(transactionId)) {
+    throw new AppError(400, 'INVALID_TRANSACTION_ID', 'Enter a valid payment transaction ID without spaces.');
+  }
+  if ((Number(total_payment) > 0 || Number(part_payment) > 0) && !transactionId) {
+    throw new AppError(400, 'TRANSACTION_ID_REQUIRED', 'Transaction ID is required when recording a payment.');
   }
 
   const { rows: [existing] } = await query(
@@ -5536,16 +5562,16 @@ router.post('/leads/:id/workflow/conversion', authenticate, asyncHandler(async (
   }
 
   const { rows: [conv] } = await query(`
-    INSERT INTO lead_conversion (lead_id, user_id, followup_status, address, total_payment, part_payment, customer_type, services)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    INSERT INTO lead_conversion (lead_id, user_id, followup_status, address, total_payment, part_payment, customer_type, services, transaction_id)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
     ON CONFLICT (lead_id) DO UPDATE SET
       followup_status = $3, address = $4, total_payment = $5, part_payment = $6,
-      customer_type = $7, services = $8,
+      customer_type = $7, services = $8, transaction_id = $9,
       submitted_at = NOW(), updated_at = NOW()
     RETURNING *
   `, [leadId, req.user.id, followup_status || null, address || null,
       total_payment || null, part_payment || null,
-      customer_type, services || null]);
+      customerType, services || null, transactionId || null]);
 
   await query(`
     UPDATE lead_workflow SET conversion_completed = TRUE, conversion_completed_at = NOW(), updated_at = NOW()
@@ -5560,14 +5586,14 @@ router.post('/leads/:id/workflow/conversion', authenticate, asyncHandler(async (
   await query(`
     INSERT INTO lead_workflow_history (lead_id, user_id, step, action, new_value, metadata)
     VALUES ($1, $2, 4, 'conversion_submitted', $3, $4)
-  `, [leadId, req.user.id, customer_type, JSON.stringify({ total_payment, part_payment, services })]);
+  `, [leadId, req.user.id, customerType, JSON.stringify({ total_payment, part_payment, services, transaction_id: transactionId || null })]);
 
   {
     const { logActivity } = require('../utils/auditLog');
     await logActivity(req, {
       entity: 'lead', entity_id: leadId, action: 'converted',
-      new_value: customer_type,
-      metadata: { step: 4, total_payment, part_payment, services, followup_status },
+      new_value: customerType,
+      metadata: { step: 4, total_payment, part_payment, services, followup_status, transaction_id: transactionId || null },
     });
   }
 
@@ -5806,14 +5832,16 @@ router.get('/workflow/stats', authenticate, requireRole('super_admin', 'admin', 
       (SELECT COUNT(*) FROM leads l WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}) AS total_assigned,
       (SELECT COUNT(*) FROM leads l LEFT JOIN lead_workflow wf ON wf.lead_id = l.id
         WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}
-        AND wf.remark_status IS NULL) AS step1_pending,
+        AND COALESCE(wf.remark_status, '') NOT IN ('communication_completed', 'respond_hi', 'session_730_attend', 'yes_after_730_session')) AS step1_pending,
       (SELECT COUNT(*) FROM leads l LEFT JOIN lead_workflow wf ON wf.lead_id = l.id
         WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}
-        AND wf.remark_status IS NOT NULL
+        AND wf.remark_status IN ('communication_completed', 'respond_hi', 'session_730_attend', 'yes_after_730_session')
         AND wf.lead_level IS NULL) AS step2_pending,
       (SELECT COUNT(*) FROM leads l LEFT JOIN lead_workflow wf ON wf.lead_id = l.id
         WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}
+        AND wf.remark_status IN ('communication_completed', 'respond_hi', 'session_730_attend', 'yes_after_730_session')
         AND wf.lead_level IS NOT NULL
+        AND wf.lead_level NOT IN ('cold_partner', 'cold_trader')
         AND wf.followup_completed IS NOT TRUE) AS step3_pending,
       (SELECT COUNT(*) FROM leads l LEFT JOIN lead_workflow wf ON wf.lead_id = l.id
         WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}
@@ -5821,8 +5849,9 @@ router.get('/workflow/stats', authenticate, requireRole('super_admin', 'admin', 
         AND wf.conversion_completed IS NOT TRUE) AS step4_pending,
       (SELECT COUNT(*) FROM leads l LEFT JOIN lead_workflow wf ON wf.lead_id = l.id
         WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}
-        AND wf.remark_status IS NOT NULL
+        AND wf.remark_status IN ('communication_completed', 'respond_hi', 'session_730_attend', 'yes_after_730_session')
         AND wf.lead_level IS NOT NULL
+        AND wf.lead_level NOT IN ('cold_partner', 'cold_trader')
         AND wf.followup_completed IS TRUE
         AND wf.conversion_completed IS TRUE) AS completed,
       (SELECT COUNT(*) FROM lead_workflow_history h

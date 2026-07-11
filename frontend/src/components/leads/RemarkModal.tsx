@@ -3,40 +3,10 @@ import { useState, FormEvent } from 'react';
 import toast from 'react-hot-toast';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
-import { Select, Textarea, Input } from '@/components/ui/Input';
 import { useAddRemark } from '@/hooks/useLeads';
 import type { CallStatus, LeadStage } from '@/types';
-
-const STATUS_OPTS = [
-  // Positive Outcomes
-  { value: 'communication_completed', label: 'Communication Completed' },
-  { value: 'respond_hi',              label: 'Respond (HI)' },
-  { value: 'interested',             label: 'Interested' },
-  { value: 'converted',              label: 'Converted' },
-  
-  // Call Issues
-  { value: 'recall',                 label: 'Recall' },
-  { value: 'cnr',                    label: 'CNR (Call Not Received)' },
-  { value: 'so',                     label: 'SO (Switch Off)' },
-  { value: 'cw',                     label: 'CW (Call Waiting)' },
-  { value: 'nn',                     label: 'NN (No Network)' },
-  { value: 'nc',                     label: 'NC (Not Connected)' },
-  { value: 'ni',                     label: 'NI (No Incoming)' },
-  { value: 'in',                     label: 'IN (Invalid Number)' },
-  { value: 'cb',                     label: 'CB (Call Busy)' },
-  { value: 'rnr',                    label: 'RNR (Ringing No Response)' },
-  { value: 'busy',                   label: 'Busy' },
-  
-  // Session Related
-  { value: 'session_730_attend',     label: '7:30 Session Attend' },
-  { value: 'session_after_730',      label: 'Yes After 7:30 Session' },
-  
-  // Other
-  { value: 'not_interested',         label: 'Not Interested' },
-  { value: 'callback_requested',    label: 'Callback Requested' },
-  { value: 'follow_up',              label: 'Follow-up' },
-  { value: 'custom_remark',          label: 'Custom Remark' },
-];
+import { LEAD_REMARK_GROUPS } from '@/constants/leadRemarkOptions';
+import { clsx } from '@/lib/format';
 
 const STAGE_OPTS = [
   { value: '',          label: 'Keep stage as-is' },
@@ -108,85 +78,30 @@ export function RemarkModal({ leadId, open, onClose }: Props) {
         <div>
           <label className="mb-3 block text-sm font-semibold text-slate-900">Call Status</label>
           <div className="space-y-4">
-            {/* Positive Outcomes */}
-            <div>
-              <p className="mb-2 text-xs font-medium text-emerald-700 uppercase tracking-wide">Positive Outcomes</p>
-              <div className="grid grid-cols-2 gap-2">
-                {STATUS_OPTS.slice(0, 4).map(option => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => setStatus(option.value as CallStatus)}
-                    className={status === option.value
-                      ? 'rounded-lg border border-emerald-500 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700'
-                      : 'rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 hover:border-slate-300 hover:bg-slate-50'
-                    }
-                  >
-                    {option.label}
-                  </button>
-                ))}
+            {LEAD_REMARK_GROUPS.map(group => (
+              <div key={group.key}>
+                <p className={clsx('mb-2 text-xs font-medium uppercase tracking-wide', {
+                  emerald: 'text-emerald-700', sky: 'text-sky-700', amber: 'text-amber-700', slate: 'text-slate-500',
+                }[group.tone])}>{group.label}</p>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {group.options.map(option => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setStatus(option.value as CallStatus)}
+                      className={clsx(
+                        'rounded-lg border px-3 py-2 text-sm font-medium transition-colors',
+                        status === option.value
+                          ? 'border-brand-500 bg-brand-50 text-brand-700'
+                          : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50',
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-
-            {/* Call Issues */}
-            <div>
-              <p className="mb-2 text-xs font-medium text-amber-700 uppercase tracking-wide">Call Issues</p>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                {STATUS_OPTS.slice(4, 18).map(option => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => setStatus(option.value as CallStatus)}
-                    className={status === option.value
-                      ? 'rounded-lg border border-amber-500 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700'
-                      : 'rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 hover:border-slate-300 hover:bg-slate-50'
-                    }
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Session Related */}
-            <div>
-              <p className="mb-2 text-xs font-medium text-blue-700 uppercase tracking-wide">Session Related</p>
-              <div className="grid grid-cols-2 gap-2">
-                {STATUS_OPTS.slice(18, 20).map(option => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => setStatus(option.value as CallStatus)}
-                    className={status === option.value
-                      ? 'rounded-lg border border-blue-500 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700'
-                      : 'rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 hover:border-slate-300 hover:bg-slate-50'
-                    }
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Other */}
-            <div>
-              <p className="mb-2 text-xs font-medium text-slate-500 uppercase tracking-wide">Other</p>
-              <div className="grid grid-cols-2 gap-2">
-                {STATUS_OPTS.slice(20).map(option => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => setStatus(option.value as CallStatus)}
-                    className={status === option.value
-                      ? 'rounded-lg border border-slate-500 bg-slate-100 px-3 py-2 text-sm font-medium text-slate-700'
-                      : 'rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 hover:border-slate-300 hover:bg-slate-50'
-                    }
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            ))}
           </div>
         </div>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
