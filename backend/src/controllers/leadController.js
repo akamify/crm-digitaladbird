@@ -10,6 +10,7 @@ const { resolveLeadCategory } = require('../services/leadCategory/leadCategoryRe
 const { validateCallStatus, validateLeadStage } = require('../constants/leadStatusOptions');
 const leadSessionService = require('../services/leadSessionService');
 const { normalizeWorkflowRemarkStatus, saveWorkflowRemark } = require('../services/leadWorkflowRemarkService');
+const { assertLabelVisible } = require('../services/leadLabelService');
 
 function humanizeValue(value) {
   return String(value || '')
@@ -232,6 +233,29 @@ exports.list = asyncHandler(async (req, res) => {
   if (req.query.category && ['partner', 'trader', 'unknown'].includes(req.query.category)) {
     params.push(req.query.category);
     where.push(`l.category = $${params.length}`);
+  }
+  if (req.query.label_id) {
+    const labelId = String(req.query.label_id).trim();
+    await assertLabelVisible(req.user, labelId);
+    params.push(labelId);
+    where.push(`EXISTS (
+      SELECT 1 FROM lead_label_assignments label_assignment
+       WHERE label_assignment.lead_id = l.id
+         AND label_assignment.label_id = $${params.length}
+    )`);
+  }
+  if (req.query.remark_status) {
+    params.push(String(req.query.remark_status).trim());
+    where.push(`EXISTS (
+      SELECT 1 FROM lead_remarks remark_filter
+       WHERE remark_filter.lead_id = l.id
+         AND remark_filter.call_status::text = $${params.length}
+    )`);
+  }
+  if (req.query.session_attendance === 'has_session') {
+    where.push(`EXISTS (SELECT 1 FROM lead_sessions session_filter WHERE session_filter.lead_id = l.id AND session_filter.deleted_at IS NULL)`);
+  } else if (req.query.session_attendance === 'no_session') {
+    where.push(`NOT EXISTS (SELECT 1 FROM lead_sessions session_filter WHERE session_filter.lead_id = l.id AND session_filter.deleted_at IS NULL)`);
   }
 
   const hasWorkflowOrRemark = `(

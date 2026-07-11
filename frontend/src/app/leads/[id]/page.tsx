@@ -3,7 +3,7 @@
 import { Component, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { CalendarClock, MessageCircle, MessageSquarePlus, Phone, UserCog } from 'lucide-react';
+import { CalendarClock, MessageCircle, MessageSquarePlus, Phone, Tag, UserCog } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/Button';
@@ -22,6 +22,7 @@ import { ReassignModal } from '@/components/leads/ReassignModal';
 import { WorkflowPanel } from '@/components/leads/WorkflowPanel';
 import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
 import { LeadSessionsCard } from '@/components/leads/LeadSessionsCard';
+import { LeadLabelsCard } from '@/components/leads/LeadLabelsCard';
 import { useLead } from '@/hooks/useLeads';
 import { useLeadCommunication } from '@/hooks/useLeadCommunication';
 import { useAuth } from '@/lib/auth';
@@ -47,6 +48,7 @@ function LeadDetailInner() {
   const [remarkOpen, setRemarkOpen] = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
   const [sessionCreateSignal, setSessionCreateSignal] = useState(0);
+  const [labelCreateSignal, setLabelCreateSignal] = useState(0);
 
   if (!user) return <PageLoader />;
 
@@ -143,6 +145,16 @@ function LeadDetailInner() {
       {!readOnlyAccess && (
         <Button
           variant="outline"
+          leftIcon={<Tag className="h-4 w-4" />}
+          onClick={() => setLabelCreateSignal(value => value + 1)}
+        >
+          Add Label
+        </Button>
+      )}
+
+      {!readOnlyAccess && (
+        <Button
+          variant="outline"
           leftIcon={<MessageCircle className="h-4 w-4" />}
           onClick={() => router.push(`/chat?leadId=${id}`)}
         >
@@ -218,6 +230,7 @@ function LeadDetailInner() {
             <LeadSummaryCard lead={lead} />
             <AssignmentCard lead={lead} />
             <FollowUpCard lead={lead} />
+            <LeadLabelsCard leadId={id} canManage={!readOnlyAccess} createSignal={labelCreateSignal} />
             <LeadSessionsCard
               leadId={id}
               canManage={!readOnlyAccess}

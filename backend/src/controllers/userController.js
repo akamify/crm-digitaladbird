@@ -121,12 +121,12 @@ async function resolveReportingRm(reference) {
       WHERE role = 'rm'
         AND status = 'active'
         AND deleted_at IS NULL
-        AND (id::text = $1 OR LOWER(email) = LOWER($1) OR LOWER(cp_id) = LOWER($1) OR LOWER(full_name) = LOWER($1))
+        AND (id::text = $1 OR LOWER(email) = LOWER($1) OR LOWER(cp_id) = LOWER($1))
       LIMIT 2`,
     [value],
   );
-  if (rows.length === 0) throw new AppError(400, 'INVALID_REPORTING_RM', 'Reporting RM was not found or is not active.');
-  if (rows.length > 1) throw new AppError(400, 'AMBIGUOUS_REPORTING_RM', 'Reporting RM matches more than one user. Use RM email or CP ID.');
+  if (rows.length === 0) throw new AppError(400, 'INVALID_REPORTING_RM', 'Reporting RM must be an active RM email, user ID, or CP ID.');
+  if (rows.length > 1) throw new AppError(400, 'AMBIGUOUS_REPORTING_RM', 'Reporting RM matches more than one user. Use RM email, user ID, or CP ID.');
   return rows[0];
 }
 

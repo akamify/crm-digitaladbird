@@ -25,6 +25,7 @@ import {
   Bell,
   LifeBuoy,
   UserCircle,
+  Tag,
 } from 'lucide-react';
 import { useState } from 'react';
 import { LogoLockup } from '@/components/ui/BirdLogo';
@@ -65,6 +66,7 @@ const ADMIN_NAV = [
   { href: '/dashboard/admin/distribution', label: 'Distribution', Icon: GitBranch },
   { href: '/dashboard/admin/analytics', label: 'Analytics', Icon: PieChart },
   { href: '/dashboard/admin/sheets', label: 'Google Sheets', Icon: FileSpreadsheet },
+  { href: '/dashboard/admin/labels', label: 'Labels', Icon: Tag },
   { href: '/dashboard/admin/support-tickets', label: 'Raised Tickets', Icon: LifeBuoy },
   { href: '/dashboard/admin/activity', label: 'Activity Logs', Icon: ScrollText },
 ];
@@ -73,10 +75,12 @@ export function Sidebar({
   onNavigate,
   collapsed = false,
   onToggleCollapse,
+  onExpand,
 }: {
   onNavigate?: () => void;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  onExpand?: () => void;
 }) {
   const pathname = usePathname();
   const { user } = useAuth();
@@ -93,10 +97,13 @@ export function Sidebar({
   const isAdmin = user.role === 'super_admin';
 
   return (
-    <aside className={clsx(
+    <aside
+      onMouseEnter={collapsed ? onExpand : undefined}
+      className={clsx(
       'flex h-full shrink-0 flex-col border-r border-slate-200 bg-white transition-[width] duration-200',
       collapsed ? 'w-20' : 'w-60',
-    )}>
+      )}
+    >
       <style jsx>{`
         .sidebar-scroll-area {
           scrollbar-width: none;

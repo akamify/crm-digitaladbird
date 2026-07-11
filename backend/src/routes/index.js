@@ -19,6 +19,7 @@ const leadStatusOptions = require('../constants/leadStatusOptions');
 const { updateLeadAvailability, updateSingleLeadAvailability } = require('../services/userAvailabilityService');
 const supportTickets = require('../services/supportTicketService');
 const myProfile = require('../services/myProfileService');
+const leadLabels = require('../services/leadLabelService');
 const {
   WORKFLOW_REMARK_OPTIONS,
   isWorkflowRemarkCompleted,
@@ -130,6 +131,27 @@ router.get   ('/users/deleted',   authenticate, requireRole('super_admin', 'admi
 router.post  ('/users/:id/block', authenticate, requireRole('super_admin', 'admin'), users.block);
 router.post  ('/users/:id/unblock', authenticate, requireRole('super_admin', 'admin'), users.unblock);
 router.post  ('/users/:id/delete', authenticate, requireRole('super_admin', 'admin'), users.softDelete);
+
+router.get('/lead-labels', authenticate, asyncHandler(async (req, res) => {
+  const data = await leadLabels.listLabels(req.user);
+  res.json({ success: true, data });
+}));
+router.post('/lead-labels', authenticate, asyncHandler(async (req, res) => {
+  const data = await leadLabels.createLabel(req.user, req.body || {});
+  res.status(201).json({ success: true, data });
+}));
+router.get('/leads/:id/labels', authenticate, asyncHandler(async (req, res) => {
+  const data = await leadLabels.getLeadLabels(req.user, req.params.id);
+  res.json({ success: true, data });
+}));
+router.post('/leads/:id/labels', authenticate, asyncHandler(async (req, res) => {
+  const data = await leadLabels.assignLabel(req.user, req.params.id, req.body?.label_id);
+  res.status(201).json({ success: true, data });
+}));
+router.delete('/leads/:id/labels/:labelId', authenticate, asyncHandler(async (req, res) => {
+  await leadLabels.removeLabel(req.user, req.params.id, req.params.labelId);
+  res.json({ success: true });
+}));
 router.patch ('/users/:userId/lead-availability', authenticate, requireRole('super_admin', 'admin', 'rm'), asyncHandler(async (req, res) => {
   const { userId } = req.params;
   const status = req.body?.is_available ?? req.body?.lead_assignment_status ?? req.body?.status;

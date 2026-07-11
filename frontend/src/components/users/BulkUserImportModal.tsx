@@ -176,7 +176,7 @@ export function BulkUserImportModal({ open, onClose }: { open: boolean; onClose:
           </label>
           <p className="mt-2 text-xs text-slate-500">
             {role === 'member'
-              ? 'Required: Name, Email, Phone, Reporting RM (RM email, CP ID, or exact name). Role comes from Import Type above.'
+              ? 'Required: Name, Email, Phone, Reporting RM (active RM email, user ID, or CP ID). Role comes from Import Type above.'
               : 'Required: Name, Email, Phone, Team Name. Role comes from Import Type above.'}
           </p>
         </div>

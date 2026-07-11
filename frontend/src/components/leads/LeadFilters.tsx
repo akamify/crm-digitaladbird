@@ -4,6 +4,7 @@ import { Search, X } from 'lucide-react';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Input';
 import { useCampaignNames } from '@/hooks/useLeads';
+import { useLabels } from '@/hooks/useLeadLabels';
 import type { LeadFilters } from '@/types';
 
 interface Props {
@@ -56,17 +57,35 @@ const ASSIGNMENT_OPTS = [
   { value: 'unassigned', label: 'Unassigned' },
 ];
 
+const REMARK_STATUS_OPTS = [
+  { value: '', label: 'All remarks' },
+  { value: 'interested', label: 'Interested' },
+  { value: 'converted', label: 'Converted' },
+  { value: 'follow_up', label: 'Follow-up' },
+  { value: 'callback_requested', label: 'Callback Requested' },
+  { value: 'not_interested', label: 'Not Interested' },
+  { value: 'busy', label: 'Busy' },
+  { value: 'wrong_number', label: 'Wrong Number' },
+];
+
+const SESSION_OPTS = [
+  { value: '', label: 'All sessions' },
+  { value: 'has_session', label: 'Session attended' },
+  { value: 'no_session', label: 'No session added' },
+];
+
 export function LeadFilters({ value, onChange }: Props) {
   const set = <K extends keyof LeadFilters>(k: K, v: LeadFilters[K]) =>
     onChange({ ...value, [k]: v, page: 1 });
 
   const { data: campaignNames } = useCampaignNames();
+  const { data: labels } = useLabels();
   const campaignOpts = [
     { value: '', label: 'All campaigns' },
     ...(campaignNames || []).map(n => ({ value: n, label: n })),
   ];
 
-  const hasFilters = !!(value.q || value.category || value.stage || value.call_status || value.followup || value.source || value.campaign || value.from || value.to || value.created_preset || value.pending || value.assignment);
+  const hasFilters = !!(value.q || value.category || value.stage || value.call_status || value.followup || value.source || value.campaign || value.from || value.to || value.created_preset || value.pending || value.assignment || value.label_id || value.remark_status || value.session_attendance);
 
   return (
     <div className="card p-4">
@@ -96,7 +115,7 @@ export function LeadFilters({ value, onChange }: Props) {
         />
       </div>
 
-      <div className="mt-3 grid grid-cols-1 flex items-center gap-3 sm:grid-cols-6">
+      <div className="mt-3 grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Select
           value={value.category || ''}
           options={CATEGORY_OPTS}
@@ -116,6 +135,21 @@ export function LeadFilters({ value, onChange }: Props) {
           type="date" label="From"
           value={value.from || ''}
           onChange={(e: ChangeEvent<HTMLInputElement>) => onChange({ ...value, from: e.target.value, created_preset: '', page: 1 })}
+        />
+        <Select
+          value={value.label_id || ''}
+          options={[{ value: '', label: 'All labels' }, ...(labels || []).map(label => ({ value: label.id, label: label.name }))]}
+          onChange={(e: ChangeEvent<HTMLSelectElement>) => set('label_id', e.target.value)}
+        />
+        <Select
+          value={value.remark_status || ''}
+          options={REMARK_STATUS_OPTS}
+          onChange={(e: ChangeEvent<HTMLSelectElement>) => set('remark_status', e.target.value as LeadFilters['remark_status'])}
+        />
+        <Select
+          value={value.session_attendance || ''}
+          options={SESSION_OPTS}
+          onChange={(e: ChangeEvent<HTMLSelectElement>) => set('session_attendance', e.target.value as LeadFilters['session_attendance'])}
         />
         <Input
           type="date" label="To"

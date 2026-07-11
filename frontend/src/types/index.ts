@@ -152,6 +152,9 @@ export interface LeadFilters {
   assignment?: 'assigned' | 'unassigned' | '';
   assigned_today?: 'true' | '';
   assigned_to?: string;
+  label_id?: string;
+  remark_status?: CallStatus | '';
+  session_attendance?: 'has_session' | 'no_session' | '';
   page?: number;
   page_size?: number;
   sort?: string;

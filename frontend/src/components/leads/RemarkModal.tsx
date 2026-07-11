@@ -31,33 +31,35 @@ export function RemarkModal({ leadId, open, onClose }: Props) {
   const [stage,    setStage]    = useState<LeadStage | ''>('');
   const [followAt, setFollowAt] = useState('');
   const [releaseLock, setReleaseLock] = useState(true);
+  const [customResponse, setCustomResponse] = useState('');
 
-  const { mutate, isPending } = useAddRemark();
+  const remarkMutation = useAddRemark();
+  const isPending = remarkMutation.isPending;
 
-  function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (followAt && new Date(followAt).getTime() <= Date.now()) { toast.error('Follow-up must be scheduled in the future'); return; }
-    mutate(
-      {
+    if (status === 'custom_remark' && !customResponse.trim()) { toast.error('Enter the custom response.'); return; }
+    try {
+      const remarkText = status === 'custom_remark'
+        ? [`Custom response: ${customResponse.trim()}`, remark.trim()].filter(Boolean).join('\n')
+        : remark.trim();
+      await remarkMutation.mutateAsync({
         id: leadId,
-        remark: remark.trim(),
+        remark: remarkText,
         call_status: status,
         stage: stage || undefined,
         next_followup_at: followAt ? new Date(followAt).toISOString() : null,
         release_lock: releaseLock,
-      },
-      {
-        onSuccess: () => {
-          toast.success('Remark saved');
-          setRemark(''); setStatus('not_called'); setStage(''); setFollowAt(''); setReleaseLock(true);
-          onClose();
-        },
-        onError: (err: unknown) => {
-          const data = (err as { response?: { data?: { message?: string; error?: string | { message?: string } } } })?.response?.data;
-          toast.error(data?.message || (typeof data?.error === 'string' ? data.error : data?.error?.message) || 'Could not save remark');
-        },
-      },
-    );
+      });
+
+      toast.success('Remark saved');
+      setRemark(''); setStatus('not_called'); setStage(''); setFollowAt(''); setReleaseLock(true); setCustomResponse('');
+      onClose();
+    } catch (err: unknown) {
+      const data = (err as { response?: { data?: { message?: string; error?: string | { message?: string } } } })?.response?.data;
+      toast.error(data?.message || (typeof data?.error === 'string' ? data.error : data?.error?.message) || 'Could not save remark');
+    }
   }
 
   return (
@@ -104,6 +106,13 @@ export function RemarkModal({ leadId, open, onClose }: Props) {
             ))}
           </div>
         </div>
+        {status === 'custom_remark' && (
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-slate-700">Custom Response</label>
+            <input value={customResponse} maxLength={500} onChange={event => setCustomResponse(event.target.value)} disabled={isPending} className="input w-full" placeholder="Enter the response received from the lead" />
+            <p className="mt-1 text-xs text-slate-500">This is saved once with the selected Custom Remark status. The note below remains optional.</p>
+          </div>
+        )}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label className="mb-1.5 block text-sm font-medium text-slate-700">Move to Stage</label>
