@@ -72,6 +72,7 @@ function LeadsInner() {
   const { data, isLoading, isFetching } = useLeadList(effectiveFilters);
   const bulkAddRemark = useBulkAddRemark();
   const isAdminLeadsView = user?.role === 'super_admin' || user?.role === 'admin';
+  const isMemberLeadsView = user?.role === 'member';
 
   const rows = data?.rows ?? [];
   const total = data?.total ?? 0;
@@ -185,7 +186,7 @@ function LeadsInner() {
           {[
             { key: 'current', label: 'Current Leads', next: { reassignment: '', unworked: '' } },
             { key: 'to_me', label: 'Reassigned To Me', next: { reassignment: 'to_me', unworked: '' } },
-            { key: 'to_others', label: 'Reassigned To Others', next: { reassignment: 'to_others', unworked: '' } },
+            ...(!isMemberLeadsView ? [{ key: 'to_others', label: 'Reassigned To Others', next: { reassignment: 'to_others', unworked: '' } }] : []),
             { key: 'unworked', label: 'Unworked Leads', next: { reassignment: '', unworked: 'true' } },
             { key: 'today', label: 'Today Assigned', next: { reassignment: '', unworked: '', assigned_today: 'true' } },
           ].map(tab => {

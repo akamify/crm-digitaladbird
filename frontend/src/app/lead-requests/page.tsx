@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { CheckCircle2, Clock, HandMetal, Loader2, RefreshCw, XCircle } from 'lucide-react';
+import { CheckCircle2, Clock, HandMetal, Loader2, RefreshCw, Send, XCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { KpiCard } from '@/components/dashboard/KpiCard';
@@ -15,6 +15,7 @@ import {
   useLeadRequests,
   useMyLeadRequests,
   useRejectLeadRequest,
+  useSubmitLeadRequest,
 } from '@/hooks/useLeadRequests';
 
 const STATUS_FILTERS = ['', 'pending', 'approved', 'partially_fulfilled', 'fulfilled', 'rejected', 'cancelled'] as const;
@@ -40,14 +41,18 @@ function LeadRequestsInner() {
   const { user } = useAuth();
   const [status, setStatus] = useState('');
   const [selected, setSelected] = useState<LeadRequest | null>(null);
+  const [requestFormOpen, setRequestFormOpen] = useState(false);
   const isAdmin = user?.role === 'super_admin' || user?.role === 'admin';
   const isManager = isAdmin || user?.role === 'rm';
+  const canSubmitRequest = user?.role === 'member' || user?.role === 'partner';
 
   const managerRequests = useLeadRequests(status || 'all');
   const ownRequests = useMyLeadRequests();
   const approve = useApproveLeadRequest();
   const reject = useRejectLeadRequest();
+  const submit = useSubmitLeadRequest();
   const rows = isManager ? (managerRequests.data || []) : (ownRequests.data || []);
+  const visibleRows = isManager || !status ? rows : rows.filter(request => request.status === status);
   const loading = isManager ? managerRequests.isLoading : ownRequests.isLoading;
   const fetching = isManager ? managerRequests.isFetching : ownRequests.isFetching;
 
@@ -91,21 +96,29 @@ function LeadRequestsInner() {
             </button>
           ))}
         </div>
-        <button
-          type="button"
-          onClick={refresh}
-          disabled={fetching}
-          className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm"
-        >
-          <RefreshCw className={clsx('h-4 w-4', fetching && 'animate-spin')} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={refresh}
+            disabled={fetching}
+            className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm"
+          >
+            <RefreshCw className={clsx('h-4 w-4', fetching && 'animate-spin')} />
+            Refresh
+          </button>
+          {canSubmitRequest && (
+            <button type="button" onClick={() => setRequestFormOpen(true)} className="btn-primary inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm">
+              <Send className="h-4 w-4" />
+              Request Leads
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="card overflow-hidden">
         {loading ? (
           <div className="space-y-2 p-4">{Array.from({ length: 6 }).map((_, idx) => <Skeleton key={idx} className="h-14" />)}</div>
-        ) : rows.length === 0 ? (
+        ) : visibleRows.length === 0 ? (
           <EmptyState title="No lead requests found" description="Member lead requests will appear here after submission." icon={<HandMetal className="h-6 w-6" />} />
         ) : (
           <div className="overflow-x-auto">
@@ -122,7 +135,7 @@ function LeadRequestsInner() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {rows.map(request => (
+                {visibleRows.map(request => (
                   <LeadRequestRow
                     key={request.id}
                     request={request}
@@ -162,7 +175,100 @@ function LeadRequestsInner() {
           });
         }}
       />
+
+      <CreateLeadRequestModal
+        open={requestFormOpen}
+        submitting={submit.isPending}
+        onClose={() => setRequestFormOpen(false)}
+        onSubmit={(quantity, category, note) => {
+          submit.mutate({ quantity, ...(category ? { category } : {}), ...(note ? { note } : {}) }, {
+            onSuccess: () => {
+              toast.success('Lead request submitted');
+              setRequestFormOpen(false);
+            },
+            onError: (error: any) => toast.error(error?.response?.data?.error?.message || 'Could not submit lead request'),
+          });
+        }}
+      />
     </div>
+  );
+}
+
+function CreateLeadRequestModal({
+  open,
+  submitting,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean;
+  submitting: boolean;
+  onClose: () => void;
+  onSubmit: (quantity: number, category: string, note: string) => void;
+}) {
+  const [quantity, setQuantity] = useState(10);
+  const [category, setCategory] = useState('');
+  const [note, setNote] = useState('');
+
+  function submitRequest() {
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 500) {
+      toast.error('Enter a quantity between 1 and 500');
+      return;
+    }
+    onSubmit(quantity, category, note.trim());
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Request Leads"
+      description="Submit a lead request for admin approval and fulfillment."
+      size="md"
+      footer={(
+        <>
+          <button type="button" onClick={onClose} disabled={submitting} className="btn-outline rounded-lg px-4 py-2 text-sm">Cancel</button>
+          <button type="button" onClick={submitRequest} disabled={submitting} className="btn-primary inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm">
+            {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+            Submit Request
+          </button>
+        </>
+      )}
+    >
+      <div className="space-y-4">
+        <label className="block">
+          <span className="label">Lead Quantity</span>
+          <input
+            type="number"
+            min={1}
+            max={500}
+            value={quantity}
+            onChange={event => setQuantity(Math.max(1, Math.min(500, Number.parseInt(event.target.value, 10) || 1)))}
+            className="input w-full"
+            disabled={submitting}
+          />
+        </label>
+        <label className="block">
+          <span className="label">Lead Category</span>
+          <select value={category} onChange={event => setCategory(event.target.value)} className="input w-full" disabled={submitting}>
+            <option value="">Any available lead</option>
+            <option value="partner">Partner leads</option>
+            <option value="trader">Trader leads</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="label">Note <span className="font-normal text-slate-400">(optional)</span></span>
+          <textarea
+            value={note}
+            onChange={event => setNote(event.target.value)}
+            maxLength={500}
+            rows={4}
+            className="input w-full resize-y"
+            placeholder="Add any lead preference or context"
+            disabled={submitting}
+          />
+        </label>
+      </div>
+    </Modal>
   );
 }
 
