@@ -25,6 +25,7 @@ const {
   isWorkflowRemarkCompleted,
   saveWorkflowRemark,
 } = require('../services/leadWorkflowRemarkService');
+const { createLeadInteraction } = require('../services/leadInteractionService');
 
 // Loads a lead-request enriched with user + RM context and emits the
 // appropriate `lead-request:<kind>` Socket.IO event so admin + RM + the
@@ -5368,21 +5369,17 @@ router.post('/leads/:id/workflow/remark', authenticate, asyncHandler(async (req,
   const { remark_status } = req.body;
   if (!remark_status) throw new AppError(400, 'INVALID', 'remark_status required');
 
-  const { rows: [lead] } = await query(
-    `SELECT id, assigned_to_user_id, category FROM leads WHERE id = $1 AND deleted_at IS NULL`, [leadId]
-  );
-  if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
-  if (req.user.role === 'member' && lead.assigned_to_user_id !== req.user.id) {
-    throw new AppError(403, 'FORBIDDEN', 'Lead not assigned to you');
-  }
-
-  const wf = await withTransaction((client) => saveWorkflowRemark({
-    leadId,
-    userId: req.user.id,
-    remarkStatus: remark_status,
+  const interaction = await withTransaction((client) => createLeadInteraction({
     client,
-    source: 'workflow_step',
+    user: req.user,
+    leadId,
+    note: req.body?.remark || req.body?.note || '',
+    status: remark_status,
+    source: 'workflow_step_1',
+    workflowStep: 1,
+    syncWorkflowStep1: true,
   }));
+  const wf = interaction.workflow;
 
   {
     const { logActivity } = require('../utils/auditLog');
@@ -5391,6 +5388,13 @@ router.post('/leads/:id/workflow/remark', authenticate, asyncHandler(async (req,
       new_value: wf.remark_status,
       metadata: { step: 1 },
     });
+  }
+
+  try {
+    const userSheets = require('../services/userGoogleSheetsService');
+    await userSheets.enqueueLeadSync(leadId, { eventType: 'lead_workflow_remark_updated', source: 'workflow_step_1', userId: req.user.id });
+  } catch (error) {
+    logger.warn({ leadId, message: error?.message }, '[Workflow] Google Sheets sync enqueue failed');
   }
 
   res.json({ success: true, data: wf });

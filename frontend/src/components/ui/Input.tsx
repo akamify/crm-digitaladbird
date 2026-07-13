@@ -57,7 +57,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
 });
 
 interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement>, FieldShell {
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; disabled?: boolean }[];
   placeholder?: string;
 }
 
@@ -79,7 +79,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
         {...rest}
       >
         {placeholder && <option value="">{placeholder}</option>}
-        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        {options.map(o => <option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>)}
       </select>
       {error  ? <p className="mt-1 text-xs text-red-400">{error}</p>
             : hint && <p className="mt-1 text-xs text-slate-500">{hint}</p>}

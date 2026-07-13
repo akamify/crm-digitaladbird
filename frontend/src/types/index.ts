@@ -90,6 +90,21 @@ export interface Lead {
   was_reassigned?: boolean;
   read_only_access?: boolean;
   reassignment_access_type?: 'current_owner' | 'reassigned_to_other' | null;
+  latest_remark_id?: string | null;
+  latest_remark_note?: string | null;
+  latest_remark_status?: string | null;
+  latest_remark_call_status?: CallStatus | null;
+  latest_remark_stage?: LeadStage | null;
+  latest_remark_source?: 'manual' | 'bulk' | 'workflow_step_1' | string | null;
+  latest_remark_by_name?: string | null;
+  latest_remark_at?: string | null;
+  latest_followup_at?: string | null;
+  followup_state?: 'overdue' | 'today' | 'upcoming' | 'none' | null;
+  workflow_step_1_status?: string | null;
+  workflow_current_step?: number | null;
+  workflow_unlocked_step?: number | null;
+  workflow_is_step_1_completed?: boolean | null;
+  session_attendance_status?: 'has_session' | 'no_session' | null;
 }
 
 export interface LeadRemark {
@@ -146,8 +161,11 @@ export interface LeadFilters {
   created_preset?: 'today' | 'yesterday' | 'day_before' | '';
   pending?: 'true' | 'false' | '';
   unworked?: 'true' | 'false' | '';
-  followup?: 'today' | 'overdue' | 'upcoming' | '';
+  no_remark?: 'true' | '';
+  followup?: 'today' | 'overdue' | 'upcoming' | 'no_followup' | '';
   followup_strict?: 'true' | '';
+  workflow_status?: 'step_1_pending' | 'step_1_completed' | 'step_2_unlocked' | 'completed_response' | '';
+  latest_activity?: 'today' | 'yesterday' | 'last_7_days' | 'last_30_days' | '';
   reassignment?: 'to_me' | 'to_others' | '';
   assignment?: 'assigned' | 'unassigned' | '';
   assigned_today?: 'true' | '';

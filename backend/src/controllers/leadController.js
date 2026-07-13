@@ -11,6 +11,7 @@ const { validateCallStatus, validateLeadStage } = require('../constants/leadStat
 const leadSessionService = require('../services/leadSessionService');
 const { normalizeWorkflowRemarkStatus, saveWorkflowRemark } = require('../services/leadWorkflowRemarkService');
 const { assertLabelVisible } = require('../services/leadLabelService');
+const { createLeadInteraction } = require('../services/leadInteractionService');
 
 function humanizeValue(value) {
   return String(value || '')
@@ -229,6 +230,22 @@ exports.list = asyncHandler(async (req, res) => {
       SELECT 1 FROM lead_remarks lr
        WHERE lr.lead_id = l.id
     )`);
+    where.push(`NOT EXISTS (
+      SELECT 1 FROM lead_workflow wf_unworked
+       WHERE wf_unworked.lead_id = l.id
+         AND wf_unworked.remark_status IS NOT NULL
+    )`);
+  }
+  if (req.query.no_remark === 'true') {
+    where.push(`NOT EXISTS (
+      SELECT 1 FROM lead_remarks lr_no_remark
+       WHERE lr_no_remark.lead_id = l.id
+    )`);
+    where.push(`NOT EXISTS (
+      SELECT 1 FROM lead_workflow wf_no_remark
+       WHERE wf_no_remark.lead_id = l.id
+         AND wf_no_remark.remark_status IS NOT NULL
+    )`);
   }
   if (req.query.category && ['partner', 'trader', 'unknown'].includes(req.query.category)) {
     params.push(req.query.category);
@@ -246,16 +263,60 @@ exports.list = asyncHandler(async (req, res) => {
   }
   if (req.query.remark_status) {
     params.push(String(req.query.remark_status).trim());
-    where.push(`EXISTS (
+    const remarkStatusIdx = params.length;
+    where.push(`(
+      EXISTS (
       SELECT 1 FROM lead_remarks remark_filter
        WHERE remark_filter.lead_id = l.id
-         AND remark_filter.call_status::text = $${params.length}
+         AND remark_filter.call_status::text = $${remarkStatusIdx}
+      )
+      OR EXISTS (
+        SELECT 1 FROM lead_workflow workflow_remark_filter
+         WHERE workflow_remark_filter.lead_id = l.id
+           AND workflow_remark_filter.remark_status::text = $${remarkStatusIdx}
+      )
     )`);
   }
   if (req.query.session_attendance === 'has_session') {
     where.push(`EXISTS (SELECT 1 FROM lead_sessions session_filter WHERE session_filter.lead_id = l.id AND session_filter.deleted_at IS NULL)`);
   } else if (req.query.session_attendance === 'no_session') {
     where.push(`NOT EXISTS (SELECT 1 FROM lead_sessions session_filter WHERE session_filter.lead_id = l.id AND session_filter.deleted_at IS NULL)`);
+  }
+
+  const completedWorkflowSql = `('communication_completed','respond_hi','session_730_attend','yes_after_730_session')`;
+  if (req.query.workflow_status) {
+    const workflowStatus = String(req.query.workflow_status);
+    if (workflowStatus === 'step_1_pending') {
+      where.push(`NOT EXISTS (
+        SELECT 1 FROM lead_workflow wf_status
+         WHERE wf_status.lead_id = l.id
+           AND wf_status.remark_status::text IN ${completedWorkflowSql}
+      )`);
+    } else if (['step_1_completed', 'step_2_unlocked', 'completed_response'].includes(workflowStatus)) {
+      where.push(`EXISTS (
+        SELECT 1 FROM lead_workflow wf_status
+         WHERE wf_status.lead_id = l.id
+           AND wf_status.remark_status::text IN ${completedWorkflowSql}
+      )`);
+    }
+  }
+
+  if (req.query.latest_activity) {
+    const latestActivityExpr = `GREATEST(
+      l.updated_at,
+      COALESCE((SELECT MAX(lr_activity.created_at) FROM lead_remarks lr_activity WHERE lr_activity.lead_id = l.id), l.updated_at),
+      COALESCE((SELECT MAX(wf_activity.updated_at) FROM lead_workflow wf_activity WHERE wf_activity.lead_id = l.id), l.updated_at)
+    )`;
+    const latestActivity = String(req.query.latest_activity);
+    if (latestActivity === 'today') {
+      where.push(`(${latestActivityExpr} AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date`);
+    } else if (latestActivity === 'yesterday') {
+      where.push(`(${latestActivityExpr} AT TIME ZONE 'Asia/Kolkata')::date = ((NOW() AT TIME ZONE 'Asia/Kolkata')::date - INTERVAL '1 day')`);
+    } else if (latestActivity === 'last_7_days') {
+      where.push(`${latestActivityExpr} >= NOW() - INTERVAL '7 days'`);
+    } else if (latestActivity === 'last_30_days') {
+      where.push(`${latestActivityExpr} >= NOW() - INTERVAL '30 days'`);
+    }
   }
 
   const hasWorkflowOrRemark = `(
@@ -277,6 +338,10 @@ exports.list = asyncHandler(async (req, res) => {
       l.next_followup_at BETWEEN NOW() AND NOW() + INTERVAL '7 days'
       OR ${hasWorkflowOrRemark}
     )`);
+  } else if (req.query.followup === 'upcoming') {
+    where.push(`l.next_followup_at > NOW()`);
+  } else if (req.query.followup === 'no_followup') {
+    where.push(`l.next_followup_at IS NULL`);
   }
 
   const allowedSort = new Set(['created_at', 'assigned_at', 'next_followup_at', 'updated_at']);
@@ -306,6 +371,43 @@ exports.list = asyncHandler(async (req, res) => {
       l.assigned_to_user_id, u.full_name AS assigned_to_name,
       l.locked_by_user_id, l.locked_until,
       l.created_at, l.assigned_at, l.stage_updated_at, l.updated_at,
+      latest_remark.id AS latest_remark_id,
+      latest_remark.remark AS latest_remark_note,
+      CASE
+        WHEN wf.remark_status IS NOT NULL
+         AND COALESCE(wf.remark_saved_at, wf.updated_at, wf.created_at) >= COALESCE(latest_remark.created_at, '-infinity'::timestamptz)
+          THEN wf.remark_status::text
+        WHEN latest_remark.call_status IS NOT NULL THEN latest_remark.call_status::text
+        WHEN latest_remark.stage IS NOT NULL THEN latest_remark.stage::text
+        ELSE NULL
+      END AS latest_remark_status,
+      latest_remark.call_status::text AS latest_remark_call_status,
+      latest_remark.stage::text AS latest_remark_stage,
+      latest_remark.source AS latest_remark_source,
+      remark_user.full_name AS latest_remark_by_name,
+      latest_remark.created_at AS latest_remark_at,
+      COALESCE(latest_remark.next_followup_at, l.next_followup_at) AS latest_followup_at,
+      CASE
+        WHEN COALESCE(latest_remark.next_followup_at, l.next_followup_at) IS NULL THEN 'none'
+        WHEN COALESCE(latest_remark.next_followup_at, l.next_followup_at) < NOW() THEN 'overdue'
+        WHEN (COALESCE(latest_remark.next_followup_at, l.next_followup_at) AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date THEN 'today'
+        ELSE 'upcoming'
+      END AS followup_state,
+      wf.remark_status::text AS workflow_step_1_status,
+      CASE
+        WHEN wf.remark_status::text IN ${completedWorkflowSql} THEN 2
+        ELSE 1
+      END AS workflow_unlocked_step,
+      CASE
+        WHEN wf.remark_status::text IN ${completedWorkflowSql} THEN 2
+        ELSE 1
+      END AS workflow_current_step,
+      (wf.remark_status::text IN ${completedWorkflowSql}) AS workflow_is_step_1_completed,
+      CASE
+        WHEN EXISTS (SELECT 1 FROM lead_sessions session_status WHERE session_status.lead_id = l.id AND session_status.deleted_at IS NULL)
+          THEN 'has_session'
+        ELSE 'no_session'
+      END AS session_attendance_status,
       EXISTS (
         SELECT 1 FROM lead_assignments la
          WHERE la.lead_id = l.id
@@ -315,6 +417,16 @@ exports.list = asyncHandler(async (req, res) => {
       ${reassignment === 'to_others' && visible !== null ? 'TRUE' : 'FALSE'} AS read_only_access
     FROM leads l
     LEFT JOIN users u ON u.id = l.assigned_to_user_id
+    LEFT JOIN LATERAL (
+      SELECT lr.id, lr.remark, lr.call_status, lr.stage, lr.next_followup_at,
+             lr.source, lr.user_id, lr.created_at
+        FROM lead_remarks lr
+       WHERE lr.lead_id = l.id
+       ORDER BY lr.created_at DESC
+       LIMIT 1
+    ) latest_remark ON TRUE
+    LEFT JOIN users remark_user ON remark_user.id = latest_remark.user_id
+    LEFT JOIN lead_workflow wf ON wf.lead_id = l.id
     WHERE ${whereSql}
     ORDER BY l.${sortCol} ${sortOrd} NULLS LAST
     LIMIT $${limitIdx} OFFSET $${offsetIdx}
@@ -457,61 +569,19 @@ exports.unlock = asyncHandler(async (req, res) => {
  */
 exports.addRemark = asyncHandler(async (req, res) => {
   const { remark, call_status, next_followup_at, stage, release_lock = true } = req.body;
-  const normalizedCallStatus = call_status ? validateCallStatus(call_status) : '';
-  const normalizedStage = stage ? validateLeadStage(stage) : '';
-  if ((call_status && normalizedCallStatus === null) || (stage && normalizedStage === null)) {
-    throw new AppError(400, 'INVALID_LEAD_STATUS_VALUE', 'Invalid status value. Please select one of the available CRM statuses.');
-  }
-  const remarkText = buildRemarkText({
-    remark,
-    callStatus: normalizedCallStatus,
-    stage: normalizedStage,
-    nextFollowupAt: next_followup_at,
-  });
-
   const result = await withTransaction(async (client) => {
-    const dbCallStatus = await toDbCallStatus(client, normalizedCallStatus);
-    await assertLeadWriteAccess(client, req.params.id, req.user);
-    await client.query(`SELECT id FROM leads WHERE id = $1 FOR UPDATE`, [req.params.id]);
-
-    const { rows: [r] } = await client.query(
-      `INSERT INTO lead_remarks(lead_id, user_id, remark, call_status, next_followup_at)
-         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [req.params.id, req.user.id, remarkText, dbCallStatus, next_followup_at || null]
-    );
-
-    const workflowRemark = normalizeWorkflowRemarkStatus(normalizedCallStatus);
-    if (workflowRemark) {
-      await saveWorkflowRemark({
-        leadId: req.params.id,
-        userId: req.user.id,
-        remarkStatus: workflowRemark,
-        client,
-        source: 'lead_remark',
-      });
-    }
-
-    const updates = [];
-    const params = [req.params.id];
-    if (dbCallStatus) {
-      params.push(dbCallStatus);
-      updates.push(`call_status = $${params.length}`);
-      updates.push(`last_call_at = NOW()`);
-      updates.push(`call_attempts = call_attempts + 1`);
-    } else if (normalizedCallStatus) {
-      updates.push(`last_call_at = NOW()`);
-      updates.push(`call_attempts = call_attempts + 1`);
-    }
-    if (next_followup_at) { params.push(next_followup_at); updates.push(`next_followup_at = $${params.length}`); }
-    if (normalizedStage) { params.push(normalizedStage); updates.push(`stage = $${params.length}`); }
-    // release lock for this user after they've worked the lead
-    if (release_lock !== false) updates.push(`locked_by_user_id = NULL`, `locked_until = NULL`);
-    updates.push(`updated_at = NOW()`);
-
-    if (updates.length > 0) {
-      await client.query(`UPDATE leads SET ${updates.join(', ')} WHERE id = $1`, params);
-    }
-    return r;
+    const interaction = await createLeadInteraction({
+      client,
+      user: req.user,
+      leadId: req.params.id,
+      note: remark,
+      status: call_status,
+      stage,
+      nextFollowupAt: next_followup_at,
+      source: 'manual',
+      releaseLock: release_lock,
+    });
+    return interaction.remark;
   });
 
   await enqueueLeadSheetSync(req.params.id, { eventType: 'lead_remark_updated', source: 'crm_remark', userId: req.user.id });
@@ -529,22 +599,9 @@ exports.bulkAddRemarks = asyncHandler(async (req, res) => {
   const { remark, call_status, next_followup_at, stage } = req.body;
   if (!Array.isArray(leadIds) || leadIds.length === 0) throw new AppError(400, 'LEAD_IDS_REQUIRED', 'Select at least one lead.');
 
-  const normalizedCallStatus = call_status ? validateCallStatus(call_status) : '';
-  const normalizedStage = stage ? validateLeadStage(stage) : '';
-  if ((call_status && normalizedCallStatus === null) || (stage && normalizedStage === null)) {
-    throw new AppError(400, 'INVALID_LEAD_STATUS_VALUE', 'Invalid status value. Please select one of the available CRM statuses.');
-  }
-  const remarkText = buildRemarkText({
-    remark,
-    callStatus: normalizedCallStatus,
-    stage: normalizedStage,
-    nextFollowupAt: next_followup_at,
-  });
-
   const uniqueLeadIds = [...new Set(leadIds.map(String).filter(Boolean))].slice(0, 500);
   const visible = await getVisibleUserIds(req.user);
   const result = await withTransaction(async (client) => {
-    const dbCallStatus = await toDbCallStatus(client, normalizedCallStatus);
     const params = [uniqueLeadIds];
     let scope = '';
     if (visible !== null) {
@@ -569,32 +626,16 @@ exports.bulkAddRemarks = asyncHandler(async (req, res) => {
         skippedReasons[leadId] = 'not_found_or_forbidden';
         continue;
       }
-      await client.query(
-        `INSERT INTO lead_remarks(lead_id, user_id, remark, call_status, next_followup_at)
-           VALUES ($1, $2, $3, $4, $5)`,
-        [leadId, req.user.id, remarkText, dbCallStatus, next_followup_at || null],
-      );
-
-      const updates = ['updated_at = NOW()'];
-      const updateParams = [leadId];
-      if (dbCallStatus) {
-        updateParams.push(dbCallStatus);
-        updates.push(`call_status = $${updateParams.length}`);
-        updates.push(`last_call_at = NOW()`);
-        updates.push(`call_attempts = call_attempts + 1`);
-      } else if (normalizedCallStatus) {
-        updates.push(`last_call_at = NOW()`);
-        updates.push(`call_attempts = call_attempts + 1`);
-      }
-      if (next_followup_at) {
-        updateParams.push(next_followup_at);
-        updates.push(`next_followup_at = $${updateParams.length}`);
-      }
-      if (normalizedStage) {
-        updateParams.push(normalizedStage);
-        updates.push(`stage = $${updateParams.length}`);
-      }
-      await client.query(`UPDATE leads SET ${updates.join(', ')} WHERE id = $1`, updateParams);
+      await createLeadInteraction({
+        client,
+        user: req.user,
+        leadId,
+        note: remark,
+        status: call_status,
+        stage,
+        nextFollowupAt: next_followup_at,
+        source: 'bulk',
+      });
       updated++;
     }
 

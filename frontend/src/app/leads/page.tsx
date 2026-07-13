@@ -12,14 +12,32 @@ import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPane
 import { LeadFilters } from '@/components/leads/LeadFilters';
 import { RemarkModal } from '@/components/leads/RemarkModal';
 import { EmptyState, Modal, Skeleton, StatusChip } from '@/components/ui/Modal';
+import { Select } from '@/components/ui/Input';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useBulkAddRemark, useLeadList } from '@/hooks/useLeads';
 import { formatISTCompact, formatISTTooltip, formatStageUpdatedAt } from '@/lib/date';
 import { clsx, fmtPhone, humanize, isDueToday, isOverdue, stageChip } from '@/lib/format';
 import { useAuth } from '@/lib/auth';
-import type { Lead, LeadFilters as LeadFilterType } from '@/types';
+import { LEAD_REMARK_GROUPS } from '@/constants/leadRemarkOptions';
+import type { CallStatus, Lead, LeadFilters as LeadFilterType } from '@/types';
 
 type CommunicationTab = 'chat' | 'calls';
+
+function followupChipClass(state?: Lead['followup_state']) {
+  if (state === 'overdue') return 'chip-red';
+  if (state === 'today') return 'chip-amber';
+  if (state === 'upcoming') return 'chip-blue';
+  return 'chip-slate';
+}
+
+function workflowLabel(lead: Lead) {
+  if (lead.workflow_is_step_1_completed) return lead.workflow_unlocked_step && lead.workflow_unlocked_step >= 2 ? 'Step 2 Unlocked' : 'Step 1 Completed';
+  return lead.workflow_step_1_status ? 'Step 1 Pending' : 'No workflow';
+}
+
+function latestStatus(lead: Lead) {
+  return lead.latest_remark_status || lead.latest_remark_call_status || lead.call_status || lead.stage || '';
+}
 
 export default function LeadsPage() {
   return (
@@ -47,6 +65,9 @@ function LeadsInner() {
     label_id: sp.get('label_id') || '',
     remark_status: (sp.get('remark_status') as LeadFilterType['remark_status']) || '',
     session_attendance: (sp.get('session_attendance') as LeadFilterType['session_attendance']) || '',
+    workflow_status: (sp.get('workflow_status') as LeadFilterType['workflow_status']) || '',
+    latest_activity: (sp.get('latest_activity') as LeadFilterType['latest_activity']) || '',
+    no_remark: (sp.get('no_remark') as LeadFilterType['no_remark']) || '',
     source: sp.get('source') || '',
     from: sp.get('from') || '',
     to: sp.get('to') || '',
@@ -64,6 +85,7 @@ function LeadsInner() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkRemarkOpen, setBulkRemarkOpen] = useState(false);
   const [bulkRemark, setBulkRemark] = useState('');
+  const [bulkStatus, setBulkStatus] = useState('');
   const debouncedSearch = useDebouncedValue(filters.q || '');
   const effectiveFilters = useMemo(() => {
     const next: LeadFilterType = { ...filters, q: debouncedSearch || undefined };
@@ -125,12 +147,17 @@ function LeadsInner() {
       toast.error('Remark is required');
       return;
     }
-    bulkAddRemark.mutate({ leadIds: selectedIds, remark: bulkRemark.trim() }, {
+    bulkAddRemark.mutate({
+      leadIds: selectedIds,
+      remark: bulkRemark.trim(),
+      ...(bulkStatus ? { call_status: bulkStatus as CallStatus } : {}),
+    }, {
       onSuccess: (summary) => {
         toast.success(`Remark added to ${summary.updated} lead${summary.updated === 1 ? '' : 's'}`);
         if (summary.skipped) toast.error(`${summary.skipped} lead${summary.skipped === 1 ? '' : 's'} skipped`);
         setSelectedIds([]);
         setBulkRemark('');
+        setBulkStatus('');
         setBulkRemarkOpen(false);
       },
       onError: (e: any) => toast.error(e?.response?.data?.error?.message || e?.response?.data?.message || 'Could not add remarks'),
@@ -268,16 +295,19 @@ function LeadsInner() {
           />
         ) : (
           <div className="overflow-x-auto scroll-thin">
-            <table className="w-full min-w-[1320px] table-fixed text-sm">
+            <table className="w-full min-w-[1640px] table-fixed text-sm">
               <colgroup>
                 <col className="w-10" />
                 <col className="w-[220px]" />
                 <col className="w-[190px]" />
                 <col className="w-[150px]" />
                 <col className="w-[160px]" />
-                <col className="w-[210px]" />
+                <col className="w-[190px]" />
                 <col className="w-[140px]" />
                 <col className="w-[130px]" />
+                <col className="w-[270px]" />
+                <col className="w-[135px]" />
+                <col className="w-[120px]" />
                 <col className="w-[150px]" />
                 <col className="w-[115px]" />
                 <col className="w-[145px]" />
@@ -301,6 +331,9 @@ function LeadsInner() {
                   <th className="px-4 py-2.5 font-medium whitespace-nowrap">Campaign</th>
                   <th className="px-4 py-2.5 font-medium whitespace-nowrap">Stage</th>
                   <th className="px-4 py-2.5 font-medium whitespace-nowrap">Call status</th>
+                  <th className="px-4 py-2.5 font-medium whitespace-nowrap">Latest interaction</th>
+                  <th className="px-4 py-2.5 font-medium whitespace-nowrap">Workflow</th>
+                  <th className="px-4 py-2.5 font-medium whitespace-nowrap">Session</th>
                   <th className="px-4 py-2.5 font-medium whitespace-nowrap">Assigned</th>
                   <th className="px-4 py-2.5 font-medium whitespace-nowrap">Reassigned</th>
                   <th className="px-4 py-2.5 font-medium whitespace-nowrap">Follow-up</th>
@@ -379,6 +412,40 @@ function LeadsInner() {
                         </div>
                       </td>
                       <td className="px-4 py-3"><StatusChip status={lead.call_status} /></td>
+                      <td className="px-4 py-3">
+                        <div className="flex min-w-0 items-center gap-2">
+                          {latestStatus(lead) ? <StatusChip status={latestStatus(lead)} /> : <span className="chip-slate">No remark yet</span>}
+                          {lead.latest_remark_source && <span className="text-[10px] text-slate-400">{humanize(lead.latest_remark_source)}</span>}
+                        </div>
+                        <div
+                          className="mt-1 line-clamp-2 text-xs text-slate-600"
+                          title={lead.latest_remark_note || undefined}
+                        >
+                          {lead.latest_remark_note || 'No remark yet'}
+                        </div>
+                        <div className="mt-1 flex min-w-0 items-center gap-1 text-[11px] text-slate-400">
+                          <span className="truncate">{lead.latest_remark_by_name || 'No user'}</span>
+                          <span>·</span>
+                          <span title={lead.latest_remark_at ? formatISTTooltip(lead.latest_remark_at) : undefined}>
+                            {lead.latest_remark_at ? formatISTCompact(lead.latest_remark_at) : 'No activity'}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={lead.workflow_is_step_1_completed ? 'chip-green' : lead.workflow_step_1_status ? 'chip-amber' : 'chip-slate'}>
+                          {workflowLabel(lead)}
+                        </span>
+                        {lead.workflow_step_1_status && (
+                          <div className="mt-1 truncate text-[11px] text-slate-500" title={humanize(lead.workflow_step_1_status)}>
+                            {humanize(lead.workflow_step_1_status)}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={lead.session_attendance_status === 'has_session' ? 'chip-blue' : 'chip-slate'}>
+                          {lead.session_attendance_status === 'has_session' ? 'Session added' : 'No session'}
+                        </span>
+                      </td>
                       <td className="px-4 py-3 text-slate-700">
                         <div className="truncate" title={lead.assigned_to_name || undefined}>{lead.assigned_to_name || <span className="italic text-slate-400">Unassigned</span>}</div>
                       </td>
@@ -392,16 +459,17 @@ function LeadsInner() {
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        {lead.next_followup_at ? (
+                        {(lead.latest_followup_at || lead.next_followup_at) ? (
                           <div
                             className={clsx(
                               'text-sm',
-                              isOverdue(lead.next_followup_at) && 'text-rose-600',
-                              isDueToday(lead.next_followup_at) && 'text-amber-700',
+                              isOverdue(lead.latest_followup_at || lead.next_followup_at) && 'text-rose-600',
+                              isDueToday(lead.latest_followup_at || lead.next_followup_at) && 'text-amber-700',
                             )}
-                            title={formatISTTooltip(lead.next_followup_at)}
+                            title={formatISTTooltip(lead.latest_followup_at || lead.next_followup_at)}
                           >
-                            {formatISTCompact(lead.next_followup_at)}
+                            <span className={followupChipClass(lead.followup_state)}>{humanize(lead.followup_state || 'upcoming')}</span>
+                            <span className="mt-1 block text-xs">{formatISTCompact(lead.latest_followup_at || lead.next_followup_at)}</span>
                           </div>
                         ) : <span className="text-slate-400">Not available</span>}
                       </td>
@@ -472,6 +540,18 @@ function LeadsInner() {
       <Modal open={bulkRemarkOpen} onClose={() => setBulkRemarkOpen(false)} title="Add Remark to Selected Leads" size="md">
         <div className="space-y-3">
           <p className="text-sm text-slate-600">This remark will be added to {selectedIds.length} selected lead{selectedIds.length === 1 ? '' : 's'} you can access.</p>
+          <Select
+            label="Status"
+            value={bulkStatus}
+            options={[
+              { value: '', label: 'Select status' },
+              ...LEAD_REMARK_GROUPS.flatMap(group => [
+                { value: `__group_${group.key}`, label: group.label, disabled: true },
+                ...group.options.map(option => ({ value: option.value, label: `  ${option.label}` })),
+              ]),
+            ]}
+            onChange={event => setBulkStatus(event.target.value)}
+          />
           <textarea
             className="input min-h-[120px] resize-y"
             value={bulkRemark}
