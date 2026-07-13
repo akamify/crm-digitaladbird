@@ -23,6 +23,8 @@ const leadLabels = require('../services/leadLabelService');
 const {
   WORKFLOW_REMARK_OPTIONS,
   isWorkflowRemarkCompleted,
+  isAnyWorkflowRemarkCompleted,
+  normalizeWorkflowRemarkStatuses,
   saveWorkflowRemark,
 } = require('../services/leadWorkflowRemarkService');
 const { createLeadInteraction } = require('../services/leadInteractionService');
@@ -141,6 +143,27 @@ router.post('/lead-labels', authenticate, asyncHandler(async (req, res) => {
   const data = await leadLabels.createLabel(req.user, req.body || {});
   res.status(201).json({ success: true, data });
 }));
+router.post('/leads/bulk/labels', authenticate, asyncHandler(async (req, res) => {
+  const result = await leadLabels.bulkApplyLabels(req.user, req.body || {});
+  try {
+    const userSheets = require('../services/userGoogleSheetsService');
+    for (const leadId of result.changed_lead_ids || []) {
+      await userSheets.enqueueLeadSync(leadId, { eventType: 'lead_labels_updated', source: 'crm_bulk_labels', userId: req.user.id });
+    }
+  } catch (error) {
+    logger.warn({ message: error?.message }, '[LeadLabels] Google Sheets sync enqueue failed');
+  }
+  res.json({
+    success: true,
+    data: {
+      applied_count: result.applied_count,
+      skipped_count: result.skipped_count,
+      skipped_lead_ids: result.skipped_lead_ids,
+      labels: result.labels,
+      mode: result.mode,
+    },
+  });
+}));
 router.get('/leads/:id/labels', authenticate, asyncHandler(async (req, res) => {
   const data = await leadLabels.getLeadLabels(req.user, req.params.id);
   res.json({ success: true, data });
@@ -187,6 +210,7 @@ router.delete('/users/:id',       authenticate, requireRole('super_admin', 'admi
 
 // ---- Leads --------------------------------------------------------
 router.get  ('/leads',            authenticate, leads.list);
+router.post ('/leads/manual',     authenticate, requireRole('super_admin', 'admin', 'rm'), leads.createManual);
 router.post ('/leads/bulk/remarks', authenticate, leads.bulkAddRemarks);
 router.get  ('/leads/:leadId/sessions', authenticate, leads.listSessions);
 router.post ('/leads/:leadId/sessions', authenticate, leads.createSession);
@@ -5296,15 +5320,21 @@ router.get('/admin/meta/campaigns-enriched', authenticate, requireRole('super_ad
 // ══════════════════════════════════════════════════════════════════════
 
 const REMARK_OPTIONS = WORKFLOW_REMARK_OPTIONS;
-const COLD_LEAD_LEVELS = ['cold_partner', 'cold_trader'];
+const COLD_LEAD_LEVELS = ['cold_lead', 'cold_partner', 'cold_trader'];
+const HOT_LEAD_LEVELS = ['hot_lead', 'hot_partner', 'hot_trader'];
 
 function levelOptionsForCategory(category) {
+  const generic = [
+    'hot_lead', 'cold_lead', 'interested', 'not_interested', 'follow_up_required',
+    'payment_discussed', 'demo_required', 'documents_shared', 'callback_requested',
+    'decision_pending', 'converted', 'lost',
+  ];
   const normalized = String(category || '').toLowerCase();
   if (normalized === 'partner') {
-    return LEAD_LEVEL_OPTIONS.filter(level => level.endsWith('_partner') || ['advance_payment', 'closed'].includes(level));
+    return [...generic, ...LEAD_LEVEL_OPTIONS.filter(level => level.endsWith('_partner') || ['advance_payment', 'closed'].includes(level))];
   }
   if (normalized === 'trader') {
-    return LEAD_LEVEL_OPTIONS.filter(level => level.endsWith('_trader') || ['advance_payment', 'closed'].includes(level));
+    return [...generic, ...LEAD_LEVEL_OPTIONS.filter(level => level.endsWith('_trader') || ['advance_payment', 'closed'].includes(level))];
   }
   return LEAD_LEVEL_OPTIONS;
 }
@@ -5312,11 +5342,38 @@ function levelOptionsForCategory(category) {
 // Final lead-level set — UH and HU removed; ALL Partner/ALL Trader are the
 // canonical "everyone" buckets. Order matches the admin-spec final list.
 const LEAD_LEVEL_OPTIONS = [
+  'hot_lead', 'cold_lead', 'interested', 'not_interested', 'follow_up_required',
+  'payment_discussed', 'demo_required', 'documents_shared', 'callback_requested',
+  'decision_pending', 'converted', 'lost',
   'new_partner', 'hot_partner', 'all_partner', 'followup_partner', 'cold_partner',
   'advance_payment',
   'new_trader', 'hot_trader', 'all_trader', 'followup_trader', 'cold_trader',
   'closed',
 ];
+
+function normalizeStep2Statuses(value) {
+  const values = Array.isArray(value)
+    ? value
+    : value
+      ? [value]
+      : [];
+  const unique = [...new Set(values.map(v => String(v || '').trim()).filter(Boolean))];
+  const invalid = unique.filter(v => !LEAD_LEVEL_OPTIONS.includes(v));
+  if (invalid.length) {
+    throw new AppError(400, 'INVALID_STEP_2_STATUS', `Invalid Step 2 option: ${invalid[0]}`);
+  }
+  const hasHot = unique.some(v => HOT_LEAD_LEVELS.includes(v));
+  const hasCold = unique.some(v => COLD_LEAD_LEVELS.includes(v));
+  if (hasHot && hasCold) {
+    throw new AppError(400, 'STEP_2_STATUS_CONFLICT', 'Cold Lead and Hot Lead cannot be selected together.');
+  }
+  return unique;
+}
+
+function hasColdStep2Status(value) {
+  const statuses = Array.isArray(value) ? value : value ? [value] : [];
+  return statuses.some(status => COLD_LEAD_LEVELS.includes(String(status)));
+}
 
 // GET workflow state for a lead
 router.get('/leads/:id/workflow', authenticate, asyncHandler(async (req, res) => {
@@ -5341,9 +5398,20 @@ router.get('/leads/:id/workflow', authenticate, asyncHandler(async (req, res) =>
     `SELECT * FROM lead_conversion WHERE lead_id = $1`, [leadId]
   );
 
-  const currentStep = !isWorkflowRemarkCompleted(wf?.remark_status) ? 1
-    : !wf?.lead_level ? 2
-    : COLD_LEAD_LEVELS.includes(wf.lead_level) ? 2
+  const step2Statuses = Array.isArray(wf?.step_2_statuses)
+    ? wf.step_2_statuses
+    : wf?.step_2_statuses
+      ? wf.step_2_statuses
+      : wf?.lead_level
+      ? [wf.lead_level]
+      : [];
+  const step1Statuses = Array.isArray(wf?.step_1_statuses) && wf.step_1_statuses.length
+    ? wf.step_1_statuses
+    : wf?.remark_status ? [wf.remark_status] : [];
+  const step1Completed = isAnyWorkflowRemarkCompleted(step1Statuses);
+  const currentStep = !step1Completed ? 1
+    : step2Statuses.length === 0 ? 2
+    : hasColdStep2Status(step2Statuses) ? 2
     : !wf?.followup_completed ? 3
     : !wf?.conversion_completed ? 4
     : 5;
@@ -5356,9 +5424,16 @@ router.get('/leads/:id/workflow', authenticate, asyncHandler(async (req, res) =>
       conversion: conv || null,
       current_step: currentStep,
       remark_options: REMARK_OPTIONS,
+      workflow_step_1_statuses: step1Statuses,
+      workflow_step_1_labels: step1Statuses.map(status => status.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())),
       lead_level_options: levelOptionsForCategory(lead.category),
+      step_2_statuses: step2Statuses,
+      step_2_labels: step2Statuses.map(status => status.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())),
       lead_category: lead.category || null,
-      workflow_remark_completed: isWorkflowRemarkCompleted(wf?.remark_status),
+      workflow_remark_completed: step1Completed,
+      workflow_current_step: currentStep,
+      workflow_unlocked_step: currentStep,
+      workflow_is_step_1_completed: step1Completed,
     },
   });
 }));
@@ -5366,15 +5441,17 @@ router.get('/leads/:id/workflow', authenticate, asyncHandler(async (req, res) =>
 // Step 1: Save remark status
 router.post('/leads/:id/workflow/remark', authenticate, asyncHandler(async (req, res) => {
   const leadId = req.params.id;
-  const { remark_status } = req.body;
-  if (!remark_status) throw new AppError(400, 'INVALID', 'remark_status required');
+  const requestedStatuses = req.body?.remark_statuses || req.body?.workflow_step_1_statuses || req.body?.call_statuses || req.body?.remark_status;
+  const remarkStatuses = normalizeWorkflowRemarkStatuses(requestedStatuses);
+  if (remarkStatuses.length === 0) throw new AppError(400, 'INVALID', 'At least one remark status is required');
 
   const interaction = await withTransaction((client) => createLeadInteraction({
     client,
     user: req.user,
     leadId,
     note: req.body?.remark || req.body?.note || '',
-    status: remark_status,
+    status: remarkStatuses[0],
+    statuses: remarkStatuses,
     source: 'workflow_step_1',
     workflowStep: 1,
     syncWorkflowStep1: true,
@@ -5385,8 +5462,8 @@ router.post('/leads/:id/workflow/remark', authenticate, asyncHandler(async (req,
     const { logActivity } = require('../utils/auditLog');
     await logActivity(req, {
       entity: 'lead', entity_id: leadId, action: 'remark_saved',
-      new_value: wf.remark_status,
-      metadata: { step: 1 },
+      new_value: remarkStatuses.join(','),
+      metadata: { step: 1, step_1_statuses: remarkStatuses },
     });
   }
 
@@ -5403,8 +5480,10 @@ router.post('/leads/:id/workflow/remark', authenticate, asyncHandler(async (req,
 // Step 2: Save lead level
 router.post('/leads/:id/workflow/level', authenticate, asyncHandler(async (req, res) => {
   const leadId = req.params.id;
-  const { lead_level } = req.body;
-  if (!lead_level) throw new AppError(400, 'INVALID', 'lead_level required');
+  const requestedStatuses = req.body?.step_2_statuses || req.body?.selected_step_2_options || req.body?.lead_levels || req.body?.lead_level;
+  const step2Statuses = normalizeStep2Statuses(requestedStatuses);
+  if (step2Statuses.length === 0) throw new AppError(400, 'INVALID', 'At least one Step 2 status is required.');
+  const primaryLeadLevel = step2Statuses[0];
 
   const { rows: [lead] } = await query(
     `SELECT id, assigned_to_user_id, category FROM leads WHERE id = $1 AND deleted_at IS NULL`, [leadId]
@@ -5414,35 +5493,51 @@ router.post('/leads/:id/workflow/level', authenticate, asyncHandler(async (req, 
     throw new AppError(403, 'FORBIDDEN', 'Lead not assigned to you');
   }
 
-  if (!levelOptionsForCategory(lead.category).includes(lead_level)) {
+  const allowedForCategory = levelOptionsForCategory(lead.category);
+  if (step2Statuses.some(status => !allowedForCategory.includes(status))) {
     throw new AppError(400, 'INVALID_LEAD_LEVEL', 'Select a lead category option that matches this lead profile.');
   }
 
   const { rows: [existing] } = await query(
-    `SELECT remark_status FROM lead_workflow WHERE lead_id = $1`, [leadId]
+    `SELECT remark_status, step_1_statuses FROM lead_workflow WHERE lead_id = $1`, [leadId]
   );
-  if (!isWorkflowRemarkCompleted(existing?.remark_status)) {
+  const step1Statuses = Array.isArray(existing?.step_1_statuses) && existing.step_1_statuses.length
+    ? existing.step_1_statuses
+    : existing?.remark_status ? [existing.remark_status] : [];
+  if (!isAnyWorkflowRemarkCompleted(step1Statuses)) {
     throw new AppError(400, 'STEP_LOCKED', 'Select a completed Step 1 remark before classifying this lead.');
   }
 
   const { rows: [wf] } = await query(`
-    UPDATE lead_workflow SET lead_level = $1, lead_level_saved_at = NOW(), updated_at = NOW()
-    WHERE lead_id = $2 RETURNING *
-  `, [lead_level, leadId]);
+    UPDATE lead_workflow
+       SET lead_level = $1,
+           step_2_statuses = $2::jsonb,
+           lead_level_saved_at = NOW(),
+           updated_at = NOW()
+     WHERE lead_id = $3
+     RETURNING *
+  `, [primaryLeadLevel, JSON.stringify(step2Statuses), leadId]);
 
   await query(`
     INSERT INTO lead_workflow_history (lead_id, user_id, step, action, new_value)
     VALUES ($1, $2, 2, 'level_saved', $3)
-  `, [leadId, req.user.id, lead_level]);
+  `, [leadId, req.user.id, step2Statuses.join(',')]);
 
   {
     const { logActivity } = require('../utils/auditLog');
     await logActivity(req, {
       entity: 'lead', entity_id: leadId, action: 'level_saved',
       old_value: existing?.remark_status || null,
-      new_value: lead_level,
-      metadata: { step: 2 },
+      new_value: step2Statuses.join(','),
+      metadata: { step: 2, step_2_statuses: step2Statuses },
     });
+  }
+
+  try {
+    const userSheets = require('../services/userGoogleSheetsService');
+    await userSheets.enqueueLeadSync(leadId, { eventType: 'lead_workflow_step_2_updated', source: 'workflow_step_2', userId: req.user.id });
+  } catch (error) {
+    logger.warn({ leadId, message: error?.message }, '[Workflow] Google Sheets sync enqueue failed');
   }
 
   res.json({ success: true, data: wf });
@@ -5462,12 +5557,15 @@ router.patch('/leads/:id/workflow/followup', authenticate, asyncHandler(async (r
   }
 
   const { rows: [existing] } = await query(
-    `SELECT lead_level FROM lead_workflow WHERE lead_id = $1`, [leadId]
+    `SELECT lead_level, step_2_statuses FROM lead_workflow WHERE lead_id = $1`, [leadId]
   );
-  if (!existing?.lead_level) {
+  const step2Statuses = Array.isArray(existing?.step_2_statuses)
+    ? existing.step_2_statuses
+    : existing?.lead_level ? [existing.lead_level] : [];
+  if (step2Statuses.length === 0) {
     throw new AppError(400, 'STEP_LOCKED', 'Complete Step 2 (Lead Level) first');
   }
-  if (COLD_LEAD_LEVELS.includes(existing.lead_level)) {
+  if (hasColdStep2Status(step2Statuses)) {
     throw new AppError(400, 'COLD_LEAD_WORKFLOW_PAUSED', 'Cold leads do not unlock follow-up. Change the lead category to continue this workflow.');
   }
 
@@ -5787,50 +5885,36 @@ router.get('/workflow/summary', authenticate, requireRole('super_admin', 'rm'), 
   }
 
   let having = '';
-  if (stepFilter) {
-    having = `HAVING (CASE
-      WHEN wf.remark_status IS NULL THEN 1
-      WHEN wf.lead_level IS NULL THEN 2
+  const workflowStepCase = `CASE
+      WHEN wf.remark_status IS NULL AND NOT (COALESCE(wf.step_1_statuses, '[]'::jsonb) ?| ARRAY['communication_completed','respond_hi','session_730_attend','yes_after_730_session']) THEN 1
+      WHEN COALESCE(jsonb_array_length(wf.step_2_statuses), 0) = 0 AND wf.lead_level IS NULL THEN 2
+      WHEN (COALESCE(wf.step_2_statuses, '[]'::jsonb) ?| ARRAY['cold_lead','cold_partner','cold_trader']) OR wf.lead_level IN ('cold_lead','cold_partner','cold_trader') THEN 2
       WHEN wf.followup_completed IS NOT TRUE THEN 3
       WHEN wf.conversion_completed IS NOT TRUE THEN 4
-      ELSE 5 END) = ${stepFilter}`;
+      ELSE 5 END`;
+  if (stepFilter) {
+    having = `HAVING (${workflowStepCase}) = ${stepFilter}`;
   }
 
   const { rows: [{ total }] } = await query(`
     SELECT COUNT(*) AS total FROM leads l
     LEFT JOIN lead_workflow wf ON wf.lead_id = l.id
     ${where}
-    ${stepFilter ? `AND (CASE
-      WHEN wf.remark_status IS NULL THEN 1
-      WHEN wf.lead_level IS NULL THEN 2
-      WHEN wf.followup_completed IS NOT TRUE THEN 3
-      WHEN wf.conversion_completed IS NOT TRUE THEN 4
-      ELSE 5 END) = ${stepFilter}` : ''}
+    ${stepFilter ? `AND (${workflowStepCase}) = ${stepFilter}` : ''}
   `, params);
 
   params.push(limit, offset);
   const { rows } = await query(`
     SELECT l.id AS lead_id, l.full_name, l.phone, l.category,
            l.assigned_to_user_id, u.full_name AS assigned_to_name, u.team_name,
-           wf.remark_status, wf.lead_level, wf.followup_completed, wf.conversion_completed,
+           wf.remark_status, wf.lead_level, wf.step_2_statuses, wf.followup_completed, wf.conversion_completed,
            wf.remark_saved_at, wf.lead_level_saved_at, wf.followup_completed_at, wf.conversion_completed_at,
-           CASE
-             WHEN wf.remark_status IS NULL THEN 1
-             WHEN wf.lead_level IS NULL THEN 2
-             WHEN wf.followup_completed IS NOT TRUE THEN 3
-             WHEN wf.conversion_completed IS NOT TRUE THEN 4
-             ELSE 5
-           END AS current_step
+           ${workflowStepCase} AS current_step
     FROM leads l
     LEFT JOIN lead_workflow wf ON wf.lead_id = l.id
     LEFT JOIN users u ON u.id = l.assigned_to_user_id
     ${where}
-    ${stepFilter ? `AND (CASE
-      WHEN wf.remark_status IS NULL THEN 1
-      WHEN wf.lead_level IS NULL THEN 2
-      WHEN wf.followup_completed IS NOT TRUE THEN 3
-      WHEN wf.conversion_completed IS NOT TRUE THEN 4
-      ELSE 5 END) = ${stepFilter}` : ''}
+    ${stepFilter ? `AND (${workflowStepCase}) = ${stepFilter}` : ''}
     ORDER BY COALESCE(wf.updated_at, l.created_at) DESC
     LIMIT $${params.length - 1} OFFSET $${params.length}
   `, params);
@@ -5858,16 +5942,20 @@ router.get('/workflow/stats', authenticate, requireRole('super_admin', 'admin', 
       (SELECT COUNT(*) FROM leads l WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}) AS total_assigned,
       (SELECT COUNT(*) FROM leads l LEFT JOIN lead_workflow wf ON wf.lead_id = l.id
         WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}
-        AND COALESCE(wf.remark_status, '') NOT IN ('communication_completed', 'respond_hi', 'session_730_attend', 'yes_after_730_session')) AS step1_pending,
+        AND COALESCE(wf.remark_status, '') NOT IN ('communication_completed', 'respond_hi', 'session_730_attend', 'yes_after_730_session')
+        AND NOT (COALESCE(wf.step_1_statuses, '[]'::jsonb) ?| ARRAY['communication_completed','respond_hi','session_730_attend','yes_after_730_session'])) AS step1_pending,
       (SELECT COUNT(*) FROM leads l LEFT JOIN lead_workflow wf ON wf.lead_id = l.id
         WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}
-        AND wf.remark_status IN ('communication_completed', 'respond_hi', 'session_730_attend', 'yes_after_730_session')
+        AND (wf.remark_status IN ('communication_completed', 'respond_hi', 'session_730_attend', 'yes_after_730_session')
+          OR COALESCE(wf.step_1_statuses, '[]'::jsonb) ?| ARRAY['communication_completed','respond_hi','session_730_attend','yes_after_730_session'])
+        AND COALESCE(jsonb_array_length(wf.step_2_statuses), 0) = 0
         AND wf.lead_level IS NULL) AS step2_pending,
       (SELECT COUNT(*) FROM leads l LEFT JOIN lead_workflow wf ON wf.lead_id = l.id
         WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}
-        AND wf.remark_status IN ('communication_completed', 'respond_hi', 'session_730_attend', 'yes_after_730_session')
-        AND wf.lead_level IS NOT NULL
-        AND wf.lead_level NOT IN ('cold_partner', 'cold_trader')
+        AND (wf.remark_status IN ('communication_completed', 'respond_hi', 'session_730_attend', 'yes_after_730_session')
+          OR COALESCE(wf.step_1_statuses, '[]'::jsonb) ?| ARRAY['communication_completed','respond_hi','session_730_attend','yes_after_730_session'])
+        AND (COALESCE(jsonb_array_length(wf.step_2_statuses), 0) > 0 OR wf.lead_level IS NOT NULL)
+        AND NOT ((COALESCE(wf.step_2_statuses, '[]'::jsonb) ?| ARRAY['cold_lead','cold_partner','cold_trader']) OR wf.lead_level IN ('cold_lead','cold_partner','cold_trader'))
         AND wf.followup_completed IS NOT TRUE) AS step3_pending,
       (SELECT COUNT(*) FROM leads l LEFT JOIN lead_workflow wf ON wf.lead_id = l.id
         WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}
@@ -5875,9 +5963,10 @@ router.get('/workflow/stats', authenticate, requireRole('super_admin', 'admin', 
         AND wf.conversion_completed IS NOT TRUE) AS step4_pending,
       (SELECT COUNT(*) FROM leads l LEFT JOIN lead_workflow wf ON wf.lead_id = l.id
         WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scope}
-        AND wf.remark_status IN ('communication_completed', 'respond_hi', 'session_730_attend', 'yes_after_730_session')
-        AND wf.lead_level IS NOT NULL
-        AND wf.lead_level NOT IN ('cold_partner', 'cold_trader')
+        AND (wf.remark_status IN ('communication_completed', 'respond_hi', 'session_730_attend', 'yes_after_730_session')
+          OR COALESCE(wf.step_1_statuses, '[]'::jsonb) ?| ARRAY['communication_completed','respond_hi','session_730_attend','yes_after_730_session'])
+        AND (COALESCE(jsonb_array_length(wf.step_2_statuses), 0) > 0 OR wf.lead_level IS NOT NULL)
+        AND NOT ((COALESCE(wf.step_2_statuses, '[]'::jsonb) ?| ARRAY['cold_lead','cold_partner','cold_trader']) OR wf.lead_level IN ('cold_lead','cold_partner','cold_trader'))
         AND wf.followup_completed IS TRUE
         AND wf.conversion_completed IS TRUE) AS completed,
       (SELECT COUNT(*) FROM lead_workflow_history h
@@ -5893,18 +5982,33 @@ router.get('/workflow/stats', authenticate, requireRole('super_admin', 'admin', 
 // Admin: Edit any workflow step (override)
 router.patch('/leads/:id/workflow/admin-edit', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
   const leadId = req.params.id;
-  const { remark_status, lead_level, followup_completed, conversion_completed } = req.body;
+  const { remark_status, remark_statuses, workflow_step_1_statuses, lead_level, step_2_statuses, selected_step_2_options, lead_levels, followup_completed, conversion_completed } = req.body;
 
   const sets = ['updated_at = NOW()'];
   const params = [leadId];
 
-  if (remark_status !== undefined) {
-    params.push(remark_status);
-    sets.push(`remark_status = $${params.length}`, 'remark_saved_at = NOW()');
+  const step1Input = remark_statuses !== undefined ? remark_statuses : workflow_step_1_statuses !== undefined ? workflow_step_1_statuses : remark_status;
+  if (step1Input !== undefined) {
+    const nextStep1 = normalizeWorkflowRemarkStatuses(step1Input);
+    params.push(nextStep1[0] || null);
+    sets.push(`remark_status = $${params.length}`);
+    params.push(JSON.stringify(nextStep1));
+    sets.push(`step_1_statuses = $${params.length}::jsonb`, 'remark_saved_at = NOW()');
   }
-  if (lead_level !== undefined) {
-    params.push(lead_level);
-    sets.push(`lead_level = $${params.length}`, 'lead_level_saved_at = NOW()');
+  const step2Input = step_2_statuses !== undefined
+    ? step_2_statuses
+    : selected_step_2_options !== undefined
+      ? selected_step_2_options
+      : lead_levels !== undefined
+        ? lead_levels
+        : lead_level;
+  if (step2Input !== undefined) {
+    const nextStatuses = normalizeStep2Statuses(step2Input);
+    const primaryLeadLevel = nextStatuses[0] || null;
+    params.push(primaryLeadLevel);
+    sets.push(`lead_level = $${params.length}`);
+    params.push(JSON.stringify(nextStatuses));
+    sets.push(`step_2_statuses = $${params.length}::jsonb`, 'lead_level_saved_at = NOW()');
   }
   if (followup_completed !== undefined) {
     params.push(followup_completed);

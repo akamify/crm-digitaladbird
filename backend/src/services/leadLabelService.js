@@ -64,7 +64,8 @@ async function listLabels(actor) {
   const visibility = labelVisibilitySql(actor, 'll');
   const { rows } = await query(`
     SELECT ll.*, creator.full_name AS created_by_name, creator.role AS created_by_role,
-           COUNT(lla.lead_id)::int AS lead_count
+           COUNT(lla.lead_id)::int AS lead_count,
+           COUNT(lla.lead_id)::int AS usage_count
       FROM lead_labels ll
       JOIN users creator ON creator.id = ll.created_by_user_id
       LEFT JOIN lead_label_assignments lla ON lla.label_id = ll.id
@@ -120,10 +121,64 @@ async function assignLabel(actor, leadId, labelId) {
   return label;
 }
 
+async function bulkApplyLabels(actor, input = {}) {
+  const leadIds = Array.isArray(input.lead_ids) ? input.lead_ids : input.leadIds;
+  const labelIds = Array.isArray(input.label_ids) ? input.label_ids : input.labelIds;
+  const mode = ['add', 'replace', 'remove'].includes(input.mode) ? input.mode : 'add';
+  if (!Array.isArray(leadIds) || leadIds.length === 0) {
+    throw new AppError(400, 'LEAD_IDS_REQUIRED', 'Select at least one lead.');
+  }
+  if (!Array.isArray(labelIds) || labelIds.length === 0) {
+    throw new AppError(400, 'LABEL_IDS_REQUIRED', 'Select at least one label.');
+  }
+
+  const uniqueLeadIds = [...new Set(leadIds.map(String).filter(Boolean))].slice(0, 500);
+  const uniqueLabelIds = [...new Set(labelIds.map(String).filter(Boolean))].slice(0, 25);
+  const labels = [];
+  for (const labelId of uniqueLabelIds) {
+    labels.push(await assertLabelVisible(actor, labelId));
+  }
+
+  const skippedLeadIds = [];
+  const changedLeadIds = [];
+  for (const leadId of uniqueLeadIds) {
+    try {
+      await assertLeadAccess(actor, leadId);
+      if (mode === 'replace') {
+        await query(`DELETE FROM lead_label_assignments WHERE lead_id = $1`, [leadId]);
+      }
+      if (mode === 'remove') {
+        await query(`DELETE FROM lead_label_assignments WHERE lead_id = $1 AND label_id = ANY($2::uuid[])`, [leadId, uniqueLabelIds]);
+      } else {
+        for (const labelId of uniqueLabelIds) {
+          await query(`
+            INSERT INTO lead_label_assignments(lead_id, label_id, assigned_by_user_id)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (lead_id, label_id) DO NOTHING
+          `, [leadId, labelId, actor.id]);
+        }
+      }
+      changedLeadIds.push(leadId);
+    } catch (error) {
+      skippedLeadIds.push(leadId);
+    }
+  }
+
+  return {
+    success: true,
+    applied_count: changedLeadIds.length,
+    skipped_count: skippedLeadIds.length,
+    skipped_lead_ids: skippedLeadIds,
+    labels,
+    changed_lead_ids: changedLeadIds,
+    mode,
+  };
+}
+
 async function removeLabel(actor, leadId, labelId) {
   await assertLeadAccess(actor, leadId);
   await assertLabelVisible(actor, labelId);
   await query(`DELETE FROM lead_label_assignments WHERE lead_id = $1 AND label_id = $2`, [leadId, labelId]);
 }
 
-module.exports = { listLabels, createLabel, getLeadLabels, assignLabel, removeLabel, assertLabelVisible };
+module.exports = { listLabels, createLabel, getLeadLabels, assignLabel, bulkApplyLabels, removeLabel, assertLabelVisible };

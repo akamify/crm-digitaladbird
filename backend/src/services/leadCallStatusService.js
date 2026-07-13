@@ -24,6 +24,7 @@ const CALL_STATUS_MAP = {
   callback_requested: { callStatus: 'callback_requested', stage: 'follow_up' },
   callback: { callStatus: 'callback_requested', stage: 'follow_up' },
   ccb: { callStatus: 'ccb', stage: 'follow_up' },
+  call_cut_busy: { callStatus: 'call_cut_busy', stage: 'follow_up' },
   follow_up: { callStatus: 'follow_up', stage: 'follow_up' },
   converted: { callStatus: 'converted', stage: 'won' },
   not_interested: { callStatus: 'not_interested', stage: 'lost' },

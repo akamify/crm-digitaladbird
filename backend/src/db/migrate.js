@@ -17,6 +17,7 @@ const NO_TRANSACTION_MIGRATIONS = new Set([
   '012_partner_role_and_cpid.sql',
   '038_user_lifecycle_role_simplification.sql',
   '046_lead_call_log_outcomes.sql',
+  '057_workflow_step2_multiselect_and_call_cut_busy.sql',
 ]);
 
 function splitSqlStatements(sql) {

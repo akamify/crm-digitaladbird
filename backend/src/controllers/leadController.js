@@ -12,6 +12,7 @@ const leadSessionService = require('../services/leadSessionService');
 const { normalizeWorkflowRemarkStatus, saveWorkflowRemark } = require('../services/leadWorkflowRemarkService');
 const { assertLabelVisible } = require('../services/leadLabelService');
 const { createLeadInteraction } = require('../services/leadInteractionService');
+const { validateLeadAssignee } = require('../services/leadAssigneeValidator');
 
 function humanizeValue(value) {
   return String(value || '')
@@ -27,6 +28,44 @@ function buildRemarkText({ remark, callStatus, stage, nextFollowupAt }) {
   if (stage) parts.push(`Stage: ${humanizeValue(stage)}`);
   if (nextFollowupAt) parts.push('Follow-up scheduled');
   return parts.length ? parts.join(' | ') : 'Lead activity updated';
+}
+
+function normalizeManualText(value, max = 255) {
+  const text = String(value || '').trim().replace(/\s+/g, ' ');
+  return text ? text.slice(0, max) : null;
+}
+
+function normalizeManualPhone(value) {
+  const raw = String(value || '').trim();
+  const cleaned = raw.replace(/[^\d+]/g, '');
+  const digits = cleaned.replace(/\D/g, '');
+  if (digits.length < 10 || digits.length > 15) {
+    throw new AppError(400, 'INVALID_PHONE', 'Enter a valid phone number.');
+  }
+  return cleaned.startsWith('+') ? cleaned : digits;
+}
+
+function normalizeManualEmail(value) {
+  const email = String(value || '').trim().toLowerCase();
+  if (!email) return null;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new AppError(400, 'INVALID_EMAIL', 'Enter a valid email address.');
+  }
+  return email;
+}
+
+function normalizeManualCategory(value) {
+  const category = String(value || '').trim().toLowerCase();
+  if (!category) return 'unknown';
+  if (!['partner', 'trader', 'unknown'].includes(category)) {
+    throw new AppError(400, 'INVALID_LEAD_CATEGORY', 'Invalid lead category.');
+  }
+  return category;
+}
+
+function normalizeUuidList(value, max = 25) {
+  const values = Array.isArray(value) ? value : value ? [value] : [];
+  return [...new Set(values.map(item => String(item || '').trim()).filter(Boolean))].slice(0, max);
 }
 
 const callStatusEnumCache = {
@@ -185,7 +224,21 @@ exports.list = asyncHandler(async (req, res) => {
     where.push(`(l.full_name ILIKE $${n} OR l.phone ILIKE $${n} OR l.email ILIKE $${n})`);
   }
   if (req.query.stage) { params.push(req.query.stage); where.push(`l.stage = $${params.length}`); }
-  if (req.query.call_status) { params.push(req.query.call_status); where.push(`l.call_status = $${params.length}`); }
+  if (req.query.call_status) {
+    params.push(String(req.query.call_status).trim());
+    const callStatusIdx = params.length;
+    where.push(`(
+      l.call_status::text = $${callStatusIdx}
+      OR EXISTS (
+        SELECT 1 FROM lead_remarks call_status_filter
+         WHERE call_status_filter.lead_id = l.id
+           AND (
+             call_status_filter.call_status::text = $${callStatusIdx}
+             OR COALESCE(call_status_filter.call_statuses, '[]'::jsonb) ? $${callStatusIdx}
+           )
+      )
+    )`);
+  }
   if (req.query.source) { params.push(req.query.source); where.push(`l.source = $${params.length}`); }
   if (req.query.form_id) { params.push(req.query.form_id); where.push(`l.meta_form_id = $${params.length}`); }
   if (req.query.campaign_id) {
@@ -268,12 +321,18 @@ exports.list = asyncHandler(async (req, res) => {
       EXISTS (
       SELECT 1 FROM lead_remarks remark_filter
        WHERE remark_filter.lead_id = l.id
-         AND remark_filter.call_status::text = $${remarkStatusIdx}
+         AND (
+           remark_filter.call_status::text = $${remarkStatusIdx}
+           OR COALESCE(remark_filter.call_statuses, '[]'::jsonb) ? $${remarkStatusIdx}
+         )
       )
       OR EXISTS (
         SELECT 1 FROM lead_workflow workflow_remark_filter
          WHERE workflow_remark_filter.lead_id = l.id
-           AND workflow_remark_filter.remark_status::text = $${remarkStatusIdx}
+           AND (
+             workflow_remark_filter.remark_status::text = $${remarkStatusIdx}
+             OR COALESCE(workflow_remark_filter.step_1_statuses, '[]'::jsonb) ? $${remarkStatusIdx}
+           )
       )
     )`);
   }
@@ -290,13 +349,19 @@ exports.list = asyncHandler(async (req, res) => {
       where.push(`NOT EXISTS (
         SELECT 1 FROM lead_workflow wf_status
          WHERE wf_status.lead_id = l.id
-           AND wf_status.remark_status::text IN ${completedWorkflowSql}
+           AND (
+             wf_status.remark_status::text IN ${completedWorkflowSql}
+             OR COALESCE(wf_status.step_1_statuses, '[]'::jsonb) ?| ARRAY['communication_completed','respond_hi','session_730_attend','yes_after_730_session']
+           )
       )`);
     } else if (['step_1_completed', 'step_2_unlocked', 'completed_response'].includes(workflowStatus)) {
       where.push(`EXISTS (
         SELECT 1 FROM lead_workflow wf_status
          WHERE wf_status.lead_id = l.id
-           AND wf_status.remark_status::text IN ${completedWorkflowSql}
+           AND (
+             wf_status.remark_status::text IN ${completedWorkflowSql}
+             OR COALESCE(wf_status.step_1_statuses, '[]'::jsonb) ?| ARRAY['communication_completed','respond_hi','session_730_attend','yes_after_730_session']
+           )
       )`);
     }
   }
@@ -364,6 +429,9 @@ exports.list = asyncHandler(async (req, res) => {
     SELECT
       l.id, l.full_name, l.phone, l.email, l.city, l.state,
       l.source, l.meta_form_id, l.campaign_label, l.product_tag,
+      CASE WHEN l.source = 'manual' THEN 'Manual' ELSE INITCAP(l.source::text) END AS source_label,
+      l.manual_added_by_user_id, manual_user.full_name AS manual_added_by_name, manual_user.role AS manual_added_by_role, l.manual_added_at,
+      l.created_by_user_id, creator_user.full_name AS created_by_name, creator_user.role AS created_by_role,
       l.category, l.category_source, l.category_rule_id, l.category_resolved_at,
       l.campaign_name, l.adset_name, l.ad_name,
       l.meta_campaign_id, l.meta_adset_id, l.meta_ad_id,
@@ -371,12 +439,15 @@ exports.list = asyncHandler(async (req, res) => {
       l.assigned_to_user_id, u.full_name AS assigned_to_name,
       l.locked_by_user_id, l.locked_until,
       l.created_at, l.assigned_at, l.stage_updated_at, l.updated_at,
+      COALESCE(lead_labels.labels, '[]'::jsonb) AS labels,
+      COALESCE(lead_labels.labels_count, 0) AS labels_count,
       latest_remark.id AS latest_remark_id,
       latest_remark.remark AS latest_remark_note,
+      COALESCE(latest_remark.call_statuses, CASE WHEN latest_remark.call_status IS NOT NULL THEN jsonb_build_array(latest_remark.call_status::text) ELSE '[]'::jsonb END) AS latest_remark_statuses,
       CASE
-        WHEN wf.remark_status IS NOT NULL
+        WHEN (wf.remark_status IS NOT NULL OR COALESCE(jsonb_array_length(wf.step_1_statuses), 0) > 0)
          AND COALESCE(wf.remark_saved_at, wf.updated_at, wf.created_at) >= COALESCE(latest_remark.created_at, '-infinity'::timestamptz)
-          THEN wf.remark_status::text
+          THEN COALESCE(wf.remark_status::text, wf.step_1_statuses->>0)
         WHEN latest_remark.call_status IS NOT NULL THEN latest_remark.call_status::text
         WHEN latest_remark.stage IS NOT NULL THEN latest_remark.stage::text
         ELSE NULL
@@ -393,16 +464,28 @@ exports.list = asyncHandler(async (req, res) => {
         WHEN (COALESCE(latest_remark.next_followup_at, l.next_followup_at) AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date THEN 'today'
         ELSE 'upcoming'
       END AS followup_state,
+      COALESCE(wf.step_1_statuses, CASE WHEN wf.remark_status IS NOT NULL THEN jsonb_build_array(wf.remark_status::text) ELSE '[]'::jsonb END) AS workflow_step_1_statuses,
       wf.remark_status::text AS workflow_step_1_status,
       CASE
-        WHEN wf.remark_status::text IN ${completedWorkflowSql} THEN 2
-        ELSE 1
+        WHEN (wf.remark_status::text NOT IN ${completedWorkflowSql} OR wf.remark_status IS NULL)
+          AND NOT (COALESCE(wf.step_1_statuses, '[]'::jsonb) ?| ARRAY['communication_completed','respond_hi','session_730_attend','yes_after_730_session']) THEN 1
+        WHEN COALESCE(jsonb_array_length(wf.step_2_statuses), 0) = 0 AND wf.lead_level IS NULL THEN 2
+        WHEN (COALESCE(wf.step_2_statuses, '[]'::jsonb) ?| ARRAY['cold_lead','cold_partner','cold_trader']) OR wf.lead_level IN ('cold_lead','cold_partner','cold_trader') THEN 2
+        WHEN NOT wf.followup_completed THEN 3
+        WHEN NOT wf.conversion_completed THEN 4
+        ELSE 5
       END AS workflow_unlocked_step,
       CASE
-        WHEN wf.remark_status::text IN ${completedWorkflowSql} THEN 2
-        ELSE 1
+        WHEN (wf.remark_status::text NOT IN ${completedWorkflowSql} OR wf.remark_status IS NULL)
+          AND NOT (COALESCE(wf.step_1_statuses, '[]'::jsonb) ?| ARRAY['communication_completed','respond_hi','session_730_attend','yes_after_730_session']) THEN 1
+        WHEN COALESCE(jsonb_array_length(wf.step_2_statuses), 0) = 0 AND wf.lead_level IS NULL THEN 2
+        WHEN (COALESCE(wf.step_2_statuses, '[]'::jsonb) ?| ARRAY['cold_lead','cold_partner','cold_trader']) OR wf.lead_level IN ('cold_lead','cold_partner','cold_trader') THEN 2
+        WHEN NOT wf.followup_completed THEN 3
+        WHEN NOT wf.conversion_completed THEN 4
+        ELSE 5
       END AS workflow_current_step,
-      (wf.remark_status::text IN ${completedWorkflowSql}) AS workflow_is_step_1_completed,
+      (wf.remark_status::text IN ${completedWorkflowSql}
+        OR COALESCE(wf.step_1_statuses, '[]'::jsonb) ?| ARRAY['communication_completed','respond_hi','session_730_attend','yes_after_730_session']) AS workflow_is_step_1_completed,
       CASE
         WHEN EXISTS (SELECT 1 FROM lead_sessions session_status WHERE session_status.lead_id = l.id AND session_status.deleted_at IS NULL)
           THEN 'has_session'
@@ -417,8 +500,10 @@ exports.list = asyncHandler(async (req, res) => {
       ${reassignment === 'to_others' && visible !== null ? 'TRUE' : 'FALSE'} AS read_only_access
     FROM leads l
     LEFT JOIN users u ON u.id = l.assigned_to_user_id
+    LEFT JOIN users manual_user ON manual_user.id = l.manual_added_by_user_id
+    LEFT JOIN users creator_user ON creator_user.id = l.created_by_user_id
     LEFT JOIN LATERAL (
-      SELECT lr.id, lr.remark, lr.call_status, lr.stage, lr.next_followup_at,
+      SELECT lr.id, lr.remark, lr.call_status, lr.call_statuses, lr.stage, lr.next_followup_at,
              lr.source, lr.user_id, lr.created_at
         FROM lead_remarks lr
        WHERE lr.lead_id = l.id
@@ -426,6 +511,13 @@ exports.list = asyncHandler(async (req, res) => {
        LIMIT 1
     ) latest_remark ON TRUE
     LEFT JOIN users remark_user ON remark_user.id = latest_remark.user_id
+    LEFT JOIN LATERAL (
+      SELECT jsonb_agg(jsonb_build_object('id', ll.id, 'name', ll.name, 'color', ll.color) ORDER BY assignment.created_at DESC) AS labels,
+             COUNT(*)::int AS labels_count
+      FROM lead_label_assignments assignment
+      JOIN lead_labels ll ON ll.id = assignment.label_id AND ll.deleted_at IS NULL
+      WHERE assignment.lead_id = l.id
+    ) lead_labels ON TRUE
     LEFT JOIN lead_workflow wf ON wf.lead_id = l.id
     WHERE ${whereSql}
     ORDER BY l.${sortCol} ${sortOrd} NULLS LAST
@@ -457,6 +549,11 @@ exports.getOne = asyncHandler(async (req, res) => {
   }
   const { rows } = await query(
     `SELECT l.*, u.full_name AS assigned_to_name,
+            CASE WHEN l.source = 'manual' THEN 'Manual' ELSE INITCAP(l.source::text) END AS source_label,
+            manual_user.full_name AS manual_added_by_name,
+            manual_user.role AS manual_added_by_role,
+            creator_user.full_name AS created_by_name,
+            creator_user.role AS created_by_role,
             CASE
               WHEN $2::uuid[] IS NULL THEN FALSE
               WHEN l.assigned_to_user_id = ANY($2::uuid[]) THEN FALSE
@@ -467,7 +564,10 @@ exports.getOne = asyncHandler(async (req, res) => {
               WHEN l.assigned_to_user_id = ANY($2::uuid[]) THEN 'current_owner'
               ELSE 'reassigned_to_other'
             END AS reassignment_access_type
-       FROM leads l LEFT JOIN users u ON u.id = l.assigned_to_user_id
+       FROM leads l
+       LEFT JOIN users u ON u.id = l.assigned_to_user_id
+       LEFT JOIN users manual_user ON manual_user.id = l.manual_added_by_user_id
+       LEFT JOIN users creator_user ON creator_user.id = l.created_by_user_id
       WHERE l.id = $1 AND l.deleted_at IS NULL ${scope}`,
     visible === null ? [req.params.id, null] : params
   );
@@ -489,8 +589,14 @@ exports.getOne = asyncHandler(async (req, res) => {
       WHERE a.lead_id = $1 ORDER BY a.assigned_at DESC`,
     [req.params.id]
   );
+  let labels = [];
+  try {
+    labels = await require('../services/leadLabelService').getLeadLabels(req.user, req.params.id);
+  } catch (_) {
+    labels = [];
+  }
 
-  res.json({ success: true, data: { ...rows[0], remarks: remarks.rows, history: history.rows } });
+  res.json({ success: true, data: { ...rows[0], remarks: remarks.rows, history: history.rows, labels } });
 });
 
 exports.listSessions = asyncHandler(async (req, res) => {
@@ -568,7 +674,7 @@ exports.unlock = asyncHandler(async (req, res) => {
  * Updates lead call_status, next_followup_at, call_attempts atomically.
  */
 exports.addRemark = asyncHandler(async (req, res) => {
-  const { remark, call_status, next_followup_at, stage, release_lock = true } = req.body;
+  const { remark, call_status, call_statuses, remark_statuses, next_followup_at, stage, release_lock = true } = req.body;
   const result = await withTransaction(async (client) => {
     const interaction = await createLeadInteraction({
       client,
@@ -576,6 +682,7 @@ exports.addRemark = asyncHandler(async (req, res) => {
       leadId: req.params.id,
       note: remark,
       status: call_status,
+      statuses: call_statuses || remark_statuses,
       stage,
       nextFollowupAt: next_followup_at,
       source: 'manual',
@@ -596,7 +703,7 @@ exports.addRemark = asyncHandler(async (req, res) => {
  */
 exports.bulkAddRemarks = asyncHandler(async (req, res) => {
   const leadIds = Array.isArray(req.body?.lead_ids) ? req.body.lead_ids : req.body?.leadIds;
-  const { remark, call_status, next_followup_at, stage } = req.body;
+  const { remark, call_status, call_statuses, remark_statuses, next_followup_at, stage } = req.body;
   if (!Array.isArray(leadIds) || leadIds.length === 0) throw new AppError(400, 'LEAD_IDS_REQUIRED', 'Select at least one lead.');
 
   const uniqueLeadIds = [...new Set(leadIds.map(String).filter(Boolean))].slice(0, 500);
@@ -632,6 +739,7 @@ exports.bulkAddRemarks = asyncHandler(async (req, res) => {
         leadId,
         note: remark,
         status: call_status,
+        statuses: call_statuses || remark_statuses,
         stage,
         nextFollowupAt: next_followup_at,
         source: 'bulk',
@@ -683,6 +791,210 @@ exports.reassign = asyncHandler(async (req, res) => {
   });
 
   res.json({ success: true, data: out });
+});
+
+exports.createManual = asyncHandler(async (req, res) => {
+  if (!['super_admin', 'admin', 'rm'].includes(req.user.role)) {
+    throw new AppError(403, 'FORBIDDEN', 'Only admin and RM users can add manual leads.');
+  }
+
+  const fullName = normalizeManualText(req.body?.full_name || req.body?.name, 190);
+  if (!fullName) throw new AppError(400, 'NAME_REQUIRED', 'Lead name is required.');
+
+  const phone = normalizeManualPhone(req.body?.phone);
+  const alternatePhone = req.body?.alternate_phone ? normalizeManualPhone(req.body.alternate_phone) : null;
+  const email = normalizeManualEmail(req.body?.email);
+  const city = normalizeManualText(req.body?.city, 120);
+  const state = normalizeManualText(req.body?.state, 120);
+  const category = normalizeManualCategory(req.body?.category);
+  const normalizedStage = req.body?.stage ? validateLeadStage(req.body.stage) : null;
+  if (req.body?.stage && normalizedStage === null) {
+    throw new AppError(400, 'INVALID_LEAD_STATUS_VALUE', 'Invalid stage value. Please select one of the available CRM stages.');
+  }
+  const normalizedCallStatus = req.body?.call_status ? validateCallStatus(req.body.call_status) : null;
+  if (req.body?.call_status && normalizedCallStatus === null) {
+    throw new AppError(400, 'INVALID_LEAD_STATUS_VALUE', 'Invalid call status value. Please select one of the available CRM statuses.');
+  }
+  const initialRemark = String(req.body?.initial_remark || req.body?.notes || '').trim();
+  const labelIds = normalizeUuidList(req.body?.label_ids || req.body?.labelIds);
+  const assignedToUserId = String(req.body?.assigned_to_user_id || '').trim() || null;
+  const nextFollowupAt = req.body?.next_followup_at || null;
+
+  const dup = await findExistingByContact({ phone, email });
+  if (dup) {
+    return res.status(409).json({
+      success: false,
+      error: {
+        code: 'DUPLICATE_LEAD',
+        message: `Lead already exists (matched by ${dup.reason}).`,
+        data: { id: dup.id, reason: dup.reason },
+      },
+    });
+  }
+
+  const result = await withTransaction(async (client) => {
+    let dbCallStatus = null;
+    if (normalizedCallStatus) {
+      dbCallStatus = await toDbCallStatus(client, normalizedCallStatus);
+    }
+    const labels = [];
+    for (const labelId of labelIds) {
+      labels.push(await assertLabelVisible(req.user, labelId));
+    }
+
+    let assignee = null;
+    if (assignedToUserId) {
+      assignee = await validateLeadAssignee(client, assignedToUserId, { actor: req.user });
+    }
+
+    const sourceMeta = {
+      source: 'manual',
+      alternate_phone: alternatePhone,
+      created_by_user_id: req.user.id,
+      created_by_name: req.user.name || req.user.full_name || null,
+      created_by_role: req.user.role,
+    };
+    const rawPayload = {
+      manual: true,
+      name: fullName,
+      phone,
+      alternate_phone: alternatePhone,
+      email,
+      city,
+      state,
+      category,
+      created_by_user_id: req.user.id,
+    };
+
+    const { rows: [lead] } = await client.query(
+      `INSERT INTO leads (
+         full_name, phone, email, city, state, source, category, category_source,
+         category_resolved_at, stage, call_status, next_followup_at,
+         assigned_to_user_id, assigned_at, raw_payload, source_meta,
+         manual_added_by_user_id, manual_added_at, created_by_user_id
+       )
+       VALUES (
+         $1, $2, $3, $4, $5, 'manual'::lead_source, $6, 'manual',
+         NOW(), COALESCE($7, 'new')::lead_stage, COALESCE($8, 'not_called')::call_status, $9,
+         $10, CASE WHEN $10 IS NULL THEN NULL ELSE NOW() END, $11::jsonb, $12::jsonb,
+         $13, NOW(), $13
+       )
+       RETURNING id, full_name, phone, email, source, manual_added_by_user_id, manual_added_at,
+                 created_by_user_id, created_at, assigned_to_user_id`,
+      [
+        fullName,
+        phone,
+        email,
+        city,
+        state,
+        category,
+        normalizedStage || null,
+        dbCallStatus || null,
+        nextFollowupAt,
+        assignee?.id || null,
+        JSON.stringify(rawPayload),
+        JSON.stringify(sourceMeta),
+        req.user.id,
+      ],
+    );
+
+    if (assignee) {
+      await client.query(
+        `INSERT INTO lead_assignments(lead_id, user_id, assigned_to_user_id, assigned_by, assigned_at, reason)
+         VALUES ($1, $2, $2, $3, NOW(), 'manual_lead_create')`,
+        [lead.id, assignee.id, req.user.id],
+      );
+    }
+
+    for (const label of labels) {
+      await client.query(
+        `INSERT INTO lead_label_assignments(lead_id, label_id, assigned_by_user_id)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (lead_id, label_id) DO NOTHING`,
+        [lead.id, label.id, req.user.id],
+      );
+    }
+
+    if (initialRemark || normalizedCallStatus || normalizedStage || nextFollowupAt) {
+      await client.query(
+        `INSERT INTO lead_remarks(
+           lead_id, user_id, remark, call_status, stage, next_followup_at,
+           source, is_completed_response, call_statuses
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, 'manual', FALSE, $7::jsonb)`,
+        [
+          lead.id,
+          req.user.id,
+          buildRemarkText({
+            remark: initialRemark,
+            callStatus: normalizedCallStatus,
+            stage: normalizedStage,
+            nextFollowupAt,
+          }),
+          dbCallStatus,
+          normalizedStage || null,
+          nextFollowupAt,
+          JSON.stringify(normalizedCallStatus ? [normalizedCallStatus] : []),
+        ],
+      );
+      if (dbCallStatus) {
+        await client.query(
+          `UPDATE leads
+              SET last_call_at = NOW(),
+                  call_attempts = call_attempts + 1,
+                  updated_at = NOW()
+            WHERE id = $1`,
+          [lead.id],
+        );
+      }
+    }
+
+    return {
+      lead,
+      labels,
+      assignee,
+    };
+  });
+
+  onLeadCreated(result.lead.id, { source: 'manual_create' });
+
+  const { logActivity } = require('../utils/auditLog');
+  await logActivity(req, {
+    entity: 'lead',
+    entity_id: result.lead.id,
+    action: 'lead_created_manual',
+    new_value: fullName,
+    metadata: {
+      lead_name: fullName,
+      phone,
+      source: 'manual',
+      assigned_to_user_id: result.assignee?.id || null,
+      labels: result.labels.map(label => ({ id: label.id, name: label.name })),
+      created_at: result.lead.created_at,
+    },
+  });
+
+  const createdByName = req.user.name || req.user.full_name || null;
+  const payload = {
+    id: result.lead.id,
+    name: result.lead.full_name,
+    full_name: result.lead.full_name,
+    phone: result.lead.phone,
+    email: result.lead.email,
+    source: 'manual',
+    source_label: 'Manual',
+    created_by_user_id: req.user.id,
+    created_by_name: createdByName,
+    created_by_role: req.user.role,
+    manual_added_by_user_id: req.user.id,
+    manual_added_by_name: createdByName,
+    manual_added_by_role: req.user.role,
+    manual_added_at: result.lead.manual_added_at,
+    created_at: result.lead.created_at,
+    labels: result.labels.map(label => ({ id: label.id, name: label.name, color: label.color })),
+  };
+
+  res.status(201).json({ success: true, data: { lead: payload }, lead: payload });
 });
 
 /** Admin/RM: manually create a lead and auto-assign. */

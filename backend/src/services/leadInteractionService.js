@@ -3,7 +3,9 @@ const { AppError } = require('../utils/errors');
 const { validateCallStatus, validateLeadStage } = require('../constants/leadStatusOptions');
 const {
   normalizeWorkflowRemarkStatus,
+  normalizeWorkflowRemarkStatuses,
   isWorkflowRemarkCompleted,
+  isAnyWorkflowRemarkCompleted,
   saveWorkflowRemark,
 } = require('./leadWorkflowRemarkService');
 
@@ -49,6 +51,7 @@ async function toDbCallStatus(client, status) {
     talk_response: 'interested',
     recall: 'callback_requested',
     cb: 'busy',
+    call_cut_busy: 'busy',
     in: 'invalid_number',
     session_730_attend: 'follow_up',
     session_after_730: 'follow_up',
@@ -83,12 +86,22 @@ function validateInteractionInput({ status, stage }) {
   return { normalizedStatus, normalizedStage };
 }
 
+function normalizeInteractionStatuses(value) {
+  const values = Array.isArray(value) ? value : value ? [value] : [];
+  const normalized = [...new Set(values.map(item => validateCallStatus(item)).filter(Boolean))];
+  if (values.length > 0 && normalized.length !== values.map(item => String(item || '').trim()).filter(Boolean).length) {
+    throw new AppError(400, 'INVALID_LEAD_STATUS_VALUE', 'Invalid status value. Please select one of the available CRM statuses.');
+  }
+  return normalized;
+}
+
 async function createLeadInteraction({
   client,
   user,
   leadId,
   note,
   status,
+  statuses,
   stage,
   nextFollowupAt,
   source = 'manual',
@@ -96,7 +109,9 @@ async function createLeadInteraction({
   syncWorkflowStep1 = false,
   releaseLock = true,
 }) {
-  const { normalizedStatus, normalizedStage } = validateInteractionInput({ status, stage });
+  const normalizedStatuses = normalizeInteractionStatuses(statuses || status);
+  const normalizedStatus = normalizedStatuses[0] || '';
+  const { normalizedStage } = validateInteractionInput({ status: normalizedStatus, stage });
   const dbCallStatus = await toDbCallStatus(client, normalizedStatus);
   await assertLeadWriteAccess(client, leadId, user);
   await client.query(`SELECT id FROM leads WHERE id = $1 FOR UPDATE`, [leadId]);
@@ -107,15 +122,16 @@ async function createLeadInteraction({
     stage: normalizedStage,
     nextFollowupAt,
   });
-  const workflowStatus = normalizeWorkflowRemarkStatus(normalizedStatus);
-  const completed = isWorkflowRemarkCompleted(workflowStatus);
+  const workflowStatuses = normalizeWorkflowRemarkStatuses(normalizedStatuses);
+  const workflowStatus = workflowStatuses[0] || normalizeWorkflowRemarkStatus(normalizedStatus);
+  const completed = isAnyWorkflowRemarkCompleted(workflowStatuses.length ? workflowStatuses : workflowStatus);
 
   const { rows: [remark] } = await client.query(
     `INSERT INTO lead_remarks(
        lead_id, user_id, remark, call_status, stage, next_followup_at,
-       source, workflow_step, is_completed_response
+       source, workflow_step, is_completed_response, call_statuses
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
      RETURNING *`,
     [
       leadId,
@@ -127,6 +143,7 @@ async function createLeadInteraction({
       source,
       workflowStep,
       completed,
+      JSON.stringify(normalizedStatuses),
     ],
   );
 
@@ -136,6 +153,7 @@ async function createLeadInteraction({
       leadId,
       userId: user.id,
       remarkStatus: workflowStatus,
+      remarkStatuses: workflowStatuses.length ? workflowStatuses : [workflowStatus],
       client,
       source,
     });
@@ -167,6 +185,7 @@ async function createLeadInteraction({
     remark,
     workflow,
     normalizedStatus,
+    normalizedStatuses,
     normalizedStage,
     dbCallStatus,
     isCompletedResponse: completed,

@@ -2,7 +2,7 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api';
 import type {
-  Lead, LeadDetail, LeadFilters, PageResult, CallStatus, LeadSession,
+  Lead, LeadDetail, LeadFilters, PageResult, CallStatus, LeadSession, LeadCategory, LeadStage,
 } from '@/types';
 
 function toQueryString(f: LeadFilters): string {
@@ -61,9 +61,38 @@ export interface AddRemarkInput {
   id: string;
   remark: string;
   call_status?: CallStatus;
+  call_statuses?: CallStatus[];
   next_followup_at?: string | null;
   stage?: string;
   release_lock?: boolean;
+}
+
+export interface ManualLeadInput {
+  full_name: string;
+  phone: string;
+  alternate_phone?: string;
+  email?: string;
+  city?: string;
+  state?: string;
+  category?: LeadCategory | '';
+  stage?: LeadStage | '';
+  call_status?: CallStatus | '';
+  next_followup_at?: string | null;
+  label_ids?: string[];
+  initial_remark?: string;
+  assigned_to_user_id?: string;
+}
+
+export function useCreateManualLead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: ManualLeadInput) => apiPost<{ lead: Lead }>('/leads/manual', body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['labels'] });
+      qc.invalidateQueries({ queryKey: ['reports'] });
+    },
+  });
 }
 
 export function useAddRemark() {
@@ -137,6 +166,7 @@ export interface BulkAddRemarkInput {
   leadIds: string[];
   remark: string;
   call_status?: CallStatus;
+  call_statuses?: CallStatus[];
   next_followup_at?: string | null;
   stage?: string;
 }

@@ -27,7 +27,7 @@ interface Props {
 
 export function RemarkModal({ leadId, open, onClose }: Props) {
   const [remark,   setRemark]   = useState('');
-  const [status,   setStatus]   = useState<CallStatus>('not_called');
+  const [statuses, setStatuses] = useState<CallStatus[]>(['not_called']);
   const [stage,    setStage]    = useState<LeadStage | ''>('');
   const [followAt, setFollowAt] = useState('');
   const [releaseLock, setReleaseLock] = useState(true);
@@ -39,27 +39,34 @@ export function RemarkModal({ leadId, open, onClose }: Props) {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (followAt && new Date(followAt).getTime() <= Date.now()) { toast.error('Follow-up must be scheduled in the future'); return; }
-    if (status === 'custom_remark' && !customResponse.trim()) { toast.error('Enter the custom response.'); return; }
+    if (statuses.length === 0 && !remark.trim()) { toast.error('Select at least one status or write a remark.'); return; }
+    if (statuses.includes('custom_remark') && !customResponse.trim()) { toast.error('Enter the custom response.'); return; }
     try {
-      const remarkText = status === 'custom_remark'
+      const primaryStatus = statuses[0];
+      const remarkText = statuses.includes('custom_remark')
         ? [`Custom response: ${customResponse.trim()}`, remark.trim()].filter(Boolean).join('\n')
         : remark.trim();
       await remarkMutation.mutateAsync({
         id: leadId,
         remark: remarkText,
-        call_status: status,
+        call_status: primaryStatus,
+        call_statuses: statuses,
         stage: stage || undefined,
         next_followup_at: followAt ? new Date(followAt).toISOString() : null,
         release_lock: releaseLock,
       });
 
       toast.success('Remark saved');
-      setRemark(''); setStatus('not_called'); setStage(''); setFollowAt(''); setReleaseLock(true); setCustomResponse('');
+      setRemark(''); setStatuses(['not_called']); setStage(''); setFollowAt(''); setReleaseLock(true); setCustomResponse('');
       onClose();
     } catch (err: unknown) {
       const data = (err as { response?: { data?: { message?: string; error?: string | { message?: string } } } })?.response?.data;
       toast.error(data?.message || (typeof data?.error === 'string' ? data.error : data?.error?.message) || 'Could not save remark');
     }
+  }
+
+  function toggleStatus(status: CallStatus) {
+    setStatuses(values => values.includes(status) ? values.filter(value => value !== status) : [...values, status]);
   }
 
   return (
@@ -90,10 +97,10 @@ export function RemarkModal({ leadId, open, onClose }: Props) {
                     <button
                       key={option.value}
                       type="button"
-                      onClick={() => setStatus(option.value as CallStatus)}
+                      onClick={() => toggleStatus(option.value as CallStatus)}
                       className={clsx(
                         'rounded-lg border px-3 py-2 text-sm font-medium transition-colors',
-                        status === option.value
+                        statuses.includes(option.value as CallStatus)
                           ? 'border-brand-500 bg-brand-50 text-brand-700'
                           : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50',
                       )}
@@ -106,7 +113,12 @@ export function RemarkModal({ leadId, open, onClose }: Props) {
             ))}
           </div>
         </div>
-        {status === 'custom_remark' && (
+        {statuses.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {statuses.map(value => <span key={value} className="chip-blue">{LEAD_REMARK_GROUPS.flatMap(group => group.options).find(option => option.value === value)?.label || value}</span>)}
+          </div>
+        )}
+        {statuses.includes('custom_remark') && (
           <div>
             <label className="mb-1.5 block text-sm font-medium text-slate-700">Custom Response</label>
             <input value={customResponse} maxLength={500} onChange={event => setCustomResponse(event.target.value)} disabled={isPending} className="input w-full" placeholder="Enter the response received from the lead" />

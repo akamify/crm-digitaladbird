@@ -12,6 +12,7 @@ export interface LeadLabel {
   created_by_name?: string;
   created_by_role?: string;
   lead_count?: number;
+  usage_count?: number;
   assigned_at?: string;
 }
 
@@ -41,6 +42,22 @@ export function useAssignLeadLabel() {
     mutationFn: ({ leadId, labelId }: { leadId: string; labelId: string }) => apiPost<LeadLabel>(`/leads/${leadId}/labels`, { label_id: labelId }),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['lead-labels', variables.leadId] });
+      queryClient.invalidateQueries({ queryKey: ['labels'] });
+    },
+  });
+}
+
+export function useBulkApplyLeadLabels() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { leadIds: string[]; labelIds: string[]; mode?: 'add' | 'replace' | 'remove' }) =>
+      apiPost<{ applied_count: number; skipped_count: number; skipped_lead_ids: string[]; labels: LeadLabel[]; mode: string }>('/leads/bulk/labels', {
+        lead_ids: body.leadIds,
+        label_ids: body.labelIds,
+        mode: body.mode || 'add',
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['leads'] });
       queryClient.invalidateQueries({ queryKey: ['labels'] });
     },
   });

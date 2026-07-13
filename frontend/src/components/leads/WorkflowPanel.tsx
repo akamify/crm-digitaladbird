@@ -36,6 +36,18 @@ const REMARK_DISPLAY: Record<string, { label: string; bg: string; text: string; 
 /* ── Level display labels + colors ──────────────────────────────────── */
 
 const LEVEL_DISPLAY: Record<string, { label: string; bg: string; text: string; ring: string }> = {
+  hot_lead:          { label: 'Hot Lead',          bg: 'bg-red-50',     text: 'text-red-700',     ring: 'ring-red-400' },
+  cold_lead:         { label: 'Cold Lead',         bg: 'bg-slate-100',  text: 'text-slate-700',   ring: 'ring-slate-400' },
+  interested:        { label: 'Interested',        bg: 'bg-blue-50',    text: 'text-blue-700',    ring: 'ring-blue-400' },
+  not_interested:    { label: 'Not Interested',    bg: 'bg-rose-50',    text: 'text-rose-700',    ring: 'ring-rose-400' },
+  follow_up_required:{ label: 'Follow-up Required',bg: 'bg-violet-50',  text: 'text-violet-700',  ring: 'ring-violet-400' },
+  payment_discussed: { label: 'Payment Discussed', bg: 'bg-emerald-50', text: 'text-emerald-700', ring: 'ring-emerald-400' },
+  demo_required:     { label: 'Demo Required',     bg: 'bg-indigo-50',  text: 'text-indigo-700',  ring: 'ring-indigo-400' },
+  documents_shared:  { label: 'Documents Shared',  bg: 'bg-cyan-50',    text: 'text-cyan-700',    ring: 'ring-cyan-400' },
+  callback_requested:{ label: 'Callback Requested',bg: 'bg-amber-50',   text: 'text-amber-700',   ring: 'ring-amber-400' },
+  decision_pending:  { label: 'Decision Pending',  bg: 'bg-yellow-50',  text: 'text-yellow-700',  ring: 'ring-yellow-400' },
+  converted:         { label: 'Converted',         bg: 'bg-green-50',   text: 'text-green-700',   ring: 'ring-green-400' },
+  lost:              { label: 'Lost',              bg: 'bg-red-50',     text: 'text-red-700',     ring: 'ring-red-400' },
   new_partner:       { label: 'New Partner',       bg: 'bg-blue-50',    text: 'text-blue-700',    ring: 'ring-blue-400' },
   new_trader:        { label: 'New Trader',        bg: 'bg-cyan-50',    text: 'text-cyan-700',    ring: 'ring-cyan-400' },
   followup_partner:  { label: 'Follow-up Partner', bg: 'bg-violet-50',  text: 'text-violet-700',  ring: 'ring-violet-400' },
@@ -122,7 +134,7 @@ export function WorkflowPanel({ leadId, isAdmin }: Props) {
 
   const completedSteps = [
     !!wfData.workflow_remark_completed,
-    !!wfData.workflow?.lead_level,
+    !!(wfData.step_2_statuses?.length || wfData.workflow?.lead_level),
     !!wfData.workflow?.followup_completed,
     !!wfData.workflow?.conversion_completed,
   ];
@@ -189,12 +201,13 @@ export function WorkflowPanel({ leadId, isAdmin }: Props) {
           step={1} config={STEP_CONFIG[0]}
           unlocked={currentStep >= 1} completed={completedSteps[0]}
           isOpen={openStep === 1} onToggle={() => { setHasInteracted(true); setOpenStep(openStep === 1 ? null : 1); }}
-          savedValue={wfData.workflow?.remark_status ? (REMARK_DISPLAY[wfData.workflow.remark_status]?.label || humanize(wfData.workflow.remark_status)) : undefined}
+          savedValue={(wfData.workflow_step_1_statuses?.length ? wfData.workflow_step_1_statuses : wfData.workflow?.remark_status ? [wfData.workflow.remark_status] : [])
+            .map(status => REMARK_DISPLAY[status]?.label || humanize(status)).join(', ') || undefined}
           savedAt={wfData.workflow?.remark_saved_at || undefined}
         >
           <Step1Remark
             leadId={leadId}
-            current={wfData.workflow?.remark_status || null}
+            current={wfData.workflow_step_1_statuses?.length ? wfData.workflow_step_1_statuses : wfData.workflow?.remark_status ? [wfData.workflow.remark_status] : []}
             options={wfData.remark_options}
             completed={!!wfData.workflow_remark_completed}
           />
@@ -204,12 +217,13 @@ export function WorkflowPanel({ leadId, isAdmin }: Props) {
           step={2} config={STEP_CONFIG[1]}
           unlocked={currentStep >= 2} completed={completedSteps[1]}
           isOpen={openStep === 2} onToggle={() => { setHasInteracted(true); setOpenStep(openStep === 2 ? null : 2); }}
-          savedValue={wfData.workflow?.lead_level ? (LEVEL_DISPLAY[wfData.workflow.lead_level]?.label || humanize(wfData.workflow.lead_level)) : undefined}
+          savedValue={(wfData.step_2_statuses?.length ? wfData.step_2_statuses : wfData.workflow?.lead_level ? [wfData.workflow.lead_level] : [])
+            .map(level => LEVEL_DISPLAY[level]?.label || humanize(level)).join(', ') || undefined}
           savedAt={wfData.workflow?.lead_level_saved_at || undefined}
         >
           <Step2Level
             leadId={leadId}
-            current={wfData.workflow?.lead_level || null}
+            current={wfData.step_2_statuses?.length ? wfData.step_2_statuses : wfData.workflow?.lead_level ? [wfData.workflow.lead_level] : []}
             options={wfData.lead_level_options}
             leadCategory={wfData.lead_category}
           />
@@ -357,21 +371,42 @@ function StepCard({ step, config, unlocked, completed, isOpen, onToggle, savedVa
 /* ── Step 1: Remark System ───────────────────────────────────────── */
 
 function Step1Remark({ leadId, current, options, completed }: {
-  leadId: string; current: string | null; options: string[]; completed: boolean;
+  leadId: string; current: string[]; options: string[]; completed: boolean;
 }) {
   const save = useSaveRemark();
+  const [selected, setSelected] = useState<string[]>(current || []);
   const availableGroups = LEAD_REMARK_GROUPS.map(group => ({
     ...group,
     options: group.options.filter(option => options.includes(option.value)),
   })).filter(group => group.options.length > 0);
 
+  useEffect(() => {
+    setSelected(current || []);
+  }, [current]);
+
+  function toggle(value: string) {
+    setSelected(values => values.includes(value) ? values.filter(item => item !== value) : [...values, value]);
+  }
+
+  function submit() {
+    if (selected.length === 0) {
+      toast.error('Select at least one Step 1 status.');
+      return;
+    }
+    save.mutate({ leadId, remark_status: selected[0], remark_statuses: selected }, {
+      onSuccess: () => toast.success('Step 1 updated'),
+      onError: (e: any) => toast.error(e?.response?.data?.error?.message || 'Failed to save Step 1'),
+    });
+  }
+
+  const hasCompletingSelection = selected.some(value => COMPLETED_REMARK_STATUS_VALUES.has(value));
+
   return (
     <div>
       <p className="text-xs text-slate-500 mb-3">
-        {completed
-          ? 'The completed remark is locked. Earlier and later remark activity remains in workflow history.'
-          : 'Select a remark. Completed outcomes unlock the lead category step.'}
+        Selecting any completed response will unlock Step 2. Existing completed responses are editable from this panel.
       </p>
+      {hasCompletingSelection && <p className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">A completed response is selected, so Step 2 can unlock after saving.</p>}
       <div className="space-y-4">
         {availableGroups.map(group => (
           <div key={group.key}>
@@ -381,35 +416,40 @@ function Step1Remark({ leadId, current, options, completed }: {
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {group.options.map(option => {
                 const display = REMARK_DISPLAY[option.value] || { label: option.label, bg: 'bg-slate-50', text: 'text-slate-700', ring: 'ring-slate-400' };
-                const selected = current === option.value;
+                const isSelected = selected.includes(option.value);
                 const isCompletingOption = COMPLETED_REMARK_STATUS_VALUES.has(option.value);
                 return (
                   <button
                     key={option.value}
-                    disabled={save.isPending || completed}
-                    onClick={() => save.mutate({ leadId, remark_status: option.value }, {
-                      onSuccess: () => toast.success(`Remark: ${display.label}`),
-                      onError: () => toast.error('Failed to save remark'),
-                    })}
+                    disabled={save.isPending}
+                    onClick={() => toggle(option.value)}
                     className={clsx(
                       'relative rounded-xl border-2 px-3 py-2.5 text-left text-xs font-semibold transition-all duration-200',
-                      selected
+                      isSelected
                         ? `${display.bg} ${display.text} border-current ring-2 ${display.ring} shadow-md scale-[1.02]`
-                        : completed
-                          ? 'cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400'
-                          : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:shadow-sm hover:scale-[1.01]'
+                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:shadow-sm hover:scale-[1.01]'
                     )}
                   >
                     {save.isPending && <Loader2 className="absolute top-1 right-1 h-3 w-3 animate-spin text-slate-400" />}
-                    {selected && <CheckCircle2 className="absolute top-1 right-1 h-3.5 w-3.5 text-green-500" />}
+                    {isSelected && <CheckCircle2 className="absolute top-1 right-1 h-3.5 w-3.5 text-green-500" />}
                     {option.label}
-                    {isCompletingOption && !selected && <span className="mt-1 block text-[9px] font-medium uppercase tracking-wide text-emerald-600">Completes step</span>}
+                    {isCompletingOption && !isSelected && <span className="mt-1 block text-[9px] font-medium uppercase tracking-wide text-emerald-600">Completes step</span>}
                   </button>
                 );
               })}
             </div>
           </div>
         ))}
+      </div>
+      {selected.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {selected.map(value => <span key={value} className="chip-blue">{REMARK_DISPLAY[value]?.label || humanize(value)}</span>)}
+        </div>
+      )}
+      <div className="mt-4 flex justify-end">
+        <button type="button" disabled={save.isPending || selected.length === 0} onClick={submit} className="btn-primary rounded-lg px-4 py-2 text-sm">
+          {save.isPending ? 'Saving...' : completed ? 'Update Step 1' : 'Save Step 1'}
+        </button>
       </div>
     </div>
   );
@@ -418,42 +458,72 @@ function Step1Remark({ leadId, current, options, completed }: {
 /* ── Step 2: Lead Level ──────────────────────────────────────────── */
 
 function Step2Level({ leadId, current, options, leadCategory }: {
-  leadId: string; current: string | null; options: string[]; leadCategory: 'partner' | 'trader' | 'unknown' | null;
+  leadId: string; current: string[]; options: string[]; leadCategory: 'partner' | 'trader' | 'unknown' | null;
 }) {
   const save = useSaveLeadLevel();
-  const isCold = current === 'cold_partner' || current === 'cold_trader';
+  const selected = new Set(current || []);
+  const isCold = ['cold_lead', 'cold_partner', 'cold_trader'].some(value => selected.has(value));
+
+  function nextSelection(option: string) {
+    const next = new Set(selected);
+    if (next.has(option)) {
+      next.delete(option);
+      return [...next];
+    }
+    if (['hot_lead', 'hot_partner', 'hot_trader'].includes(option)) {
+      ['cold_lead', 'cold_partner', 'cold_trader'].forEach(value => next.delete(value));
+    }
+    if (['cold_lead', 'cold_partner', 'cold_trader'].includes(option)) {
+      ['hot_lead', 'hot_partner', 'hot_trader'].forEach(value => next.delete(value));
+    }
+    next.add(option);
+    return [...next];
+  }
 
   return (
     <div>
       <p className="text-xs text-slate-500 mb-3">
         Classify this {leadCategory ? `${humanize(leadCategory)} lead` : 'lead'} using its profile category.
       </p>
+      <p className="mb-3 text-xs text-slate-500">Cold Lead and Hot Lead cannot be selected together.</p>
       {isCold && <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">Cold leads remain editable, but do not unlock the follow-up step.</p>}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {options.map(opt => {
           const display = LEVEL_DISPLAY[opt] || { label: humanize(opt), bg: 'bg-slate-50', text: 'text-slate-700', ring: 'ring-slate-400' };
-          const selected = current === opt;
+          const isSelected = selected.has(opt);
           return (
             <button
               key={opt}
               disabled={save.isPending}
-              onClick={() => save.mutate({ leadId, lead_level: opt }, {
-                onSuccess: () => toast.success(`Level: ${display.label}`),
+              onClick={() => {
+                const statuses = nextSelection(opt);
+                if (statuses.length === 0) {
+                  toast.error('Select at least one Step 2 option.');
+                  return;
+                }
+                save.mutate({ leadId, step_2_statuses: statuses }, {
+                onSuccess: () => toast.success(statuses.length ? 'Step 2 updated' : 'Step 2 cleared'),
                 onError: (e: any) => toast.error(e?.message || 'Failed'),
-              })}
+              });
+              }}
               className={clsx(
                 'relative rounded-xl border-2 px-3 py-2.5 text-center text-xs font-semibold transition-all duration-200',
-                selected
+                isSelected
                   ? `${display.bg} ${display.text} border-current ring-2 ${display.ring} shadow-md scale-[1.02]`
                   : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:shadow-sm hover:scale-[1.01]'
               )}
             >
-              {selected && <CheckCircle2 className="absolute -top-1 -right-1 h-4 w-4 text-green-500 bg-white rounded-full" />}
+              {isSelected && <CheckCircle2 className="absolute -top-1 -right-1 h-4 w-4 text-green-500 bg-white rounded-full" />}
               {display.label}
             </button>
           );
         })}
       </div>
+      {current.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {current.map(value => <span key={value} className="chip-blue">{LEVEL_DISPLAY[value]?.label || humanize(value)}</span>)}
+        </div>
+      )}
     </div>
   );
 }

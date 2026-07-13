@@ -17,7 +17,17 @@ export function LeadSummaryCard({ lead }: { lead: LeadDetail }) {
       <h2 className="text-sm font-semibold text-slate-950">Lead Summary</h2>
       <dl className="mt-3">
         <Row label="Assigned to" value={lead.assigned_to_name || 'Unassigned'} />
-        <Row label="Source" value={humanize(lead.source)} />
+        <Row label="Source" value={lead.source_label || humanize(lead.source)} />
+        {lead.source === 'manual' && (
+          <>
+            <Row label="Added by" value={lead.manual_added_by_name || lead.created_by_name || 'Not available'} />
+            <Row
+              label="Added at"
+              value={lead.manual_added_at ? formatCompactDateTime(lead.manual_added_at) : null}
+              title={formatDateTimeTooltip(lead.manual_added_at)}
+            />
+          </>
+        )}
         <Row label="Lead category" value={getLeadCategoryLabel(lead.category)} />
         <Row label="Received" value={formatCompactDateTime(lead.created_at)} title={formatDateTimeTooltip(lead.created_at)} />
         <Row label="Call attempts" value={lead.call_attempts ?? 0} />

@@ -25,17 +25,18 @@ const STAGE_OPTS = [
 
 const STATUS_OPTS = [
   { value: '', label: 'All call statuses' },
-  { value: 'not_called',     label: 'Not Called' },
-  { value: 'talk_response',  label: 'Connected' },
-  { value: 'busy',           label: 'Busy' },
+  { value: 'not_called', label: 'Not Called' },
+  { value: 'talk_response', label: 'Connected' },
+  { value: 'busy', label: 'Busy' },
   { value: 'callback_requested', label: 'Call Back Later' },
-  { value: 'interested',     label: 'Interested' },
-  { value: 'follow_up',      label: 'Follow-up Scheduled' },
-  { value: 'converted',      label: 'Converted' },
+  { value: 'interested', label: 'Interested' },
+  { value: 'follow_up', label: 'Follow-up Scheduled' },
+  { value: 'converted', label: 'Converted' },
   { value: 'not_interested', label: 'Not Interested' },
-  { value: 'wrong_number',   label: 'Wrong Number' },
-  { value: 'switched_off',   label: 'Switch Off' },
-  { value: 'nn',             label: 'No Network' },
+  { value: 'wrong_number', label: 'Wrong Number' },
+  { value: 'call_cut_busy', label: 'Call Cut / Busy' },
+  { value: 'switched_off', label: 'Switch Off' },
+  { value: 'nn', label: 'No Network' },
 ];
 
 const FOLLOWUP_OPTS = [
@@ -57,6 +58,14 @@ const ASSIGNMENT_OPTS = [
   { value: '', label: 'All assignment' },
   { value: 'assigned', label: 'Assigned' },
   { value: 'unassigned', label: 'Unassigned' },
+];
+
+const SOURCE_OPTS = [
+  { value: '', label: 'All sources' },
+  { value: 'manual', label: 'Manual' },
+  { value: 'meta', label: 'Meta' },
+  { value: 'google_sheet', label: 'Google Sheet' },
+  { value: 'import', label: 'Import' },
 ];
 
 const REMARK_STATUS_OPTS = [
@@ -115,6 +124,7 @@ export function LeadFilters({ value, onChange }: Props) {
     value.followup && { key: 'followup', label: `Follow-up: ${optionLabel(FOLLOWUP_OPTS, value.followup)}` },
     value.session_attendance && { key: 'session_attendance', label: `Session: ${optionLabel(SESSION_OPTS, value.session_attendance)}` },
     value.assignment && { key: 'assignment', label: `Assignment: ${optionLabel(ASSIGNMENT_OPTS, value.assignment)}` },
+    value.source && { key: 'source', label: `Source: ${optionLabel(SOURCE_OPTS, value.source)}` },
     value.label_id && { key: 'label_id', label: `Label: ${optionLabel(labelOpts, value.label_id)}` },
     value.latest_activity && { key: 'latest_activity', label: `Activity: ${optionLabel(LATEST_ACTIVITY_OPTS, value.latest_activity)}` },
     value.no_remark === 'true' && { key: 'no_remark', label: 'No remark' },
@@ -160,14 +170,14 @@ export function LeadFilters({ value, onChange }: Props) {
           onChange={(e: ChangeEvent<HTMLSelectElement>) => set('assignment', e.target.value as LeadFilters['assignment'])}
         />
         <Select
+          value={value.source || ''}
+          options={SOURCE_OPTS}
+          onChange={(e: ChangeEvent<HTMLSelectElement>) => set('source', e.target.value)}
+        />
+        <Select
           value={value.campaign || ''}
           options={campaignOpts}
           onChange={(e: ChangeEvent<HTMLSelectElement>) => set('campaign', e.target.value)}
-        />
-        <Input
-          type="date" label="From"
-          value={value.from || ''}
-          onChange={(e: ChangeEvent<HTMLInputElement>) => onChange({ ...value, from: e.target.value, created_preset: '', page: 1 })}
         />
         <Select
           value={value.label_id || ''}
@@ -198,6 +208,11 @@ export function LeadFilters({ value, onChange }: Props) {
           value={value.no_remark || ''}
           options={[{ value: '', label: 'All remark state' }, { value: 'true', label: 'No remark yet' }]}
           onChange={(e: ChangeEvent<HTMLSelectElement>) => set('no_remark', e.target.value as LeadFilters['no_remark'])}
+        />
+        <Input
+          type="date" label="From"
+          value={value.from || ''}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => onChange({ ...value, from: e.target.value, created_preset: '', page: 1 })}
         />
         <Input
           type="date" label="To"

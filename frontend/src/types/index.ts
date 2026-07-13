@@ -14,7 +14,7 @@ export type CallStatus =
   | 'not_called' | 'cnr' | 'cw' | 'nc' | 'ccb' | 'ni' | 'so' | 'nn'
   | 'talk_response' | 'custom_remark'
   | 'interested' | 'not_interested' | 'follow_up' | 'converted'
-  | 'rnr' | 'busy' | 'switched_off' | 'invalid_number'
+  | 'rnr' | 'busy' | 'call_cut_busy' | 'switched_off' | 'invalid_number'
   | 'callback_requested' | 'wrong_number' | 'language_barrier'
   | 'communication_completed' | 'respond_hi' | 'recall'
   | 'in' | 'session_730_attend' | 'session_after_730' | 'yes_after_730_session';
@@ -58,6 +58,14 @@ export interface Lead {
   city: string | null;
   state: string | null;
   source: string | null;
+  source_label?: string | null;
+  manual_added_by_user_id?: string | null;
+  manual_added_by_name?: string | null;
+  manual_added_by_role?: Role | string | null;
+  manual_added_at?: string | null;
+  created_by_user_id?: string | null;
+  created_by_name?: string | null;
+  created_by_role?: Role | string | null;
   meta_form_id: string | null;
   campaign_label: string | null;
   product_tag: string | null;
@@ -93,6 +101,7 @@ export interface Lead {
   latest_remark_id?: string | null;
   latest_remark_note?: string | null;
   latest_remark_status?: string | null;
+  latest_remark_statuses?: CallStatus[] | string[] | null;
   latest_remark_call_status?: CallStatus | null;
   latest_remark_stage?: LeadStage | null;
   latest_remark_source?: 'manual' | 'bulk' | 'workflow_step_1' | string | null;
@@ -101,10 +110,13 @@ export interface Lead {
   latest_followup_at?: string | null;
   followup_state?: 'overdue' | 'today' | 'upcoming' | 'none' | null;
   workflow_step_1_status?: string | null;
+  workflow_step_1_statuses?: string[] | null;
   workflow_current_step?: number | null;
   workflow_unlocked_step?: number | null;
   workflow_is_step_1_completed?: boolean | null;
   session_attendance_status?: 'has_session' | 'no_session' | null;
+  labels?: Array<{ id: string; name: string; color: string }>;
+  labels_count?: number;
 }
 
 export interface LeadRemark {

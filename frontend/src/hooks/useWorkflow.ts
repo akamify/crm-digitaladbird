@@ -7,8 +7,10 @@ export interface WorkflowState {
   lead_id: string;
   user_id: string;
   remark_status: string | null;
+  step_1_statuses?: string[];
   remark_saved_at: string | null;
   lead_level: string | null;
+  step_2_statuses?: string[];
   lead_level_saved_at: string | null;
   followup_completed: boolean;
   followup_completed_at: string | null;
@@ -61,9 +63,16 @@ export interface WorkflowResponse {
   conversion: ConversionData | null;
   current_step: number;
   remark_options: string[];
+  workflow_step_1_statuses: string[];
+  workflow_step_1_labels?: string[];
   lead_level_options: string[];
+  step_2_statuses: string[];
+  step_2_labels?: string[];
   lead_category: 'partner' | 'trader' | 'unknown' | null;
   workflow_remark_completed: boolean;
+  workflow_current_step?: number;
+  workflow_unlocked_step?: number;
+  workflow_is_step_1_completed?: boolean;
 }
 
 export interface WorkflowHistoryEntry {
@@ -118,8 +127,8 @@ export function useLeadWorkflow(leadId: string | null | undefined) {
 export function useSaveRemark() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ leadId, remark_status }: { leadId: string; remark_status: string }) =>
-      apiPost<WorkflowState>(`/leads/${leadId}/workflow/remark`, { remark_status }),
+    mutationFn: ({ leadId, remark_status, remark_statuses }: { leadId: string; remark_status?: string; remark_statuses?: string[] }) =>
+      apiPost<WorkflowState>(`/leads/${leadId}/workflow/remark`, { remark_status, remark_statuses }),
     onSuccess: (_d, { leadId }) => {
       qc.invalidateQueries({ queryKey: ['workflow', leadId] });
       qc.invalidateQueries({ queryKey: ['lead', leadId] });
@@ -130,8 +139,8 @@ export function useSaveRemark() {
 export function useSaveLeadLevel() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ leadId, lead_level }: { leadId: string; lead_level: string }) =>
-      apiPost<WorkflowState>(`/leads/${leadId}/workflow/level`, { lead_level }),
+    mutationFn: ({ leadId, lead_level, step_2_statuses }: { leadId: string; lead_level?: string; step_2_statuses?: string[] }) =>
+      apiPost<WorkflowState>(`/leads/${leadId}/workflow/level`, { lead_level, step_2_statuses }),
     onSuccess: (_d, { leadId }) => {
       qc.invalidateQueries({ queryKey: ['workflow', leadId] });
       qc.invalidateQueries({ queryKey: ['lead', leadId] });

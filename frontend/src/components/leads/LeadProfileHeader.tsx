@@ -6,6 +6,8 @@ import type { LeadDetail } from '@/types';
 import { LeadCategoryBadge } from './LeadCategoryBadge';
 import { fmtPhone, humanize } from '@/lib/format';
 import { getStatusBadgeVariant, isMeaningfulValue } from './leadProfileUtils';
+import { useLeadLabels } from '@/hooks/useLeadLabels';
+import { formatISTCompact, formatISTTooltip } from '@/lib/date';
 
 interface Props {
   lead: LeadDetail;
@@ -14,6 +16,7 @@ interface Props {
 
 export function LeadProfileHeader({ lead, actions }: Props) {
   const location = [lead.city, lead.state].filter(isMeaningfulValue).join(', ');
+  const labels = useLeadLabels(lead.id);
   return (
     <header className="sticky top-0 z-20 -mx-3 border-b border-slate-200 bg-white/95 px-3 py-3 backdrop-blur sm:mx-0 sm:rounded-lg sm:border lg:static lg:px-5 lg:py-4">
       <Link href="/leads" className="mb-2 inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-slate-900">
@@ -30,8 +33,27 @@ export function LeadProfileHeader({ lead, actions }: Props) {
             <span className={getStatusBadgeVariant(lead.stage)}>{humanize(lead.stage)}</span>
             <span className={getStatusBadgeVariant(lead.call_status)}>{humanize(lead.call_status)}</span>
             <LeadCategoryBadge category={lead.category} />
-            {isMeaningfulValue(lead.source) && <span className="chip-slate">{humanize(lead.source)}</span>}
+            {isMeaningfulValue(lead.source) && <span className={lead.source === 'manual' ? 'chip-blue' : 'chip-slate'}>{lead.source_label || humanize(lead.source)}</span>}
           </div>
+          {lead.source === 'manual' && (
+            <div className="mt-2 text-xs text-slate-500">
+              Added by {lead.manual_added_by_name || lead.created_by_name || 'Not available'}
+              {lead.manual_added_by_role ? ` (${humanize(lead.manual_added_by_role)})` : ''}
+              {lead.manual_added_at && (
+                <span title={formatISTTooltip(lead.manual_added_at)}> - {formatISTCompact(lead.manual_added_at)}</span>
+              )}
+            </div>
+          )}
+          {!!labels.data?.length && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {labels.data.slice(0, 6).map(label => (
+                <span key={label.id} className="rounded-full px-2 py-0.5 text-[11px] font-medium text-white" style={{ backgroundColor: label.color }}>
+                  {label.name}
+                </span>
+              ))}
+              {labels.data.length > 6 && <span className="chip-slate">+{labels.data.length - 6}</span>}
+            </div>
+          )}
         </div>
         <div className="hidden min-w-0 max-w-[60%] flex-wrap items-center justify-end gap-2 lg:flex">{actions}</div>
       </div>

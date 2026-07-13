@@ -44,6 +44,7 @@ export const LEAD_REMARK_GROUPS: LeadRemarkGroup[] = [
       { value: 'nc', label: 'NC (Not Connected)' },
       { value: 'ni', label: 'NI (No Incoming)' },
       { value: 'in', label: 'IN (Invalid Number)' },
+      { value: 'call_cut_busy', label: 'Call Cut / Busy' },
       { value: 'cb', label: 'CB (Call Busy)' },
       { value: 'rnr', label: 'RNR (Ringing No Response)' },
       { value: 'busy', label: 'Busy' },

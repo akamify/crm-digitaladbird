@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ChevronLeft, ChevronRight, Eye, Inbox, Lock, Mail, MessageSquarePlus, Phone } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Eye, Inbox, Lock, Mail, MessageSquarePlus, Phone, Plus, Tag } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { LeadActions } from '@/components/leads/LeadActions';
@@ -11,8 +11,9 @@ import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
 import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
 import { LeadFilters } from '@/components/leads/LeadFilters';
 import { RemarkModal } from '@/components/leads/RemarkModal';
+import { LeadLabelPickerModal } from '@/components/leads/LeadLabelPickerModal';
+import { AddLeadModal } from '@/components/leads/AddLeadModal';
 import { EmptyState, Modal, Skeleton, StatusChip } from '@/components/ui/Modal';
-import { Select } from '@/components/ui/Input';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useBulkAddRemark, useLeadList } from '@/hooks/useLeads';
 import { formatISTCompact, formatISTTooltip, formatStageUpdatedAt } from '@/lib/date';
@@ -37,6 +38,13 @@ function workflowLabel(lead: Lead) {
 
 function latestStatus(lead: Lead) {
   return lead.latest_remark_status || lead.latest_remark_call_status || lead.call_status || lead.stage || '';
+}
+
+function latestStatusList(lead: Lead) {
+  const values = Array.isArray(lead.latest_remark_statuses) && lead.latest_remark_statuses.length
+    ? lead.latest_remark_statuses
+    : latestStatus(lead) ? [latestStatus(lead)] : [];
+  return [...new Set(values.filter(Boolean))].slice(0, 4);
 }
 
 export default function LeadsPage() {
@@ -84,8 +92,10 @@ function LeadsInner() {
   const [remarkLeadId, setRemarkLeadId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkRemarkOpen, setBulkRemarkOpen] = useState(false);
+  const [bulkLabelOpen, setBulkLabelOpen] = useState(false);
+  const [addLeadOpen, setAddLeadOpen] = useState(false);
   const [bulkRemark, setBulkRemark] = useState('');
-  const [bulkStatus, setBulkStatus] = useState('');
+  const [bulkStatuses, setBulkStatuses] = useState<CallStatus[]>([]);
   const debouncedSearch = useDebouncedValue(filters.q || '');
   const effectiveFilters = useMemo(() => {
     const next: LeadFilterType = { ...filters, q: debouncedSearch || undefined };
@@ -98,6 +108,7 @@ function LeadsInner() {
   const bulkAddRemark = useBulkAddRemark();
   const isAdminLeadsView = user?.role === 'super_admin' || user?.role === 'admin';
   const isMemberLeadsView = user?.role === 'member';
+  const canAddManualLead = user?.role === 'super_admin' || user?.role === 'admin' || user?.role === 'rm';
 
   const rows = data?.rows ?? [];
   const total = data?.total ?? 0;
@@ -143,29 +154,45 @@ function LeadsInner() {
   }
 
   function submitBulkRemark() {
-    if (!bulkRemark.trim()) {
-      toast.error('Remark is required');
+    if (!bulkRemark.trim() && bulkStatuses.length === 0) {
+      toast.error('Select at least one status or write a remark');
       return;
     }
     bulkAddRemark.mutate({
       leadIds: selectedIds,
       remark: bulkRemark.trim(),
-      ...(bulkStatus ? { call_status: bulkStatus as CallStatus } : {}),
+      ...(bulkStatuses.length ? { call_status: bulkStatuses[0], call_statuses: bulkStatuses } : {}),
     }, {
       onSuccess: (summary) => {
         toast.success(`Remark added to ${summary.updated} lead${summary.updated === 1 ? '' : 's'}`);
         if (summary.skipped) toast.error(`${summary.skipped} lead${summary.skipped === 1 ? '' : 's'} skipped`);
         setSelectedIds([]);
         setBulkRemark('');
-        setBulkStatus('');
+        setBulkStatuses([]);
         setBulkRemarkOpen(false);
       },
       onError: (e: any) => toast.error(e?.response?.data?.error?.message || e?.response?.data?.message || 'Could not add remarks'),
     });
   }
 
+  function toggleBulkStatus(status: CallStatus) {
+    setBulkStatuses(values => values.includes(status) ? values.filter(value => value !== status) : [...values, status]);
+  }
+
   return (
     <div className="space-y-4">
+      {canAddManualLead && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => setAddLeadOpen(true)}
+            className="btn-primary inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"
+          >
+            <Plus className="h-4 w-4" /> Add Lead
+          </button>
+        </div>
+      )}
+
       {isAdminLeadsView ? (
         <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
           {[
@@ -269,6 +296,9 @@ function LeadsInner() {
             <button onClick={() => setBulkRemarkOpen(true)} className="btn-primary inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs">
               <MessageSquarePlus className="h-4 w-4" /> Add Remark
             </button>
+            <button onClick={() => setBulkLabelOpen(true)} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs">
+              <Tag className="h-4 w-4" /> Add Labels
+            </button>
             <button onClick={() => setSelectedIds([])} className="btn-ghost rounded-lg px-3 py-2 text-xs">Clear Selection</button>
           </div>
         </div>
@@ -369,6 +399,16 @@ function LeadsInner() {
                           <div className="truncate text-xs text-slate-500">
                             {[lead.city, lead.state].filter(Boolean).join(', ') || 'Not available'}
                           </div>
+                          {!!lead.labels?.length && (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {lead.labels.slice(0, 3).map(label => (
+                                <span key={label.id} className="max-w-[90px] truncate rounded-full px-2 py-0.5 text-[10px] font-medium text-white" style={{ backgroundColor: label.color }} title={label.name}>
+                                  {label.name}
+                                </span>
+                              ))}
+                              {lead.labels.length > 3 && <span className="chip-slate">+{lead.labels.length - 3}</span>}
+                            </div>
+                          )}
                         </Link>
                       </td>
                       <td className="px-4 py-3">
@@ -382,10 +422,23 @@ function LeadsInner() {
                         </div>
                       </td>
                       <td className="px-4 py-3 text-slate-700">
-                        <div className="truncate">{humanize(lead.source)}</div>
-                        <div className="truncate text-xs text-slate-500" title={lead.campaign_label || undefined}>
-                          {lead.campaign_label || 'Not available'}
+                        <div className="flex flex-wrap items-center gap-1">
+                          <span className={lead.source === 'manual' ? 'chip-blue' : 'chip-slate'}>{lead.source_label || humanize(lead.source)}</span>
                         </div>
+                        {lead.source === 'manual' ? (
+                          <div className="mt-1 space-y-0.5 text-xs text-slate-500">
+                            <div className="truncate" title={lead.manual_added_by_name || lead.created_by_name || undefined}>
+                              Added by {lead.manual_added_by_name || lead.created_by_name || 'Not available'}
+                            </div>
+                            <div title={formatISTTooltip(lead.manual_added_at || lead.created_at)}>
+                              {formatISTCompact(lead.manual_added_at || lead.created_at)}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="truncate text-xs text-slate-500" title={lead.campaign_label || undefined}>
+                            {lead.campaign_label || 'Not available'}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <div className="space-y-1">
@@ -417,6 +470,11 @@ function LeadsInner() {
                           {latestStatus(lead) ? <StatusChip status={latestStatus(lead)} /> : <span className="chip-slate">No remark yet</span>}
                           {lead.latest_remark_source && <span className="text-[10px] text-slate-400">{humanize(lead.latest_remark_source)}</span>}
                         </div>
+                        {latestStatusList(lead).length > 1 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {latestStatusList(lead).map(status => <StatusChip key={status} status={status} />)}
+                          </div>
+                        )}
                         <div
                           className="mt-1 line-clamp-2 text-xs text-slate-600"
                           title={lead.latest_remark_note || undefined}
@@ -436,8 +494,10 @@ function LeadsInner() {
                           {workflowLabel(lead)}
                         </span>
                         {lead.workflow_step_1_status && (
-                          <div className="mt-1 truncate text-[11px] text-slate-500" title={humanize(lead.workflow_step_1_status)}>
-                            {humanize(lead.workflow_step_1_status)}
+                          <div className="mt-1 flex flex-wrap gap-1" title={humanize(lead.workflow_step_1_status)}>
+                            {(lead.workflow_step_1_statuses?.length ? lead.workflow_step_1_statuses : [lead.workflow_step_1_status]).slice(0, 3).map(status => (
+                              <StatusChip key={status} status={status} />
+                            ))}
                           </div>
                         )}
                       </td>
@@ -537,21 +597,54 @@ function LeadsInner() {
         )}
       </Modal>
       {remarkLeadId && <RemarkModal leadId={remarkLeadId} open={!!remarkLeadId} onClose={() => setRemarkLeadId(null)} />}
+      <AddLeadModal open={addLeadOpen} onClose={() => setAddLeadOpen(false)} />
+      <LeadLabelPickerModal
+        open={bulkLabelOpen}
+        onClose={() => setBulkLabelOpen(false)}
+        mode="bulk"
+        leadIds={selectedIds}
+        title="Add Labels to Selected Leads"
+        description={`${selectedIds.length} selected lead${selectedIds.length === 1 ? '' : 's'}`}
+        onSuccess={() => setSelectedIds([])}
+      />
       <Modal open={bulkRemarkOpen} onClose={() => setBulkRemarkOpen(false)} title="Add Remark to Selected Leads" size="md">
         <div className="space-y-3">
           <p className="text-sm text-slate-600">This remark will be added to {selectedIds.length} selected lead{selectedIds.length === 1 ? '' : 's'} you can access.</p>
-          <Select
-            label="Status"
-            value={bulkStatus}
-            options={[
-              { value: '', label: 'Select status' },
-              ...LEAD_REMARK_GROUPS.flatMap(group => [
-                { value: `__group_${group.key}`, label: group.label, disabled: true },
-                ...group.options.map(option => ({ value: option.value, label: `  ${option.label}` })),
-              ]),
-            ]}
-            onChange={event => setBulkStatus(event.target.value)}
-          />
+          <div>
+            <label className="mb-3 block text-sm font-semibold text-slate-900">Statuses</label>
+            <div className="space-y-3">
+              {LEAD_REMARK_GROUPS.map(group => (
+                <div key={group.key}>
+                  <p className={clsx('mb-2 text-[11px] font-semibold uppercase tracking-wide', {
+                    emerald: 'text-emerald-700', sky: 'text-sky-700', amber: 'text-amber-700', slate: 'text-slate-500',
+                  }[group.tone])}>{group.label}</p>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {group.options.map(option => {
+                      const selected = bulkStatuses.includes(option.value as CallStatus);
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => toggleBulkStatus(option.value as CallStatus)}
+                          className={clsx(
+                            'rounded-lg border px-3 py-2 text-sm font-medium transition-colors',
+                            selected ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50',
+                          )}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {bulkStatuses.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {bulkStatuses.map(status => <StatusChip key={status} status={status} />)}
+              </div>
+            )}
+          </div>
           <textarea
             className="input min-h-[120px] resize-y"
             value={bulkRemark}
