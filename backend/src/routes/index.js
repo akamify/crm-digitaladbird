@@ -2332,8 +2332,8 @@ router.get('/meta/ad-accounts', authenticate, requireRole('super_admin'), asyncH
       SELECT
         COUNT(*)::int AS total_campaigns,
         COUNT(*) FILTER (WHERE COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status) = 'ACTIVE')::int AS active_campaigns,
-        COUNT(*) FILTER (WHERE COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status) = 'PAUSED')::int AS paused_campaigns,
-        COUNT(*) FILTER (WHERE COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status) IN ('IN_PROCESS', 'PENDING_REVIEW', 'DRAFT', 'IN_DRAFT', 'WITH_ISSUES'))::int AS draft_campaigns,
+        COUNT(*) FILTER (WHERE COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status) IN ('PAUSED', 'CAMPAIGN_PAUSED', 'ADSET_PAUSED'))::int AS paused_campaigns,
+        COUNT(*) FILTER (WHERE COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status) IN ('IN_PROCESS', 'DRAFT', 'IN_DRAFT'))::int AS draft_campaigns,
         COUNT(*) FILTER (WHERE COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status) = 'ARCHIVED')::int AS archived_campaigns,
         COUNT(*) FILTER (WHERE COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status) = 'DELETED')::int AS deleted_campaigns
       FROM meta_campaigns mc
@@ -2382,6 +2382,18 @@ router.get('/admin/meta/debug/accounts-campaigns', authenticate, requireRole('su
     res.json({ success: true, data });
   } catch (err) {
     res.status(502).json({ success: false, error: metaGraphError(err, 'Meta debug failed'), data: null });
+  }
+}));
+
+router.get('/meta/debug/campaign-statuses', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  try {
+    const accountId = String(req.query.account_id || '').trim();
+    if (!accountId) throw new AppError(400, 'ACCOUNT_ID_REQUIRED', 'account_id is required.');
+    const data = await metaSync.debugCampaignStatuses(accountId);
+    res.json({ success: true, data });
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    res.status(502).json({ success: false, error: metaGraphError(err, 'Campaign status debug failed'), data: null });
   }
 }));
 
@@ -5261,7 +5273,9 @@ router.get('/admin/meta/campaigns-enriched', authenticate, requireRole('super_ad
   }
   if (status && status !== 'ALL') {
     if (status === 'DRAFT' || status === 'IN_PROCESS') {
-      where.push(`UPPER(COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status, 'UNKNOWN')) IN ('IN_PROCESS', 'PENDING_REVIEW', 'DRAFT', 'IN_DRAFT', 'WITH_ISSUES')`);
+      where.push(`UPPER(COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status, 'UNKNOWN')) IN ('IN_PROCESS', 'DRAFT', 'IN_DRAFT')`);
+    } else if (status === 'PAUSED') {
+      where.push(`UPPER(COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status, 'UNKNOWN')) IN ('PAUSED', 'CAMPAIGN_PAUSED', 'ADSET_PAUSED')`);
     } else {
       params.push(status);
       where.push(`UPPER(COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status, 'UNKNOWN')) = $${params.length}`);
@@ -5280,11 +5294,17 @@ router.get('/admin/meta/campaigns-enriched', authenticate, requireRole('super_ad
       COALESCE(mc.ui_status,
         CASE COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status)
           WHEN 'ACTIVE' THEN 'Active / On'
-          WHEN 'PAUSED' THEN 'Off / Paused'
+          WHEN 'PAUSED' THEN 'Paused'
+          WHEN 'CAMPAIGN_PAUSED' THEN 'Campaign Paused'
+          WHEN 'ADSET_PAUSED' THEN 'Ad Set Paused'
           WHEN 'ARCHIVED' THEN 'Archived'
           WHEN 'DELETED' THEN 'Deleted'
           WHEN 'IN_PROCESS' THEN 'In draft'
-          WHEN 'PENDING_REVIEW' THEN 'In draft'
+          WHEN 'PENDING_REVIEW' THEN 'Pending Review'
+          WHEN 'DISAPPROVED' THEN 'Disapproved'
+          WHEN 'PREAPPROVED' THEN 'Preapproved'
+          WHEN 'PENDING_BILLING_INFO' THEN 'Pending Billing Info'
+          WHEN 'WITH_ISSUES' THEN 'With Issues'
           ELSE COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status, 'Unknown')
         END
       ) AS ui_status,
@@ -5293,6 +5313,7 @@ router.get('/admin/meta/campaigns-enriched', authenticate, requireRole('super_ad
       mc.meta_updated_time, mc.daily_budget, mc.lifetime_budget, mc.budget_remaining,
       mc.spend_cap, mc.special_ad_categories, mc.source, mc.last_meta_status_checked_at,
       mc.last_synced_at, mc.sync_status, mc.last_sync_error,
+      mc.raw_status_payload,
       mc.impressions, mc.reach, mc.spend, mc.leads AS meta_leads,
       mc.cost_per_result, mc.last_metrics_synced_at, mc.metrics_error,
       mc.missing_from_latest_sync, mc.last_seen_at,

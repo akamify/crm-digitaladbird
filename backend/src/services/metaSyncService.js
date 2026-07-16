@@ -148,7 +148,24 @@ async function syncCampaigns(adAccountId) {
   for (const c of campaigns) {
     const label = deriveCampaignLabel(c.name);
     const uiStatus = deriveCampaignUiStatus(c);
+    const rawStatusPayload = {
+      status: c.status || null,
+      configured_status: c.configured_status || null,
+      effective_status: c.effective_status || null,
+      updated_time: c.updated_time || null,
+      fetched_at: new Date().toISOString(),
+    };
     seenCampaignIds.push(String(c.id));
+    logger.info({
+      account_id: normalizedAccountId,
+      campaign_id: c.id,
+      campaign_name: c.name,
+      meta_status: c.status || null,
+      meta_configured_status: c.configured_status || null,
+      meta_effective_status: c.effective_status || null,
+      updated_time: c.updated_time || null,
+      fetched_at: rawStatusPayload.fetched_at,
+    }, 'Meta campaign raw status fetched');
 
     const result = await query(
       `INSERT INTO meta_campaigns(
@@ -157,9 +174,9 @@ async function syncCampaigns(adAccountId) {
          start_time, stop_time, meta_created_time, meta_updated_time,
          daily_budget, lifetime_budget, budget_remaining, spend_cap, special_ad_categories,
          raw_meta, source, last_meta_status_checked_at, last_synced_at, sync_status, last_sync_error,
-         last_seen_sync_run_id, missing_from_latest_sync, last_seen_at
+         last_seen_sync_run_id, missing_from_latest_sync, last_seen_at, raw_status_payload, last_successful_sync_at
        )
-       VALUES($1, $2, $3, $4, $5, $6, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb, $21::jsonb, 'meta_api', NOW(), NOW(), 'synced', NULL, $22, FALSE, NOW())
+       VALUES($1, $2, $3, $4, $5, $6, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb, $21::jsonb, 'meta_api', NOW(), NOW(), 'synced', NULL, $22, FALSE, NOW(), $23::jsonb, NOW())
        ON CONFLICT(campaign_id) DO UPDATE
          SET campaign_name = EXCLUDED.campaign_name,
              ad_account_id = EXCLUDED.ad_account_id,
@@ -181,9 +198,11 @@ async function syncCampaigns(adAccountId) {
              spend_cap = EXCLUDED.spend_cap,
              special_ad_categories = EXCLUDED.special_ad_categories,
              raw_meta = EXCLUDED.raw_meta,
+             raw_status_payload = EXCLUDED.raw_status_payload,
              source = 'meta_api',
              last_meta_status_checked_at = NOW(),
              last_synced_at = NOW(),
+             last_successful_sync_at = NOW(),
              sync_status = 'synced',
              last_sync_error = NULL,
              last_seen_sync_run_id = EXCLUDED.last_seen_sync_run_id,
@@ -214,6 +233,7 @@ async function syncCampaigns(adAccountId) {
         JSON.stringify(Array.isArray(c.special_ad_categories) ? c.special_ad_categories : []),
         JSON.stringify(c),
         syncRunId,
+        JSON.stringify(rawStatusPayload),
       ]
     );
 
@@ -375,21 +395,29 @@ function toNumberOrNull(value) {
 
 function deriveCampaignUiStatus(campaign = {}) {
   const raw = String(campaign.effective_status || campaign.configured_status || campaign.status || '').toUpperCase();
-  if (raw === 'ACTIVE') return 'Active / On';
-  if (raw === 'PAUSED') return 'Off / Paused';
+  if (raw === 'ACTIVE') return 'Active';
+  if (raw === 'PAUSED') return 'Paused';
+  if (raw === 'CAMPAIGN_PAUSED') return 'Campaign Paused';
+  if (raw === 'ADSET_PAUSED') return 'Ad Set Paused';
   if (raw === 'ARCHIVED') return 'Archived';
   if (raw === 'DELETED') return 'Deleted';
-  if (['IN_PROCESS', 'PENDING_REVIEW', 'DRAFT', 'IN_DRAFT', 'WITH_ISSUES'].includes(raw)) return 'In draft';
+  if (raw === 'PENDING_REVIEW') return 'Pending Review';
+  if (raw === 'DISAPPROVED') return 'Disapproved';
+  if (raw === 'PREAPPROVED') return 'Preapproved';
+  if (raw === 'PENDING_BILLING_INFO') return 'Pending Billing Info';
+  if (raw === 'WITH_ISSUES') return 'With Issues';
+  if (['IN_PROCESS', 'DRAFT', 'IN_DRAFT'].includes(raw)) return 'In draft';
   return raw || 'Unknown';
 }
 
 function campaignCountBucket(row) {
-  const value = String(row.effective_status || row.configured_status || row.status || row.meta_status || '').toUpperCase();
+  const value = String(row.effective_status || '').toUpperCase()
+    || String(row.configured_status || row.status || row.meta_status || '').toUpperCase();
   if (value === 'ACTIVE') return 'active';
-  if (value === 'PAUSED') return 'paused';
+  if (['PAUSED', 'CAMPAIGN_PAUSED', 'ADSET_PAUSED'].includes(value)) return 'paused';
   if (value === 'ARCHIVED') return 'archived';
   if (value === 'DELETED') return 'deleted';
-  if (['IN_PROCESS', 'PENDING_REVIEW', 'DRAFT', 'IN_DRAFT', 'WITH_ISSUES'].includes(value)) return 'draft';
+  if (['IN_PROCESS', 'DRAFT', 'IN_DRAFT'].includes(value)) return 'draft';
   return null;
 }
 
@@ -1241,6 +1269,110 @@ async function debugAccountsCampaigns() {
   };
 }
 
+async function debugCampaignStatuses(accountId) {
+  const normalizedAccountId = normalizeAdAccountId(accountId);
+  if (!normalizedAccountId) throw new Error('account_id is required');
+  const graphAccountId = normalizeGraphAdAccountId(normalizedAccountId);
+  const fields = [
+    'id',
+    'name',
+    'status',
+    'configured_status',
+    'effective_status',
+    'objective',
+    'buying_type',
+    'created_time',
+    'updated_time',
+    'start_time',
+    'stop_time',
+    'daily_budget',
+    'lifetime_budget',
+  ].join(',');
+  const metaCampaigns = await graphGetAll(
+    `${graphAccountId}/campaigns`,
+    {
+      fields,
+      limit: 100,
+      _useUserToken: true,
+    },
+    100,
+    `${graphAccountId}/campaigns:status-debug`
+  );
+
+  const dbRes = await query(
+    `SELECT campaign_id, campaign_name, status, meta_status, configured_status, effective_status,
+            ui_status, last_synced_at, last_successful_sync_at, sync_status,
+            missing_from_latest_sync, raw_status_payload
+       FROM meta_campaigns
+      WHERE ad_account_id = $1`,
+    [normalizedAccountId],
+  );
+  const dbById = new Map(dbRes.rows.map(row => [String(row.campaign_id), row]));
+  const metaIds = new Set(metaCampaigns.map(campaign => String(campaign.id)));
+
+  const campaigns = metaCampaigns.map((campaign) => {
+    const db = dbById.get(String(campaign.id)) || null;
+    const mismatch = !db
+      || String(db.status || '') !== String(campaign.status || '')
+      || String(db.configured_status || '') !== String(campaign.configured_status || '')
+      || String(db.effective_status || '') !== String(campaign.effective_status || '');
+    return {
+      campaign_id: String(campaign.id),
+      name: campaign.name || null,
+      meta: {
+        status: campaign.status || null,
+        configured_status: campaign.configured_status || null,
+        effective_status: campaign.effective_status || null,
+        updated_time: campaign.updated_time || null,
+      },
+      db: db ? {
+        status: db.status || null,
+        meta_status: db.meta_status || null,
+        configured_status: db.configured_status || null,
+        effective_status: db.effective_status || null,
+        ui_status: db.ui_status || null,
+        last_synced_at: db.last_synced_at || null,
+        last_successful_sync_at: db.last_successful_sync_at || null,
+        sync_status: db.sync_status || null,
+        missing_from_latest_sync: Boolean(db.missing_from_latest_sync),
+        raw_status_payload: db.raw_status_payload || null,
+      } : null,
+      mismatch,
+    };
+  });
+
+  for (const row of dbRes.rows) {
+    if (metaIds.has(String(row.campaign_id))) continue;
+    campaigns.push({
+      campaign_id: String(row.campaign_id),
+      name: row.campaign_name || null,
+      meta: null,
+      db: {
+        status: row.status || null,
+        meta_status: row.meta_status || null,
+        configured_status: row.configured_status || null,
+        effective_status: row.effective_status || null,
+        ui_status: row.ui_status || null,
+        last_synced_at: row.last_synced_at || null,
+        last_successful_sync_at: row.last_successful_sync_at || null,
+        sync_status: row.sync_status || null,
+        missing_from_latest_sync: Boolean(row.missing_from_latest_sync),
+        raw_status_payload: row.raw_status_payload || null,
+      },
+      mismatch: true,
+      stale_reason: 'Campaign exists in DB but was not returned by the current Meta API response.',
+    });
+  }
+
+  return {
+    account_id: normalizedAccountId,
+    graph_account_id: graphAccountId,
+    fetched_at: new Date().toISOString(),
+    fields,
+    campaigns,
+  };
+}
+
 module.exports = {
   syncFormLeads,
   syncAllFormLeads,
@@ -1257,6 +1389,7 @@ module.exports = {
   getPageSubscriptions,
   debugToken,
   debugAccountsCampaigns,
+  debugCampaignStatuses,
   checkConnectivity,
   deriveCampaignLabel,
   ingestGraphLead, // exposed for recovery scripts that need per-page tokens

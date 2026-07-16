@@ -889,6 +889,7 @@ export interface CampaignEnriched {
   impressions?: number | null; reach?: number | null; spend?: number | null; meta_leads?: number | null; cost_per_result?: number | null;
   account_name?: string | null; account_status?: number | null; ad_account_sync_status?: string | null; ad_account_sync_error?: string | null;
   meta_updated_time?: string | null; last_meta_status_checked_at?: string | null; last_synced_at?: string | null; sync_status?: string | null; last_sync_error?: string | null;
+  raw_status_payload?: Record<string, unknown> | null;
   last_metrics_synced_at?: string | null; metrics_error?: string | null;
   missing_from_latest_sync?: boolean | null; last_seen_at?: string | null;
 }
@@ -972,6 +973,46 @@ export function useMetaDebugAccountsCampaigns(enabled: boolean) {
     queryKey: ['admin', 'meta-debug-accounts-campaigns'],
     queryFn: () => apiGet<MetaDebugAccountsCampaigns>('/admin/meta/debug/accounts-campaigns'),
     enabled,
+    staleTime: 0,
+  });
+}
+
+export interface MetaCampaignStatusDebug {
+  account_id: string;
+  graph_account_id: string;
+  fetched_at: string;
+  fields: string;
+  campaigns: Array<{
+    campaign_id: string;
+    name: string | null;
+    meta: {
+      status: string | null;
+      configured_status: string | null;
+      effective_status: string | null;
+      updated_time: string | null;
+    } | null;
+    db: {
+      status: string | null;
+      meta_status?: string | null;
+      configured_status: string | null;
+      effective_status: string | null;
+      ui_status: string | null;
+      last_synced_at: string | null;
+      last_successful_sync_at?: string | null;
+      sync_status?: string | null;
+      missing_from_latest_sync?: boolean;
+      raw_status_payload?: Record<string, unknown> | null;
+    } | null;
+    mismatch: boolean;
+    stale_reason?: string;
+  }>;
+}
+
+export function useMetaCampaignStatusDebug(enabled: boolean, accountId?: string) {
+  return useQuery({
+    queryKey: ['admin', 'meta-campaign-status-debug', accountId || 'none'],
+    queryFn: () => apiGet<MetaCampaignStatusDebug>('/meta/debug/campaign-statuses', { account_id: accountId }),
+    enabled: enabled && !!accountId,
     staleTime: 0,
   });
 }

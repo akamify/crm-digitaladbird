@@ -22,7 +22,7 @@ import {
   useMetaPagesEnriched, useMetaFormsEnriched, useFormLeads, usePageLeads,
   useMetaWebhookLogs, useSheetsEnriched, useMetaTokenStatus,
   useMetaSubscriptionStatus, useCampaignsEnriched, useMetaAdAccounts,
-  useMetaDebugAccountsCampaigns,
+  useMetaDebugAccountsCampaigns, useMetaCampaignStatusDebug,
   useSyncCampaigns, useSyncLeads, useUpdateMetaToken, useSubscribePage,
   useSyncMetaAdAccountCampaigns,
   useTestPageToken, useUpdatePageToken, useSyncMetaPageForms, useSetMetaPageActivation,
@@ -1170,9 +1170,9 @@ function metaCampaignStatusLabel(c: { ui_status?: string | null; status?: string
 
 function metaStatusClass(status?: string | null) {
   const value = String(status || '').toUpperCase();
-  if (value === 'ACTIVE' || value.includes('ACTIVE') || value.includes('ON')) return 'chip-green';
-  if (value === 'PAUSED' || value.includes('PAUSED') || value.includes('OFF') || value === 'IN_PROCESS' || value === 'PENDING_REVIEW' || value.includes('DRAFT')) return 'chip-amber';
-  if (value === 'DELETED' || value === 'ARCHIVED' || value === 'DISAPPROVED' || value === 'WITH_ISSUES') return 'chip-red';
+  if (value === 'ACTIVE' || value === 'ACTIVE / ON') return 'chip-green';
+  if (['PAUSED', 'OFF / PAUSED', 'CAMPAIGN_PAUSED', 'CAMPAIGN PAUSED', 'ADSET_PAUSED', 'AD SET PAUSED', 'IN_PROCESS', 'DRAFT', 'IN_DRAFT', 'IN DRAFT', 'PENDING_REVIEW', 'PENDING REVIEW', 'PENDING_BILLING_INFO', 'PENDING BILLING INFO', 'PREAPPROVED'].includes(value)) return 'chip-amber';
+  if (['DELETED', 'ARCHIVED', 'DISAPPROVED', 'WITH_ISSUES', 'WITH ISSUES'].includes(value)) return 'chip-red';
   return 'chip-slate';
 }
 
@@ -1251,7 +1251,7 @@ function AdAccountsTab() {
                     <p className="font-medium text-slate-800">{account.campaign_count || 0} total</p>
                   </div>
                   <div>
-                    <p className="text-slate-500">On / Off</p>
+                    <p className="text-slate-500">Live Active / Effective Paused</p>
                     <p className="font-medium text-slate-800">{account.active_campaign_count || 0} / {account.paused_campaign_count || 0}</p>
                   </div>
                   <div>
@@ -1313,6 +1313,7 @@ function CampaignsTab() {
     search,
   });
   const debug = useMetaDebugAccountsCampaigns(showDebug);
+  const statusDebug = useMetaCampaignStatusDebug(showDebug && selectedAccount !== 'all', selectedAccount === 'all' ? undefined : selectedAccount);
   const syncCampaigns = useSyncCampaigns();
   const syncAccount = useSyncMetaAdAccountCampaigns();
   const totalCampaigns = accounts?.reduce((sum, account) => sum + (account.campaign_count || 0), 0) || campaigns?.length || 0;
@@ -1346,9 +1347,15 @@ function CampaignsTab() {
             className={settingsActionButtonClass}
             onClick={() => {
               if (selectedAccount === 'all') {
-                syncCampaigns.mutate(undefined, { onSuccess: () => toast.success('All accounts synced'), onError: () => toast.error('Meta sync failed') });
+                syncCampaigns.mutate(undefined, {
+                  onSuccess: (result: any) => {
+                    const failed = Array.isArray(result?.accounts) ? result.accounts.filter((item: any) => item.status === 'failed').length : 0;
+                    toast[failed ? 'error' : 'success'](failed ? 'Some accounts failed to sync' : 'Campaign statuses refreshed');
+                  },
+                  onError: () => toast.error('Meta sync failed'),
+                });
               } else {
-                syncAccount.mutate(selectedAccount, { onSuccess: () => toast.success('Selected account synced'), onError: () => toast.error('Selected account sync failed') });
+                syncAccount.mutate(selectedAccount, { onSuccess: () => toast.success('Campaign statuses refreshed'), onError: () => toast.error('Selected account sync failed') });
               }
             }}
             disabled={syncCampaigns.isPending || syncAccount.isPending}
@@ -1428,6 +1435,38 @@ function CampaignsTab() {
                   </div>
                 ))}
               </div>
+              {selectedAccount !== 'all' && (
+                <div className="rounded-lg border border-blue-100 bg-blue-50 p-3">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-blue-900">Campaign Status Debug</h3>
+                    <Button variant="outline" className={settingsActionButtonClass} size="sm" onClick={() => statusDebug.refetch()} disabled={statusDebug.isFetching}>
+                      {statusDebug.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                      <span>Refresh statuses</span>
+                    </Button>
+                  </div>
+                  {statusDebug.isLoading ? (
+                    <Skeleton className="h-20" />
+                  ) : statusDebug.data ? (
+                    <div className="max-h-72 space-y-2 overflow-y-auto text-xs">
+                      {statusDebug.data.campaigns.map(campaign => (
+                        <div key={campaign.campaign_id} className={clsx('rounded border bg-white px-3 py-2', campaign.mismatch ? 'border-amber-200' : 'border-emerald-100')}>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <strong className="text-slate-900">{campaign.name || campaign.campaign_id}</strong>
+                            <span className={campaign.mismatch ? 'chip-amber' : 'chip-green'}>{campaign.mismatch ? 'Mismatch/stale' : 'Matched'}</span>
+                          </div>
+                          <div className="mt-1 grid gap-1 md:grid-cols-2">
+                            <div>Meta: {campaign.meta ? `${campaign.meta.status || 'null'} / ${campaign.meta.configured_status || 'null'} / ${campaign.meta.effective_status || 'null'}` : 'Not returned by API'}</div>
+                            <div>DB: {campaign.db ? `${campaign.db.status || 'null'} / ${campaign.db.configured_status || 'null'} / ${campaign.db.effective_status || 'null'}` : 'Not stored'}</div>
+                          </div>
+                          {campaign.stale_reason && <p className="mt-1 text-amber-700">{campaign.stale_reason}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-blue-800">Select an ad account and refresh debug to compare Meta API status with DB status.</p>
+                  )}
+                </div>
+              )}
             </div>
           ) : (
             <p className="text-sm text-slate-500">Click refresh debug to fetch Meta API diagnostics.</p>
@@ -1464,8 +1503,8 @@ function CampaignsTab() {
               </div>
               <div className="mt-3 grid grid-cols-4 gap-2 text-center text-xs">
                 <MiniStat label="Total" value={account.campaign_count || 0} color="text-slate-900" />
-                <MiniStat label="On" value={account.active_campaign_count || 0} color="text-emerald-700" />
-                <MiniStat label="Off" value={account.paused_campaign_count || 0} color="text-amber-700" />
+                <MiniStat label="Live Active" value={account.active_campaign_count || 0} color="text-emerald-700" />
+                <MiniStat label="Effective Paused" value={account.paused_campaign_count || 0} color="text-amber-700" />
                 <MiniStat label="Draft" value={account.draft_count_api_available ? (account.draft_campaign_count || 0) : 'N/A'} color="text-violet-700" />
               </div>
               {!account.draft_count_api_available && <p className="mt-2 text-xs text-slate-500">Draft: not available from API</p>}
@@ -1514,7 +1553,7 @@ function CampaignsTab() {
                   <div className={clsx('h-2.5 w-2.5 rounded-full', c.is_active ? 'bg-emerald-500' : 'bg-slate-300')} />
                   <span className="font-semibold text-slate-900 truncate max-w-[250px]">{c.campaign_name}</span>
                 </div>
-                <span className={metaStatusClass(metaCampaignStatusLabel(c))}>{humanize(metaCampaignStatusLabel(c))}</span>
+                <span className={metaStatusClass(c.effective_status || c.configured_status || c.status || c.meta_status)}>{metaCampaignStatusLabel(c)}</span>
               </div>
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 {c.internal_label && <span className="chip-blue text-[10px]">{c.internal_label}</span>}
@@ -1532,9 +1571,10 @@ function CampaignsTab() {
               </div>
 
               <div className="text-xs text-slate-500 space-y-0.5">
-                <div>Raw status: <strong className="text-slate-700">{humanize(metaCampaignRawStatus(c))}</strong></div>
-                {c.meta_status && <div>Meta status: <strong className="text-slate-700">{humanize(c.meta_status)}</strong></div>}
+                <div>Live / effective: <strong className="text-slate-700">{humanize(c.effective_status || 'unknown')}</strong></div>
                 {c.configured_status && <div>Configured: <strong className="text-slate-700">{humanize(c.configured_status)}</strong></div>}
+                {c.meta_status && <div>Meta status: <strong className="text-slate-700">{humanize(c.meta_status)}</strong></div>}
+                <div>Raw fallback: <strong className="text-slate-700">{humanize(metaCampaignRawStatus(c))}</strong></div>
                 {c.objective && <div>Objective: <strong className="text-slate-700">{humanize(c.objective)}</strong></div>}
                 {c.spend !== null && c.spend !== undefined && <div>Spend: <strong className="text-slate-700">{c.spend}</strong></div>}
                 {c.impressions !== null && c.impressions !== undefined && <div>Impressions: <strong className="text-slate-700">{c.impressions}</strong></div>}

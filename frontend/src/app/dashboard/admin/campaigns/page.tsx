@@ -249,8 +249,9 @@ function CampaignsInner() {
 function metaStatusTone(c: AdminCampaign) {
   const status = String(c.effective_status || c.meta_status || c.configured_status || '').toUpperCase();
   if (status === 'ACTIVE') return { key: 'active', label: 'Active', className: 'bg-emerald-100 text-emerald-700' };
-  if (['PAUSED', 'ARCHIVED', 'DELETED'].includes(status)) return { key: 'paused', label: status === 'PAUSED' ? 'Paused' : humanize(status), className: 'bg-slate-100 text-slate-600' };
-  if (['IN_PROCESS', 'WITH_ISSUES', 'PENDING_REVIEW', 'DISAPPROVED'].includes(status)) return { key: 'attention', label: humanize(status), className: 'bg-amber-100 text-amber-700' };
+  if (['PAUSED', 'CAMPAIGN_PAUSED', 'ADSET_PAUSED'].includes(status)) return { key: 'paused', label: humanize(status), className: 'bg-slate-100 text-slate-600' };
+  if (['ARCHIVED', 'DELETED', 'DISAPPROVED', 'WITH_ISSUES'].includes(status)) return { key: 'stopped', label: humanize(status), className: 'bg-rose-100 text-rose-700' };
+  if (['IN_PROCESS', 'PENDING_REVIEW', 'PREAPPROVED', 'PENDING_BILLING_INFO'].includes(status)) return { key: 'attention', label: humanize(status), className: 'bg-amber-100 text-amber-700' };
   return { key: 'attention', label: 'Unknown', className: 'bg-slate-100 text-slate-500' };
 }
 
