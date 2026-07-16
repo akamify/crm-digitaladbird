@@ -23,7 +23,7 @@ const { AppError, asyncHandler } = require('../utils/errors');
 const config = require('../config/env');
 const logger = require('../utils/logger');
 
-const VALID_ROLES = ['super_admin', 'rm', 'member'];
+const VALID_ROLES = ['super_admin', 'rm', 'member', 'client'];
 
 function normalizePhone(input) {
   if (!input) return null;
@@ -43,7 +43,7 @@ function generateEmpCode(role) {
  * No OTP, no verification step. For production, use request-otp / verify-otp.
  */
 // Map frontend role labels to database role values
-const ROLE_MAP = { admin: 'super_admin', rm: 'rm', partner: 'member', member: 'member', super_admin: 'super_admin' };
+const ROLE_MAP = { admin: 'super_admin', rm: 'rm', partner: 'member', member: 'member', super_admin: 'super_admin', client: 'client' };
 
 function identifierType(value) {
   const raw = String(value || '').trim();
@@ -265,10 +265,10 @@ exports.requestOtp = asyncHandler(async (req, res) => {
     const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) throw new AppError(401, 'INVALID_CREDENTIALS', 'Incorrect email or password.');
   } else {
-    // New user: super_admin cannot self-register
-    if (role === 'super_admin') {
+    // New user: privileged/client accounts cannot self-register.
+    if (role === 'super_admin' || role === 'client') {
       throw new AppError(403, 'REGISTRATION_BLOCKED',
-        'Super Admin accounts must be created by the system administrator.');
+        'This account type must be created by the system administrator.');
     }
     if (!full_name || !full_name.trim()) {
       throw new AppError(400, 'NAME_REQUIRED', 'Full name is required to create your account.');

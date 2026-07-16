@@ -10,7 +10,7 @@ import {
   Download, FileText, Image as ImageIcon, File as FileIcon, X, Users, ZoomIn,
   Forward, Edit3, Copy, Star, Archive, Mic, Play, Pause,
   Phone, Video, Moon, Sun,
-  FileDown, ChevronDown,
+  FileDown, ChevronDown, RefreshCw,
 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { useAuth } from '@/lib/auth';
@@ -26,7 +26,7 @@ import {
   useSendMessageWithMentions, usePinnedMessages,
   useUploadMultipleFiles, useAdminExportChat,
   useConversationParticipants, useSocketConnection, useLeadThread,
-  useSendWaspMessage,
+  useSendWaspMessage, useSyncWaspInbox,
   ChatConversation, ChatMessage, ChatContact, ChatAttachment,
 } from '@/hooks/useChat';
 import { onConnectionStatus } from '@/lib/socket';
@@ -753,6 +753,7 @@ function ConversationList({
   const [leadCategory, setLeadCategory] = useState<'all' | 'trader' | 'partner' | 'unknown'>('all');
   const leadOnly = user.role === 'member' || user.role === 'partner';
   const { data: unreadData } = useChatUnread();
+  const syncWasp = useSyncWaspInbox();
   const totalUnread = unreadData?.unread || 0;
   const { data: searchResults } = useSearchMessages(search);
   const { data: archivedConvs = [] } = useChatConversations(undefined, filter === 'archived');
@@ -871,6 +872,19 @@ function ConversationList({
             {f === 'all' ? 'All' : f === 'whatsapp' ? 'WhatsApp' : f === 'external' ? 'External' : f === 'open' ? 'Open session' : f === 'expired' ? 'Expired' : f.charAt(0).toUpperCase() + f.slice(1)}
           </button>
         ))}
+        {['super_admin', 'admin', 'rm'].includes(user.role) && (
+          <button
+            type="button"
+            onClick={() => syncWasp.mutate()}
+            disabled={syncWasp.isPending}
+            className={clsx('ml-auto inline-flex items-center gap-1 rounded-full px-3 py-1 text-[11px] font-medium transition whitespace-nowrap',
+              dark ? 'bg-emerald-900/40 text-emerald-200 hover:bg-emerald-900/60' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100')}
+            title="Pull latest WhatsApp conversations from WaspAkamify External Chat API"
+          >
+            <RefreshCw className={clsx('h-3 w-3', syncWasp.isPending && 'animate-spin')} />
+            Sync WhatsApp
+          </button>
+        )}
       </div>
       <div className={clsx('shrink-0 flex gap-1 px-3 py-2 border-b overflow-x-auto', dark ? 'border-slate-700 bg-[#111b21]' : 'border-slate-100 bg-white')}>
         {(['all', 'trader', 'partner', 'unknown'] as const).map(category => (

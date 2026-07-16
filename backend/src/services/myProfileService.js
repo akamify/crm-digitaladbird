@@ -121,13 +121,42 @@ async function rmStats(userId) {
   return { ...stats, ...support };
 }
 
+async function clientStats(userId) {
+  const { rows: [stats] } = await query(
+    `SELECT
+       COUNT(l.id)::int AS total_assigned_leads,
+       COUNT(l.id) FILTER (WHERE (l.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date)::int AS today_assigned_leads,
+       COUNT(l.id) FILTER (WHERE COALESCE(call_status, 'not_called') <> 'not_called')::int AS contacted_leads,
+       COUNT(l.id) FILTER (WHERE COALESCE(call_status, 'not_called') = 'not_called')::int AS pending_not_called_leads,
+       COUNT(l.id) FILTER (WHERE call_status = 'converted' OR stage::text = 'won')::int AS converted_leads,
+       COUNT(l.id) FILTER (WHERE next_followup_at::date = CURRENT_DATE)::int AS followups_today,
+       COUNT(l.id) FILTER (WHERE next_followup_at IS NOT NULL AND next_followup_at <= NOW())::int AS followups_due,
+       (SELECT COUNT(*)::int FROM meta_campaigns WHERE client_id = $1) AS total_campaigns,
+       (SELECT COUNT(*)::int FROM meta_campaigns WHERE client_id = $1 AND effective_status = 'ACTIVE') AS active_campaigns,
+       (SELECT COUNT(*)::int FROM meta_pages WHERE client_id = $1) AS pages,
+       (SELECT COUNT(*)::int FROM meta_forms WHERE client_id = $1) AS forms
+      FROM leads l
+     WHERE l.client_id = $1
+       AND l.deleted_at IS NULL`,
+    [userId],
+  );
+  const { rows: [support] } = await query(
+    `SELECT COUNT(*)::int AS open_support_tickets
+       FROM support_tickets
+      WHERE created_by_user_id = $1
+        AND status = 'open'`,
+    [userId],
+  ).catch(() => ({ rows: [{ open_support_tickets: 0 }] }));
+  return { ...stats, ...support };
+}
+
 async function getMyProfile(actor) {
   if (!actor?.id) throw new AppError(401, 'NO_USER', 'Not authenticated.');
   const row = await getProfileRow(actor.id);
   const role = normalizeRole(row.role);
   let stats;
   try {
-    stats = role === 'rm' ? await rmStats(actor.id) : await memberStats(actor.id);
+    stats = role === 'rm' ? await rmStats(actor.id) : role === 'client' ? await clientStats(actor.id) : await memberStats(actor.id);
   } catch (err) {
     logger.warn({
       userId: actor.id,

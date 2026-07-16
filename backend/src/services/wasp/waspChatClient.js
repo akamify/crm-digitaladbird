@@ -29,6 +29,29 @@ function authHeaders() {
   return headers;
 }
 
+async function requestJson(path, { method = 'GET', body, headers } = {}) {
+  ensureConfigured();
+  const response = await fetch(buildUrl(path), {
+    method,
+    headers: {
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...authHeaders(),
+      ...(headers || {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(payload?.error?.message || payload?.message || `WaspAkamify API failed (${response.status})`);
+    error.code = payload?.error?.code || 'WASP_API_FAILED';
+    error.status = response.status;
+    error.payload = payload;
+    logger.warn({ path, status: response.status, code: error.code }, '[Wasp] API request failed');
+    throw error;
+  }
+  return payload;
+}
+
 function verifyWebhook(req) {
   if (!config.wasp.webhookSecret) return true;
   const provided = req.get('x-wasp-secret') || req.get('x-webhook-secret') || req.query.secret;
@@ -55,34 +78,52 @@ function verifyWebhook(req) {
 }
 
 async function sendTextMessage({ to, waId, text, contact, metadata }) {
-  ensureConfigured();
   const body = {
     to: mapper.normalizeWaId(to || waId),
     text,
     contact: contact || undefined,
     metadata: { crm: 'digitaladbird', ...(metadata || {}) },
   };
-  const response = await fetch(buildUrl(config.wasp.sendMessagePath), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeaders(),
-    },
-    body: JSON.stringify(body),
+  const payload = await requestJson(config.wasp.sendMessagePath, { method: 'POST', body });
+  return mapper.normalizeOutboundResponse(payload);
+}
+
+async function listConversations(params = {}) {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') query.set(key, String(value));
   });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(payload?.error?.message || payload?.message || `WaspAkamify send failed (${response.status})`);
-    error.code = 'WASP_SEND_FAILED';
-    error.status = response.status;
-    logger.warn({ status: response.status, code: error.code }, '[Wasp] send failed');
+  const suffix = query.toString() ? `?${query}` : '';
+  return requestJson(`${config.wasp.fetchMessagesPath}${suffix}`);
+}
+
+async function listConversationMessages(phone, params = {}) {
+  const normalized = mapper.normalizeWaId(phone);
+  if (!normalized) {
+    const error = new Error('Conversation phone is required.');
+    error.code = 'WASP_PHONE_REQUIRED';
     throw error;
   }
-  return mapper.normalizeOutboundResponse(payload);
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') query.set(key, String(value));
+  });
+  const suffix = query.toString() ? `?${query}` : '';
+  return requestJson(`/external/chat/conversations/${encodeURIComponent(normalized)}/messages${suffix}`);
+}
+
+async function markConversationRead(phone) {
+  const normalized = mapper.normalizeWaId(phone);
+  if (!normalized) return null;
+  return requestJson(`/external/chat/conversations/${encodeURIComponent(normalized)}/read`, { method: 'POST' });
 }
 
 module.exports = {
   verifyWebhook,
   sendTextMessage,
+  listConversations,
+  listConversationMessages,
+  markConversationRead,
+  requestJson,
   buildUrl,
 };

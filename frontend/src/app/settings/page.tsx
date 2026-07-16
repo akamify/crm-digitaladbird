@@ -17,7 +17,9 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal, Skeleton, EmptyState } from '@/components/ui/Modal';
 import { apiGet, apiPost } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { fmtRelative, fmtDate, humanize, clsx } from '@/lib/format';
+import { useClientMeta } from '@/hooks/useClients';
 import {
   useMetaPagesEnriched, useMetaFormsEnriched, useFormLeads, usePageLeads,
   useMetaWebhookLogs, useSheetsEnriched, useMetaTokenStatus,
@@ -89,10 +91,63 @@ function formatLogMetadata(value: unknown): string {
 }
 
 export default function SettingsPage() {
+  const { user } = useAuth();
   return (
-    <AppShell title="Settings & Integrations" subtitle="Meta integration, Google Sheets, distribution, and admin tools" roles={['super_admin']}>
-      <SettingsInner />
+    <AppShell title="Settings & Integrations" subtitle={user?.role === 'client' ? 'Read-only Meta assets and sync status' : 'Meta integration, Google Sheets, distribution, and admin tools'} roles={['super_admin', 'client']}>
+      {user?.role === 'client' ? <ClientSettingsInner /> : <SettingsInner />}
     </AppShell>
+  );
+}
+
+function ClientSettingsInner() {
+  const meta = useClientMeta();
+  const data = meta.data;
+  if (meta.isLoading) return <Skeleton className="h-80" />;
+  if (meta.isError || !data) {
+    return <EmptyState title="Meta settings could not be loaded" action={<button className="btn-outline rounded-lg px-3 py-2 text-sm" onClick={() => meta.refetch()}>Retry</button>} />;
+  }
+  return (
+    <div className="space-y-6">
+      <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+        Your Meta credentials are managed by the CRM admin. This page is read-only.
+      </div>
+      <ReadOnlyAssetSection title="Pages" rows={data.pages} primary="page_name" secondary="page_id" status="connection_status" empty="No Meta pages are mapped to your client account." />
+      <ReadOnlyAssetSection title="Ad Accounts" rows={data.ad_accounts} primary="account_name" secondary="account_id" status="sync_status" empty="No ad accounts are mapped to your client account." />
+      <ReadOnlyAssetSection title="Campaigns" rows={data.campaigns} primary="campaign_name" secondary="campaign_id" status="effective_status" empty="No campaigns are mapped to your client account." />
+    </div>
+  );
+}
+
+function ReadOnlyAssetSection({
+  title, rows, primary, secondary, status, empty,
+}: {
+  title: string;
+  rows: Array<Record<string, unknown>>;
+  primary: string;
+  secondary: string;
+  status: string;
+  empty: string;
+}) {
+  return (
+    <section className="card-padded">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+        <span className="chip-slate">{rows.length}</span>
+      </div>
+      {!rows.length ? <p className="text-sm text-slate-500">{empty}</p> : (
+        <div className="divide-y divide-slate-100">
+          {rows.map((row, index) => (
+            <div key={`${title}-${index}`} className="flex items-center justify-between gap-3 py-3 text-sm">
+              <div className="min-w-0">
+                <div className="truncate font-medium text-slate-900">{String(row[primary] || row[secondary] || 'Unnamed')}</div>
+                <div className="truncate font-mono text-xs text-slate-500">{String(row[secondary] || '')}</div>
+              </div>
+              <span className="chip-slate shrink-0">{humanize(String(row[status] || 'unknown'))}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

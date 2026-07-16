@@ -20,6 +20,7 @@ const { updateLeadAvailability, updateSingleLeadAvailability } = require('../ser
 const supportTickets = require('../services/supportTicketService');
 const myProfile = require('../services/myProfileService');
 const leadLabels = require('../services/leadLabelService');
+const clients = require('../services/clientManagementService');
 const {
   WORKFLOW_REMARK_OPTIONS,
   isWorkflowRemarkCompleted,
@@ -57,15 +58,15 @@ router.post('/auth/logout',      auth.logout);
 router.get ('/auth/me',          authenticate, auth.me);
 
 // ---- Support Tickets -------------------------------------------------
-router.get('/support/tickets', authenticate, requireRole('rm', 'member', 'partner'), asyncHandler(async (req, res) => {
+router.get('/support/tickets', authenticate, requireRole('rm', 'member', 'partner', 'client'), asyncHandler(async (req, res) => {
   const result = await supportTickets.listMyTickets(req.user, req.query);
   res.json({ success: true, data: result.rows, pagination: result.pagination });
 }));
-router.post('/support/tickets', authenticate, requireRole('rm', 'member', 'partner'), asyncHandler(async (req, res) => {
+router.post('/support/tickets', authenticate, requireRole('rm', 'member', 'partner', 'client'), asyncHandler(async (req, res) => {
   const ticket = await supportTickets.createTicket(req.user, req.body);
   res.status(201).json({ success: true, data: ticket, message: 'Support ticket submitted successfully.' });
 }));
-router.get('/support/tickets/:ticketId', authenticate, requireRole('rm', 'member', 'partner'), asyncHandler(async (req, res) => {
+router.get('/support/tickets/:ticketId', authenticate, requireRole('rm', 'member', 'partner', 'client'), asyncHandler(async (req, res) => {
   const ticket = await supportTickets.getTicket(req.user, req.params.ticketId);
   res.json({ success: true, data: ticket });
 }));
@@ -83,7 +84,7 @@ router.patch('/admin/support-tickets/:ticketId/status', authenticate, requireRol
 }));
 
 // ---- Users --------------------------------------------------------
-router.get('/users/me/profile', authenticate, requireRole('rm', 'member', 'partner'), asyncHandler(async (req, res) => {
+router.get('/users/me/profile', authenticate, requireRole('rm', 'member', 'partner', 'client'), asyncHandler(async (req, res) => {
   try {
     const data = await myProfile.getMyProfile(req.user);
     res.json({ success: true, data });
@@ -104,7 +105,7 @@ router.get('/users/me/profile', authenticate, requireRole('rm', 'member', 'partn
     throw err;
   }
 }));
-router.patch('/users/me/profile', authenticate, requireRole('rm', 'member', 'partner'), asyncHandler(async (req, res) => {
+router.patch('/users/me/profile', authenticate, requireRole('rm', 'member', 'partner', 'client'), asyncHandler(async (req, res) => {
   try {
     const data = await myProfile.updateMyProfile(req.user, req.body);
     invalidateUser(req.user.id);
@@ -126,7 +127,7 @@ router.patch('/users/me/profile', authenticate, requireRole('rm', 'member', 'par
     throw err;
   }
 }));
-router.get   ('/users',           authenticate, users.list);
+router.get   ('/users',           authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), users.list);
 router.get   ('/users/hierarchy', authenticate, requireRole('super_admin', 'rm'), users.hierarchy);
 router.post  ('/users',           authenticate, requireRole('super_admin', 'admin'), users.create);
 router.post  ('/users/bulk-import', authenticate, requireRole('super_admin', 'admin'), users.bulkImport);
@@ -208,6 +209,52 @@ router.patch('/users/lead-availability/bulk', authenticate, requireRole('super_a
 router.patch ('/users/:id',       authenticate, requireRole('super_admin', 'admin'), users.update);
 router.delete('/users/:id',       authenticate, requireRole('super_admin', 'admin'), users.softDelete);
 
+// ---- Clients ------------------------------------------------------
+router.get('/admin/clients', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  const result = await clients.listClients(req.user, req.query);
+  res.json({ success: true, data: result.rows, pagination: result.pagination });
+}));
+router.post('/admin/clients', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  const client = await clients.createClient(req.user, req.body || {}, req);
+  res.status(201).json({ success: true, data: client, message: 'Client created.' });
+}));
+router.get('/admin/clients/:clientId', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  const data = await clients.getClient(req.user, req.params.clientId);
+  res.json({ success: true, data });
+}));
+router.patch('/admin/clients/:clientId', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  const client = await clients.updateClient(req.user, req.params.clientId, req.body || {}, req);
+  invalidateUser(req.params.clientId);
+  res.json({ success: true, data: client, message: 'Client updated.' });
+}));
+router.post('/admin/clients/:clientId/activate', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  const client = await clients.setClientStatus(req.user, req.params.clientId, true, req);
+  invalidateUser(req.params.clientId);
+  res.json({ success: true, data: client, message: 'Client activated.' });
+}));
+router.post('/admin/clients/:clientId/deactivate', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  const client = await clients.setClientStatus(req.user, req.params.clientId, false, req);
+  invalidateUser(req.params.clientId);
+  res.json({ success: true, data: client, message: 'Client deactivated.' });
+}));
+router.post('/admin/clients/:clientId/reset-password', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  const data = await clients.sendReset(req.user, req.params.clientId, req);
+  res.json({ success: true, data, message: 'Password reset link sent.' });
+}));
+router.delete('/admin/clients/:clientId', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  const data = await clients.deleteClient(req.user, req.params.clientId, req);
+  invalidateUser(req.params.clientId);
+  res.json({ success: true, data, message: 'Client deleted.' });
+}));
+router.get('/client/dashboard', authenticate, requireRole('client'), asyncHandler(async (req, res) => {
+  const data = await clients.clientDashboard(req.user);
+  res.json({ success: true, data });
+}));
+router.get('/client/meta', authenticate, requireRole('client'), asyncHandler(async (req, res) => {
+  const data = await clients.clientSettings(req.user);
+  res.json({ success: true, data });
+}));
+
 // ---- Leads --------------------------------------------------------
 router.get  ('/leads',            authenticate, leads.list);
 router.post ('/leads/manual',     authenticate, requireRole('super_admin', 'admin', 'rm'), leads.createManual);
@@ -224,12 +271,12 @@ router.post ('/leads/:id/remarks',  authenticate, leads.addRemark);
 router.post ('/leads/:id/reassign', authenticate, requireRole('super_admin', 'rm'), leads.reassign);
 
 // ---- Reports (cached for performance) ---------------------------------
-router.get('/reports/summary', authenticate, responseCache(15000), reports.summary);
-router.get('/reports/daily',   authenticate, responseCache(30000), reports.daily);
+router.get('/reports/summary', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), responseCache(15000), reports.summary);
+router.get('/reports/daily',   authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), responseCache(30000), reports.daily);
 router.get('/reports/by-user', authenticate, requireRole('super_admin', 'rm'), responseCache(15000), reports.byUser);
-router.get('/reports/funnel',  authenticate, responseCache(30000), reports.funnel);
-router.get('/reports/sources', authenticate, responseCache(30000), reports.sources);
-router.get('/reports/categories', authenticate, responseCache(30000), reports.categories);
+router.get('/reports/funnel',  authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), responseCache(30000), reports.funnel);
+router.get('/reports/sources', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), responseCache(30000), reports.sources);
+router.get('/reports/categories', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), responseCache(30000), reports.categories);
 
 // ---- Admin: Distribution rules + Meta management ------------------
 router.get('/rules',  authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
@@ -2011,7 +2058,7 @@ router.get('/campaigns/adsets', authenticate, responseCache(60000), asyncHandler
 }));
 
 // Campaign performance report (leads per campaign with stats)
-router.get('/reports/campaigns', authenticate, asyncHandler(async (_req, res) => {
+router.get('/reports/campaigns', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), asyncHandler(async (_req, res) => {
   const { rows } = await query(`
     SELECT
       COALESCE(l.campaign_name, l.campaign_label, 'Unknown') AS campaign,
@@ -2036,7 +2083,7 @@ router.get('/reports/campaigns', authenticate, asyncHandler(async (_req, res) =>
 }));
 
 // Campaign summary cards (aggregated, no adset breakdown)
-router.get('/reports/campaign-summary', authenticate, asyncHandler(async (_req, res) => {
+router.get('/reports/campaign-summary', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), asyncHandler(async (_req, res) => {
   const { rows } = await query(`
     SELECT
       COALESCE(l.campaign_name, l.campaign_label, 'Unknown') AS campaign,
@@ -4814,7 +4861,7 @@ router.post('/admin/users/:userId/update-settings', authenticate, requireRole('s
 }));
 
 // ── Campaign Performance Report ──────────────────────────────────
-router.get('/reports/campaign-summary', authenticate, asyncHandler(async (_req, res) => {
+router.get('/reports/campaign-summary', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), asyncHandler(async (_req, res) => {
   const { rows } = await query(`
     SELECT COALESCE(l.campaign_name, 'Unknown') AS campaign,
       COUNT(*)::int AS total_leads,

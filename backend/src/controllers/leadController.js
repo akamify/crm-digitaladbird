@@ -126,7 +126,7 @@ async function enqueueLeadSheetSync(leadId, payload) {
 
 async function assertLeadWriteAccess(client, leadId, user) {
   const { rows: [lead] } = await client.query(
-    `SELECT l.id, l.assigned_to_user_id, assigned_user.report_to_id AS assigned_user_rm_id
+    `SELECT l.id, l.assigned_to_user_id, l.client_id, assigned_user.report_to_id AS assigned_user_rm_id
        FROM leads l
        LEFT JOIN users assigned_user ON assigned_user.id = l.assigned_to_user_id
       WHERE l.id = $1 AND l.deleted_at IS NULL`,
@@ -134,6 +134,7 @@ async function assertLeadWriteAccess(client, leadId, user) {
   );
   if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
   if (user.role === 'super_admin' || user.role === 'admin') return lead;
+  if (user.role === 'client' && lead.client_id === user.id) return lead;
   if ((user.role === 'member' || user.role === 'partner') && lead.assigned_to_user_id === user.id) return lead;
   if (user.role === 'rm' && lead.assigned_user_rm_id === user.id) return lead;
   throw new AppError(403, 'REASSIGNED_LEAD_READ_ONLY', 'This lead has been reassigned. You can view it, but cannot edit it.');
@@ -164,7 +165,10 @@ exports.list = asyncHandler(async (req, res) => {
   const reassignment = String(req.query.reassignment || '').trim();
 
   // role scoping
-  if (reassignment === 'to_others') {
+  if (req.user.role === 'client') {
+    params.push(req.user.id);
+    where.push(`l.client_id = $${params.length}`);
+  } else if (reassignment === 'to_others') {
     if (visible !== null) {
       if (visible.length === 0) return res.json({ success: true, data: { rows: [], total: 0 } });
       params.push(visible);
@@ -532,7 +536,11 @@ exports.getOne = asyncHandler(async (req, res) => {
   const visible = await getVisibleUserIds(req.user);
   const params = [req.params.id];
   let scope = '';
-  if (visible !== null) {
+  if (req.user.role === 'client') {
+    params.push(null);
+    params.push(req.user.id);
+    scope = ` AND l.client_id = $3`;
+  } else if (visible !== null) {
     params.push(visible);
     scope = ` AND (
       l.assigned_to_user_id = ANY($2::uuid[])
@@ -569,7 +577,7 @@ exports.getOne = asyncHandler(async (req, res) => {
        LEFT JOIN users manual_user ON manual_user.id = l.manual_added_by_user_id
        LEFT JOIN users creator_user ON creator_user.id = l.created_by_user_id
       WHERE l.id = $1 AND l.deleted_at IS NULL ${scope}`,
-    visible === null ? [req.params.id, null] : params
+    visible === null && req.user.role !== 'client' ? [req.params.id, null] : params
   );
   if (!rows[0]) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
 

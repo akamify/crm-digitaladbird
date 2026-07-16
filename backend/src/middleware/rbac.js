@@ -34,10 +34,12 @@ function requireMemberType(...types) {
  * Returns an array of user IDs the current user is allowed to see leads for.
  *   super_admin → null  (no filter — sees everything)
  *   rm          → self + direct reports
+ *   client      → client-owned Meta/leads are scoped separately
  *   member/partner → only self
  */
 async function getVisibleUserIds(user) {
   if (user.role === 'super_admin' || user.role === 'admin') return null;
+  if (user.role === 'client') return [];
   if (user.role === 'rm') {
     const { rows } = await query(
       `SELECT id FROM users

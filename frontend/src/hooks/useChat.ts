@@ -321,6 +321,31 @@ export function useSendWaspMessage(conversationId: string | null) {
   });
 }
 
+export function useSyncWaspInbox() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => safeApiPost<{
+      conversations_fetched: number;
+      conversations_synced: number;
+      messages_fetched: number;
+      messages_created: number;
+      errors?: Array<{ phone?: string; message: string }>;
+    }>('/chat/wasp/sync', { limit: 50, message_limit: 30 }),
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ['chat-conversations'] });
+      qc.invalidateQueries({ queryKey: ['chat-messages'] });
+      toast.success(`WhatsApp synced: ${result.conversations_synced || 0} chats, ${result.messages_created || 0} new messages`);
+      if (result.errors?.length) {
+        toast.error(`${result.errors.length} WhatsApp chat(s) could not sync`);
+      }
+    },
+    onError: (error: unknown) => {
+      const msg = (error as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'WhatsApp inbox sync failed.';
+      toast.error(msg);
+    },
+  });
+}
+
 export function useChatMessages(conversationId: string | null) {
   useEffect(() => {
     if (!conversationId) return;

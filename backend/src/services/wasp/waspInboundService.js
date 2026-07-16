@@ -345,4 +345,7 @@ module.exports = {
   handleInboundWaspMessage,
   handleWaspStatusUpdate,
   findLead,
+  findOrCreateConversation,
+  activeAdmins,
+  ensureParticipants,
 };

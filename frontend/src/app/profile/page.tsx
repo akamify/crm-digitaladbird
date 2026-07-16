@@ -33,7 +33,7 @@ export default function MyProfilePage() {
     <AppShell
       title="My Profile"
       subtitle="Your CRM account, work details, and performance summary"
-      roles={['rm', 'member', 'partner']}
+      roles={['rm', 'member', 'partner', 'client']}
     >
       <MyProfileInner />
     </AppShell>

@@ -10,6 +10,7 @@ const { assertLeadCommunicationAccess } = require('../services/leadCommunication
 const { getOrCreateLeadConversation } = require('../services/leadConversationService');
 const { getChatSessionState } = require('../services/chat/chatSessionService');
 const { sendWaspTextMessage } = require('../services/wasp/waspOutboundService');
+const waspInboxSync = require('../services/wasp/waspInboxSyncService');
 const logger = require('../utils/logger');
 
 const DIRECT_CHAT_DISABLED_CODE = 'DIRECT_CHAT_DISABLED_FOR_ROLE';
@@ -65,6 +66,17 @@ router.use(asyncHandler(async (req, _res, next) => {
     query(`UPDATE users SET last_seen_at = NOW() WHERE id = $1`, [req.user.id]).catch(() => {});
   }
   next();
+}));
+
+router.post('/wasp/sync', asyncHandler(async (req, res) => {
+  if (!['super_admin', 'admin', 'rm'].includes(req.user.role)) {
+    throw new AppError(403, 'WASP_SYNC_FORBIDDEN', 'Only admin and RM users can sync the WhatsApp inbox.');
+  }
+  const result = await waspInboxSync.syncExternalInbox({
+    limit: Math.min(Math.max(Number(req.body?.limit || 50), 1), 100),
+    messageLimit: Math.min(Math.max(Number(req.body?.message_limit || 30), 1), 100),
+  });
+  res.json({ success: true, data: result, message: 'WhatsApp inbox synced.' });
 }));
 
 // ─── Permission helpers ────────────────────────────────────────────
@@ -692,6 +704,9 @@ router.post('/conversations/:id/read', asyncHandler(async (req, res) => {
     WHERE user_id = $1 AND read_at IS NULL
       AND message_id IN (SELECT id FROM chat_messages WHERE conversation_id = $2)
   `, [userId, convId]);
+
+  waspInboxSync.markExternalConversationRead(convId)
+    .catch(err => logger.warn({ conversationId: convId, message: err.message }, '[Wasp] external mark-read failed'));
 
   emitToConversation(convId, 'message:read', { userId, conversationId: convId });
   res.json({ success: true });

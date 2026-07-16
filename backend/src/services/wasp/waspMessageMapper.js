@@ -86,6 +86,55 @@ function normalizeInbound(payload = {}) {
   };
 }
 
+function unwrapList(payload = {}, keys = []) {
+  if (Array.isArray(payload)) return payload;
+  for (const key of keys) {
+    const value = key.split('.').reduce((acc, part) => acc?.[part], payload);
+    if (Array.isArray(value)) return value;
+  }
+  if (Array.isArray(payload.data)) return payload.data;
+  if (Array.isArray(payload.items)) return payload.items;
+  if (Array.isArray(payload.results)) return payload.results;
+  return [];
+}
+
+function normalizeExternalConversation(row = {}) {
+  const contact = row.contact || row.customer || {};
+  const phone = normalizePhone(pick(row, ['phone', 'customer_phone', 'to', 'from', 'wa_id']) || contact.phone || contact.wa_id);
+  const waId = normalizeWaId(pick(row, ['wa_id', 'customer_wa_id', 'phone']) || contact.wa_id, phone);
+  const lastMessage = row.lastMessage || row.last_message || row.message || {};
+  return {
+    provider: 'wasp',
+    external_conversation_id: String(pick(row, ['id', 'conversation_id', 'conversationId', 'chat_id', 'thread_id']) || ''),
+    customer_phone: phone,
+    customer_wa_id: waId,
+    customer_name: String(pick(row, ['name', 'customer_name', 'contact.name']) || contact.name || '').trim(),
+    last_message_text: String(pick(row, ['last_message_text', 'lastMessage.text', 'lastMessage.body', 'last_message.body']) || '').trim(),
+    last_message_at: toIsoDate(pick(row, ['lastMessage.createdAt', 'last_message.created_at', 'last_message_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at'])),
+    unread_count: Number(pick(row, ['unread_count', 'unreadCount']) || 0),
+    raw_payload: row,
+    last_message: lastMessage,
+  };
+}
+
+function normalizeExternalMessage(row = {}, conversation = {}) {
+  const payload = { data: { message: row }, contact: conversation.raw_payload?.contact || {} };
+  const normalized = normalizeInbound(payload);
+  const direction = String(pick(row, ['direction']) || '').toLowerCase();
+  const fromMe = Boolean(pick(row, ['fromMe', 'from_me', 'is_from_me']));
+  return {
+    ...normalized,
+    external_conversation_id: normalized.external_conversation_id || conversation.external_conversation_id || '',
+    customer_phone: normalized.customer_phone || conversation.customer_phone || null,
+    customer_wa_id: normalized.customer_wa_id || conversation.customer_wa_id || null,
+    direction: direction || (fromMe ? 'outbound' : 'inbound'),
+    sender_type: fromMe || direction === 'outbound' ? 'user' : 'customer',
+    status: normalized.status || (fromMe ? 'sent' : 'received'),
+    timestamp: toIsoDate(pick(row, ['createdAt', 'created_at', 'timestamp', 'time']) || conversation.last_message_at),
+    raw_payload: row,
+  };
+}
+
 function normalizeOutboundResponse(response = {}) {
   const data = response.data?.message || response.data || response.message || response;
   return {
@@ -115,6 +164,9 @@ module.exports = {
   normalizePhone,
   normalizeWaId,
   normalizeInbound,
+  normalizeExternalConversation,
+  normalizeExternalMessage,
+  unwrapList,
   normalizeOutboundResponse,
   normalizeStatusUpdate,
   eventType,

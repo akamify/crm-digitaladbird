@@ -150,6 +150,7 @@ function AdminSupportTicketsInner() {
               <option value="rm">RM</option>
               <option value="member">Member</option>
               <option value="partner">Partner</option>
+              <option value="client">Client</option>
             </select>
 
             <select

@@ -18,7 +18,7 @@ const STATUS_CLASS: Record<string, string> = {
 
 export default function SupportPage() {
   return (
-    <AppShell title="Support" subtitle="Raise a ticket for any CRM issue." roles={['rm', 'member', 'partner']}>
+    <AppShell title="Support" subtitle="Raise a ticket for any CRM issue." roles={['rm', 'member', 'partner', 'client']}>
       <SupportInner />
     </AppShell>
   );

@@ -99,7 +99,7 @@ export function Topbar({ title, subtitle, onMenuClick, right }: TopbarProps) {
               <div className="truncate text-xs text-slate-500">{user?.email}</div>
               <div className="mt-1 inline-flex rounded-full bg-brand-50 px-2 py-0.5 text-[10px] uppercase tracking-wider text-brand-700">{user?.role}</div>
             </div>
-            {(user?.role === 'rm' || user?.role === 'member' || user?.role === 'partner') && (
+            {(user?.role === 'rm' || user?.role === 'member' || user?.role === 'partner' || user?.role === 'client') && (
               <Link
                 href="/profile"
                 onClick={() => setOpen(false)}

@@ -5,7 +5,7 @@ const notifications = require('./notifications/notificationService');
 const templates = require('./notifications/notificationTemplates');
 
 const ADMIN_ROLES = new Set(['super_admin', 'admin']);
-const ALLOWED_CREATOR_ROLES = new Set(['rm', 'member', 'partner']);
+const ALLOWED_CREATOR_ROLES = new Set(['rm', 'member', 'partner', 'client']);
 const STATUS_VALUES = new Set(['open', 'solved', 'not_solved']);
 
 function isAdmin(user) {
@@ -267,7 +267,7 @@ async function listAdminTickets(actor, filters = {}) {
     values.push(status);
   }
   const role = trim(filters.role).toLowerCase();
-  if (role && ['rm', 'member', 'partner'].includes(role)) {
+  if (role && ['rm', 'member', 'partner', 'client'].includes(role)) {
     where.push(`t.role = $${index++}`);
     values.push(role);
   }
