@@ -1003,6 +1003,7 @@ function MessageThread({
   const prevMsgCount = useRef(0);
   const messages = data?.messages || [];
   const isWaspConversation = conversation?.channel === 'whatsapp' || conversation?.provider === 'wasp';
+  const isInternalLeadConversation = conversation?.type === 'lead' && !isWaspConversation;
   const canSendWasp = Boolean(isWaspConversation && conversation?.can_send_whatsapp);
   const sessionInfo = sessionBadge(conversation?.session);
   const waspDisabledReason = conversation?.disabled_reason || conversation?.session?.disabled_reason || 'Waiting for customer message. WhatsApp reply is available only after the customer sends a message.';
@@ -1225,6 +1226,7 @@ function MessageThread({
           <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1">
             {conversation?.type === 'lead' && <LeadCategoryBadge category={conversation.lead?.category} />}
             {isWaspConversation && <MiniBadge tone="emerald" className="bg-white/15 text-white ring-white/15">WA</MiniBadge>}
+            {isInternalLeadConversation && <MiniBadge tone="slate" className="bg-white/15 text-white ring-white/15">Internal</MiniBadge>}
             {conversation?.is_external_unknown && <MiniBadge tone="violet" className="bg-violet-500/20 text-violet-100 ring-violet-300/20">External</MiniBadge>}
             {sessionInfo && (
               <span className={clsx('max-w-[220px] truncate rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none',
@@ -1528,6 +1530,14 @@ function MessageThread({
               <MiniBadge tone={canSendWasp ? 'emerald' : 'amber'}>WA reply</MiniBadge>
               <span className={clsx('min-w-0 flex-1 truncate text-[11px]', canSendWasp ? (dark ? 'text-emerald-300' : 'text-emerald-700') : (dark ? 'text-amber-300' : 'text-amber-700'))}>
                 {canSendWasp ? '24-hour window open' : waspDisabledReason}
+              </span>
+            </div>
+          )}
+          {isInternalLeadConversation && !editingMsg && (
+            <div className={clsx('flex items-center gap-2 border-b px-3 py-1.5', dark ? 'border-slate-700' : 'border-slate-200')}>
+              <MiniBadge tone="slate">Lead chat</MiniBadge>
+              <span className={clsx('min-w-0 flex-1 truncate text-[11px]', dark ? 'text-slate-300' : 'text-slate-600')}>
+                Internal CRM conversation. WhatsApp reply will appear here only after an AiWizChat conversation is linked and the 24-hour window is open.
               </span>
             </div>
           )}

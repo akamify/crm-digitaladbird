@@ -181,7 +181,8 @@ router.get('/conversations', asyncHandler(async (req, res) => {
   if (session === 'open') {
     sessionFilter = `AND COALESCE(c.session_status, 'closed') = 'open' AND c.session_expires_at > NOW()`;
   } else if (session === 'expired') {
-    sessionFilter = `AND COALESCE(c.channel, 'internal') = 'whatsapp' AND c.session_expires_at <= NOW()`;
+    sessionFilter = `AND COALESCE(c.channel, 'internal') = 'whatsapp'
+      AND NOT (COALESCE(c.session_status, 'closed') = 'open' AND c.session_expires_at > NOW())`;
   }
 
   if (isLeadOnlyChatRole(req.user)) {

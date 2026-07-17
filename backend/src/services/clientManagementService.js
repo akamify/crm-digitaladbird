@@ -109,7 +109,17 @@ function toClientCreateAppError(error) {
       },
     );
   }
-  return error;
+  return new AppError(
+    500,
+    'CLIENT_CREATE_FAILED',
+    'Client creation failed. Check backend logs for the exact failed step.',
+    {
+      db_code: error?.code || null,
+      db_table: error?.table || null,
+      db_column: error?.column || null,
+      db_constraint: error?.constraint || null,
+    },
+  );
 }
 
 function pageParams(input = {}) {
@@ -224,7 +234,14 @@ async function createClient(actor, body = {}, req = {}) {
   try {
     await assertCreateReady('client_create');
     const input = validateClientInput(body);
+    logger.info({
+      route: 'POST /api/admin/clients',
+      actorId: actor?.id,
+      email: input.email,
+      phone_present: Boolean(input.phone),
+    }, 'Client create validation passed');
     const userId = await generateClientUserId(input.fullName);
+    logger.info({ route: 'POST /api/admin/clients', actorId: actor?.id, userId }, 'Client user ID generated');
 
     const { rows: [client] } = await query(
       `INSERT INTO users(emp_code, cp_id, full_name, email, phone, role, status, password_hash, is_available, lead_assignment_enabled, lead_assignment_status)
@@ -236,6 +253,7 @@ async function createClient(actor, body = {}, req = {}) {
       if (error?.code === '23505') throw new AppError(409, 'CLIENT_ALREADY_EXISTS', 'Client email, phone, or user ID already exists.');
       throw error;
     });
+    logger.info({ route: 'POST /api/admin/clients', actorId: actor?.id, clientId: client.id, userId: client.user_id }, 'Client DB insert succeeded');
 
     let emailWarning = null;
     try {

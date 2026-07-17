@@ -94,7 +94,17 @@ function toManualLeadCreateAppError(error) {
       },
     );
   }
-  return error;
+  return new AppError(
+    500,
+    'MANUAL_LEAD_CREATE_FAILED',
+    'Manual lead creation failed. Check backend logs for the exact failed step.',
+    {
+      db_code: error?.code || null,
+      db_table: error?.table || null,
+      db_column: error?.column || null,
+      db_constraint: error?.constraint || null,
+    },
+  );
 }
 
 const callStatusEnumCache = {
@@ -861,6 +871,17 @@ exports.createManual = asyncHandler(async (req, res) => {
   const labelIds = normalizeUuidList(req.body?.label_ids || req.body?.labelIds);
   const assignedToUserId = String(req.body?.assigned_to_user_id || '').trim() || null;
   const nextFollowupAt = req.body?.next_followup_at || null;
+  logger.info({
+    route: 'POST /api/leads/manual',
+    userId: req.user?.id,
+    role: req.user?.role,
+    has_email: Boolean(email),
+    has_phone: Boolean(phone),
+    has_city: Boolean(city),
+    has_state: Boolean(state),
+    label_count: labelIds.length,
+    has_assignee: Boolean(assignedToUserId),
+  }, 'Manual lead create validation passed');
 
   const dup = await findExistingByContact({ phone, email });
   if (dup) {
@@ -939,6 +960,7 @@ exports.createManual = asyncHandler(async (req, res) => {
         req.user.id,
       ],
     );
+    logger.info({ route: 'POST /api/leads/manual', userId: req.user?.id, leadId: lead.id }, 'Manual lead DB insert succeeded');
 
     if (assignee) {
       await client.query(
@@ -955,6 +977,9 @@ exports.createManual = asyncHandler(async (req, res) => {
          ON CONFLICT (lead_id, label_id) DO NOTHING`,
         [lead.id, label.id, req.user.id],
       );
+    }
+    if (labels.length) {
+      logger.info({ route: 'POST /api/leads/manual', leadId: lead.id, label_count: labels.length }, 'Manual lead labels assigned');
     }
 
     if (initialRemark || normalizedCallStatus || normalizedStage || nextFollowupAt) {
@@ -989,6 +1014,7 @@ exports.createManual = asyncHandler(async (req, res) => {
           [lead.id],
         );
       }
+      logger.info({ route: 'POST /api/leads/manual', leadId: lead.id, has_status: Boolean(dbCallStatus), has_stage: Boolean(normalizedStage) }, 'Manual lead initial remark saved');
     }
 
     return {

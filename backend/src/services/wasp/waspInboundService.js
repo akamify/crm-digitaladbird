@@ -70,7 +70,23 @@ async function findOrCreateConversation(client, normalized, lead) {
   }
   existingSql += ` ORDER BY updated_at DESC LIMIT 1`;
   const { rows: existing } = await client.query(existingSql, params);
-  if (existing[0]) return existing[0];
+  if (existing[0]) {
+    if (lead?.id && (!existing[0].lead_id || existing[0].is_external_unknown || existing[0].type !== 'lead')) {
+      const { rows: [linked] } = await client.query(
+        `UPDATE chat_conversations
+            SET type = 'lead',
+                lead_id = $2,
+                title = $3,
+                is_external_unknown = FALSE,
+                updated_at = NOW()
+          WHERE id = $1
+          RETURNING *`,
+        [existing[0].id, lead.id, `WhatsApp: ${lead.full_name || normalized.customer_phone || normalized.customer_wa_id}`],
+      );
+      return linked || existing[0];
+    }
+    return existing[0];
+  }
 
   const admins = lead ? [] : await activeAdmins(client);
   const createdBy = lead?.assigned_to_user_id || admins[0]?.id || null;
