@@ -77,11 +77,13 @@ export function Sidebar({
   collapsed = false,
   onToggleCollapse,
   onExpand,
+  onCollapse,
 }: {
   onNavigate?: () => void;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
   onExpand?: () => void;
+  onCollapse?: () => void;
 }) {
   const pathname = usePathname();
   const { user } = useAuth();
@@ -99,10 +101,19 @@ export function Sidebar({
 
   return (
     <aside
-      onMouseEnter={collapsed ? onExpand : undefined}
+      onMouseEnter={() => {
+        if (collapsed) {
+          onExpand?.();
+        }
+      }}
+      onMouseLeave={() => {
+        if (!collapsed) {
+          onCollapse?.();
+        }
+      }}
       className={clsx(
-      'flex h-full shrink-0 flex-col border-r border-slate-200 bg-white transition-[width] duration-200',
-      collapsed ? 'w-20' : 'w-60',
+        "flex h-full shrink-0 flex-col border-r border-slate-200 bg-white transition-[width] duration-200",
+        collapsed ? "w-20" : "w-60"
       )}
     >
       <style jsx>{`

@@ -47,11 +47,21 @@ export function AppShell({ children, title, subtitle, roles, right }: AppShellPr
     });
   }
 
+  function collapseSidebar() {
+    setCollapsed((value) => {
+      if (value) return value;
+      try {
+        window.localStorage.setItem('crm_sidebar_collapsed', 'true');
+      } catch {}
+      return true;
+    });
+  }
+
   return (
     <AuthGate roles={roles}>
       <div className="min-h-screen bg-slate-50">
         <div className="fixed inset-y-0 left-0 z-40 hidden md:flex md:flex-col">
-          <Sidebar collapsed={collapsed} onToggleCollapse={toggleCollapsed} onExpand={expandSidebar} />
+          <Sidebar collapsed={collapsed} onToggleCollapse={toggleCollapsed} onExpand={expandSidebar} onCollapse={collapseSidebar} />
         </div>
 
         {open && (

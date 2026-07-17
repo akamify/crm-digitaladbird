@@ -83,7 +83,17 @@ async function sendWaspTextMessage({ conversationId, user, text }) {
               status_updated_at = NOW()
         WHERE id = $1
         RETURNING *`,
-      [message.id, sent.external_message_id || null, sent.external_conversation_id || null, sent.status || 'sent', JSON.stringify(sent.raw_response || {})],
+      [
+        message.id,
+        sent.external_message_id || null,
+        sent.external_conversation_id || null,
+        sent.status || 'sent',
+        JSON.stringify({
+          ...(sent.raw_response || {}),
+          aiwiz_message_id: sent.external_message_id || null,
+          whatsapp_message_id: sent.whatsapp_message_id || null,
+        }),
+      ],
     );
     await query(
       `UPDATE chat_conversations

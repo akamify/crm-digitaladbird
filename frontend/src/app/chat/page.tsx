@@ -55,6 +55,7 @@ const WA_DARK_CHAT = '#0b141a';
 const WA_DARK_HEADER = '#202c33';
 const WA_DARK_BUBBLE_ME = '#005c4b';
 const WA_DARK_BUBBLE_OTHER = '#202c33';
+const HIDE_SCROLLBAR = '[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden';
 
 const AVATAR_COLORS = [
   'from-emerald-500 to-teal-600', 'from-blue-500 to-indigo-600',
@@ -223,9 +224,25 @@ function TypingDots() {
 }
 
 function DeliveryTicks({ status, dark }: { status?: string; dark?: boolean }) {
+  if (status === 'failed') return <span className="text-[10px] font-semibold text-red-500">failed</span>;
+  if (status === 'queued') return <span className={clsx('text-[10px]', dark ? 'text-slate-500' : 'text-slate-400')}>queued</span>;
   if (status === 'read') return <CheckCheck className="h-3.5 w-3.5 text-sky-500" />;
   if (status === 'delivered') return <CheckCheck className={clsx('h-3.5 w-3.5', dark ? 'text-slate-400' : 'text-slate-400')} />;
   return <Check className={clsx('h-3.5 w-3.5', dark ? 'text-slate-400' : 'text-slate-400')} />;
+}
+
+function MiniBadge({ children, tone = 'slate', className }: { children: React.ReactNode; tone?: 'emerald' | 'amber' | 'violet' | 'slate'; className?: string }) {
+  const tones = {
+    emerald: 'bg-emerald-50 text-emerald-700 ring-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-200 dark:ring-emerald-500/20',
+    amber: 'bg-amber-50 text-amber-700 ring-amber-100 dark:bg-amber-500/10 dark:text-amber-200 dark:ring-amber-500/20',
+    violet: 'bg-violet-50 text-violet-700 ring-violet-100 dark:bg-violet-500/10 dark:text-violet-200 dark:ring-violet-500/20',
+    slate: 'bg-slate-100 text-slate-600 ring-slate-200 dark:bg-white/10 dark:text-slate-200 dark:ring-white/10',
+  };
+  return (
+    <span className={clsx('inline-flex max-w-full items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none ring-1', tones[tone], className)}>
+      {children}
+    </span>
+  );
 }
 
 // ─── Image Preview Modal ────────────────────────────────────────────
@@ -713,7 +730,7 @@ function ForwardDialog({ onSelect, onClose, dark }: { onSelect: (convId: string)
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search conversations..." className="w-full rounded-lg bg-white/15 py-2 pl-9 pr-3 text-sm text-white placeholder-white/50 outline-none focus:bg-white/25 transition" autoFocus />
           </div>
         </div>
-        <div className="max-h-[400px] overflow-y-auto">
+        <div className={clsx('max-h-[400px] overflow-y-auto', HIDE_SCROLLBAR)}>
           {filtered.map(conv => {
             const name = conv.type === 'direct' ? conv.other_user?.full_name || 'Unknown' : conv.title || 'Conversation';
             return (
@@ -779,14 +796,17 @@ function ConversationList({
     const isActive = conv.id === selected;
     const name = conv.type === 'direct' ? conv.other_user?.full_name || 'Unknown' : conv.type === 'broadcast' ? conv.title || 'Broadcast' : conv.title || 'Lead Discussion';
     const isOnline = conv.type === 'direct' && conv.other_user?.status === 'active';
+    const sessionText = conv.session?.status === 'open'
+      ? `Open${conv.session.expires_at ? ` - ${formatSessionExpiry(conv.session.expires_at)}` : ''}`
+      : conv.disabled_reason || conv.session?.disabled_reason || 'Closed';
 
     return (
       <button key={conv.id} onClick={() => onSelect(conv.id)}
-        className={clsx('flex w-full items-center gap-3 px-4 py-3 text-left transition-all duration-200 border-b',
-          dark ? (isActive ? 'bg-[#2a3942] border-slate-700' : 'border-slate-700/50 hover:bg-[#202c33]')
-            : (isActive ? 'bg-teal-50/70 border-slate-50' : 'border-slate-50 hover:bg-slate-50'))}>
+        className={clsx('flex w-full items-center gap-2.5 border-b px-3 py-2.5 text-left transition-all duration-200',
+          dark ? (isActive ? 'border-slate-700 bg-[#22313a]' : 'border-slate-800/60 hover:bg-[#202c33]')
+            : (isActive ? 'border-teal-100 bg-teal-50/70' : 'border-slate-100 hover:bg-slate-50'))}>
         <div className="relative shrink-0">
-          <Avatar name={name} type={conv.type} />
+          <Avatar name={name} type={conv.type} size="sm" />
           {isOnline && <OnlineDot />}
         </div>
         <div className="min-w-0 flex-1">
@@ -798,12 +818,8 @@ function ConversationList({
                 ? (dark ? 'font-bold text-white' : 'font-bold text-slate-900')
                 : (dark ? 'font-medium text-slate-200' : 'font-medium text-slate-700'))}>{name}</span>
               {conv.type === 'lead' && <LeadCategoryBadge category={conv.lead?.category} />}
-              {conv.channel === 'whatsapp' && (
-                <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700">WA</span>
-              )}
-              {conv.is_external_unknown && (
-                <span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[9px] font-semibold text-violet-700">External</span>
-              )}
+              {conv.channel === 'whatsapp' && <MiniBadge tone="emerald" className="px-1.5">WA</MiniBadge>}
+              {conv.is_external_unknown && <MiniBadge tone="violet" className="px-1.5">External</MiniBadge>}
             </div>
             <span className={clsx('shrink-0 text-[11px]', conv.unread_count > 0 ? 'text-teal-500 font-medium' : (dark ? 'text-slate-500' : 'text-slate-400'))}>
               {formatListTime(conv.last_message_at)}
@@ -823,8 +839,8 @@ function ConversationList({
             )}
           </div>
           {conv.channel === 'whatsapp' && conv.session && (
-            <div className={clsx('mt-1 text-[10px]', conv.session.status === 'open' ? 'text-emerald-500' : dark ? 'text-amber-300' : 'text-amber-600')}>
-              {conv.session.status === 'open' ? `WhatsApp session open${conv.session.expires_at ? ` - ${formatSessionExpiry(conv.session.expires_at)}` : ''}` : conv.disabled_reason || conv.session.disabled_reason}
+            <div className={clsx('mt-1 truncate text-[10px]', conv.session.status === 'open' ? 'text-emerald-500' : dark ? 'text-amber-300' : 'text-amber-600')}>
+              {sessionText}
             </div>
           )}
         </div>
@@ -834,22 +850,22 @@ function ConversationList({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="shrink-0 px-4 py-3" style={{ background: dark ? WA_DARK_HEADER : `linear-gradient(135deg, ${WA_GREEN_DARK}, ${WA_GREEN_LIGHT})` }}>
+      <div className="shrink-0 px-3 py-3" style={{ background: dark ? WA_DARK_HEADER : `linear-gradient(135deg, ${WA_GREEN_DARK}, ${WA_GREEN_LIGHT})` }}>
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-bold text-white flex items-center gap-2">
-            <MessageSquare className="h-5 w-5" /> Messages
-            {totalUnread > 0 && <span className="rounded-full bg-white/20 px-2 py-0.5 text-xs">{totalUnread}</span>}
+          <h2 className="flex min-w-0 items-center gap-2 text-base font-bold text-white">
+            <MessageSquare className="h-4 w-4 shrink-0" /> <span className="truncate">WhatsApp Inbox</span>
+            {totalUnread > 0 && <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[10px]">{totalUnread > 99 ? '99+' : totalUnread}</span>}
           </h2>
-          <span className="rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-semibold text-white/90">WhatsApp</span>
+          <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-semibold text-white/90">Live</span>
         </div>
         <div className="relative mt-2">
           <Search className="absolute left-3 top-2 h-4 w-4 text-white/40" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search messages & chats..."
-            className="w-full rounded-lg bg-white/15 py-1.5 pl-9 pr-3 text-sm text-white placeholder-white/40 outline-none focus:bg-white/25 transition" />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search WhatsApp chats..."
+            className="w-full rounded-xl bg-white/15 py-1.5 pl-9 pr-3 text-sm text-white placeholder-white/40 outline-none transition focus:bg-white/25" />
         </div>
       </div>
 
-      <div className={clsx('shrink-0 flex gap-1 px-3 py-2 border-b overflow-x-auto', dark ? 'border-slate-700 bg-[#111b21]' : 'border-slate-100 bg-white')}>
+      <div className={clsx('shrink-0 flex gap-1.5 px-3 py-2 border-b overflow-x-auto', HIDE_SCROLLBAR, dark ? 'border-slate-700 bg-[#111b21]' : 'border-slate-100 bg-white')}>
         {(leadOnly
           ? (['all', 'unread', 'whatsapp', 'open', 'expired', 'archived'] as const)
           : (['all', 'unread', 'whatsapp', 'external', 'open', 'expired', 'archived'] as const)
@@ -876,7 +892,7 @@ function ConversationList({
           </button>
         )}
       </div>
-      <div className={clsx('shrink-0 flex gap-1 px-3 py-2 border-b overflow-x-auto', dark ? 'border-slate-700 bg-[#111b21]' : 'border-slate-100 bg-white')}>
+      <div className={clsx('shrink-0 flex gap-1.5 px-3 py-2 border-b overflow-x-auto', HIDE_SCROLLBAR, dark ? 'border-slate-700 bg-[#111b21]' : 'border-slate-100 bg-white')}>
         {(['all', 'trader', 'partner', 'unknown'] as const).map(category => (
           <button key={category} onClick={() => setLeadCategory(category)} className={clsx('rounded-full px-3 py-1 text-[11px] font-medium whitespace-nowrap', leadCategory === category ? 'bg-violet-600 text-white' : dark ? 'bg-slate-700 text-slate-300' : 'bg-slate-100 text-slate-600')}>
             {category === 'all' ? 'All categories' : category === 'trader' ? 'Trader Leads' : category === 'partner' ? 'Partner Leads' : 'Unknown'}
@@ -885,7 +901,7 @@ function ConversationList({
       </div>
 
       {search.length >= 2 && searchResults && searchResults.length > 0 && (
-        <div className={clsx('border-b max-h-40 overflow-y-auto', dark ? 'bg-[#1a2a32] border-slate-700' : 'bg-amber-50/50 border-slate-200')}>
+        <div className={clsx('border-b max-h-40 overflow-y-auto', HIDE_SCROLLBAR, dark ? 'bg-[#1a2a32] border-slate-700' : 'bg-amber-50/50 border-slate-200')}>
           <div className={clsx('px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider', dark ? 'text-slate-400' : 'text-slate-500')}>Search Results</div>
           {searchResults.slice(0, 5).map((r: any) => (
             <button key={r.id} onClick={() => onSelect(r.conversation_id)} className={clsx('flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs', dark ? 'hover:bg-slate-600' : 'hover:bg-amber-50')}>
@@ -899,7 +915,7 @@ function ConversationList({
         </div>
       )}
 
-      <div className={clsx('flex-1 overflow-y-auto', dark ? 'bg-[#111b21]' : 'bg-white')}>
+      <div className={clsx('flex-1 overflow-y-auto', HIDE_SCROLLBAR, dark ? 'bg-[#111b21]' : 'bg-white')}>
         {loading && !conversations.length && (
           <div className="flex flex-col items-center justify-center py-16 text-slate-400"><Loader2 className="h-6 w-6 animate-spin mb-2" /><p className="text-sm">Loading...</p></div>
         )}
@@ -1198,31 +1214,23 @@ function MessageThread({
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="shrink-0 flex items-center gap-3 px-4 py-2.5" style={{ background: dark ? WA_DARK_HEADER : `linear-gradient(135deg, ${WA_GREEN_DARK}, ${WA_GREEN_LIGHT})` }}>
+      <div className="shrink-0 flex items-center gap-2.5 px-3 py-2.5" style={{ background: dark ? WA_DARK_HEADER : `linear-gradient(135deg, ${WA_GREEN_DARK}, ${WA_GREEN_LIGHT})` }}>
         <button onClick={onBack} className="grid h-8 w-8 place-items-center rounded-full text-white/80 hover:bg-white/10 sm:hidden transition"><ArrowLeft className="h-5 w-5" /></button>
         <div className="relative cursor-pointer" onClick={() => setShowParticipants(v => !v)}>
-          <Avatar name={title} type={conversation?.type} />
+          <Avatar name={title} type={conversation?.type} size="sm" />
           {isOnline && <OnlineDot />}
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-bold text-white">{title}</div>
-          <div className="mt-0.5 flex flex-wrap items-center gap-1">
+          <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1">
             {conversation?.type === 'lead' && <LeadCategoryBadge category={conversation.lead?.category} />}
-            {isWaspConversation && (
-              <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-semibold text-white">
-                WaspAkamify WhatsApp
-              </span>
-            )}
-            {conversation?.is_external_unknown && (
-              <span className="rounded-full bg-violet-500/25 px-2 py-0.5 text-[10px] font-semibold text-violet-100">
-                Admin-only external
-              </span>
-            )}
+            {isWaspConversation && <MiniBadge tone="emerald" className="bg-white/15 text-white ring-white/15">WA</MiniBadge>}
+            {conversation?.is_external_unknown && <MiniBadge tone="violet" className="bg-violet-500/20 text-violet-100 ring-violet-300/20">External</MiniBadge>}
             {sessionInfo && (
-              <span className={clsx('rounded-full px-2 py-0.5 text-[10px] font-semibold',
-                sessionInfo.tone === 'emerald' ? 'bg-emerald-500/25 text-emerald-100'
-                  : sessionInfo.tone === 'amber' ? 'bg-amber-500/25 text-amber-100'
-                    : sessionInfo.tone === 'violet' ? 'bg-violet-500/25 text-violet-100'
+              <span className={clsx('max-w-[220px] truncate rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none',
+                sessionInfo.tone === 'emerald' ? 'bg-emerald-500/20 text-emerald-100'
+                  : sessionInfo.tone === 'amber' ? 'bg-amber-500/20 text-amber-100'
+                    : sessionInfo.tone === 'violet' ? 'bg-violet-500/20 text-violet-100'
                       : 'bg-white/15 text-white/80')}>
                 {sessionInfo.label}
               </span>
@@ -1277,7 +1285,7 @@ function MessageThread({
 
       {/* Participants panel */}
       {showParticipants && (
-        <div className={clsx('shrink-0 border-b max-h-48 overflow-y-auto', dark ? 'bg-[#1a2a32] border-slate-600' : 'bg-white border-slate-200')}>
+        <div className={clsx('shrink-0 border-b max-h-48 overflow-y-auto', HIDE_SCROLLBAR, dark ? 'bg-[#1a2a32] border-slate-600' : 'bg-white border-slate-200')}>
           <div className={clsx('flex items-center justify-between px-4 py-2', dark ? '' : '')}>
             <span className={clsx('text-xs font-bold uppercase tracking-wider', dark ? 'text-slate-400' : 'text-slate-500')}>Participants ({participants.length})</span>
             <button onClick={() => setShowParticipants(false)} className={clsx('text-slate-400 hover:text-slate-600')}><X className="h-3.5 w-3.5" /></button>
@@ -1310,7 +1318,7 @@ function MessageThread({
       <PinnedMessagesBar conversationId={conversationId} dark={dark} onJumpTo={() => { }} />
 
       {/* Messages area */}
-      <div className={clsx('flex-1 overflow-y-auto px-3 py-2 sm:px-4 relative transition-colors', isDragging && 'ring-4 ring-inset ring-teal-400/50')}
+      <div className={clsx('flex-1 overflow-y-auto px-3 py-2 sm:px-4 relative transition-colors', HIDE_SCROLLBAR, isDragging && 'ring-4 ring-inset ring-teal-400/50')}
         style={dark ? { backgroundColor: WA_DARK_CHAT } : { backgroundColor: WA_CHAT_BG, backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cdefs%3E%3Cpattern id='p' width='40' height='40' patternUnits='userSpaceOnUse'%3E%3Cpath d='M20 3c2 0 3 1 3 3s-1 3-3 3-3-1-3-3 1-3 3-3zm-7 14c1 0 2 .5 2 1.5s-1 1.5-2 1.5-2-.5-2-1.5.9-1.5 2-1.5zm14 0c1 0 2 .5 2 1.5s-1 1.5-2 1.5-2-.5-2-1.5.9-1.5 2-1.5zm-7 11c1.5 0 2.5 1 2.5 2s-1 2-2.5 2-2.5-1-2.5-2 1-2 2.5-2z' fill='%23d4cfc6' fill-opacity='.25'/%3E%3C/pattern%3E%3C/defs%3E%3Crect width='200' height='200' fill='url(%23p)'/%3E%3C/svg%3E")` }}
         onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
 
@@ -1516,13 +1524,10 @@ function MessageThread({
       {!isRecording && (
         <div className={clsx('shrink-0 border-t', dark ? 'bg-[#202c33] border-slate-700' : 'bg-slate-100 border-slate-200')} style={{ position: 'relative' }}>
           {isWaspConversation && !editingMsg && (
-            <div className={clsx('flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b', dark ? 'border-slate-700' : 'border-slate-200')}>
-              <span className={clsx('rounded-full px-3 py-1 text-[11px] font-semibold',
-                canSendWasp ? 'bg-emerald-600 text-white' : dark ? 'bg-amber-900/40 text-amber-200' : 'bg-amber-100 text-amber-700')}>
-                WhatsApp reply
-              </span>
-              <span className={clsx('text-[11px]', canSendWasp ? (dark ? 'text-emerald-300' : 'text-emerald-700') : (dark ? 'text-amber-300' : 'text-amber-700'))}>
-                {canSendWasp ? '24-hour customer service window is open.' : waspDisabledReason}
+            <div className={clsx('flex items-center gap-2 border-b px-3 py-1.5', dark ? 'border-slate-700' : 'border-slate-200')}>
+              <MiniBadge tone={canSendWasp ? 'emerald' : 'amber'}>WA reply</MiniBadge>
+              <span className={clsx('min-w-0 flex-1 truncate text-[11px]', canSendWasp ? (dark ? 'text-emerald-300' : 'text-emerald-700') : (dark ? 'text-amber-300' : 'text-amber-700'))}>
+                {canSendWasp ? '24-hour window open' : waspDisabledReason}
               </span>
             </div>
           )}
@@ -1609,7 +1614,7 @@ function NewChatDialog({ open, onClose, onSelect, dark }: { open: boolean; onClo
               className="w-full rounded-lg bg-white/15 py-2 pl-9 pr-3 text-sm text-white placeholder-white/50 outline-none focus:bg-white/25 transition" autoFocus />
           </div>
         </div>
-        <div className="max-h-[400px] overflow-y-auto">
+        <div className={clsx('max-h-[400px] overflow-y-auto', HIDE_SCROLLBAR)}>
           {isLoading && <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-teal-500" /></div>}
           {Object.entries(grouped).map(([label, list]) => (
             <div key={label}>
@@ -1694,7 +1699,7 @@ function OnlinePanel({ dark }: { dark: boolean }) {
           <span className={clsx('text-sm font-bold', dark ? 'text-slate-200' : 'text-slate-800')}>Online ({online.length})</span>
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto py-1">
+      <div className={clsx('flex-1 overflow-y-auto py-1', HIDE_SCROLLBAR)}>
         {isLoading && <div className="flex justify-center py-8"><Loader2 className="h-4 w-4 animate-spin text-slate-300" /></div>}
         {online.map(c => (
           <div key={c.id} className={clsx('flex items-center gap-2.5 px-4 py-2 transition', dark ? 'hover:bg-slate-700' : 'hover:bg-slate-50')}>
@@ -1803,6 +1808,12 @@ export default function ChatPage() {
   const selectedConv = useMemo(() => {
     const found = conversations.find(c => c.id === selectedId);
     if (found || !leadThread.data || selectedId !== leadThread.data.conversationId) return found;
+    if (leadThread.data.conversation) {
+      return {
+        ...leadThread.data.conversation,
+        lead: leadThread.data.lead || leadThread.data.conversation.lead || null,
+      } as ChatConversation;
+    }
     return {
       id: leadThread.data.conversationId,
       type: 'lead',
@@ -1845,7 +1856,7 @@ export default function ChatPage() {
     <AppShell title="Messages" roles={['super_admin', 'admin', 'rm', 'member', 'partner']}>
       <ChatErrorBoundary dark={dark}>
         <ConnectionBanner dark={dark} />
-        <div className={clsx('flex overflow-hidden rounded-xl border shadow-card', dark ? 'border-slate-700' : 'border-slate-200')} style={{ height: 'calc(100vh - 7rem)' }}>
+        <div className={clsx('flex overflow-hidden rounded-2xl border shadow-sm', dark ? 'border-slate-700 bg-[#0b141a]' : 'border-slate-200 bg-white')} style={{ height: 'calc(100vh - 7rem)' }}>
           {/* Left - Conversations */}
           <div className={clsx('w-full sm:w-[320px] md:w-[360px] shrink-0 border-r',
             dark ? 'bg-[#111b21] border-slate-700' : 'bg-white border-slate-200',

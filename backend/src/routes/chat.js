@@ -452,9 +452,11 @@ router.get('/conversations/:id/messages', asyncHandler(async (req, res) => {
     body: m.is_deleted ? 'This message was deleted' : m.body,
     reply_to: m.reply_to_id ? replyMap[m.reply_to_id] || null : null,
     forwarded_from: m.forwarded_from_id ? fwdMap[m.forwarded_from_id] || null : null,
-    delivery_status: m.sender_id === userId
-      ? (statusMap[m.id]?.all_read ? 'read' : statusMap[m.id]?.all_delivered ? 'delivered' : 'sent')
-      : (m.delivery_status || undefined),
+    delivery_status: m.provider === 'wasp'
+      ? (m.delivery_status || undefined)
+      : m.sender_id === userId
+        ? (statusMap[m.id]?.all_read ? 'read' : statusMap[m.id]?.all_delivered ? 'delivered' : 'sent')
+        : (m.delivery_status || undefined),
   }));
 
   res.json({ success: true, data: { messages: enriched, total: count, page: +page } });
@@ -1051,6 +1053,13 @@ router.get('/lead/:leadId/thread', asyncHandler(async (req, res) => {
   const { conversationId: convId, lead } = await getOrCreateLeadConversation({ leadId, user: req.user });
   const { rows: [conversation] } = await query(`SELECT * FROM chat_conversations WHERE id = $1`, [convId]);
   const session = getChatSessionState(conversation);
+  const conversationPayload = {
+    ...conversation,
+    lead,
+    session,
+    can_send_whatsapp: session.can_send_whatsapp,
+    disabled_reason: session.disabled_reason,
+  };
 
   const { rows: messages } = await query(`
     SELECT m.id, m.sender_id, u.full_name AS sender_name, u.role AS sender_role,
@@ -1066,6 +1075,7 @@ router.get('/lead/:leadId/thread', asyncHandler(async (req, res) => {
     success: true,
     data: {
       conversationId: convId,
+      conversation: conversationPayload,
       lead,
       messages: messages.map(m => ({
         ...m,

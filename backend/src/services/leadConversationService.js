@@ -8,7 +8,10 @@ async function getOrCreateLeadConversation({ leadId, user, runner = null }) {
   const { rows: existing } = await exec.query(
     `SELECT id FROM chat_conversations
       WHERE type = 'lead' AND lead_id = $1 AND is_deleted = FALSE
-      ORDER BY created_at ASC
+      ORDER BY
+        CASE WHEN COALESCE(channel, 'internal') = 'whatsapp' THEN 0 ELSE 1 END,
+        updated_at DESC NULLS LAST,
+        created_at DESC
       LIMIT 1`,
     [leadId],
   );
