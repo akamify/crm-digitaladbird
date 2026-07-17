@@ -1831,14 +1831,14 @@ export default function ChatPage() {
       last_message_at: null,
       unread_count: 0,
       lead: leadThread.data.lead || null,
-      channel: leadThread.data.conversation?.channel,
-      provider: leadThread.data.conversation?.provider,
-      session: leadThread.data.conversation?.session,
-      can_send_whatsapp: leadThread.data.conversation?.can_send_whatsapp,
-      disabled_reason: leadThread.data.conversation?.disabled_reason,
-      session_status: leadThread.data.conversation?.session_status,
-      session_expires_at: leadThread.data.conversation?.session_expires_at,
-      is_external_unknown: leadThread.data.conversation?.is_external_unknown,
+      channel: 'internal',
+      provider: null,
+      session: undefined,
+      can_send_whatsapp: false,
+      disabled_reason: null,
+      session_status: null,
+      session_expires_at: null,
+      is_external_unknown: false,
     } as ChatConversation;
   }, [conversations, leadId, leadThread.data, selectedId]);
 
