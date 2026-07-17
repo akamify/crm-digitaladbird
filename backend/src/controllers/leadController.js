@@ -71,6 +71,22 @@ function normalizeUuidList(value, max = 25) {
 
 function toManualLeadCreateAppError(error) {
   if (error instanceof AppError) return error;
+  if (error?.code === '23505') {
+    return new AppError(
+      409,
+      'DUPLICATE_LEAD',
+      'A lead with the same phone, email, or Meta lead id already exists.',
+      { constraint: error.constraint || null },
+    );
+  }
+  if (error?.code === '23514' && String(error.constraint || '').toLowerCase().includes('category')) {
+    return new AppError(
+      500,
+      'MANUAL_LEAD_CATEGORY_SCHEMA_MIGRATION_REQUIRED',
+      'Manual lead category schema is not ready. Run latest migrations and retry.',
+      { constraint: error.constraint || null },
+    );
+  }
   if (error?.code === '42703' || error?.code === '42P01') {
     return new AppError(
       500,

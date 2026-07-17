@@ -20,6 +20,7 @@ const NO_TRANSACTION_MIGRATIONS = new Set([
   '057_workflow_step2_multiselect_and_call_cut_busy.sql',
   '061_client_role_and_ownership.sql',
   '062_manual_lead_client_create_guards.sql',
+  '063_client_cp_id_and_manual_lead_category_guards.sql',
 ]);
 
 function splitSqlStatements(sql) {

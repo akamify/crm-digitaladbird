@@ -100,7 +100,31 @@ async function loadReadiness() {
   );
   const enums = new Set(enumRows.map(row => key(row.enum_type, row.enumlabel)));
 
-  cached = { columns, enums, checked_at: new Date().toISOString() };
+  const { rows: nullableRows } = await query(
+    `SELECT table_name, column_name, is_nullable
+       FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND (table_name, column_name) IN (('users', 'cp_id'))`,
+  );
+  const nullable = new Map(nullableRows.map(row => [key(row.table_name, row.column_name), row.is_nullable === 'YES']));
+
+  const { rows: constraintRows } = await query(
+    `SELECT conname, pg_get_constraintdef(oid) AS definition
+       FROM pg_constraint
+      WHERE conrelid = 'leads'::regclass
+        AND contype = 'c'
+        AND pg_get_constraintdef(oid) ILIKE '%category%'`,
+  );
+  const leadCategoryAllowsUnknown = constraintRows.length === 0
+    || constraintRows.some(row => String(row.definition || '').includes("'unknown'"));
+
+  cached = {
+    columns,
+    enums,
+    nullable,
+    leadCategoryAllowsUnknown,
+    checked_at: new Date().toISOString(),
+  };
   cachedAt = now;
   return cached;
 }
@@ -115,10 +139,18 @@ async function getCreateReadiness() {
     const missingEnums = (REQUIRED_ENUMS[scope] || [])
       .filter(([type, value]) => !state.enums.has(key(type, value)))
       .map(([type, value]) => `${type}.${value}`);
+    const blockers = [];
+    if (scope === 'client_create' && state.nullable.get(key('users', 'cp_id')) !== true) {
+      blockers.push('users.cp_id must allow NULL for client users');
+    }
+    if (scope === 'manual_lead_create' && !state.leadCategoryAllowsUnknown) {
+      blockers.push('leads.category check constraint must allow unknown');
+    }
     result[scope] = {
-      ready: missingColumns.length === 0 && missingEnums.length === 0,
+      ready: missingColumns.length === 0 && missingEnums.length === 0 && blockers.length === 0,
       missing_columns: missingColumns,
       missing_enums: missingEnums,
+      blockers,
     };
   }
   return { checked_at: state.checked_at, ...result };
@@ -133,6 +165,7 @@ async function assertCreateReady(scope) {
     scope,
     missing_columns: state?.missing_columns || [],
     missing_enums: state?.missing_enums || [],
+    blockers: state?.blockers || [],
   }, 'Create endpoint schema readiness failed');
 
   throw new AppError(

@@ -90,6 +90,22 @@ function logClientError(error, context = {}) {
 
 function toClientCreateAppError(error) {
   if (error instanceof AppError) return error;
+  if (error?.code === '23502' && error?.column === 'cp_id') {
+    return new AppError(
+      500,
+      'CLIENT_CP_ID_SCHEMA_MIGRATION_REQUIRED',
+      'Client creation database schema is not ready for clients without CP ID. Run latest migrations and retry.',
+      { column: error.column || null },
+    );
+  }
+  if (error?.code === '23514' && String(error.constraint || '').includes('users_cp_id')) {
+    return new AppError(
+      500,
+      'CLIENT_CP_ID_SCHEMA_MIGRATION_REQUIRED',
+      'Client creation database schema is not ready for clients without CP ID. Run latest migrations and retry.',
+      { constraint: error.constraint || null },
+    );
+  }
   if (error?.code === '22P02' && String(error.message || '').includes('user_role')) {
     return new AppError(
       500,
