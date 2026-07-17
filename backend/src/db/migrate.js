@@ -18,6 +18,8 @@ const NO_TRANSACTION_MIGRATIONS = new Set([
   '038_user_lifecycle_role_simplification.sql',
   '046_lead_call_log_outcomes.sql',
   '057_workflow_step2_multiselect_and_call_cut_busy.sql',
+  '061_client_role_and_ownership.sql',
+  '062_manual_lead_client_create_guards.sql',
 ]);
 
 function splitSqlStatements(sql) {

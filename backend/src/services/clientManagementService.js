@@ -72,6 +72,45 @@ function validateClientInput(body = {}, partial = false) {
   return { fullName, email, phone, userId };
 }
 
+function logClientError(error, context = {}) {
+  logger.error({
+    ...context,
+    code: error?.code || error?.errorCode || null,
+    status: error?.status || error?.statusCode || null,
+    message: error?.message,
+    stack: error?.stack,
+    db_code: error?.code || null,
+    db_detail: error?.detail || null,
+    db_table: error?.table || null,
+    db_column: error?.column || null,
+    db_constraint: error?.constraint || null,
+  }, 'Client management operation failed');
+}
+
+function toClientCreateAppError(error) {
+  if (error instanceof AppError) return error;
+  if (error?.code === '22P02' && String(error.message || '').includes('user_role')) {
+    return new AppError(
+      500,
+      'CLIENT_ROLE_MIGRATION_REQUIRED',
+      'Client role is not available in the database. Run latest migrations and retry.',
+    );
+  }
+  if (error?.code === '42703' || error?.code === '42P01') {
+    return new AppError(
+      500,
+      'CLIENT_SCHEMA_MIGRATION_REQUIRED',
+      'Client management database schema is not ready. Run latest migrations and retry.',
+      {
+        table: error.table || null,
+        column: error.column || null,
+        constraint: error.constraint || null,
+      },
+    );
+  }
+  return error;
+}
+
 function pageParams(input = {}) {
   const page = Math.max(1, Number(input.page) || 1);
   const pageSize = Math.min(100, Math.max(5, Number(input.page_size || input.pageSize) || 20));
@@ -181,42 +220,57 @@ async function getClient(actor, clientId) {
 
 async function createClient(actor, body = {}, req = {}) {
   assertAdmin(actor);
-  const input = validateClientInput(body);
-  const userId = input.userId || await generateClientUserId(input.fullName);
-
-  const { rows: [client] } = await query(
-    `INSERT INTO users(emp_code, cp_id, full_name, email, phone, role, status, password_hash, is_available, lead_assignment_enabled, lead_assignment_status)
-     VALUES($1, NULL, $2, $3, $4, 'client', COALESCE($5, 'active')::user_status, NULL, FALSE, FALSE, 'disabled')
-     RETURNING id, emp_code AS user_id, full_name, email, phone, role::text AS role, status::text AS status, created_at, updated_at, NULL::timestamptz AS last_login_at,
-               0::int AS pages_count, 0::int AS ad_accounts_count, 0::int AS campaigns_count, 0::int AS leads_count, 0::int AS open_support_tickets`,
-    [userId, input.fullName, input.email, input.phone, body.active === false ? 'inactive' : 'active'],
-  ).catch((error) => {
-    if (error?.code === '23505') throw new AppError(409, 'CLIENT_ALREADY_EXISTS', 'Client email, phone, or user ID already exists.');
-    throw error;
-  });
-
-  let emailWarning = null;
   try {
-    await passwordResetService.sendNewUserSetupLink({
-      userId: client.id,
-      createdByUser: actor,
-      ipAddress: req.ip,
-      userAgent: req.headers?.['user-agent'],
-    });
-  } catch (error) {
-    logger.warn({ clientId: client.id, code: error.code || 'CLIENT_ONBOARDING_EMAIL_FAILED', message: error.message }, 'Client created but onboarding email failed');
-    emailWarning = error.code === 'EMAIL_PROVIDER_NOT_CONFIGURED'
-      ? 'Client created, but the email provider is not configured.'
-      : 'Client created, but onboarding email could not be sent.';
-  }
+    const input = validateClientInput(body);
+    const userId = await generateClientUserId(input.fullName);
 
-  await logActivity({ user: actor, ip: req.ip, headers: req.headers || {} }, {
-    entity: 'client',
-    entity_id: client.id,
-    action: 'client_created',
-    metadata: { email: client.email, user_id: client.user_id, onboarding_email_warning: emailWarning },
-  });
-  return { ...mapClient(client), email_warning: emailWarning };
+    const { rows: [client] } = await query(
+      `INSERT INTO users(emp_code, cp_id, full_name, email, phone, role, status, password_hash, is_available, lead_assignment_enabled, lead_assignment_status)
+       VALUES($1, NULL, $2, $3, $4, 'client', COALESCE($5, 'active')::user_status, NULL, FALSE, FALSE, 'disabled')
+       RETURNING id, emp_code AS user_id, full_name, email, phone, role::text AS role, status::text AS status, created_at, updated_at, NULL::timestamptz AS last_login_at,
+                 0::int AS pages_count, 0::int AS ad_accounts_count, 0::int AS campaigns_count, 0::int AS leads_count, 0::int AS open_support_tickets`,
+      [userId, input.fullName, input.email, input.phone, body.active === false ? 'inactive' : 'active'],
+    ).catch((error) => {
+      if (error?.code === '23505') throw new AppError(409, 'CLIENT_ALREADY_EXISTS', 'Client email, phone, or user ID already exists.');
+      throw error;
+    });
+
+    let emailWarning = null;
+    try {
+      await passwordResetService.sendNewUserSetupLink({
+        userId: client.id,
+        createdByUser: actor,
+        ipAddress: req.ip,
+        userAgent: req.headers?.['user-agent'],
+      });
+    } catch (error) {
+      logger.warn({ clientId: client.id, code: error.code || 'CLIENT_ONBOARDING_EMAIL_FAILED', message: error.message }, 'Client created but onboarding email failed');
+      emailWarning = error.code === 'EMAIL_PROVIDER_NOT_CONFIGURED'
+        ? 'Client created, but the email provider is not configured.'
+        : 'Client created, but onboarding email could not be sent.';
+    }
+
+    await logActivity({ user: actor, ip: req.ip, headers: req.headers || {} }, {
+      entity: 'client',
+      entity_id: client.id,
+      action: 'client_created',
+      metadata: { email: client.email, user_id: client.user_id, onboarding_email_warning: emailWarning },
+    });
+    return { ...mapClient(client), email_warning: emailWarning };
+  } catch (error) {
+    logClientError(error, {
+      route: 'POST /api/admin/clients',
+      actorId: actor?.id,
+      actorRole: actor?.role,
+      input: {
+        has_name: Boolean(body?.full_name || body?.name),
+        has_email: Boolean(body?.email),
+        has_phone: Boolean(body?.phone),
+        requested_user_id_ignored: Boolean(body?.user_id || body?.emp_code),
+      },
+    });
+    throw toClientCreateAppError(error);
+  }
 }
 
 async function updateClient(actor, clientId, body = {}, req = {}) {

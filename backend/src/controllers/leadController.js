@@ -68,6 +68,34 @@ function normalizeUuidList(value, max = 25) {
   return [...new Set(values.map(item => String(item || '').trim()).filter(Boolean))].slice(0, max);
 }
 
+function toManualLeadCreateAppError(error) {
+  if (error instanceof AppError) return error;
+  if (error?.code === '42703' || error?.code === '42P01') {
+    return new AppError(
+      500,
+      'MANUAL_LEAD_SCHEMA_MIGRATION_REQUIRED',
+      'Manual lead database schema is not ready. Run latest migrations and retry.',
+      {
+        table: error.table || null,
+        column: error.column || null,
+        constraint: error.constraint || null,
+      },
+    );
+  }
+  if (error?.code === '22P02') {
+    return new AppError(
+      400,
+      'INVALID_MANUAL_LEAD_VALUE',
+      'Manual lead contains a value that is not supported by the current database schema.',
+      {
+        db_code: error.code,
+        detail: error.detail || null,
+      },
+    );
+  }
+  return error;
+}
+
 const callStatusEnumCache = {
   values: null,
   loadedAt: 0,
@@ -1034,7 +1062,7 @@ exports.createManual = asyncHandler(async (req, res) => {
         assigned_to_user_id: req.body?.assigned_to_user_id || null,
       },
     }, 'Manual lead creation failed');
-    throw error;
+    throw toManualLeadCreateAppError(error);
   }
 });
 

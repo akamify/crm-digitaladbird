@@ -61,6 +61,47 @@ function errorHandler(err, req, res, _next) {
     });
   }
 
+  // Postgres schema drift: deployed code is using a column/table not present in DB.
+  if (err.code === '42703' || err.code === '42P01') {
+    logger.error({
+      path: req.path,
+      method: req.method,
+      code: err.code,
+      message: err.message,
+      table: err.table || null,
+      column: err.column || null,
+      constraint: err.constraint || null,
+      detail: err.detail || null,
+      stack: err.stack,
+    }, 'Database schema mismatch');
+    return res.status(500).json({
+      success: false,
+      error: {
+        code: 'DB_SCHEMA_MISSING',
+        message: 'Database schema is not ready for this action. Run latest migrations and retry.',
+      },
+    });
+  }
+
+  // Postgres invalid enum/input syntax, usually a missing enum migration or bad status value.
+  if (err.code === '22P02') {
+    logger.error({
+      path: req.path,
+      method: req.method,
+      code: err.code,
+      message: err.message,
+      detail: err.detail || null,
+      stack: err.stack,
+    }, 'Database rejected an unsupported enum/input value');
+    return res.status(400).json({
+      success: false,
+      error: {
+        code: 'INVALID_DB_VALUE',
+        message: 'One submitted value is not supported by the current database schema.',
+      },
+    });
+  }
+
   // Postgres statement timeout
   if (err.code === '57014') {
     logger.warn({ path: req.path, method: req.method }, 'Query timeout');

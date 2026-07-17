@@ -167,8 +167,6 @@ router.get('/conversations', asyncHandler(async (req, res) => {
     channelFilter = `AND COALESCE(c.channel, 'internal') = $${idx}`;
     params.push(channel);
     idx++;
-  } else {
-    channelFilter = `AND COALESCE(c.channel, 'internal') = 'whatsapp'`;
   }
   if (external_unknown === 'true') {
     externalFilter = `AND COALESCE(c.is_external_unknown, FALSE) = TRUE`;

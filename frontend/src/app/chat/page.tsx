@@ -853,14 +853,14 @@ function ConversationList({
       <div className="shrink-0 px-3 py-3" style={{ background: dark ? WA_DARK_HEADER : `linear-gradient(135deg, ${WA_GREEN_DARK}, ${WA_GREEN_LIGHT})` }}>
         <div className="flex items-center justify-between">
           <h2 className="flex min-w-0 items-center gap-2 text-base font-bold text-white">
-            <MessageSquare className="h-4 w-4 shrink-0" /> <span className="truncate">WhatsApp Inbox</span>
+            <MessageSquare className="h-4 w-4 shrink-0" /> <span className="truncate">Chat Inbox</span>
             {totalUnread > 0 && <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[10px]">{totalUnread > 99 ? '99+' : totalUnread}</span>}
           </h2>
           <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-semibold text-white/90">Live</span>
         </div>
         <div className="relative mt-2">
           <Search className="absolute left-3 top-2 h-4 w-4 text-white/40" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search WhatsApp chats..."
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search chats..."
             className="w-full rounded-xl bg-white/15 py-1.5 pl-9 pr-3 text-sm text-white placeholder-white/40 outline-none transition focus:bg-white/25" />
         </div>
       </div>
@@ -923,7 +923,7 @@ function ConversationList({
           <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
             <MessageCircle className={clsx('h-12 w-12 mb-3', dark ? 'text-slate-600' : 'text-slate-200')} />
             <p className={clsx('text-sm', dark ? 'text-slate-400' : 'text-slate-500')}>
-              {search ? 'No matches' : leadOnly ? 'No WhatsApp chats for your assigned leads yet.' : filter === 'archived' ? 'No archived WhatsApp chats' : 'No WhatsApp conversations yet'}
+              {search ? 'No matches' : leadOnly ? 'No chats for your assigned leads yet.' : filter === 'archived' ? 'No archived chats' : 'No conversations yet'}
             </p>
           </div>
         )}
@@ -1883,8 +1883,8 @@ export default function ChatPage() {
                 <div className={clsx('grid h-20 w-20 place-items-center rounded-full shadow-md mb-4', dark ? 'bg-[#202c33]' : 'bg-white')}>
                   <MessageSquare className="h-10 w-10" style={{ color: WA_GREEN_LIGHT }} />
                 </div>
-                <h3 className={clsx('text-xl font-bold', dark ? 'text-slate-200' : 'text-slate-700')}>WhatsApp Inbox</h3>
-                <p className={clsx('text-sm mt-2 max-w-sm', dark ? 'text-slate-400' : 'text-slate-400')}>Real-time external WhatsApp conversations from AiWizChat. Replies are available inside the 24-hour customer service window.</p>
+                <h3 className={clsx('text-xl font-bold', dark ? 'text-slate-200' : 'text-slate-700')}>Chat Inbox</h3>
+                <p className={clsx('text-sm mt-2 max-w-sm', dark ? 'text-slate-400' : 'text-slate-400')}>Internal lead messages and external WhatsApp conversations in one place. WhatsApp replies stay locked to the 24-hour service window.</p>
                 <div className="flex items-center gap-3 mt-4">
                   <button onClick={toggleDark} className={clsx('grid h-10 w-10 place-items-center rounded-xl border transition', dark ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50')} title="Toggle dark mode">
                     {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
