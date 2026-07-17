@@ -171,7 +171,7 @@ function ClientFormModal({ open, client, onClose }: { open: boolean; client: Cli
       phone: client.phone || '',
       user_id: client.user_id,
       active: client.status === 'active',
-    } : { full_name: '', email: '', phone: '', user_id: '', password: '', active: true });
+    } : { full_name: '', email: '', phone: '', active: true });
   }, [client, open]);
 
   function submit() {
@@ -184,20 +184,21 @@ function ClientFormModal({ open, client, onClose }: { open: boolean; client: Cli
       return;
     }
     create.mutate(payload, {
-      onSuccess: () => { toast.success('Client created'); onClose(); },
+      onSuccess: (created) => {
+        toast.success(created.email_warning || 'Client created. Onboarding reset link sent.');
+        onClose();
+      },
       onError: errorToast,
     });
   }
 
   const pending = create.isPending || update.isPending;
   return (
-    <Modal open={open} onClose={onClose} title={client ? 'Edit Client' : 'Create Client'} description="Clients use the existing login page and never receive CP IDs or RM assignments." size="lg">
+    <Modal open={open} onClose={onClose} title={client ? 'Edit Client' : 'Create Client'} description="Clients use the existing login page. User ID is generated automatically and a password setup link is emailed." size="lg">
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Name" value={form.full_name || ''} onChange={value => setForm(current => ({ ...current, full_name: value }))} />
-        <Field label="User ID" value={form.user_id || ''} onChange={value => setForm(current => ({ ...current, user_id: value }))} />
         <Field label="Email" type="email" value={form.email || ''} onChange={value => setForm(current => ({ ...current, email: value }))} />
         <Field label="Phone" value={form.phone || ''} onChange={value => setForm(current => ({ ...current, phone: value }))} />
-        {!client && <Field label="Password" type="password" value={form.password || ''} onChange={value => setForm(current => ({ ...current, password: value }))} />}
         <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm">
           <input type="checkbox" checked={form.active !== false} onChange={event => setForm(current => ({ ...current, active: event.target.checked }))} />
           Active

@@ -25,6 +25,25 @@ function normalizePhone(value) {
   throw new AppError(400, 'INVALID_CLIENT_PHONE', 'Enter a valid phone number.');
 }
 
+async function generateClientUserId(fullName) {
+  const initials = String(fullName || 'client')
+    .replace(/[^a-zA-Z\s]/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(part => part[0])
+    .join('')
+    .slice(0, 3)
+    .toUpperCase() || 'CL';
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const suffix = Math.random().toString(36).slice(2, 8).toUpperCase();
+    const userId = `CL-${initials}-${suffix}`;
+    const { rows } = await query(`SELECT 1 FROM users WHERE LOWER(emp_code) = LOWER($1) LIMIT 1`, [userId]);
+    if (!rows.length) return userId;
+  }
+  return `CL-${Date.now().toString(36).toUpperCase()}`;
+}
+
 function assertAdmin(actor) {
   if (!ADMIN_ROLES.has(actor?.role)) throw new AppError(403, 'CLIENT_MANAGEMENT_FORBIDDEN', 'Only admins can manage clients.');
 }
@@ -34,7 +53,6 @@ function validateClientInput(body = {}, partial = false) {
   const email = normalizeEmail(body.email);
   const phone = Object.prototype.hasOwnProperty.call(body, 'phone') ? normalizePhone(body.phone) : undefined;
   const userId = trim(body.user_id || body.emp_code);
-  const password = String(body.password || '');
 
   if (!partial || fullName) {
     if (fullName.length < 2 || fullName.length > 120) throw new AppError(400, 'INVALID_CLIENT_NAME', 'Client name must be 2-120 characters.');
@@ -44,14 +62,14 @@ function validateClientInput(body = {}, partial = false) {
       throw new AppError(400, 'INVALID_CLIENT_EMAIL', 'Enter a valid client email.');
     }
   }
-  if (!partial || userId) {
+  if (userId) {
     if (!/^[a-zA-Z0-9._-]{3,60}$/.test(userId)) {
       throw new AppError(400, 'INVALID_CLIENT_USER_ID', 'Client user ID must be 3-60 letters, numbers, dot, underscore, or dash.');
     }
   }
-  if (!partial && password.length < 8) throw new AppError(400, 'INVALID_CLIENT_PASSWORD', 'Password must be at least 8 characters.');
+  if (!partial && !phone) throw new AppError(400, 'CLIENT_PHONE_REQUIRED', 'Client phone is required.');
 
-  return { fullName, email, phone, userId, password };
+  return { fullName, email, phone, userId };
 }
 
 function pageParams(input = {}) {
@@ -164,26 +182,41 @@ async function getClient(actor, clientId) {
 async function createClient(actor, body = {}, req = {}) {
   assertAdmin(actor);
   const input = validateClientInput(body);
-  const passwordHash = await bcrypt.hash(input.password, 12);
+  const userId = input.userId || await generateClientUserId(input.fullName);
 
   const { rows: [client] } = await query(
     `INSERT INTO users(emp_code, cp_id, full_name, email, phone, role, status, password_hash, is_available, lead_assignment_enabled, lead_assignment_status)
-     VALUES($1, NULL, $2, $3, $4, 'client', COALESCE($5, 'active')::user_status, $6, FALSE, FALSE, 'disabled')
+     VALUES($1, NULL, $2, $3, $4, 'client', COALESCE($5, 'active')::user_status, NULL, FALSE, FALSE, 'disabled')
      RETURNING id, emp_code AS user_id, full_name, email, phone, role::text AS role, status::text AS status, created_at, updated_at, NULL::timestamptz AS last_login_at,
                0::int AS pages_count, 0::int AS ad_accounts_count, 0::int AS campaigns_count, 0::int AS leads_count, 0::int AS open_support_tickets`,
-    [input.userId, input.fullName, input.email, input.phone, body.active === false ? 'inactive' : 'active', passwordHash],
+    [userId, input.fullName, input.email, input.phone, body.active === false ? 'inactive' : 'active'],
   ).catch((error) => {
     if (error?.code === '23505') throw new AppError(409, 'CLIENT_ALREADY_EXISTS', 'Client email, phone, or user ID already exists.');
     throw error;
   });
 
+  let emailWarning = null;
+  try {
+    await passwordResetService.sendNewUserSetupLink({
+      userId: client.id,
+      createdByUser: actor,
+      ipAddress: req.ip,
+      userAgent: req.headers?.['user-agent'],
+    });
+  } catch (error) {
+    logger.warn({ clientId: client.id, code: error.code || 'CLIENT_ONBOARDING_EMAIL_FAILED', message: error.message }, 'Client created but onboarding email failed');
+    emailWarning = error.code === 'EMAIL_PROVIDER_NOT_CONFIGURED'
+      ? 'Client created, but the email provider is not configured.'
+      : 'Client created, but onboarding email could not be sent.';
+  }
+
   await logActivity({ user: actor, ip: req.ip, headers: req.headers || {} }, {
     entity: 'client',
     entity_id: client.id,
     action: 'client_created',
-    metadata: { email: client.email, user_id: client.user_id },
+    metadata: { email: client.email, user_id: client.user_id, onboarding_email_warning: emailWarning },
   });
-  return mapClient(client);
+  return { ...mapClient(client), email_warning: emailWarning };
 }
 
 async function updateClient(actor, clientId, body = {}, req = {}) {

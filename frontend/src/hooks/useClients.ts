@@ -21,6 +21,7 @@ export interface ClientAccount {
   campaigns_count: number;
   leads_count: number;
   open_support_tickets: number;
+  email_warning?: string | null;
 }
 
 export interface ClientPage {
@@ -45,7 +46,6 @@ export interface ClientInput {
   email?: string;
   phone?: string;
   user_id?: string;
-  password?: string;
   active?: boolean;
   status?: string;
 }

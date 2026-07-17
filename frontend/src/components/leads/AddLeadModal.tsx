@@ -80,7 +80,10 @@ export function AddLeadModal({ open, onClose }: Props) {
     const next: Record<string, string> = {};
     if (!form.full_name.trim()) next.full_name = 'Name is required.';
     if (!form.phone.trim()) next.phone = 'Phone is required.';
-    if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) next.email = 'Enter a valid email.';
+    if (!form.email.trim()) next.email = 'Email is required.';
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) next.email = 'Enter a valid email.';
+    if (!form.city.trim()) next.city = 'City is required.';
+    if (!form.state.trim()) next.state = 'State is required.';
     setErrors(next);
     return Object.keys(next).length === 0;
   }
@@ -92,9 +95,9 @@ export function AddLeadModal({ open, onClose }: Props) {
       full_name: form.full_name.trim(),
       phone: form.phone.trim(),
       alternate_phone: form.alternate_phone?.trim() || undefined,
-      email: form.email?.trim() || undefined,
-      city: form.city?.trim() || undefined,
-      state: form.state?.trim() || undefined,
+      email: form.email.trim(),
+      city: form.city.trim(),
+      state: form.state.trim(),
       category: form.category || undefined,
       stage: form.stage || undefined,
       call_status: form.call_status || undefined,
@@ -149,13 +152,13 @@ export function AddLeadModal({ open, onClose }: Props) {
           <Field label="Alternate Phone">
             <input className="input w-full" value={form.alternate_phone || ''} onChange={event => setField('alternate_phone', event.target.value)} inputMode="tel" />
           </Field>
-          <Field label="Email" error={errors.email}>
+          <Field label="Email" required error={errors.email}>
             <input className="input w-full" value={form.email || ''} onChange={event => setField('email', event.target.value)} type="email" />
           </Field>
-          <Field label="City">
+          <Field label="City" required error={errors.city}>
             <input className="input w-full" value={form.city || ''} onChange={event => setField('city', event.target.value)} />
           </Field>
-          <Field label="State">
+          <Field label="State" required error={errors.state}>
             <input className="input w-full" value={form.state || ''} onChange={event => setField('state', event.target.value)} />
           </Field>
           <Field label="Category">

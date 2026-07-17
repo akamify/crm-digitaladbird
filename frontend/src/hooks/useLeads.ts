@@ -71,9 +71,9 @@ export interface ManualLeadInput {
   full_name: string;
   phone: string;
   alternate_phone?: string;
-  email?: string;
-  city?: string;
-  state?: string;
+  email: string;
+  city: string;
+  state: string;
   category?: LeadCategory | '';
   stage?: LeadStage | '';
   call_status?: CallStatus | '';

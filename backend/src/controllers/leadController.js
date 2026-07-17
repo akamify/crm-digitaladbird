@@ -802,18 +802,22 @@ exports.reassign = asyncHandler(async (req, res) => {
 });
 
 exports.createManual = asyncHandler(async (req, res) => {
-  if (!['super_admin', 'admin', 'rm'].includes(req.user.role)) {
-    throw new AppError(403, 'FORBIDDEN', 'Only admin and RM users can add manual leads.');
-  }
+  try {
+    if (!['super_admin', 'admin', 'rm'].includes(req.user.role)) {
+      throw new AppError(403, 'FORBIDDEN', 'Only admin and RM users can add manual leads.');
+    }
 
-  const fullName = normalizeManualText(req.body?.full_name || req.body?.name, 190);
-  if (!fullName) throw new AppError(400, 'NAME_REQUIRED', 'Lead name is required.');
+    const fullName = normalizeManualText(req.body?.full_name || req.body?.name, 190);
+    if (!fullName) throw new AppError(400, 'NAME_REQUIRED', 'Lead name is required.');
 
-  const phone = normalizeManualPhone(req.body?.phone);
-  const alternatePhone = req.body?.alternate_phone ? normalizeManualPhone(req.body.alternate_phone) : null;
-  const email = normalizeManualEmail(req.body?.email);
-  const city = normalizeManualText(req.body?.city, 120);
-  const state = normalizeManualText(req.body?.state, 120);
+    const phone = normalizeManualPhone(req.body?.phone);
+    const alternatePhone = req.body?.alternate_phone ? normalizeManualPhone(req.body.alternate_phone) : null;
+    const email = normalizeManualEmail(req.body?.email);
+    if (!email) throw new AppError(400, 'EMAIL_REQUIRED', 'Lead email is required.');
+    const city = normalizeManualText(req.body?.city, 120);
+    if (!city) throw new AppError(400, 'CITY_REQUIRED', 'Lead city is required.');
+    const state = normalizeManualText(req.body?.state, 120);
+    if (!state) throw new AppError(400, 'STATE_REQUIRED', 'Lead state is required.');
   const category = normalizeManualCategory(req.body?.category);
   const normalizedStage = req.body?.stage ? validateLeadStage(req.body.stage) : null;
   if (req.body?.stage && normalizedStage === null) {
@@ -1002,7 +1006,36 @@ exports.createManual = asyncHandler(async (req, res) => {
     labels: result.labels.map(label => ({ id: label.id, name: label.name, color: label.color })),
   };
 
-  res.status(201).json({ success: true, data: { lead: payload }, lead: payload });
+    res.status(201).json({ success: true, data: { lead: payload }, lead: payload });
+  } catch (error) {
+    logger.error({
+      route: 'POST /api/leads/manual',
+      userId: req.user?.id,
+      role: req.user?.role,
+      code: error.code || error.errorCode || null,
+      status: error.status || error.statusCode || null,
+      message: error.message,
+      stack: error.stack,
+      db_code: error.code || null,
+      db_detail: error.detail || null,
+      db_table: error.table || null,
+      db_column: error.column || null,
+      db_constraint: error.constraint || null,
+      input: {
+        has_name: Boolean(req.body?.full_name || req.body?.name),
+        has_email: Boolean(req.body?.email),
+        has_phone: Boolean(req.body?.phone),
+        has_city: Boolean(req.body?.city),
+        has_state: Boolean(req.body?.state),
+        category: req.body?.category || null,
+        stage: req.body?.stage || null,
+        call_status: req.body?.call_status || null,
+        label_count: Array.isArray(req.body?.label_ids || req.body?.labelIds) ? (req.body?.label_ids || req.body?.labelIds).length : 0,
+        assigned_to_user_id: req.body?.assigned_to_user_id || null,
+      },
+    }, 'Manual lead creation failed');
+    throw error;
+  }
 });
 
 /** Admin/RM: manually create a lead and auto-assign. */
