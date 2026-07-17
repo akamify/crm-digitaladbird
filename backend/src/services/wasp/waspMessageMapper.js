@@ -35,6 +35,8 @@ function eventType(payload = {}, headers = {}) {
     payload.type
     || payload.event
     || payload.event_type
+    || headers['x-aiwizchat-event']
+    || headers['X-AiWizChat-Event']
     || headers['x-waspakamify-event']
     || headers['X-Waspakamify-Event']
     || ''
@@ -103,14 +105,22 @@ function normalizeExternalConversation(row = {}) {
   const phone = normalizePhone(pick(row, ['phone', 'customer_phone', 'to', 'from', 'wa_id']) || contact.phone || contact.wa_id);
   const waId = normalizeWaId(pick(row, ['wa_id', 'customer_wa_id', 'phone']) || contact.wa_id, phone);
   const lastMessage = row.lastMessage || row.last_message || row.message || {};
+  const windowExpiresAt = pick(row, ['customerServiceWindowExpiresAt', 'customer_service_window_expires_at', 'session_expires_at']);
+  const lastCustomerMessageAt = pick(row, ['lastCustomerMessageAt', 'last_customer_message_at', 'last_inbound_at']);
+  const canReply = pick(row, ['canReply', 'can_reply']);
   return {
     provider: 'wasp',
     external_conversation_id: String(pick(row, ['id', 'conversation_id', 'conversationId', 'chat_id', 'thread_id']) || ''),
     customer_phone: phone,
     customer_wa_id: waId,
     customer_name: String(pick(row, ['name', 'customer_name', 'contact.name']) || contact.name || '').trim(),
-    last_message_text: String(pick(row, ['last_message_text', 'lastMessage.text', 'lastMessage.body', 'last_message.body']) || '').trim(),
-    last_message_at: toIsoDate(pick(row, ['lastMessage.createdAt', 'last_message.created_at', 'last_message_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at'])),
+    last_message_text: String(pick(row, ['last_message_text', 'lastMessage.preview', 'lastMessage.text', 'lastMessage.body', 'last_message.body']) || '').trim(),
+    last_message_at: toIsoDate(pick(row, ['lastMessage.at', 'lastMessage.createdAt', 'last_message.created_at', 'last_message_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at'])),
+    last_customer_message_at: lastCustomerMessageAt ? toIsoDate(lastCustomerMessageAt) : null,
+    service_window_status: String(pick(row, ['serviceWindowStatus', 'service_window_status']) || '').toLowerCase(),
+    customer_service_window_expires_at: windowExpiresAt ? toIsoDate(windowExpiresAt) : null,
+    can_reply: canReply === null ? null : Boolean(canReply),
+    remaining_window_ms: Number(pick(row, ['remainingWindowMs', 'remaining_window_ms']) || 0),
     unread_count: Number(pick(row, ['unread_count', 'unreadCount']) || 0),
     raw_payload: row,
     last_message: lastMessage,

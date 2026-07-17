@@ -737,19 +737,17 @@ function ForwardDialog({ onSelect, onClose, dark }: { onSelect: (convId: string)
 // ─── Conversation List ──────────────────────────────────────────────
 
 function ConversationList({
-  conversations, selected, onSelect, onNewChat, onBroadcast, user, loading, dark,
+  conversations, selected, onSelect, user, loading, dark,
 }: {
   conversations: ChatConversation[];
   selected: string | null;
   onSelect: (id: string) => void;
-  onNewChat: () => void;
-  onBroadcast: () => void;
   user: { id: string; role: string; name: string };
   loading: boolean;
   dark: boolean;
 }) {
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<'all' | 'unread' | 'direct' | 'lead' | 'broadcast' | 'whatsapp' | 'external' | 'open' | 'expired' | 'archived'>('all');
+  const [filter, setFilter] = useState<'all' | 'unread' | 'whatsapp' | 'external' | 'open' | 'expired' | 'archived'>('all');
   const [leadCategory, setLeadCategory] = useState<'all' | 'trader' | 'partner' | 'unknown'>('all');
   const leadOnly = user.role === 'member' || user.role === 'partner';
   const { data: unreadData } = useChatUnread();
@@ -770,7 +768,6 @@ function ConversationList({
     if (filter === 'external' && !c.is_external_unknown) return false;
     if (filter === 'open' && c.session?.status !== 'open') return false;
     if (filter === 'expired' && c.session?.status !== 'expired') return false;
-    if (!['all', 'unread', 'whatsapp', 'external', 'open', 'expired'].includes(filter) && c.type !== filter) return false;
     if (pinned.includes(c)) return false;
     if (!search) return true;
     const q = search.toLowerCase();
@@ -843,14 +840,7 @@ function ConversationList({
             <MessageSquare className="h-5 w-5" /> Messages
             {totalUnread > 0 && <span className="rounded-full bg-white/20 px-2 py-0.5 text-xs">{totalUnread}</span>}
           </h2>
-          <div className="flex items-center gap-1">
-            {(user.role === 'super_admin' || user.role === 'rm') && (
-              <button onClick={onBroadcast} className="grid h-8 w-8 place-items-center rounded-full text-white/80 hover:bg-white/10 transition" title="Broadcast"><Megaphone className="h-4 w-4" /></button>
-            )}
-            {!leadOnly && (
-              <button onClick={onNewChat} className="grid h-8 w-8 place-items-center rounded-full text-white/80 hover:bg-white/10 transition" title="New Chat"><Plus className="h-4 w-4" /></button>
-            )}
-          </div>
+          <span className="rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-semibold text-white/90">WhatsApp</span>
         </div>
         <div className="relative mt-2">
           <Search className="absolute left-3 top-2 h-4 w-4 text-white/40" />
@@ -861,8 +851,8 @@ function ConversationList({
 
       <div className={clsx('shrink-0 flex gap-1 px-3 py-2 border-b overflow-x-auto', dark ? 'border-slate-700 bg-[#111b21]' : 'border-slate-100 bg-white')}>
         {(leadOnly
-          ? (['all', 'unread', 'lead', 'whatsapp', 'open', 'expired', 'archived'] as const)
-          : (['all', 'unread', 'direct', 'lead', 'whatsapp', 'external', 'open', 'expired', 'broadcast', 'archived'] as const)
+          ? (['all', 'unread', 'whatsapp', 'open', 'expired', 'archived'] as const)
+          : (['all', 'unread', 'whatsapp', 'external', 'open', 'expired', 'archived'] as const)
         ).map(f => (
           <button key={f} onClick={() => setFilter(f)}
             className={clsx('rounded-full px-3 py-1 text-[11px] font-medium transition whitespace-nowrap',
@@ -917,9 +907,8 @@ function ConversationList({
           <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
             <MessageCircle className={clsx('h-12 w-12 mb-3', dark ? 'text-slate-600' : 'text-slate-200')} />
             <p className={clsx('text-sm', dark ? 'text-slate-400' : 'text-slate-500')}>
-              {search ? 'No matches' : leadOnly ? 'No lead conversations yet. Open a lead and click Chat.' : filter === 'archived' ? 'No archived chats' : 'No conversations yet'}
+              {search ? 'No matches' : leadOnly ? 'No WhatsApp chats for your assigned leads yet.' : filter === 'archived' ? 'No archived WhatsApp chats' : 'No WhatsApp conversations yet'}
             </p>
-            {!leadOnly && !search && filter !== 'archived' && <button onClick={onNewChat} className="mt-3 flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-700 transition"><Plus className="h-3.5 w-3.5" /> New Chat</button>}
           </div>
         )}
         {pinned.length > 0 && (
@@ -1004,8 +993,8 @@ function MessageThread({
   const isSending = sendMode === 'whatsapp' ? sendWasp.isPending : (sendMsg.isPending || sendMsgWithMentions.isPending);
 
   useEffect(() => {
-    setSendMode('internal');
-  }, [conversationId]);
+    setSendMode(isWaspConversation ? 'whatsapp' : 'internal');
+  }, [conversationId, isWaspConversation]);
 
   useEffect(() => {
     const draft = localStorage.getItem(`chat-draft-${conversationId}`);
@@ -1528,21 +1517,12 @@ function MessageThread({
         <div className={clsx('shrink-0 border-t', dark ? 'bg-[#202c33] border-slate-700' : 'bg-slate-100 border-slate-200')} style={{ position: 'relative' }}>
           {isWaspConversation && !editingMsg && (
             <div className={clsx('flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b', dark ? 'border-slate-700' : 'border-slate-200')}>
-              <div className="flex items-center gap-1 rounded-full p-1" style={{ backgroundColor: dark ? '#111b21' : '#e2e8f0' }}>
-                <button type="button" onClick={() => setSendMode('internal')}
-                  className={clsx('rounded-full px-3 py-1 text-[11px] font-semibold transition',
-                    sendMode === 'internal' ? 'bg-white text-slate-800 shadow-sm' : dark ? 'text-slate-300 hover:text-white' : 'text-slate-600 hover:text-slate-900')}>
-                  Internal note
-                </button>
-                <button type="button" disabled={!canSendWasp}
-                  onClick={() => canSendWasp ? setSendMode('whatsapp') : toast.error(waspDisabledReason)}
-                  className={clsx('rounded-full px-3 py-1 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50',
-                    sendMode === 'whatsapp' ? 'bg-emerald-600 text-white shadow-sm' : dark ? 'text-slate-300 hover:text-white' : 'text-slate-600 hover:text-slate-900')}>
-                  WhatsApp reply
-                </button>
-              </div>
+              <span className={clsx('rounded-full px-3 py-1 text-[11px] font-semibold',
+                canSendWasp ? 'bg-emerald-600 text-white' : dark ? 'bg-amber-900/40 text-amber-200' : 'bg-amber-100 text-amber-700')}>
+                WhatsApp reply
+              </span>
               <span className={clsx('text-[11px]', canSendWasp ? (dark ? 'text-emerald-300' : 'text-emerald-700') : (dark ? 'text-amber-300' : 'text-amber-700'))}>
-                {canSendWasp ? 'Customer session is open.' : waspDisabledReason}
+                {canSendWasp ? '24-hour customer service window is open.' : waspDisabledReason}
               </span>
             </div>
           )}
@@ -1568,7 +1548,7 @@ function MessageThread({
             </button>
             <textarea
               ref={inputRef} value={input} onChange={e => handleInputChange(e.target.value)}
-              onKeyDown={handleKeyDown} placeholder={editingMsg ? 'Edit message...' : 'Type a message... (use @ to mention)'} rows={1}
+              onKeyDown={handleKeyDown} placeholder={editingMsg ? 'Edit message...' : isWaspConversation && !canSendWasp ? '24-hour WhatsApp service window is closed' : 'Type a WhatsApp message...'} rows={1}
               className={clsx('flex-1 resize-none rounded-2xl border px-4 py-2.5 text-sm outline-none transition max-h-32',
                 dark ? 'bg-[#2a3942] border-slate-600 text-white placeholder-slate-400 focus:border-teal-500' : 'border-slate-200 bg-white focus:border-teal-400 focus:ring-1 focus:ring-teal-200')}
               style={{ minHeight: '42px' }}
@@ -1801,12 +1781,9 @@ export default function ChatPage() {
   const { dark, toggle: toggleDark } = useDarkMode();
   useSocketConnection();
   const { data: conversations = [], isLoading, refetch: refetchConversations } = useChatConversations();
-  const createConv = useCreateConversation();
   const leadId = searchParams.get('leadId');
   const leadThread = useLeadThread(leadId);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [showNew, setShowNew] = useState(false);
-  const [showBroadcast, setShowBroadcast] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1854,19 +1831,10 @@ export default function ChatPage() {
     } as ChatConversation;
   }, [conversations, leadId, leadThread.data, selectedId]);
 
-  const handleNewChat = async (targetUserId: string) => {
-    if (user?.role === 'member' || user?.role === 'partner') {
-      toast.error('Members and partners can start chat only from an assigned lead.');
-      return;
-    }
-    const result = await createConv.mutateAsync({ type: 'direct', target_user_id: targetUserId });
-    setSelectedId(result.id);
-  };
-
   if (!user) return null;
 
   return (
-    <AppShell title="Messages" roles={['super_admin', 'rm', 'member', 'partner']}>
+    <AppShell title="Messages" roles={['super_admin', 'admin', 'rm', 'member', 'partner']}>
       <ChatErrorBoundary dark={dark}>
         <ConnectionBanner dark={dark} />
         <div className={clsx('flex overflow-hidden rounded-xl border shadow-card', dark ? 'border-slate-700' : 'border-slate-200')} style={{ height: 'calc(100vh - 7rem)' }}>
@@ -1875,7 +1843,6 @@ export default function ChatPage() {
             dark ? 'bg-[#111b21] border-slate-700' : 'bg-white border-slate-200',
             selectedId ? 'hidden sm:flex sm:flex-col' : 'flex flex-col')}>
             <ConversationList conversations={conversations} selected={selectedId} onSelect={setSelectedId}
-              onNewChat={() => user.role === 'member' || user.role === 'partner' ? toast('Members and partners can start chat only from an assigned lead.') : setShowNew(true)} onBroadcast={() => setShowBroadcast(true)}
               user={{ id: user.id, role: user.role, name: user.name }} loading={isLoading} dark={dark} />
           </div>
 
@@ -1897,12 +1864,9 @@ export default function ChatPage() {
                 <div className={clsx('grid h-20 w-20 place-items-center rounded-full shadow-md mb-4', dark ? 'bg-[#202c33]' : 'bg-white')}>
                   <MessageSquare className="h-10 w-10" style={{ color: WA_GREEN_LIGHT }} />
                 </div>
-                <h3 className={clsx('text-xl font-bold', dark ? 'text-slate-200' : 'text-slate-700')}>Digital AdBird Chat</h3>
-                <p className={clsx('text-sm mt-2 max-w-sm', dark ? 'text-slate-400' : 'text-slate-400')}>Send and receive messages with your team in real-time. Select a conversation or start a new chat.</p>
+                <h3 className={clsx('text-xl font-bold', dark ? 'text-slate-200' : 'text-slate-700')}>WhatsApp Inbox</h3>
+                <p className={clsx('text-sm mt-2 max-w-sm', dark ? 'text-slate-400' : 'text-slate-400')}>Real-time external WhatsApp conversations from AiWizChat. Replies are available inside the 24-hour customer service window.</p>
                 <div className="flex items-center gap-3 mt-4">
-                  {user.role !== 'member' && user.role !== 'partner' && <button onClick={() => setShowNew(true)} className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white shadow-md hover:brightness-110 transition" style={{ backgroundColor: WA_GREEN_TEAL }}>
-                    <Plus className="h-4 w-4" /> Start New Chat
-                  </button>}
                   <button onClick={toggleDark} className={clsx('grid h-10 w-10 place-items-center rounded-xl border transition', dark ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50')} title="Toggle dark mode">
                     {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
                   </button>
@@ -1917,8 +1881,6 @@ export default function ChatPage() {
           </div>
         </div>
 
-        <NewChatDialog open={showNew} onClose={() => setShowNew(false)} onSelect={handleNewChat} dark={dark} />
-        <BroadcastDialog open={showBroadcast} onClose={() => setShowBroadcast(false)} dark={dark} />
       </ChatErrorBoundary>
     </AppShell>
   );

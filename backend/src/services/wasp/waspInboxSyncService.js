@@ -69,11 +69,32 @@ async function syncExternalInbox(options = {}) {
     return { enabled: false, conversations_fetched: 0, conversations_synced: 0, messages_fetched: 0, messages_created: 0 };
   }
 
-  const payload = await client.listConversations({
-    limit: options.limit || MAX_CONVERSATIONS_PER_SYNC,
-  });
-  const externalRows = mapper.unwrapList(payload, ['conversations', 'data.conversations', 'data.items', 'items']);
-  const externalConversations = externalRows.map(mapper.normalizeExternalConversation).filter(row => row.customer_phone || row.customer_wa_id);
+  const limit = options.limit || MAX_CONVERSATIONS_PER_SYNC;
+  const maxPages = options.maxPages || 20;
+  const externalRows = [];
+  for (let page = 1; page <= maxPages; page += 1) {
+    const payload = await client.listConversations({ limit, page });
+    const rows = mapper.unwrapList(payload, ['conversations', 'data.conversations', 'data.items', 'items']);
+    externalRows.push(...rows);
+    const pagination = payload?.data?.pagination || payload?.pagination || {};
+    const hasNextPage = Boolean(pagination.hasNextPage || pagination.has_next_page || pagination.next);
+    logger.info({
+      page,
+      count: rows.length,
+      total: pagination.total || null,
+      hasNextPage,
+    }, '[Wasp] external inbox conversations page fetched');
+    if (!hasNextPage || !rows.length) break;
+  }
+  const deduped = new Map();
+  externalRows
+    .map(mapper.normalizeExternalConversation)
+    .filter(row => row.customer_phone || row.customer_wa_id)
+    .forEach((row) => {
+      const key = row.external_conversation_id || row.customer_wa_id || row.customer_phone;
+      if (!deduped.has(key)) deduped.set(key, row);
+    });
+  const externalConversations = [...deduped.values()];
 
   let conversationsSynced = 0;
   let messagesFetched = 0;
@@ -94,7 +115,10 @@ async function syncExternalInbox(options = {}) {
           : admins.map(admin => admin.id);
         await inbound.ensureParticipants(db, conversation.id, participantIds);
 
-        const lastInboundAt = externalConversation.last_message_at || new Date().toISOString();
+        const lastInboundAt = externalConversation.last_customer_message_at || externalConversation.last_message_at || new Date().toISOString();
+        const sessionExpiresAt = externalConversation.customer_service_window_expires_at
+          || (externalConversation.can_reply === true ? addSessionHours(lastInboundAt) : null);
+        const sessionStatus = externalConversation.service_window_status === 'open' || externalConversation.can_reply === true ? 'open' : 'closed';
         await db.query(
           `UPDATE chat_conversations
               SET channel = 'whatsapp',
@@ -102,10 +126,10 @@ async function syncExternalInbox(options = {}) {
                   customer_phone = COALESCE(customer_phone, $2),
                   customer_wa_id = COALESCE(customer_wa_id, $3),
                   external_conversation_id = COALESCE(NULLIF(external_conversation_id, ''), $4),
-                  session_status = COALESCE(NULLIF(session_status, ''), 'open'),
-                  last_inbound_at = COALESCE(last_inbound_at, $5),
-                  session_expires_at = COALESCE(session_expires_at, $6),
-                  provider_metadata = COALESCE(provider_metadata, '{}'::jsonb) || $7::jsonb,
+                  session_status = $5,
+                  last_inbound_at = COALESCE($6, last_inbound_at),
+                  session_expires_at = $7,
+                  provider_metadata = COALESCE(provider_metadata, '{}'::jsonb) || $8::jsonb,
                   updated_at = NOW()
             WHERE id = $1`,
           [
@@ -113,9 +137,16 @@ async function syncExternalInbox(options = {}) {
             externalConversation.customer_phone,
             externalConversation.customer_wa_id,
             externalConversation.external_conversation_id || null,
-            lastInboundAt,
-            addSessionHours(lastInboundAt),
-            JSON.stringify({ external_chat_api_last_sync_at: new Date().toISOString(), external_conversation: externalConversation.raw_payload || {} }),
+            sessionStatus,
+            externalConversation.last_customer_message_at,
+            sessionExpiresAt,
+            JSON.stringify({
+              external_chat_api_last_sync_at: new Date().toISOString(),
+              service_window_status: externalConversation.service_window_status || null,
+              can_reply: externalConversation.can_reply,
+              remaining_window_ms: externalConversation.remaining_window_ms,
+              external_conversation: externalConversation.raw_payload || {},
+            }),
           ],
         );
 

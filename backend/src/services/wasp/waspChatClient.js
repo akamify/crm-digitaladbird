@@ -25,6 +25,7 @@ function authHeaders() {
   const headers = /^authorization$/i.test(header)
     ? { Authorization: `Bearer ${config.wasp.apiKey}` }
     : { [header]: config.wasp.apiKey };
+  if (!headers.Authorization) headers.Authorization = `Bearer ${config.wasp.apiKey}`;
   if (config.wasp.workspaceId) headers['x-workspace-id'] = config.wasp.workspaceId;
   return headers;
 }
@@ -61,8 +62,8 @@ function verifyWebhook(req) {
     if (a.length === b.length && crypto.timingSafeEqual(a, b)) return true;
   }
 
-  const signature = req.get('x-waspakamify-signature') || req.get('x-wasp-signature') || req.get('x-hub-signature-256');
-  const timestamp = req.get('x-waspakamify-timestamp');
+  const signature = req.get('x-aiwizchat-signature') || req.get('x-waspakamify-signature') || req.get('x-wasp-signature') || req.get('x-hub-signature-256');
+  const timestamp = req.get('x-aiwizchat-timestamp') || req.get('x-waspakamify-timestamp');
   const rawBuffer = Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(String(req.rawBody || JSON.stringify(req.body || {})));
   const raw = rawBuffer.toString('utf8');
   if (!signature) return false;

@@ -120,7 +120,7 @@ const config = {
 
   wasp: {
     enabled: String(process.env.WASP_CHAT_ENABLED || 'false').toLowerCase() === 'true',
-    baseUrl: (process.env.WASP_BASE_URL || 'https://api.wasp.akamify.com/api').replace(/\/+$/, ''),
+    baseUrl: (process.env.WASP_BASE_URL || 'https://api.aiwizchat.com/api').replace(/\/+$/, ''),
     apiKey: process.env.WASP_API_KEY || '',
     apiKeyHeader: process.env.WASP_API_KEY_HEADER || 'X-API-Key',
     workspaceId: process.env.WASP_WORKSPACE_ID || process.env.WASPAKAMIFY_WORKSPACE_ID || '',

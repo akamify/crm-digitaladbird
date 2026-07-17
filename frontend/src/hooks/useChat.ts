@@ -330,7 +330,7 @@ export function useSyncWaspInbox() {
       messages_fetched: number;
       messages_created: number;
       errors?: Array<{ phone?: string; message: string }>;
-    }>('/chat/wasp/sync', { limit: 50, message_limit: 30 }),
+    }>('/chat/wasp/sync', { limit: 50, max_pages: 20, message_limit: 30 }),
     onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ['chat-conversations'] });
       qc.invalidateQueries({ queryKey: ['chat-messages'] });

@@ -74,6 +74,7 @@ router.post('/wasp/sync', asyncHandler(async (req, res) => {
   }
   const result = await waspInboxSync.syncExternalInbox({
     limit: Math.min(Math.max(Number(req.body?.limit || 50), 1), 100),
+    maxPages: Math.min(Math.max(Number(req.body?.max_pages || 20), 1), 50),
     messageLimit: Math.min(Math.max(Number(req.body?.message_limit || 30), 1), 100),
   });
   res.json({ success: true, data: result, message: 'WhatsApp inbox synced.' });
@@ -166,6 +167,8 @@ router.get('/conversations', asyncHandler(async (req, res) => {
     channelFilter = `AND COALESCE(c.channel, 'internal') = $${idx}`;
     params.push(channel);
     idx++;
+  } else {
+    channelFilter = `AND COALESCE(c.channel, 'internal') = 'whatsapp'`;
   }
   if (external_unknown === 'true') {
     externalFilter = `AND COALESCE(c.is_external_unknown, FALSE) = TRUE`;
@@ -211,6 +214,7 @@ router.get('/conversations', asyncHandler(async (req, res) => {
       c.channel, c.provider, c.customer_phone, c.customer_wa_id,
       c.external_conversation_id, c.session_status, c.last_inbound_at,
       c.last_outbound_at, c.session_expires_at, c.is_external_unknown,
+      c.provider_metadata,
       c.created_at, c.updated_at,
       cp.is_muted, cp.is_archived,
       lm.body AS last_message,

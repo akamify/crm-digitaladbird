@@ -9,13 +9,29 @@ function getChatSessionState(conversation) {
   if (!conversation || conversation.channel !== 'whatsapp') {
     return { status: 'internal', can_send_whatsapp: false, expires_at: null, disabled_reason: null };
   }
+  const providerMetadata = conversation.provider_metadata || {};
+  const providerCanReply = providerMetadata.can_reply;
+  const providerWindowStatus = String(providerMetadata.service_window_status || conversation.session_status || '').toLowerCase();
+  const providerClosed = providerCanReply === false || providerWindowStatus === 'closed';
+  const providerOpen = providerCanReply === true || providerWindowStatus === 'open';
+  const expiresAt = conversation.session_expires_at || null;
+  const windowOpen = Boolean(expiresAt && new Date(expiresAt) > new Date());
+
+  if (providerClosed) {
+    return {
+      status: 'expired',
+      can_send_whatsapp: false,
+      expires_at: expiresAt,
+      disabled_reason: '24-hour WhatsApp service window is closed. Ask the customer to send Hi before replying.',
+    };
+  }
   if (conversation.is_external_unknown) {
-    const open = conversation.session_expires_at && new Date(conversation.session_expires_at) > new Date();
+    const open = providerOpen && windowOpen;
     return {
       status: open ? 'admin_only_external' : 'expired',
       can_send_whatsapp: open,
-      expires_at: conversation.session_expires_at || null,
-      disabled_reason: open ? 'Admin-only external chat' : 'Chat window is closed. Template message support will be added later.',
+      expires_at: expiresAt,
+      disabled_reason: open ? 'Admin-only external chat' : '24-hour WhatsApp service window is closed. Ask the customer to send Hi before replying.',
     };
   }
   if (!conversation.last_inbound_at) {
@@ -31,7 +47,7 @@ function getChatSessionState(conversation) {
       status: 'expired',
       can_send_whatsapp: false,
       expires_at: conversation.session_expires_at || null,
-      disabled_reason: 'Chat window is closed. Template message support will be added later.',
+      disabled_reason: '24-hour WhatsApp service window is closed. Ask the customer to send Hi before replying.',
     };
   }
   return {
@@ -46,4 +62,3 @@ module.exports = {
   addSessionHours,
   getChatSessionState,
 };
-
