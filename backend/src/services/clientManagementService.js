@@ -259,16 +259,85 @@ async function createClient(actor, body = {}, req = {}) {
     const userId = await generateClientUserId(input.fullName);
     logger.info({ route: 'POST /api/admin/clients', actorId: actor?.id, userId }, 'Client user ID generated');
 
-    const { rows: [client] } = await query(
-      `INSERT INTO users(emp_code, cp_id, full_name, email, phone, role, status, password_hash, is_available, lead_assignment_enabled, lead_assignment_status)
-       VALUES($1, NULL, $2, $3, $4, 'client', COALESCE($5, 'active')::user_status, NULL, FALSE, FALSE, 'disabled')
-       RETURNING id, emp_code AS user_id, full_name, email, phone, role::text AS role, status::text AS status, created_at, updated_at, NULL::timestamptz AS last_login_at,
-                 0::int AS pages_count, 0::int AS ad_accounts_count, 0::int AS campaigns_count, 0::int AS leads_count, 0::int AS open_support_tickets`,
-      [userId, input.fullName, input.email, input.phone, body.active === false ? 'inactive' : 'active'],
-    ).catch((error) => {
-      if (error?.code === '23505') throw new AppError(409, 'CLIENT_ALREADY_EXISTS', 'Client email, phone, or user ID already exists.');
-      throw error;
-    });
+    const { rows: conflicts } = await query(
+      `SELECT id, full_name, email, phone, role::text AS role, status::text AS status, deleted_at, COALESCE(is_hidden, FALSE) AS is_hidden
+         FROM users
+        WHERE LOWER(email) = LOWER($1)
+           OR phone = $2
+           OR LOWER(COALESCE(emp_code, '')) = LOWER($3)`,
+      [input.email, input.phone, userId],
+    );
+    const activeConflict = conflicts.find(row => !row.deleted_at);
+    if (activeConflict) {
+      throw new AppError(
+        409,
+        'CLIENT_ALREADY_EXISTS',
+        activeConflict.role === 'client'
+          ? 'Client email, phone, or user ID already exists.'
+          : `This email or phone is already used by a ${activeConflict.role} account.`,
+        {
+          existing_user_id: activeConflict.id,
+          existing_role: activeConflict.role,
+          existing_status: activeConflict.status,
+          existing_hidden: activeConflict.is_hidden,
+        },
+      );
+    }
+    const deletedClient = conflicts.find(row => row.role === 'client' && row.deleted_at);
+    if (conflicts.length > 0 && !deletedClient) {
+      const conflict = conflicts[0];
+      throw new AppError(
+        409,
+        'CLIENT_ALREADY_EXISTS_DELETED_NON_CLIENT',
+        `This email or phone is reserved by a deleted ${conflict.role} account. Use a different email/phone or restore that user first.`,
+        { existing_user_id: conflict.id, existing_role: conflict.role, existing_status: conflict.status },
+      );
+    }
+    if (deletedClient && conflicts.some(row => row.id !== deletedClient.id)) {
+      throw new AppError(
+        409,
+        'CLIENT_ALREADY_EXISTS_MULTIPLE_DELETED',
+        'This email and phone are reserved by different deleted users. Use a different email/phone or clean up duplicate users first.',
+        { conflict_count: conflicts.length },
+      );
+    }
+
+    const { rows: [client] } = deletedClient
+      ? await query(
+        `UPDATE users
+            SET emp_code = $2,
+                cp_id = NULL,
+                full_name = $3,
+                email = $4,
+                phone = $5,
+                role = 'client',
+                status = COALESCE($6, 'active')::user_status,
+                password_hash = NULL,
+                is_available = FALSE,
+                lead_assignment_enabled = FALSE,
+                lead_assignment_status = 'disabled',
+                deleted_at = NULL,
+                updated_at = NOW()
+          WHERE id = $1
+          RETURNING id, emp_code AS user_id, full_name, email, phone, role::text AS role, status::text AS status, created_at, updated_at, last_login_at,
+                    0::int AS pages_count, 0::int AS ad_accounts_count, 0::int AS campaigns_count, 0::int AS leads_count, 0::int AS open_support_tickets`,
+        [deletedClient.id, userId, input.fullName, input.email, input.phone, body.active === false ? 'inactive' : 'active'],
+      )
+      : await query(
+        `INSERT INTO users(emp_code, cp_id, full_name, email, phone, role, status, password_hash, is_available, lead_assignment_enabled, lead_assignment_status)
+         VALUES($1, NULL, $2, $3, $4, 'client', COALESCE($5, 'active')::user_status, NULL, FALSE, FALSE, 'disabled')
+         RETURNING id, emp_code AS user_id, full_name, email, phone, role::text AS role, status::text AS status, created_at, updated_at, NULL::timestamptz AS last_login_at,
+                   0::int AS pages_count, 0::int AS ad_accounts_count, 0::int AS campaigns_count, 0::int AS leads_count, 0::int AS open_support_tickets`,
+        [userId, input.fullName, input.email, input.phone, body.active === false ? 'inactive' : 'active'],
+      ).catch((error) => {
+        if (error?.code === '23505') {
+          throw new AppError(409, 'CLIENT_ALREADY_EXISTS', 'Client email, phone, or user ID already exists.', {
+            constraint: error.constraint || null,
+            detail: error.detail || null,
+          });
+        }
+        throw error;
+      });
     logger.info({ route: 'POST /api/admin/clients', actorId: actor?.id, clientId: client.id, userId: client.user_id }, 'Client DB insert succeeded');
 
     let emailWarning = null;
@@ -289,7 +358,7 @@ async function createClient(actor, body = {}, req = {}) {
     await logActivity({ user: actor, ip: req.ip, headers: req.headers || {} }, {
       entity: 'client',
       entity_id: client.id,
-      action: 'client_created',
+      action: deletedClient ? 'client_restored' : 'client_created',
       metadata: { email: client.email, user_id: client.user_id, onboarding_email_warning: emailWarning },
     });
     return { ...mapClient(client), email_warning: emailWarning };

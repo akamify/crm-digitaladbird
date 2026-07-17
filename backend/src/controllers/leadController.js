@@ -87,6 +87,30 @@ function toManualLeadCreateAppError(error) {
       { constraint: error.constraint || null },
     );
   }
+  if (error?.code === '23514') {
+    return new AppError(
+      400,
+      'MANUAL_LEAD_CONSTRAINT_FAILED',
+      'Manual lead failed a database validation rule.',
+      { constraint: error.constraint || null, detail: error.detail || null },
+    );
+  }
+  if (error?.code === '23502') {
+    return new AppError(
+      400,
+      'MANUAL_LEAD_REQUIRED_FIELD_MISSING',
+      `Manual lead is missing required database field: ${error.column || 'unknown'}.`,
+      { table: error.table || null, column: error.column || null },
+    );
+  }
+  if (error?.code === '23503') {
+    return new AppError(
+      400,
+      'MANUAL_LEAD_REFERENCE_INVALID',
+      'Manual lead references a missing related record.',
+      { table: error.table || null, constraint: error.constraint || null, detail: error.detail || null },
+    );
+  }
   if (error?.code === '42703' || error?.code === '42P01') {
     return new AppError(
       500,
