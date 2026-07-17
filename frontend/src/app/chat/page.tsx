@@ -1831,7 +1831,15 @@ export default function ChatPage() {
     } as ChatConversation;
   }, [conversations, leadId, leadThread.data, selectedId]);
 
-  if (!user) return null;
+  if (!user) {
+    return (
+      <AppShell title="Messages" roles={['super_admin', 'admin', 'rm', 'member', 'partner']}>
+        <div className="flex h-[60vh] items-center justify-center">
+          <Loader2 className="h-6 w-6 animate-spin text-teal-600" />
+        </div>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell title="Messages" roles={['super_admin', 'admin', 'rm', 'member', 'partner']}>

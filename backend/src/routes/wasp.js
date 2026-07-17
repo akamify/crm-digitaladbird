@@ -22,7 +22,7 @@ router.post('/integrations/wasp/webhook', asyncHandler(async (req, res) => {
     throw new AppError(401, 'WASP_WEBHOOK_UNAUTHORIZED', 'Invalid WaspAkamify webhook secret.');
   }
   try {
-    const result = await inbound.handleInboundWaspMessage(req.body || {});
+    const result = await inbound.handleInboundWaspMessage(req.body || {}, req.headers || {});
     res.json({ success: true, data: result });
   } catch (err) {
     logger.warn({ code: err.code || 'WASP_WEBHOOK_FAILED', message: err.message }, '[Wasp] webhook processing failed');
@@ -31,4 +31,3 @@ router.post('/integrations/wasp/webhook', asyncHandler(async (req, res) => {
 }));
 
 module.exports = router;
-

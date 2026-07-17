@@ -35,6 +35,7 @@ function eventType(payload = {}, headers = {}) {
     payload.type
     || payload.event
     || payload.event_type
+    || headers['x-aiwizchat-event'.toLowerCase()]
     || headers['x-aiwizchat-event']
     || headers['X-AiWizChat-Event']
     || headers['x-waspakamify-event']
@@ -74,7 +75,7 @@ function normalizeInbound(payload = {}) {
   return {
     provider: 'wasp',
     event_type: eventType(payload),
-    external_message_id: String(pick(data, ['whatsappMessageId', 'message_id', 'id', 'external_message_id']) || ''),
+    external_message_id: String(pick(data, ['id', 'message_id', 'external_message_id', 'whatsappMessageId']) || ''),
     external_conversation_id: String(pick(data, ['conversation.id', 'conversationId', 'chat_id', 'conversation_id', 'external_conversation_id', 'thread_id']) || ''),
     direction: String(pick(data, ['direction']) || 'inbound').toLowerCase(),
     status: String(pick(data, ['status', 'delivery_status']) || 'received').toLowerCase(),
@@ -149,22 +150,35 @@ function normalizeOutboundResponse(response = {}) {
   const data = response.data?.message || response.data || response.message || response;
   return {
     success: response.success !== false,
-    external_message_id: String(pick(data, ['whatsappMessageId', 'message_id', 'id', 'external_message_id']) || ''),
+    external_message_id: String(pick(data, ['id', 'message_id', 'external_message_id', 'whatsappMessageId']) || ''),
+    whatsapp_message_id: String(pick(data, ['whatsappMessageId', 'whatsapp_message_id', 'wamid']) || ''),
     external_conversation_id: String(pick(data, ['conversation.id', 'conversationId', 'chat_id', 'conversation_id', 'external_conversation_id']) || ''),
-    status: String(pick(data, ['status', 'delivery_status']) || 'sent'),
+    status: normalizeDeliveryStatus(pick(data, ['status', 'delivery_status']) || 'sent'),
     raw_response: response,
   };
 }
 
+function normalizeDeliveryStatus(value) {
+  const status = String(value || '').toLowerCase();
+  if (['accepted', 'queued'].includes(status)) return 'sent';
+  if (['sent', 'delivered', 'read', 'failed', 'received'].includes(status)) return status;
+  return status || '';
+}
+
 function normalizeStatusUpdate(payload = {}) {
   const data = unwrapMessage(payload);
+  const status = normalizeDeliveryStatus(pick(data, ['status', 'delivery_status']));
   return {
     provider: 'wasp',
     event_type: eventType(payload),
-    external_message_id: String(pick(data, ['whatsappMessageId', 'message_id', 'id', 'external_message_id']) || ''),
+    external_message_id: String(pick(data, ['id', 'message_id', 'external_message_id']) || ''),
+    whatsapp_message_id: String(pick(data, ['whatsappMessageId', 'whatsapp_message_id', 'wamid']) || ''),
     external_conversation_id: String(pick(data, ['conversation.id', 'conversationId', 'chat_id', 'conversation_id', 'external_conversation_id']) || ''),
     customer_phone: normalizePhone(pick(data, ['phone', 'to', 'from', 'customer_phone'])),
-    status: String(pick(data, ['status', 'delivery_status']) || '').toLowerCase(),
+    status,
+    status_timestamps: pick(data, ['statusTimestamps', 'status_timestamps']) || {},
+    status_history: pick(data, ['statusHistory', 'status_history']) || [],
+    error: pick(data, ['error']) || null,
     timestamp: toIsoDate(pick(data, ['updatedAt', 'updated_at', 'createdAt', 'created_at', 'timestamp'])),
     raw_payload: payload,
   };

@@ -171,8 +171,26 @@ async function notifyInbound({ normalized, lead, conversation, message, particip
   }
 }
 
-async function handleInboundWaspMessage(payload) {
-  const event = mapper.eventType(payload);
+const DELIVERY_RANK = {
+  queued: 0,
+  accepted: 1,
+  sent: 2,
+  delivered: 3,
+  read: 4,
+  failed: 5,
+};
+
+function bestDeliveryStatus(current, incoming) {
+  const oldStatus = String(current || '').toLowerCase();
+  const newStatus = String(incoming || '').toLowerCase();
+  if (!newStatus) return oldStatus || null;
+  if (newStatus === 'failed') return 'failed';
+  if (oldStatus === 'failed') return oldStatus;
+  return (DELIVERY_RANK[newStatus] || 0) >= (DELIVERY_RANK[oldStatus] || 0) ? newStatus : oldStatus;
+}
+
+async function handleInboundWaspMessage(payload, headers = {}) {
+  const event = mapper.eventType(payload, headers);
   if (event === 'message.status_updated') {
     return handleWaspStatusUpdate(payload);
   }
@@ -283,7 +301,7 @@ async function handleInboundWaspMessage(payload) {
 
 async function handleWaspStatusUpdate(payload) {
   const normalized = mapper.normalizeStatusUpdate(payload);
-  if (!normalized.external_message_id) {
+  if (!normalized.external_message_id && !normalized.whatsapp_message_id) {
     throw Object.assign(new Error('Status webhook missing message id'), { code: 'WASP_STATUS_PAYLOAD_INVALID' });
   }
   return withTransaction(async (client) => {
@@ -291,24 +309,50 @@ async function handleWaspStatusUpdate(payload) {
       `INSERT INTO wasp_webhook_logs(event_type, external_message_id, external_conversation_id, customer_phone, payload)
        VALUES ($1,$2,$3,$4,$5)
        RETURNING id`,
-      [normalized.event_type || 'message.status_updated', normalized.external_message_id, normalized.external_conversation_id || null, normalized.customer_phone || null, JSON.stringify(payload || {})],
+      [normalized.event_type || 'message.status_updated', normalized.external_message_id || normalized.whatsapp_message_id || null, normalized.external_conversation_id || null, normalized.customer_phone || null, JSON.stringify(payload || {})],
     );
-    const { rows: [message] } = await client.query(
-      `UPDATE chat_messages
-          SET delivery_status = COALESCE(NULLIF($2, ''), delivery_status),
-              external_conversation_id = COALESCE(NULLIF($3, ''), external_conversation_id),
-              provider_payload = COALESCE(provider_payload, '{}'::jsonb) || $4::jsonb,
-              status_updated_at = NOW()
+    const { rows: [existing] } = await client.query(
+      `SELECT *
+         FROM chat_messages
         WHERE provider = 'wasp'
-          AND external_message_id = $1
-        RETURNING *`,
+          AND (
+            external_message_id = $1
+            OR ($2::text IS NOT NULL AND external_message_id = $2::text)
+          )
+        ORDER BY created_at DESC
+        LIMIT 1`,
       [
-        normalized.external_message_id,
-        normalized.status || null,
-        normalized.external_conversation_id || null,
-        JSON.stringify({ last_status_webhook: payload || {} }),
+        normalized.external_message_id || null,
+        normalized.whatsapp_message_id || null,
       ],
     );
+    let message = null;
+    if (existing) {
+      const nextStatus = bestDeliveryStatus(existing.delivery_status, normalized.status);
+      const { rows: [updated] } = await client.query(
+        `UPDATE chat_messages
+            SET delivery_status = COALESCE(NULLIF($2, ''), delivery_status),
+                external_conversation_id = COALESCE(NULLIF($3, ''), external_conversation_id),
+                provider_payload = COALESCE(provider_payload, '{}'::jsonb) || $4::jsonb,
+                status_updated_at = NOW()
+          WHERE id = $1
+          RETURNING *`,
+        [
+          existing.id,
+          nextStatus || null,
+          normalized.external_conversation_id || null,
+          JSON.stringify({
+            last_status_webhook: payload || {},
+            aiwiz_status_timestamps: normalized.status_timestamps || {},
+            aiwiz_status_history: normalized.status_history || [],
+            aiwiz_status_error: normalized.error || null,
+            aiwiz_message_id: normalized.external_message_id || null,
+            whatsapp_message_id: normalized.whatsapp_message_id || null,
+          }),
+        ],
+      );
+      message = updated;
+    }
     await client.query(
       `UPDATE wasp_webhook_logs
           SET processing_status = $1,

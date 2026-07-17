@@ -69,14 +69,6 @@ export function Topbar({ title, subtitle, onMenuClick, right }: TopbarProps) {
       {/* `right` slot is page-defined — hide it on extra-narrow phones if a page passes a wide bar; pages can override with their own breakpoints */}
       {right && <div className="hidden sm:flex shrink-0">{right}</div>}
 
-      <div className="relative grid h-10 w-10 place-items-center rounded-lg text-slate-500 hover:text-slate-700 transition shrink-0">
-        {unreadCount > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-[16px] place-items-center rounded-full bg-brand-600 px-1 text-[9px] font-bold text-white">
-            {unreadCount > 99 ? '99+' : unreadCount}
-          </span>
-        )}
-      </div>
-
       <NotificationBell />
 
       <div className="relative shrink-0" ref={menuRef}>
