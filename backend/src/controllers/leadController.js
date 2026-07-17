@@ -13,6 +13,7 @@ const { normalizeWorkflowRemarkStatus, saveWorkflowRemark } = require('../servic
 const { assertLabelVisible } = require('../services/leadLabelService');
 const { createLeadInteraction } = require('../services/leadInteractionService');
 const { validateLeadAssignee } = require('../services/leadAssigneeValidator');
+const { assertCreateReady } = require('../services/createReadinessService');
 
 function humanizeValue(value) {
   return String(value || '')
@@ -834,6 +835,7 @@ exports.createManual = asyncHandler(async (req, res) => {
     if (!['super_admin', 'admin', 'rm'].includes(req.user.role)) {
       throw new AppError(403, 'FORBIDDEN', 'Only admin and RM users can add manual leads.');
     }
+    await assertCreateReady('manual_lead_create');
 
     const fullName = normalizeManualText(req.body?.full_name || req.body?.name, 190);
     if (!fullName) throw new AppError(400, 'NAME_REQUIRED', 'Lead name is required.');

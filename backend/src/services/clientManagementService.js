@@ -4,6 +4,7 @@ const { AppError } = require('../utils/errors');
 const { logActivity } = require('../utils/auditLog');
 const passwordResetService = require('./auth/passwordResetService');
 const logger = require('../utils/logger');
+const { assertCreateReady } = require('./createReadinessService');
 
 const ADMIN_ROLES = new Set(['super_admin', 'admin']);
 
@@ -221,6 +222,7 @@ async function getClient(actor, clientId) {
 async function createClient(actor, body = {}, req = {}) {
   assertAdmin(actor);
   try {
+    await assertCreateReady('client_create');
     const input = validateClientInput(body);
     const userId = await generateClientUserId(input.fullName);
 

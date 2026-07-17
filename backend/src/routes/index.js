@@ -21,6 +21,7 @@ const supportTickets = require('../services/supportTicketService');
 const myProfile = require('../services/myProfileService');
 const leadLabels = require('../services/leadLabelService');
 const clients = require('../services/clientManagementService');
+const createReadiness = require('../services/createReadinessService');
 const {
   WORKFLOW_REMARK_OPTIONS,
   isWorkflowRemarkCompleted,
@@ -245,6 +246,10 @@ router.delete('/admin/clients/:clientId', authenticate, requireRole('super_admin
   const data = await clients.deleteClient(req.user, req.params.clientId, req);
   invalidateUser(req.params.clientId);
   res.json({ success: true, data, message: 'Client deleted.' });
+}));
+router.get('/admin/create-readiness', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (_req, res) => {
+  const data = await createReadiness.getCreateReadiness();
+  res.json({ success: true, data });
 }));
 router.get('/client/dashboard', authenticate, requireRole('client'), asyncHandler(async (req, res) => {
   const data = await clients.clientDashboard(req.user);
