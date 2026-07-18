@@ -178,6 +178,28 @@ function mapClient(row) {
   } : null;
 }
 
+function isSchemaMissing(error) {
+  return error?.code === '42703' || error?.code === '42P01';
+}
+
+async function optionalClientSection(label, sql, params) {
+  try {
+    return await query(sql, params);
+  } catch (error) {
+    if (isSchemaMissing(error)) {
+      logger.warn({
+        section: label,
+        code: error.code,
+        message: error.message,
+        table: error.table || null,
+        column: error.column || null,
+      }, 'Client detail optional section skipped because schema is not available');
+      return { rows: [] };
+    }
+    throw error;
+  }
+}
+
 async function listClients(actor, filters = {}) {
   assertAdmin(actor);
   const { page, pageSize, offset } = pageParams(filters);
@@ -230,11 +252,11 @@ async function getClient(actor, clientId) {
   if (!row) throw new AppError(404, 'CLIENT_NOT_FOUND', 'Client not found.');
 
   const [pages, adAccounts, campaigns, leads, tickets] = await Promise.all([
-    query(`SELECT id, page_id, page_name, is_active, connection_status, token_last_checked, selected_at FROM meta_pages WHERE client_id = $1 ORDER BY page_name NULLS LAST, page_id`, [clientId]),
-    query(`SELECT id, account_id, account_name, sync_status, last_attempted_sync_at, last_successful_sync_at, last_sync_error, total_returned_by_api, active_campaign_count, paused_campaign_count FROM meta_ad_accounts WHERE client_id = $1 ORDER BY account_name NULLS LAST, account_id`, [clientId]),
-    query(`SELECT campaign_id, campaign_name, effective_status, configured_status, status, ui_status, last_synced_at, sync_status FROM meta_campaigns WHERE client_id = $1 ORDER BY updated_time DESC NULLS LAST, campaign_name`, [clientId]),
-    query(`SELECT id, full_name, phone, email, source, campaign_name, created_at, call_status, stage FROM leads WHERE client_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 20`, [clientId]),
-    query(`SELECT id, ticket_no, subject, status, created_at, updated_at FROM support_tickets WHERE created_by_user_id = $1 ORDER BY created_at DESC LIMIT 20`, [clientId]).catch(() => ({ rows: [] })),
+    optionalClientSection('meta_pages', `SELECT id, page_id, page_name, is_active, connection_status, token_last_checked, selected_at FROM meta_pages WHERE client_id = $1 ORDER BY page_name NULLS LAST, page_id`, [clientId]),
+    optionalClientSection('meta_ad_accounts', `SELECT id, account_id, account_name, sync_status, last_sync_attempted_at AS last_attempted_sync_at, last_successful_sync_at, last_sync_error, total_returned_by_api, active_campaign_count, paused_campaign_count FROM meta_ad_accounts WHERE client_id = $1 ORDER BY account_name NULLS LAST, account_id`, [clientId]),
+    optionalClientSection('meta_campaigns', `SELECT campaign_id, campaign_name, effective_status, configured_status, status, ui_status, last_synced_at, sync_status FROM meta_campaigns WHERE client_id = $1 ORDER BY updated_at DESC NULLS LAST, campaign_name`, [clientId]),
+    optionalClientSection('leads', `SELECT id, full_name, phone, email, source, campaign_name, created_at, call_status, stage FROM leads WHERE client_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 20`, [clientId]),
+    optionalClientSection('support_tickets', `SELECT id, ticket_no, subject, status, created_at, updated_at FROM support_tickets WHERE created_by_user_id = $1 ORDER BY created_at DESC LIMIT 20`, [clientId]),
   ]);
 
   return {

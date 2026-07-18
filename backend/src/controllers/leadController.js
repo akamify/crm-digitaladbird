@@ -134,6 +134,21 @@ function toManualLeadCreateAppError(error) {
       },
     );
   }
+  if (error?.code) {
+    return new AppError(
+      500,
+      'MANUAL_LEAD_DB_ERROR',
+      'Manual lead creation failed at database step.',
+      {
+        db_code: error.code,
+        message: error.message || null,
+        detail: error.detail || null,
+        table: error.table || null,
+        column: error.column || null,
+        constraint: error.constraint || null,
+      },
+    );
+  }
   return new AppError(
     500,
     'MANUAL_LEAD_CREATE_FAILED',
