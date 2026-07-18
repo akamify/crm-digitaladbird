@@ -35,8 +35,24 @@ const STAGE_OPTIONS: Array<{ value: LeadStage | ''; label: string }> = [
 const STATUS_OPTIONS = LEAD_REMARK_GROUPS.flatMap(group => group.options);
 
 function getErrorMessage(error: unknown) {
-  const maybe = error as { response?: { data?: { error?: { message?: string }; message?: string } } };
-  return maybe?.response?.data?.error?.message || maybe?.response?.data?.message || 'Could not add manual lead';
+  const maybe = error as {
+    response?: {
+      data?: {
+        error?: { message?: string; details?: Record<string, unknown> };
+        message?: string;
+      };
+    };
+  };
+  const errorData = maybe?.response?.data?.error;
+  const base = errorData?.message || maybe?.response?.data?.message || 'Could not add manual lead';
+  const details = errorData?.details || {};
+  const usefulDetails = [
+    details.db_code ? `DB ${String(details.db_code)}` : '',
+    details.column ? `Column ${String(details.column)}` : '',
+    details.constraint ? `Constraint ${String(details.constraint)}` : '',
+    details.detail ? String(details.detail) : '',
+  ].filter(Boolean);
+  return usefulDetails.length ? `${base} (${usefulDetails.join(' | ')})` : base;
 }
 
 function initialForm(): ManualLeadInput {

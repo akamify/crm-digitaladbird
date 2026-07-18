@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, type ReactNode } from 'react';
-import { Eye, Loader2, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { KeyRound, Loader2, Pencil, Plus, Power, RefreshCw, Search, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { Modal, Skeleton, EmptyState } from '@/components/ui/Modal';
@@ -32,12 +32,8 @@ function ClientsInner() {
   const [formClient, setFormClient] = useState<ClientAccount | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
-  const [deleteClient, setDeleteClient] = useState<ClientAccount | null>(null);
 
   const clients = useClients(filters);
-  const statusAction = useClientStatusAction();
-  const resetPassword = useResetClientPassword();
-  const deleteMutation = useDeleteClient();
 
   const rows = clients.data?.rows || [];
   const pagination = clients.data?.pagination || { page: 1, page_size: 20, total: 0 };
@@ -97,7 +93,6 @@ function ClientsInner() {
                 <th className="py-2 pr-3">Leads</th>
                 <th className="py-2 pr-3">Support</th>
                 <th className="py-2 pr-3">Last Login</th>
-                <th className="py-2 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -113,17 +108,6 @@ function ClientsInner() {
                   <td className="py-3 pr-3 tabular-nums">{client.leads_count}</td>
                   <td className="py-3 pr-3 tabular-nums">{client.open_support_tickets} open</td>
                   <td className="py-3 pr-3 text-xs text-slate-500">{client.last_login_at ? formatISTCompact(client.last_login_at) : 'Never'}</td>
-                  <td className="py-3 text-right" onClick={event => event.stopPropagation()}>
-                    <div className="flex flex-wrap justify-end gap-1">
-                      <button className="btn-outline rounded-lg px-2.5 py-1.5 text-xs" onClick={() => setDetailId(client.id)}><Eye className="mr-1 inline h-3.5 w-3.5" />View</button>
-                      <button className="btn-outline rounded-lg px-2.5 py-1.5 text-xs" onClick={() => { setFormClient(client); setFormOpen(true); }}>Edit</button>
-                      <button className="btn-outline rounded-lg px-2.5 py-1.5 text-xs" onClick={() => statusAction.mutate({ clientId: client.id, active: client.status !== 'active' }, { onSuccess: () => toast.success(client.status === 'active' ? 'Client deactivated' : 'Client activated'), onError: errorToast })}>
-                        {client.status === 'active' ? 'Deactivate' : 'Activate'}
-                      </button>
-                      <button className="btn-outline rounded-lg px-2.5 py-1.5 text-xs" onClick={() => resetPassword.mutate(client.id, { onSuccess: () => toast.success('Reset link sent'), onError: errorToast })}>Reset</button>
-                      <button className="btn-outline rounded-lg px-2.5 py-1.5 text-xs text-rose-600" onClick={() => setDeleteClient(client)}><Trash2 className="h-3.5 w-3.5" /></button>
-                    </div>
-                  </td>
                 </tr>
               ))}
             </tbody>
@@ -142,19 +126,6 @@ function ClientsInner() {
 
       <ClientFormModal open={formOpen} client={formClient} onClose={() => setFormOpen(false)} />
       <ClientDetailModal clientId={detailId} onClose={() => setDetailId(null)} />
-      <Modal open={Boolean(deleteClient)} onClose={() => setDeleteClient(null)} title="Delete client?" size="sm">
-        <p className="text-sm text-slate-600">This soft-deletes the client login. Owned data remains stored for audit.</p>
-        <div className="mt-4 flex justify-end gap-2">
-          <button className="btn-ghost rounded-lg px-4 py-2 text-sm" onClick={() => setDeleteClient(null)}>Cancel</button>
-          <button
-            className="btn-primary rounded-lg bg-rose-600 px-4 py-2 text-sm hover:bg-rose-700"
-            disabled={deleteMutation.isPending}
-            onClick={() => deleteClient && deleteMutation.mutate(deleteClient.id, { onSuccess: () => { toast.success('Client deleted'); setDeleteClient(null); }, onError: errorToast })}
-          >
-            Delete
-          </button>
-        </div>
-      </Modal>
     </div>
   );
 }
@@ -217,34 +188,144 @@ function ClientFormModal({ open, client, onClose }: { open: boolean; client: Cli
 
 function ClientDetailModal({ clientId, onClose }: { clientId: string | null; onClose: () => void }) {
   const detail = useClientDetail(clientId);
+  const statusAction = useClientStatusAction();
+  const resetPassword = useResetClientPassword();
+  const deleteMutation = useDeleteClient();
   const data = detail.data;
+  const [editOpen, setEditOpen] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<'reset' | 'status' | 'delete' | null>(null);
+
+  const client = data?.client || null;
+  const nextActiveState = client?.status !== 'active';
+  const actionPending = statusAction.isPending || resetPassword.isPending || deleteMutation.isPending;
+
+  function closeConfirm() {
+    if (!actionPending) setConfirmAction(null);
+  }
+
+  function runConfirmedAction() {
+    if (!client || !confirmAction) return;
+    if (confirmAction === 'reset') {
+      resetPassword.mutate(client.id, {
+        onSuccess: () => {
+          toast.success('Password reset email sent');
+          setConfirmAction(null);
+        },
+        onError: errorToast,
+      });
+      return;
+    }
+    if (confirmAction === 'status') {
+      statusAction.mutate({ clientId: client.id, active: nextActiveState }, {
+        onSuccess: () => {
+          toast.success(nextActiveState ? 'Client activated' : 'Client deactivated');
+          setConfirmAction(null);
+        },
+        onError: errorToast,
+      });
+      return;
+    }
+    deleteMutation.mutate(client.id, {
+      onSuccess: () => {
+        toast.success('Client deleted');
+        setConfirmAction(null);
+        onClose();
+      },
+      onError: errorToast,
+    });
+  }
+
   return (
-    <Modal open={Boolean(clientId)} onClose={onClose} title="Client Profile" size="xl">
-      {detail.isLoading ? <Skeleton className="h-80" /> : !data ? <EmptyState title="Client not found" /> : (
+    <>
+    <Modal open={Boolean(clientId)} onClose={onClose} title="Client Profile" description="Manage client login, Meta assets, lead analytics, and support context." size="xl">
+      {detail.isLoading ? <Skeleton className="h-80" /> : !data || !client ? <EmptyState title="Client not found" /> : (
         <div className="space-y-5">
-          <div className="grid gap-3 sm:grid-cols-4">
-            <Info label="Name" value={data.client.full_name} />
-            <Info label="Email" value={data.client.email} />
-            <Info label="User ID" value={data.client.user_id} />
-            <Info label="Status" value={humanize(data.client.status)} />
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="truncate text-xl font-semibold text-slate-950">{client.full_name}</h2>
+                  <ClientStatusChip status={client.status} />
+                </div>
+                <p className="mt-1 truncate text-sm text-slate-600">{client.email} - {client.phone || 'No phone'}</p>
+                <p className="mt-1 font-mono text-xs text-slate-500">User ID: {client.user_id}</p>
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <button type="button" className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs" onClick={() => setEditOpen(true)}>
+                  <Pencil className="h-3.5 w-3.5" />
+                  Edit
+                </button>
+                <button type="button" className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs" onClick={() => setConfirmAction('reset')}>
+                  <KeyRound className="h-3.5 w-3.5" />
+                  Send Reset Link
+                </button>
+                <button type="button" className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs" onClick={() => setConfirmAction('status')}>
+                  <Power className="h-3.5 w-3.5" />
+                  {client.status === 'active' ? 'Deactivate' : 'Activate'}
+                </button>
+                <button type="button" className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-rose-600" onClick={() => setConfirmAction('delete')}>
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Delete
+                </button>
+              </div>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-4">
+              <Info label="Created" value={client.created_at ? formatISTCompact(client.created_at) : null} />
+              <Info label="Updated" value={client.updated_at ? formatISTCompact(client.updated_at) : null} />
+              <Info label="Last login" value={client.last_login_at ? formatISTCompact(client.last_login_at) : 'Never'} />
+              <Info label="Role" value="Client" />
+            </div>
           </div>
-          <Section title="Meta Configuration">
-            <SummaryLine label="Pages" value={data.meta.pages.length} />
-            <SummaryLine label="Ad accounts" value={data.meta.ad_accounts.length} />
-            <SummaryLine label="Campaigns" value={data.meta.campaigns.length} />
+
+          <Section title="Dashboard Summary">
+            <div className="grid gap-2 sm:grid-cols-4">
+              <SummaryLine label="Pages" value={data.meta.pages.length} />
+              <SummaryLine label="Ad accounts" value={data.meta.ad_accounts.length} />
+              <SummaryLine label="Campaigns" value={data.meta.campaigns.length} />
+              <SummaryLine label="Leads" value={client.leads_count || 0} />
+              <SummaryLine label="Open tickets" value={client.open_support_tickets || 0} />
+            </div>
           </Section>
+
+          <Section title="Meta Credentials & Assets">
+            <div className="grid gap-4 lg:grid-cols-2">
+              <AssetList title="Pages" rows={data.meta.pages} primaryKeys={['page_name', 'name', 'meta_page_name']} secondaryKeys={['page_id', 'meta_page_id', 'id']} empty="No Meta pages mapped." />
+              <AssetList title="Ad Accounts" rows={data.meta.ad_accounts} primaryKeys={['account_name', 'name', 'ad_account_name']} secondaryKeys={['account_id', 'ad_account_id', 'id']} empty="No ad accounts mapped." />
+            </div>
+          </Section>
+
           <Section title="Campaigns">
-            <CompactList rows={data.meta.campaigns.slice(0, 8)} primary="campaign_name" secondary="effective_status" empty="No campaigns mapped to this client." />
+            <CompactList rows={data.meta.campaigns.slice(0, 12)} primary="campaign_name" secondary="effective_status" empty="No campaigns mapped to this client." />
           </Section>
+
           <Section title="Leads Summary">
             <CompactList rows={data.leads_summary.recent} primary="full_name" secondary="campaign_name" empty="No client leads yet." />
           </Section>
+
           <Section title="Support History">
             <CompactList rows={data.support_history} primary="ticket_no" secondary="status" empty="No support tickets yet." />
           </Section>
         </div>
       )}
     </Modal>
+
+    <ClientFormModal open={editOpen} client={client} onClose={() => setEditOpen(false)} />
+    <Modal open={Boolean(confirmAction)} onClose={closeConfirm} title={confirmTitle(confirmAction, client)} size="sm">
+      <p className="text-sm text-slate-600">{confirmDescription(confirmAction, client)}</p>
+      <div className="mt-4 flex justify-end gap-2">
+        <button type="button" className="btn-ghost rounded-lg px-4 py-2 text-sm" disabled={actionPending} onClick={closeConfirm}>Cancel</button>
+        <button
+          type="button"
+          className={clsx('btn-primary inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm', confirmAction === 'delete' && 'bg-rose-600 hover:bg-rose-700')}
+          disabled={actionPending}
+          onClick={runConfirmedAction}
+        >
+          {actionPending && <Loader2 className="h-4 w-4 animate-spin" />}
+          Confirm
+        </button>
+      </div>
+    </Modal>
+    </>
   );
 }
 
@@ -261,12 +342,79 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 function SummaryLine({ label, value }: { label: string; value: number }) {
-  return <div className="inline-flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700"><span>{label}</span><strong>{value}</strong></div>;
+  return <div className="inline-flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700"><span>{label}</span><strong>{value}</strong></div>;
 }
 
 function CompactList({ rows, primary, secondary, empty }: { rows: Array<Record<string, unknown>>; primary: string; secondary: string; empty: string }) {
   if (!rows.length) return <p className="text-sm text-slate-500">{empty}</p>;
   return <div className="divide-y divide-slate-100">{rows.map((row, index) => <div key={`${primary}-${index}`} className="flex items-center justify-between gap-3 py-2 text-sm"><span className="truncate font-medium text-slate-800">{String(row[primary] || 'Not named')}</span><span className="chip-slate shrink-0">{humanize(String(row[secondary] || 'unknown'))}</span></div>)}</div>;
+}
+
+function AssetList({
+  title,
+  rows,
+  primaryKeys,
+  secondaryKeys,
+  empty,
+}: {
+  title: string;
+  rows: Array<Record<string, unknown>>;
+  primaryKeys: string[];
+  secondaryKeys: string[];
+  empty: string;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-100 bg-white p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500">{title}</h4>
+        <span className="chip-slate">{rows.length}</span>
+      </div>
+      {!rows.length ? (
+        <p className="text-sm text-slate-500">{empty}</p>
+      ) : (
+        <div className="max-h-56 divide-y divide-slate-100 overflow-y-auto">
+          {rows.slice(0, 12).map((row, index) => {
+            const primary = firstValue(row, primaryKeys) || 'Not named';
+            const secondary = firstValue(row, secondaryKeys) || 'No ID';
+            return (
+              <div key={`${title}-${index}`} className="min-w-0 py-2">
+                <div className="truncate text-sm font-medium text-slate-800" title={primary}>{primary}</div>
+                <div className="truncate font-mono text-xs text-slate-500" title={secondary}>{secondary}</div>
+              </div>
+            );
+          })}
+          {rows.length > 12 && <div className="pt-2 text-xs text-slate-500">+{rows.length - 12} more</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function firstValue(row: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = row[key];
+    if (value !== null && value !== undefined && String(value).trim()) return String(value);
+  }
+  return '';
+}
+
+function confirmTitle(action: 'reset' | 'status' | 'delete' | null, client: ClientAccount | null) {
+  if (action === 'reset') return 'Send password reset link?';
+  if (action === 'delete') return 'Delete client?';
+  if (action === 'status') return client?.status === 'active' ? 'Deactivate client?' : 'Activate client?';
+  return 'Confirm action';
+}
+
+function confirmDescription(action: 'reset' | 'status' | 'delete' | null, client: ClientAccount | null) {
+  const name = client?.full_name || 'this client';
+  if (action === 'reset') return `A password reset email will be sent to ${client?.email || 'the client email'}.`;
+  if (action === 'delete') return `This soft-deletes ${name}'s login. Owned Meta, leads, and support data remains stored for audit.`;
+  if (action === 'status') {
+    return client?.status === 'active'
+      ? `${name} will no longer be able to log in until reactivated.`
+      : `${name} will be able to log in again after activation.`;
+  }
+  return 'Please confirm this action.';
 }
 
 function ClientStatusChip({ status }: { status: string }) {

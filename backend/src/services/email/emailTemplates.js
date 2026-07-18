@@ -30,11 +30,26 @@ function resetEmail({ user, resetUrl, expiresMinutes }) {
 }
 
 function onboardingEmail({ user, resetUrl, loginUrl, expiresMinutes }) {
-  const content = `<p>Your CRM account is ready.</p><table role="presentation" cellspacing="0" cellpadding="5" style="font-size:14px"><tr><td><strong>Role</strong></td><td>${escapeHtml(user.role)}</td></tr><tr><td><strong>Email</strong></td><td>${escapeHtml(user.email)}</td></tr><tr><td><strong>Phone</strong></td><td>${escapeHtml(user.phone || 'Not set')}</td></tr><tr><td><strong>CP ID</strong></td><td>${escapeHtml(user.cp_id)}</td></tr><tr><td><strong>CRM login</strong></td><td>${escapeHtml(loginUrl)}</td></tr></table><p style="line-height:1.6">For your security, we do not send passwords by email. Please set your password using the secure link below. The link expires in <strong>${expiresMinutes} minutes</strong>.</p>`;
+  const cpId = String(user.cp_id || '').trim();
+  const cpRow = cpId ? `<tr><td><strong>CP ID</strong></td><td>${escapeHtml(cpId)}</td></tr>` : '';
+  const content = `<p>Your CRM account is ready.</p><table role="presentation" cellspacing="0" cellpadding="5" style="font-size:14px"><tr><td><strong>Role</strong></td><td>${escapeHtml(user.role)}</td></tr><tr><td><strong>Email</strong></td><td>${escapeHtml(user.email)}</td></tr><tr><td><strong>Phone</strong></td><td>${escapeHtml(user.phone || 'Not set')}</td></tr>${cpRow}<tr><td><strong>CRM login</strong></td><td>${escapeHtml(loginUrl)}</td></tr></table><p style="line-height:1.6">For your security, we do not send passwords by email. Please set your password using the secure link below. The link expires in <strong>${expiresMinutes} minutes</strong>.</p>`;
+  const textLines = [
+    `Hello ${user.full_name},`,
+    '',
+    'Your DigitalADbird CRM account is ready.',
+    `Role: ${user.role}`,
+    `Email: ${user.email}`,
+    `Phone: ${user.phone || 'Not set'}`,
+    ...(cpId ? [`CP ID: ${cpId}`] : []),
+    `Login: ${loginUrl}`,
+    '',
+    `For your security, we do not send passwords by email. Set your password: ${resetUrl}`,
+    `This link expires in ${expiresMinutes} minutes.`,
+  ];
   return {
     subject: 'Your DigitalADbird CRM account is ready',
     html: shell({ title: 'Welcome to DigitalADbird CRM', greeting: `Hello ${user.full_name},`, content, buttonLabel: 'Set your password', resetUrl, footer: 'Keep your login details private and contact your administrator if this account was not expected.' }),
-    text: `Hello ${user.full_name},\n\nYour DigitalADbird CRM account is ready.\nRole: ${user.role}\nEmail: ${user.email}\nPhone: ${user.phone || 'Not set'}\nCP ID: ${user.cp_id}\nLogin: ${loginUrl}\n\nFor your security, we do not send passwords by email. Set your password: ${resetUrl}\nThis link expires in ${expiresMinutes} minutes.`,
+    text: textLines.join('\n'),
   };
 }
 

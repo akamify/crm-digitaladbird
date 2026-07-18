@@ -55,7 +55,7 @@ function commonParams(user, resetUrl, requestedBy) {
     USER_NAME: user.full_name,
     USER_EMAIL: user.email,
     USER_PHONE: user.phone || '',
-    CP_ID: user.cp_id,
+    CP_ID: user.cp_id || '',
     USER_ROLE: user.role,
     RESET_URL: resetUrl,
     LOGIN_URL: `${config.email.frontendUrl}/login`,

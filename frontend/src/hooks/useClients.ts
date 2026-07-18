@@ -96,7 +96,10 @@ export function useDeleteClient() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (clientId: string) => apiDelete(`/admin/clients/${clientId}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'clients'] }),
+    onSuccess: (_data, clientId) => {
+      qc.invalidateQueries({ queryKey: ['admin', 'clients'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'client', clientId] });
+    },
   });
 }
 
@@ -105,7 +108,10 @@ export function useClientStatusAction() {
   return useMutation({
     mutationFn: ({ clientId, active }: { clientId: string; active: boolean }) =>
       apiPost(`/admin/clients/${clientId}/${active ? 'activate' : 'deactivate'}`, {}),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'clients'] }),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ['admin', 'clients'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'client', variables.clientId] });
+    },
   });
 }
 
