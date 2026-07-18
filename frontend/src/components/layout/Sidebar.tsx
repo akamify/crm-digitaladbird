@@ -55,7 +55,7 @@ const NAV: NavItem[] = [
   { href: '/rm-teams', label: 'RM Teams', Icon: UsersRound, roles: ['super_admin'] },
   { href: '/settings', label: 'Settings', Icon: Settings, roles: ['super_admin', 'client'] },
   { href: '/support', label: 'Support', Icon: LifeBuoy, roles: ['rm', 'member', 'partner', 'client'] },
-  { href: '/profile', label: 'My Profile', Icon: UserCircle, roles: ['rm', 'member', 'partner', 'client'] },
+  { href: '/profile', label: 'My Profile', Icon: UserCircle, roles: ['rm', 'member', 'partner'] },
 ];
 
 const ADMIN_NAV = [

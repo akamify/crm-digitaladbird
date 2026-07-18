@@ -992,10 +992,10 @@ exports.createManual = asyncHandler(async (req, res) => {
          manual_added_by_user_id, manual_added_at, created_by_user_id
        )
        VALUES (
-         $1, $2, $3, $4, $5, 'manual'::lead_source, $6, 'manual',
-         NOW(), COALESCE($7, 'new')::lead_stage, COALESCE($8, 'not_called')::call_status, $9,
-         $10, CASE WHEN $10 IS NULL THEN NULL ELSE NOW() END, $11::jsonb, $12::jsonb,
-         $13, NOW(), $13
+         $1::text, $2::text, $3::text, $4::text, $5::text, 'manual'::lead_source, $6::text, 'manual',
+         NOW(), COALESCE($7::text, 'new')::lead_stage, COALESCE($8::text, 'not_called')::call_status, $9::timestamptz,
+         $10::uuid, CASE WHEN $10::uuid IS NULL THEN NULL ELSE NOW() END, $11::jsonb, $12::jsonb,
+         $13::uuid, NOW(), $13::uuid
        )
        RETURNING id, full_name, phone, email, source, manual_added_by_user_id, manual_added_at,
                  created_by_user_id, created_at, assigned_to_user_id`,
@@ -1040,10 +1040,10 @@ exports.createManual = asyncHandler(async (req, res) => {
     if (initialRemark || normalizedCallStatus || normalizedStage || nextFollowupAt) {
       await client.query(
         `INSERT INTO lead_remarks(
-           lead_id, user_id, remark, call_status, stage, next_followup_at,
+         lead_id, user_id, remark, call_status, stage, next_followup_at,
            source, is_completed_response, call_statuses
          )
-         VALUES ($1, $2, $3, $4, $5, $6, 'manual', FALSE, $7::jsonb)`,
+         VALUES ($1::uuid, $2::uuid, $3::text, $4::call_status, $5::lead_stage, $6::timestamptz, 'manual', FALSE, $7::jsonb)`,
         [
           lead.id,
           req.user.id,

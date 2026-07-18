@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, type ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
 import { KeyRound, Loader2, Pencil, Plus, Power, RefreshCw, Search, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
@@ -28,6 +29,7 @@ export default function AdminClientsPage() {
 }
 
 function ClientsInner() {
+  const router = useRouter();
   const [filters, setFilters] = useState({ search: '', status: 'all', sort: 'created_at', order: 'desc', page: 1, page_size: 20 });
   const [formClient, setFormClient] = useState<ClientAccount | null>(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -97,7 +99,7 @@ function ClientsInner() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {rows.map(client => (
-                <tr key={client.id} className="cursor-pointer hover:bg-slate-50" onClick={() => setDetailId(client.id)}>
+                <tr key={client.id} className="cursor-pointer hover:bg-slate-50" onClick={() => router.push(`/dashboard/admin/clients/${client.id}`)}>
                   <td className="py-3 pr-3">
                     <div className="font-medium text-slate-950">{client.full_name}</div>
                     <div className="text-xs text-slate-500">{client.email} - {client.phone || 'No phone'}</div>
