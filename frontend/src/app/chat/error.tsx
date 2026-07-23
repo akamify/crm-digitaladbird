@@ -28,3 +28,4 @@ export default function ChatError({ error, reset }: { error: Error & { digest?: 
     </div>
   );
 }
+
