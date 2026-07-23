@@ -42,7 +42,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
 
 
-          port: ${{ secrets.VPS_PORT }}
+          port: 22
 
 
           script: |
