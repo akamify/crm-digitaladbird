@@ -105,7 +105,7 @@ function LoginInner() {
 
             <div className="space-y-4">
               <p className="text-4xl font-semibold leading-tight tracking-tight">
-                 team performance, and customer follow-up in one place.
+                Lead operations, team performance, and customer follow-up in one place.
               </p>
               <p className="max-w-sm text-sm leading-6 text-slate-300">
                 Sign in with your registered email, CP ID, or phone number.
