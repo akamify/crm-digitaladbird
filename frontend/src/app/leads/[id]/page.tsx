@@ -13,6 +13,7 @@ import {
   LeadSummaryCard,
   AssignmentCard,
   FollowUpCard,
+  LatestRmUpdateCard,
   TechnicalMetaDetails,
 } from '@/components/leads/LeadProfileSidebar';
 import { LeadRemarkTimeline } from '@/components/leads/LeadRemarkTimeline';
@@ -46,6 +47,7 @@ function LeadDetailInner() {
   const updateCategory = useUpdateLeadCategory();
 
   const [remarkOpen, setRemarkOpen] = useState(false);
+  const [rmRemarkOpen, setRmRemarkOpen] = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
   const [sessionCreateSignal, setSessionCreateSignal] = useState(0);
   const [labelCreateSignal, setLabelCreateSignal] = useState(0);
@@ -77,8 +79,10 @@ function LeadDetailInner() {
   }
 
   const canReassign = user.role === 'super_admin' || user.role === 'rm';
+  const canAddRmUpdate = user.role === 'rm';
   const canEditCategory = user.role === 'super_admin' || user.role === 'admin';
   const canSeeTechnical = user.role === 'super_admin' || user.role === 'admin';
+  const canSeeRmSummary = user.role === 'super_admin' || user.role === 'admin' || user.role === 'rm';
   const readOnlyAccess = Boolean(lead.read_only_access);
   const leadPhone = lead.phone;
 
@@ -162,12 +166,22 @@ function LeadDetailInner() {
         </Button>
       )}
 
-      {!readOnlyAccess && (
+      {!readOnlyAccess && !canAddRmUpdate && (
         <Button
           leftIcon={<MessageSquarePlus className="h-4 w-4" />}
           onClick={() => setRemarkOpen(true)}
         >
           Add Remark
+        </Button>
+      )}
+
+      {!readOnlyAccess && canAddRmUpdate && (
+        <Button
+          variant="outline"
+          leftIcon={<MessageSquarePlus className="h-4 w-4" />}
+          onClick={() => setRmRemarkOpen(true)}
+        >
+          Add RM Update
         </Button>
       )}
 
@@ -220,8 +234,9 @@ function LeadDetailInner() {
 
           <LeadRemarkTimeline
             remarks={lead.remarks}
-            onAdd={() => setRemarkOpen(true)}
+            onAdd={() => (canAddRmUpdate ? setRmRemarkOpen(true) : setRemarkOpen(true))}
             canAdd={!readOnlyAccess}
+            addLabel={canAddRmUpdate ? 'Add RM Update' : 'Add remark'}
           />
         </main>
 
@@ -230,6 +245,7 @@ function LeadDetailInner() {
             <LeadSummaryCard lead={lead} />
             <AssignmentCard lead={lead} />
             <FollowUpCard lead={lead} />
+            {canSeeRmSummary && <LatestRmUpdateCard lead={lead} />}
             <LeadLabelsCard leadId={id} canManage={!readOnlyAccess} createSignal={labelCreateSignal} />
             <LeadSessionsCard
               leadId={id}
@@ -246,13 +262,17 @@ function LeadDetailInner() {
           onCall={callLead}
           callDisabled={!lead.phone}
           onChat={() => router.push(`/chat?leadId=${id}`)}
-          onRemark={() => setRemarkOpen(true)}
+          onRemark={() => (canAddRmUpdate ? setRmRemarkOpen(true) : setRemarkOpen(true))}
           onReassign={canReassign ? () => setReassignOpen(true) : undefined}
         />
       )}
 
       {!readOnlyAccess && (
         <RemarkModal leadId={id} open={remarkOpen} onClose={() => setRemarkOpen(false)} />
+      )}
+
+      {!readOnlyAccess && canAddRmUpdate && (
+        <RemarkModal leadId={id} mode="rm_update" open={rmRemarkOpen} onClose={() => setRmRemarkOpen(false)} />
       )}
 
       {!readOnlyAccess && (

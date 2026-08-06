@@ -6,6 +6,12 @@ import { Select } from '@/components/ui/Input';
 import { useCampaignNames } from '@/hooks/useLeads';
 import { useLabels } from '@/hooks/useLeadLabels';
 import { LEAD_REMARK_GROUPS } from '@/constants/leadRemarkOptions';
+import {
+  LEAD_REMARK_CATEGORY_OPTIONS,
+  LEAD_REMARK_CUSTOMER_INTEREST_OPTIONS,
+  LEAD_REMARK_NOTE_TYPE_OPTIONS,
+  LEAD_REMARK_PRIORITY_OPTIONS,
+} from '@/constants/leadRemarkMeta';
 import type { LeadFilters } from '@/types';
 
 interface Props {
@@ -113,7 +119,7 @@ export function LeadFilters({ value, onChange }: Props) {
     ...(campaignNames || []).map(n => ({ value: n, label: n })),
   ];
 
-  const hasFilters = !!(value.q || value.category || value.stage || value.call_status || value.followup || value.source || value.campaign || value.from || value.to || value.created_preset || value.pending || value.assignment || value.label_id || value.remark_status || value.session_attendance || value.workflow_status || value.latest_activity || value.no_remark);
+  const hasFilters = !!(value.q || value.category || value.stage || value.call_status || value.followup || value.source || value.campaign || value.from || value.to || value.created_preset || value.pending || value.assignment || value.label_id || value.remark_status || value.note_type || value.note_category || value.priority || value.customer_interest || value.has_rm_update || value.updated_by_rm || value.session_attendance || value.workflow_status || value.latest_activity || value.no_remark);
   const labelOpts = [{ value: '', label: 'All labels' }, ...(labels || []).map(label => ({ value: label.id, label: label.name }))];
   const activeChips = [
     value.category && { key: 'category', label: `Category: ${optionLabel(CATEGORY_OPTS, value.category)}` },
@@ -128,6 +134,11 @@ export function LeadFilters({ value, onChange }: Props) {
     value.label_id && { key: 'label_id', label: `Label: ${optionLabel(labelOpts, value.label_id)}` },
     value.latest_activity && { key: 'latest_activity', label: `Activity: ${optionLabel(LATEST_ACTIVITY_OPTS, value.latest_activity)}` },
     value.no_remark === 'true' && { key: 'no_remark', label: 'No remark' },
+    value.note_type && { key: 'note_type', label: `Note Type: ${optionLabel([{ value: '', label: '' }, ...LEAD_REMARK_NOTE_TYPE_OPTIONS], value.note_type)}` },
+    value.note_category && { key: 'note_category', label: `Note Category: ${optionLabel([{ value: '', label: '' }, ...LEAD_REMARK_CATEGORY_OPTIONS], value.note_category)}` },
+    value.priority && { key: 'priority', label: `Priority: ${optionLabel([{ value: '', label: '' }, ...LEAD_REMARK_PRIORITY_OPTIONS], value.priority)}` },
+    value.customer_interest && { key: 'customer_interest', label: `Interest: ${optionLabel([{ value: '', label: '' }, ...LEAD_REMARK_CUSTOMER_INTEREST_OPTIONS], value.customer_interest)}` },
+    value.has_rm_update && { key: 'has_rm_update', label: `RM Update: ${value.has_rm_update === 'true' ? 'Yes' : 'No'}` },
   ].filter(Boolean) as { key: keyof LeadFilters; label: string }[];
 
   return (
@@ -208,6 +219,31 @@ export function LeadFilters({ value, onChange }: Props) {
           value={value.no_remark || ''}
           options={[{ value: '', label: 'All remark state' }, { value: 'true', label: 'No remark yet' }]}
           onChange={(e: ChangeEvent<HTMLSelectElement>) => set('no_remark', e.target.value as LeadFilters['no_remark'])}
+        />
+        <Select
+          value={value.note_type || ''}
+          options={[{ value: '', label: 'All note types' }, ...LEAD_REMARK_NOTE_TYPE_OPTIONS.map(option => ({ value: option.value, label: option.label }))]}
+          onChange={(e: ChangeEvent<HTMLSelectElement>) => set('note_type', e.target.value as LeadFilters['note_type'])}
+        />
+        <Select
+          value={value.note_category || ''}
+          options={[{ value: '', label: 'All note categories' }, ...LEAD_REMARK_CATEGORY_OPTIONS.map(option => ({ value: option.value, label: option.label }))]}
+          onChange={(e: ChangeEvent<HTMLSelectElement>) => set('note_category', e.target.value as LeadFilters['note_category'])}
+        />
+        <Select
+          value={value.priority || ''}
+          options={[{ value: '', label: 'All priorities' }, ...LEAD_REMARK_PRIORITY_OPTIONS.map(option => ({ value: option.value, label: option.label }))]}
+          onChange={(e: ChangeEvent<HTMLSelectElement>) => set('priority', e.target.value as LeadFilters['priority'])}
+        />
+        <Select
+          value={value.customer_interest || ''}
+          options={[{ value: '', label: 'All customer interests' }, ...LEAD_REMARK_CUSTOMER_INTEREST_OPTIONS.map(option => ({ value: option.value, label: option.label }))]}
+          onChange={(e: ChangeEvent<HTMLSelectElement>) => set('customer_interest', e.target.value as LeadFilters['customer_interest'])}
+        />
+        <Select
+          value={value.has_rm_update || ''}
+          options={[{ value: '', label: 'RM update state' }, { value: 'true', label: 'Has RM update' }, { value: 'false', label: 'No RM update' }]}
+          onChange={(e: ChangeEvent<HTMLSelectElement>) => set('has_rm_update', e.target.value as LeadFilters['has_rm_update'])}
         />
         <Input
           type="date" label="From"

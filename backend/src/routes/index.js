@@ -1956,7 +1956,7 @@ router.post('/admin/bulk-leads', authenticate, requireRole('super_admin'), async
 }));
 
 // --- 11. Live Admin Stats (comprehensive real-time) ---
-router.get('/admin/live-stats', authenticate, requireRole('super_admin'), responseCache(10000), asyncHandler(async (_req, res) => {
+router.get('/admin/live-stats', authenticate, requireRole('super_admin', 'admin'), responseCache(10000), asyncHandler(async (_req, res) => {
   const { rows: [s] } = await query(`
     SELECT
       (SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND role = 'rm') AS total_rms,
@@ -1976,6 +1976,13 @@ router.get('/admin/live-stats', authenticate, requireRole('super_admin'), respon
       (SELECT COUNT(*) FROM lead_requests WHERE status = 'pending') AS pending_lead_requests,
       (SELECT COUNT(*) FROM distribution_approvals WHERE status = 'pending') AS pending_approvals,
       (SELECT COUNT(*) FROM lead_remarks WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS today_remarks,
+      (SELECT COUNT(*) FROM lead_remarks WHERE note_type = 'rm_update') AS total_rm_updates,
+      (SELECT COUNT(*) FROM lead_remarks WHERE note_type = 'rm_update' AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS today_rm_updates,
+      (SELECT COUNT(*) FROM lead_remarks WHERE note_type = 'rm_update' AND created_at >= date_trunc('week', NOW())) AS week_rm_updates,
+      (SELECT COUNT(*) FROM lead_remarks WHERE note_type = 'rm_update' AND next_followup IS NOT NULL AND next_followup >= NOW()) AS pending_rm_followups,
+      (SELECT COUNT(*) FROM leads l WHERE l.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM lead_remarks r WHERE r.lead_id = l.id AND r.note_type = 'rm_update')) AS leads_without_rm_update,
+      (SELECT COUNT(*) FROM lead_remarks WHERE note_type = 'rm_update' AND customer_interest = 'hot') AS hot_rm_leads,
+      (SELECT COUNT(*) FROM lead_remarks WHERE note_type = 'rm_update' AND category = 'proposal') AS proposal_pending_rm_updates,
       (SELECT COUNT(DISTINCT user_id) FROM audit_logs WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS today_active_users,
       (SELECT COUNT(*) FROM broadcast_messages WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS today_broadcasts,
       (SELECT COUNT(*) FROM admin_notifications WHERE is_read = FALSE) AS unread_notifications,
@@ -3647,6 +3654,11 @@ router.get('/rm-monitoring/team-overview', authenticate, requireRole('rm', 'supe
       COALESCE(rq.pending_req, 0)::int AS requests_pending,
       lact.last_remark_at,
       COALESCE(lact.remarks_today, 0)::int AS remarks_today,
+      COALESCE(lact.rm_updates_total, 0)::int AS rm_updates_total,
+      COALESCE(lact.rm_updates_today, 0)::int AS rm_updates_today,
+      COALESCE(lact.rm_updates_week, 0)::int AS rm_updates_week,
+      COALESCE(lact.rm_pending_followups, 0)::int AS rm_pending_followups,
+      lact.rm_latest_update_preview,
       CASE WHEN COALESCE(lact.remarks_today, 0) > 0
                 OR COALESCE(lc.today_count, 0) > 0 THEN true ELSE false END AS is_active_today
     FROM users u
@@ -3666,12 +3678,85 @@ router.get('/rm-monitoring/team-overview', authenticate, requireRole('rm', 'supe
     ) rq ON true
     LEFT JOIN LATERAL (
       SELECT MAX(r.created_at) AS last_remark_at,
-             COUNT(*) FILTER (WHERE (r.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS remarks_today
+             COUNT(*) FILTER (WHERE (r.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS remarks_today,
+             COUNT(*) FILTER (WHERE r.note_type = 'rm_update') AS rm_updates_total,
+             COUNT(*) FILTER (WHERE r.note_type = 'rm_update' AND (r.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS rm_updates_today,
+             COUNT(*) FILTER (WHERE r.note_type = 'rm_update' AND r.created_at >= date_trunc('week', NOW())) AS rm_updates_week,
+             COUNT(*) FILTER (WHERE r.note_type = 'rm_update' AND r.next_followup IS NOT NULL AND r.next_followup >= NOW()) AS rm_pending_followups,
+             (
+               SELECT LEFT(COALESCE(latest_rm.title, latest_rm.remark, ''), 120)
+               FROM lead_remarks latest_rm
+               WHERE latest_rm.user_id = u.id
+                 AND latest_rm.note_type = 'rm_update'
+               ORDER BY latest_rm.created_at DESC
+               LIMIT 1
+             ) AS rm_latest_update_preview
       FROM lead_remarks r WHERE r.user_id = u.id
     ) lact ON true
     WHERE u.report_to_id = $1 AND u.deleted_at IS NULL AND u.role = 'member'
     ORDER BY lc.converted DESC NULLS LAST, lc.worked DESC NULLS LAST, u.full_name
   `, [rmId]);
+
+  res.json({ success: true, data: rows });
+}));
+
+router.get('/rm-monitoring/rm-updates-summary', authenticate, requireRole('rm', 'super_admin', 'admin'), asyncHandler(async (req, res) => {
+  const rmId = req.user.role === 'rm' ? req.user.id : String(req.query.rm_id || '').trim() || null;
+  const scopeSql = rmId
+    ? `WHERE rm.id = $1`
+    : `WHERE rm.deleted_at IS NULL AND rm.role = 'rm'`;
+  const params = rmId ? [rmId] : [];
+
+  const { rows } = await query(`
+    SELECT
+      rm.id,
+      rm.full_name,
+      COALESCE(stats.total_rm_updates, 0)::int AS total_rm_updates,
+      COALESCE(stats.today_rm_updates, 0)::int AS today_rm_updates,
+      COALESCE(stats.week_rm_updates, 0)::int AS week_rm_updates,
+      COALESCE(stats.unique_leads_updated, 0)::int AS unique_leads_updated,
+      COALESCE(stats.pending_followups, 0)::int AS pending_followups,
+      stats.last_update_time,
+      stats.latest_update_preview,
+      stats.most_common_category
+    FROM users rm
+    LEFT JOIN LATERAL (
+      SELECT
+        COUNT(*) FILTER (WHERE lr.note_type = 'rm_update') AS total_rm_updates,
+        COUNT(*) FILTER (WHERE lr.note_type = 'rm_update' AND (lr.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS today_rm_updates,
+        COUNT(*) FILTER (WHERE lr.note_type = 'rm_update' AND lr.created_at >= date_trunc('week', NOW())) AS week_rm_updates,
+        COUNT(DISTINCT lr.lead_id) FILTER (WHERE lr.note_type = 'rm_update') AS unique_leads_updated,
+        COUNT(*) FILTER (WHERE lr.note_type = 'rm_update' AND lr.next_followup IS NOT NULL AND lr.next_followup >= NOW()) AS pending_followups,
+        MAX(lr.created_at) FILTER (WHERE lr.note_type = 'rm_update') AS last_update_time,
+        (
+          SELECT LEFT(COALESCE(latest.title, latest.remark, ''), 140)
+          FROM lead_remarks latest
+          WHERE latest.user_id = rm.id
+            AND latest.note_type = 'rm_update'
+          ORDER BY latest.created_at DESC
+          LIMIT 1
+        ) AS latest_update_preview,
+        (
+          SELECT cat.category
+          FROM (
+            SELECT latest_cat.category, COUNT(*) AS total_count
+            FROM lead_remarks latest_cat
+            WHERE latest_cat.user_id = rm.id
+              AND latest_cat.note_type = 'rm_update'
+              AND latest_cat.category IS NOT NULL
+            GROUP BY latest_cat.category
+            ORDER BY total_count DESC, latest_cat.category ASC
+            LIMIT 1
+          ) cat
+        ) AS most_common_category
+      FROM lead_remarks lr
+      WHERE lr.user_id = rm.id
+    ) stats ON true
+    ${scopeSql}
+      AND rm.deleted_at IS NULL
+      AND rm.role = 'rm'
+    ORDER BY stats.last_update_time DESC NULLS LAST, rm.full_name ASC
+  `, params);
 
   res.json({ success: true, data: rows });
 }));

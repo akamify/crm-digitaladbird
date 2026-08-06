@@ -53,6 +53,10 @@ const leadStages = [
 ];
 
 const followUpStatuses = ['pending', 'completed', 'missed', 'rescheduled'];
+const leadRemarkNoteTypes = ['general', 'counselor_update', 'rm_update'];
+const leadRemarkCategories = ['meeting', 'requirement', 'budget', 'problem', 'followup', 'status', 'proposal', 'other'];
+const leadRemarkPriorities = ['low', 'medium', 'high', 'urgent'];
+const leadRemarkCustomerInterests = ['cold', 'warm', 'hot', 'not_interested'];
 
 const aliases = new Map([
   ['not called', 'not_called'],
@@ -120,14 +124,38 @@ function validateFollowUpStatus(value) {
   return normalizeFromAllowed(value, followUpStatuses);
 }
 
+function validateLeadRemarkNoteType(value) {
+  return normalizeFromAllowed(value, leadRemarkNoteTypes);
+}
+
+function validateLeadRemarkCategory(value) {
+  return normalizeFromAllowed(value, leadRemarkCategories);
+}
+
+function validateLeadRemarkPriority(value) {
+  return normalizeFromAllowed(value, leadRemarkPriorities);
+}
+
+function validateLeadRemarkCustomerInterest(value) {
+  return normalizeFromAllowed(value, leadRemarkCustomerInterests);
+}
+
 module.exports = {
   leadStatuses,
   callStatuses,
   leadStages,
   followUpStatuses,
+  leadRemarkNoteTypes,
+  leadRemarkCategories,
+  leadRemarkPriorities,
+  leadRemarkCustomerInterests,
   normalizeOptionValue,
   validateLeadStatus,
   validateCallStatus,
   validateLeadStage,
   validateFollowUpStatus,
+  validateLeadRemarkNoteType,
+  validateLeadRemarkCategory,
+  validateLeadRemarkPriority,
+  validateLeadRemarkCustomerInterest,
 };

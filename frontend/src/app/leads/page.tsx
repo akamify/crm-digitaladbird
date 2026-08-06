@@ -72,6 +72,12 @@ function LeadsInner() {
     created_preset: (sp.get('created_preset') as LeadFilterType['created_preset']) || '',
     label_id: sp.get('label_id') || '',
     remark_status: (sp.get('remark_status') as LeadFilterType['remark_status']) || '',
+    note_type: (sp.get('note_type') as LeadFilterType['note_type']) || '',
+    note_category: (sp.get('note_category') as LeadFilterType['note_category']) || '',
+    priority: (sp.get('priority') as LeadFilterType['priority']) || '',
+    customer_interest: (sp.get('customer_interest') as LeadFilterType['customer_interest']) || '',
+    has_rm_update: (sp.get('has_rm_update') as LeadFilterType['has_rm_update']) || '',
+    updated_by_rm: sp.get('updated_by_rm') || '',
     session_attendance: (sp.get('session_attendance') as LeadFilterType['session_attendance']) || '',
     workflow_status: (sp.get('workflow_status') as LeadFilterType['workflow_status']) || '',
     latest_activity: (sp.get('latest_activity') as LeadFilterType['latest_activity']) || '',
@@ -109,6 +115,7 @@ function LeadsInner() {
   const isAdminLeadsView = user?.role === 'super_admin' || user?.role === 'admin';
   const isMemberLeadsView = user?.role === 'member';
   const canAddManualLead = user?.role === 'super_admin' || user?.role === 'admin' || user?.role === 'rm';
+  const isRmUser = user?.role === 'rm';
 
   const rows = data?.rows ?? [];
   const total = data?.total ?? 0;
@@ -161,6 +168,7 @@ function LeadsInner() {
     bulkAddRemark.mutate({
       leadIds: selectedIds,
       remark: bulkRemark.trim(),
+      ...(isRmUser ? { note_type: 'rm_update' as const } : {}),
       ...(bulkStatuses.length ? { call_status: bulkStatuses[0], call_statuses: bulkStatuses } : {}),
     }, {
       onSuccess: (summary) => {
@@ -294,7 +302,7 @@ function LeadsInner() {
           <div className="font-medium text-blue-950">{selectedIds.length} lead{selectedIds.length === 1 ? '' : 's'} selected</div>
           <div className="ml-auto flex flex-wrap gap-2">
             <button onClick={() => setBulkRemarkOpen(true)} className="btn-primary inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs">
-              <MessageSquarePlus className="h-4 w-4" /> Add Remark
+              <MessageSquarePlus className="h-4 w-4" /> {isRmUser ? 'Add RM Update' : 'Add Remark'}
             </button>
             <button onClick={() => setBulkLabelOpen(true)} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs">
               <Tag className="h-4 w-4" /> Add Labels
@@ -551,7 +559,7 @@ function LeadsInner() {
                             />
                             <button
                               type="button"
-                              title="Add remark"
+                              title={isRmUser ? 'Add RM update' : 'Add remark'}
                               onClick={() => setRemarkLeadId(lead.id)}
                               className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-1 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50"
                             >
@@ -596,7 +604,7 @@ function LeadsInner() {
           <LeadCommunicationPanel leadId={communicationLead.id} lead={communicationLead} defaultTab={communicationTab} />
         )}
       </Modal>
-      {remarkLeadId && <RemarkModal leadId={remarkLeadId} open={!!remarkLeadId} onClose={() => setRemarkLeadId(null)} />}
+      {remarkLeadId && <RemarkModal leadId={remarkLeadId} mode={isRmUser ? 'rm_update' : 'default'} open={!!remarkLeadId} onClose={() => setRemarkLeadId(null)} />}
       <AddLeadModal open={addLeadOpen} onClose={() => setAddLeadOpen(false)} />
       <LeadLabelPickerModal
         open={bulkLabelOpen}
@@ -607,9 +615,9 @@ function LeadsInner() {
         description={`${selectedIds.length} selected lead${selectedIds.length === 1 ? '' : 's'}`}
         onSuccess={() => setSelectedIds([])}
       />
-      <Modal open={bulkRemarkOpen} onClose={() => setBulkRemarkOpen(false)} title="Add Remark to Selected Leads" size="md">
+      <Modal open={bulkRemarkOpen} onClose={() => setBulkRemarkOpen(false)} title={isRmUser ? 'Add RM Update to Selected Leads' : 'Add Remark to Selected Leads'} size="md">
         <div className="space-y-3">
-          <p className="text-sm text-slate-600">This remark will be added to {selectedIds.length} selected lead{selectedIds.length === 1 ? '' : 's'} you can access.</p>
+          <p className="text-sm text-slate-600">This {isRmUser ? 'RM update' : 'remark'} will be added to {selectedIds.length} selected lead{selectedIds.length === 1 ? '' : 's'} you can access.</p>
           <div>
             <label className="mb-3 block text-sm font-semibold text-slate-900">Statuses</label>
             <div className="space-y-3">
@@ -655,7 +663,7 @@ function LeadsInner() {
         <div className="mt-4 flex justify-end gap-2">
           <button onClick={() => setBulkRemarkOpen(false)} className="btn-ghost rounded-lg px-4 py-2 text-sm">Cancel</button>
           <button onClick={submitBulkRemark} disabled={bulkAddRemark.isPending} className="btn-primary rounded-lg px-4 py-2 text-sm">
-            {bulkAddRemark.isPending ? 'Saving...' : 'Save Remark'}
+            {bulkAddRemark.isPending ? 'Saving...' : isRmUser ? 'Save RM Update' : 'Save Remark'}
           </button>
         </div>
       </Modal>

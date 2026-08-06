@@ -1,11 +1,26 @@
 'use client';
-import { useState, FormEvent } from 'react';
+import { useEffect, useState, FormEvent } from 'react';
 import toast from 'react-hot-toast';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
+import { Input, Select } from '@/components/ui/Input';
 import { useAddRemark } from '@/hooks/useLeads';
-import type { CallStatus, LeadStage } from '@/types';
+import { useAuth } from '@/lib/auth';
+import type {
+  CallStatus,
+  LeadRemarkCategory,
+  LeadRemarkCustomerInterest,
+  LeadRemarkNoteType,
+  LeadRemarkPriority,
+  LeadStage,
+} from '@/types';
 import { LEAD_REMARK_GROUPS } from '@/constants/leadRemarkOptions';
+import {
+  LEAD_REMARK_CATEGORY_OPTIONS,
+  LEAD_REMARK_CUSTOMER_INTEREST_OPTIONS,
+  LEAD_REMARK_NOTE_TYPE_OPTIONS,
+  LEAD_REMARK_PRIORITY_OPTIONS,
+} from '@/constants/leadRemarkMeta';
 import { clsx } from '@/lib/format';
 
 const STAGE_OPTS = [
@@ -23,22 +38,53 @@ interface Props {
   leadId: string;
   open: boolean;
   onClose: () => void;
+  mode?: 'default' | 'rm_update';
 }
 
-export function RemarkModal({ leadId, open, onClose }: Props) {
+export function RemarkModal({ leadId, open, onClose, mode = 'default' }: Props) {
+  const isRmMode = mode === 'rm_update';
+  const { user } = useAuth();
   const [remark,   setRemark]   = useState('');
   const [statuses, setStatuses] = useState<CallStatus[]>(['not_called']);
   const [stage,    setStage]    = useState<LeadStage | ''>('');
   const [followAt, setFollowAt] = useState('');
   const [releaseLock, setReleaseLock] = useState(true);
   const [customResponse, setCustomResponse] = useState('');
+  const [noteType, setNoteType] = useState<LeadRemarkNoteType>(isRmMode ? 'rm_update' : 'general');
+  const [category, setCategory] = useState<LeadRemarkCategory | ''>('');
+  const [title, setTitle] = useState('');
+  const [priority, setPriority] = useState<LeadRemarkPriority | ''>('');
+  const [customerInterest, setCustomerInterest] = useState<LeadRemarkCustomerInterest | ''>('');
+  const [nextFollowup, setNextFollowup] = useState('');
 
   const remarkMutation = useAddRemark();
   const isPending = remarkMutation.isPending;
+  const noteTypeOptions = LEAD_REMARK_NOTE_TYPE_OPTIONS.filter(option => {
+    if (user?.role === 'member' || user?.role === 'partner') return option.value !== 'rm_update';
+    if (user?.role === 'rm') return option.value === 'rm_update';
+    return true;
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    setRemark('');
+    setStatuses(['not_called']);
+    setStage('');
+    setFollowAt('');
+    setReleaseLock(true);
+    setCustomResponse('');
+    setNoteType(isRmMode ? 'rm_update' : 'general');
+    setCategory('');
+    setTitle('');
+    setPriority('');
+    setCustomerInterest('');
+    setNextFollowup('');
+  }, [open, isRmMode]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (followAt && new Date(followAt).getTime() <= Date.now()) { toast.error('Follow-up must be scheduled in the future'); return; }
+    if (nextFollowup && new Date(nextFollowup).getTime() <= Date.now()) { toast.error('RM follow-up must be scheduled in the future'); return; }
     if (statuses.length === 0 && !remark.trim()) { toast.error('Select at least one status or write a remark.'); return; }
     if (statuses.includes('custom_remark') && !customResponse.trim()) { toast.error('Enter the custom response.'); return; }
     try {
@@ -53,11 +99,18 @@ export function RemarkModal({ leadId, open, onClose }: Props) {
         call_statuses: statuses,
         stage: stage || undefined,
         next_followup_at: followAt ? new Date(followAt).toISOString() : null,
+        next_followup: nextFollowup ? new Date(nextFollowup).toISOString() : null,
         release_lock: releaseLock,
+        note_type: noteType,
+        category: category || undefined,
+        title: title.trim() || undefined,
+        priority: priority || undefined,
+        customer_interest: customerInterest || undefined,
       });
 
       toast.success('Remark saved');
       setRemark(''); setStatuses(['not_called']); setStage(''); setFollowAt(''); setReleaseLock(true); setCustomResponse('');
+      setNoteType(isRmMode ? 'rm_update' : 'general'); setCategory(''); setTitle(''); setPriority(''); setCustomerInterest(''); setNextFollowup('');
       onClose();
     } catch (err: unknown) {
       const data = (err as { response?: { data?: { message?: string; error?: string | { message?: string } } } })?.response?.data;
@@ -73,8 +126,8 @@ export function RemarkModal({ leadId, open, onClose }: Props) {
     <Modal
       open={open}
       onClose={onClose}
-      title="Add Remark"
-      description="Record the outcome, next stage, and follow-up in one update."
+      title={isRmMode ? 'Add RM Update' : 'Add Remark'}
+      description={isRmMode ? 'Record structured RM requirements, priority, interest, and follow-up in the shared timeline.' : 'Record the outcome, next stage, and follow-up in one update.'}
       size="lg"
       footer={
         <>
@@ -84,6 +137,57 @@ export function RemarkModal({ leadId, open, onClose }: Props) {
       }
     >
       <form onSubmit={handleSubmit} className="space-y-5">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {!isRmMode && (
+            <Select
+              label="Note Type"
+              value={noteType}
+              options={noteTypeOptions.map(option => ({ value: option.value, label: option.label }))}
+              onChange={event => setNoteType(event.target.value as LeadRemarkNoteType)}
+            />
+          )}
+          {isRmMode && (
+            <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">
+              Saving this update as <span className="font-semibold">RM Update</span>.
+            </div>
+          )}
+          <Input
+            label="Title"
+            value={title}
+            maxLength={255}
+            onChange={event => setTitle(event.target.value)}
+            placeholder={isRmMode ? 'Website + Meta Ads' : 'Optional short title'}
+          />
+          <Select
+            label="Category"
+            value={category}
+            options={[{ value: '', label: 'Select category' }, ...LEAD_REMARK_CATEGORY_OPTIONS.map(option => ({ value: option.value, label: option.label }))]}
+            onChange={event => setCategory(event.target.value as LeadRemarkCategory | '')}
+          />
+          <Select
+            label="Priority"
+            value={priority}
+            options={[{ value: '', label: 'Select priority' }, ...LEAD_REMARK_PRIORITY_OPTIONS.map(option => ({ value: option.value, label: option.label }))]}
+            onChange={event => setPriority(event.target.value as LeadRemarkPriority | '')}
+          />
+          <Select
+            label="Customer Interest"
+            value={customerInterest}
+            options={[{ value: '', label: 'Select customer interest' }, ...LEAD_REMARK_CUSTOMER_INTEREST_OPTIONS.map(option => ({ value: option.value, label: option.label }))]}
+            onChange={event => setCustomerInterest(event.target.value as LeadRemarkCustomerInterest | '')}
+          />
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-slate-700">Next RM Follow-up</label>
+            <input
+              type="datetime-local"
+              value={nextFollowup}
+              min={new Date(Date.now() + 60_000).toISOString().slice(0, 16)}
+              onChange={event => setNextFollowup(event.target.value)}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+            />
+            <p className="mt-1 text-xs text-slate-500">Optional structured follow-up for RM/company tracking.</p>
+          </div>
+        </div>
         <div>
           <label className="mb-3 block text-sm font-semibold text-slate-900">Call Status</label>
           <div className="space-y-4">

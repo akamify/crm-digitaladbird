@@ -3,6 +3,11 @@
 import { CalendarClock, ChevronDown, UserRound } from 'lucide-react';
 import type { LeadDetail } from '@/types';
 import { humanize } from '@/lib/format';
+import {
+  getLeadRemarkCategoryLabel,
+  getLeadRemarkCustomerInterestLabel,
+  getLeadRemarkPriorityLabel,
+} from '@/constants/leadRemarkMeta';
 import { formatCompactDateTime, formatDateTimeTooltip, getLeadCategoryLabel, isMeaningfulValue } from './leadProfileUtils';
 
 function Row({ label, value, title }: { label: string; value: unknown; title?: string }) {
@@ -61,6 +66,34 @@ export function AssignmentCard({ lead }: { lead: LeadDetail }) {
 
 export function FollowUpCard({ lead }: { lead: LeadDetail }) {
   return <section className="card-padded"><div className="flex items-center gap-2"><CalendarClock className="h-4 w-4 text-amber-600" /><h2 className="text-sm font-semibold text-slate-950">Follow-up</h2></div>{lead.next_followup_at ? <div className="mt-3"><div className="text-sm font-medium text-slate-900">{formatCompactDateTime(lead.next_followup_at)}</div><div className="mt-1 text-xs text-slate-500">Scheduled next action</div></div> : <p className="mt-3 text-sm text-slate-500">No follow-up scheduled.</p>}</section>;
+}
+
+export function LatestRmUpdateCard({ lead }: { lead: LeadDetail }) {
+  const update = lead.latest_rm_update;
+  if (!update) {
+    return <section className="card-padded"><h2 className="text-sm font-semibold text-slate-950">Latest RM Update</h2><p className="mt-3 text-sm text-slate-500">No RM update has been added yet.</p></section>;
+  }
+  return (
+    <section className="card-padded">
+      <div className="flex items-center gap-2">
+        <CalendarClock className="h-4 w-4 text-blue-600" />
+        <h2 className="text-sm font-semibold text-slate-950">Latest RM Update</h2>
+      </div>
+      <div className="mt-3 space-y-2">
+        {update.title && <div className="text-sm font-semibold text-slate-900">{update.title}</div>}
+        {update.note && <p className="text-sm text-slate-700 whitespace-pre-wrap">{update.note}</p>}
+        <div className="flex flex-wrap gap-2 text-xs">
+          {update.category && <span className="chip-slate">{getLeadRemarkCategoryLabel(update.category)}</span>}
+          {update.priority && <span className={update.priority === 'urgent' ? 'chip-red' : update.priority === 'high' ? 'chip-amber' : 'chip-blue'}>{getLeadRemarkPriorityLabel(update.priority)}</span>}
+          {update.customer_interest && <span className={update.customer_interest === 'hot' ? 'chip-red' : update.customer_interest === 'warm' ? 'chip-amber' : update.customer_interest === 'cold' ? 'chip-slate' : 'chip-blue'}>{getLeadRemarkCustomerInterestLabel(update.customer_interest)}</span>}
+        </div>
+        <Row label="Next follow-up" value={update.next_followup ? formatCompactDateTime(update.next_followup) : null} title={formatDateTimeTooltip(update.next_followup)} />
+        <Row label="RM" value={update.author?.name || null} />
+        <Row label="Role" value={update.author?.role ? humanize(update.author.role) : null} />
+        <Row label="Updated" value={update.updated_at ? formatCompactDateTime(update.updated_at) : null} title={formatDateTimeTooltip(update.updated_at)} />
+      </div>
+    </section>
+  );
 }
 
 export function TechnicalMetaDetails({ lead }: { lead: LeadDetail }) {

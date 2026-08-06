@@ -286,10 +286,17 @@ CREATE TABLE IF NOT EXISTS lead_remarks (
   call_status     call_status,
   remark          TEXT NOT NULL,
   next_followup_at TIMESTAMPTZ,
+  note_type       TEXT NOT NULL DEFAULT 'general' CHECK (note_type IN ('general', 'counselor_update', 'rm_update')),
+  category        TEXT NULL CHECK (category IS NULL OR category IN ('meeting', 'requirement', 'budget', 'problem', 'followup', 'status', 'proposal', 'other')),
+  title           TEXT NULL,
+  priority        TEXT NULL CHECK (priority IS NULL OR priority IN ('low', 'medium', 'high', 'urgent')),
+  customer_interest TEXT NULL CHECK (customer_interest IS NULL OR customer_interest IN ('cold', 'warm', 'hot', 'not_interested')),
+  next_followup   TIMESTAMPTZ,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_remarks_lead ON lead_remarks(lead_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_remarks_user ON lead_remarks(user_id);
+CREATE INDEX IF NOT EXISTS idx_remarks_note_type ON lead_remarks(note_type);
 
 -- LEAD CALL LOGS
 CREATE TABLE IF NOT EXISTS lead_call_logs (

@@ -24,6 +24,11 @@ export interface TeamMemberOverview {
   last_remark_at: string | null;
   remarks_today: number;
   is_active_today: boolean;
+  rm_updates_total?: number;
+  rm_updates_today?: number;
+  rm_updates_week?: number;
+  rm_pending_followups?: number;
+  rm_latest_update_preview?: string | null;
 }
 
 export interface RmLiveCounters {
@@ -38,6 +43,19 @@ export interface RmLiveCounters {
   conversions_today: number;
   top_active_member: { id: string; full_name: string; activity: number } | null;
   top_conversion_member: { id: string; full_name: string; conversions: number } | null;
+}
+
+export interface RmUpdateSummaryRow {
+  id: string;
+  full_name: string;
+  total_rm_updates: number;
+  today_rm_updates: number;
+  week_rm_updates: number;
+  unique_leads_updated: number;
+  pending_followups: number;
+  last_update_time: string | null;
+  latest_update_preview: string | null;
+  most_common_category: string | null;
 }
 
 export interface MemberRequest {
@@ -86,6 +104,16 @@ export function useMemberRequests(category?: string) {
   return useQuery({
     queryKey: ['rm-monitoring', 'member-requests', category],
     queryFn: () => apiGet<MemberRequest[]>(`/rm-monitoring/member-requests${qs}`),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+}
+
+export function useRmUpdateSummary(rmId?: string) {
+  const qs = rmId ? `?rm_id=${encodeURIComponent(rmId)}` : '';
+  return useQuery({
+    queryKey: ['rm-monitoring', 'rm-update-summary', rmId || 'all'],
+    queryFn: () => apiGet<RmUpdateSummaryRow[]>(`/rm-monitoring/rm-updates-summary${qs}`),
     staleTime: 30_000,
     refetchInterval: 60_000,
   });

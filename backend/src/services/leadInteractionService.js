@@ -1,6 +1,13 @@
 const { query } = require('../config/database');
 const { AppError } = require('../utils/errors');
-const { validateCallStatus, validateLeadStage } = require('../constants/leadStatusOptions');
+const {
+  validateCallStatus,
+  validateLeadStage,
+  validateLeadRemarkNoteType,
+  validateLeadRemarkCategory,
+  validateLeadRemarkPriority,
+  validateLeadRemarkCustomerInterest,
+} = require('../constants/leadStatusOptions');
 const {
   normalizeWorkflowRemarkStatus,
   normalizeWorkflowRemarkStatuses,
@@ -77,6 +84,47 @@ async function assertLeadWriteAccess(client, leadId, user) {
   throw new AppError(403, 'REASSIGNED_LEAD_READ_ONLY', 'This lead has been reassigned. You can view it, but cannot edit it.');
 }
 
+function normalizeOptionalText(value, maxLength) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  return maxLength ? text.slice(0, maxLength) : text;
+}
+
+function normalizeStructuredRemarkMeta({ noteType, category, title, priority, customerInterest }) {
+  const normalizedNoteType = noteType ? validateLeadRemarkNoteType(noteType) : 'general';
+  const normalizedCategory = category ? validateLeadRemarkCategory(category) : '';
+  const normalizedPriority = priority ? validateLeadRemarkPriority(priority) : '';
+  const normalizedCustomerInterest = customerInterest ? validateLeadRemarkCustomerInterest(customerInterest) : '';
+
+  if ((noteType && normalizedNoteType === null)
+    || (category && normalizedCategory === null)
+    || (priority && normalizedPriority === null)
+    || (customerInterest && normalizedCustomerInterest === null)) {
+    throw new AppError(400, 'INVALID_REMARK_METADATA', 'Invalid structured remark value. Please select one of the available CRM options.');
+  }
+
+  return {
+    normalizedNoteType: normalizedNoteType || 'general',
+    normalizedCategory: normalizedCategory || null,
+    normalizedTitle: normalizeOptionalText(title, 255),
+    normalizedPriority: normalizedPriority || null,
+    normalizedCustomerInterest: normalizedCustomerInterest || null,
+  };
+}
+
+function assertStructuredRemarkPermission(user, normalizedNoteType) {
+  if (!normalizedNoteType) return;
+  if (user.role === 'member' || user.role === 'partner') {
+    if (!['general', 'counselor_update'].includes(normalizedNoteType)) {
+      throw new AppError(403, 'FORBIDDEN_NOTE_TYPE', 'Members can only add general or counselor updates.');
+    }
+    return;
+  }
+  if (user.role === 'rm' && normalizedNoteType !== 'rm_update') {
+    throw new AppError(403, 'FORBIDDEN_NOTE_TYPE', 'RM users can only add RM updates from this workflow.');
+  }
+}
+
 function validateInteractionInput({ status, stage }) {
   const normalizedStatus = status ? validateCallStatus(status) : '';
   const normalizedStage = stage ? validateLeadStage(stage) : '';
@@ -108,10 +156,24 @@ async function createLeadInteraction({
   workflowStep = null,
   syncWorkflowStep1 = false,
   releaseLock = true,
+  noteType = 'general',
+  category = null,
+  title = null,
+  priority = null,
+  customerInterest = null,
+  nextFollowup = null,
 }) {
   const normalizedStatuses = normalizeInteractionStatuses(statuses || status);
   const normalizedStatus = normalizedStatuses[0] || '';
   const { normalizedStage } = validateInteractionInput({ status: normalizedStatus, stage });
+  const {
+    normalizedNoteType,
+    normalizedCategory,
+    normalizedTitle,
+    normalizedPriority,
+    normalizedCustomerInterest,
+  } = normalizeStructuredRemarkMeta({ noteType, category, title, priority, customerInterest });
+  assertStructuredRemarkPermission(user, normalizedNoteType);
   const dbCallStatus = await toDbCallStatus(client, normalizedStatus);
   await assertLeadWriteAccess(client, leadId, user);
   await client.query(`SELECT id FROM leads WHERE id = $1 FOR UPDATE`, [leadId]);
@@ -129,9 +191,10 @@ async function createLeadInteraction({
   const { rows: [remark] } = await client.query(
     `INSERT INTO lead_remarks(
        lead_id, user_id, remark, call_status, stage, next_followup_at,
-       source, workflow_step, is_completed_response, call_statuses
+       source, workflow_step, is_completed_response, call_statuses,
+       note_type, category, title, priority, customer_interest, next_followup
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15, $16)
      RETURNING *`,
     [
       leadId,
@@ -144,6 +207,12 @@ async function createLeadInteraction({
       workflowStep,
       completed,
       JSON.stringify(normalizedStatuses),
+      normalizedNoteType,
+      normalizedCategory,
+      normalizedTitle,
+      normalizedPriority,
+      normalizedCustomerInterest,
+      nextFollowup || nextFollowupAt || null,
     ],
   );
 
@@ -173,6 +242,9 @@ async function createLeadInteraction({
   if (nextFollowupAt) {
     params.push(nextFollowupAt);
     updates.push(`next_followup_at = $${params.length}`);
+  } else if (nextFollowup) {
+    params.push(nextFollowup);
+    updates.push(`next_followup_at = $${params.length}`);
   }
   if (normalizedStage) {
     params.push(normalizedStage);
@@ -182,13 +254,21 @@ async function createLeadInteraction({
   await client.query(`UPDATE leads SET ${updates.join(', ')} WHERE id = $1`, params);
 
   return {
-    remark,
+    remark: {
+      ...remark,
+      created_by: user.id,
+      author_name: user.full_name || user.name || 'CRM user',
+      by_name: user.full_name || user.name || 'CRM user',
+      author_role: user.role,
+      note: remark.remark,
+    },
     workflow,
     normalizedStatus,
     normalizedStatuses,
     normalizedStage,
     dbCallStatus,
     isCompletedResponse: completed,
+    normalizedNoteType,
   };
 }
 

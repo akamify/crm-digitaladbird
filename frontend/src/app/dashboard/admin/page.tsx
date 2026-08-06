@@ -28,6 +28,8 @@ import { useCampaignsEnriched, useFreshLeads } from '@/hooks/useAdminEnterprise'
 import { MovementIndicator } from '@/components/rankings/RankBadge';
 import { useAuth } from '@/lib/auth';
 import { apiGet } from '@/lib/api';
+import { useAdminLiveStats } from '@/hooks/useAdmin';
+import { useRmUpdateSummary } from '@/hooks/useRmMonitoring';
 import { AdminToolsPanel } from '@/components/dashboard/AdminToolsPanel';
 import { fmtDate, fmtRelative, humanize, isOverdue, isDueToday, clsx } from '@/lib/format';
 import type { DailyPoint, UserPerformance } from '@/types';
@@ -85,6 +87,8 @@ function AdminDashboardInner() {
   });
   const lrStats   = useLeadRequestStats();
   const pendingReqs = usePendingLeadRequests();
+  const adminLiveStats = useAdminLiveStats();
+  const rmUpdateSummary = useRmUpdateSummary();
   const approveReq  = useApproveLeadRequest();
   const rejectReq   = useRejectLeadRequest();
   const freshToday  = useFreshLeads('today', 1);  // we only need the .counts here, not rows
@@ -351,6 +355,8 @@ function AdminDashboardInner() {
 
       {/* Admin Tools Panel */}
       <AdminToolsPanel />
+
+      <RmMonitoringSection summary={rmUpdateSummary.data || []} loading={rmUpdateSummary.isLoading} live={adminLiveStats.data || null} />
 
       {/* KPIs — clickable drill-down. The "today" trio (Fresh / Partner / Trader)
           links straight to the Fresh Leads page scoped to each tab. */}
@@ -782,6 +788,110 @@ function CampaignLeadsTracker() {
             </ul>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function RmMonitoringSection({
+  summary,
+  loading,
+  live,
+}: {
+  summary: Array<{
+    id: string;
+    full_name: string;
+    total_rm_updates: number;
+    today_rm_updates: number;
+    week_rm_updates: number;
+    unique_leads_updated: number;
+    pending_followups: number;
+    last_update_time: string | null;
+    latest_update_preview: string | null;
+    most_common_category: string | null;
+  }>;
+  loading: boolean;
+  live: {
+    total_rm_updates?: number;
+    pending_rm_followups?: number;
+    today_rm_updates?: number;
+    hot_rm_leads?: number;
+    proposal_pending_rm_updates?: number;
+    leads_without_rm_update?: number;
+  } | null;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Users className="h-5 w-5 text-blue-600" />
+          <h2 className="text-sm font-semibold text-slate-900">RM Monitoring</h2>
+        </div>
+        <Link href="/leads?note_type=rm_update" className="text-xs text-brand-600 hover:text-brand-700 inline-flex items-center gap-1">
+          View RM leads <ArrowRight className="h-3 w-3" />
+        </Link>
+      </div>
+
+      {live && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <MiniStat icon={<ScrollText className="h-4 w-4" />} label="Total RM Updates" value={String(live.total_rm_updates ?? 0)} color="blue" href="/leads?note_type=rm_update" />
+          <MiniStat icon={<Activity className="h-4 w-4" />} label="Today's RM Activity" value={String(live.today_rm_updates ?? 0)} color="green" href="/leads?note_type=rm_update&latest_activity=today" />
+          <MiniStat icon={<Clock className="h-4 w-4" />} label="Pending Follow-ups" value={String(live.pending_rm_followups ?? 0)} color="amber" href="/leads?note_type=rm_update&followup=upcoming" />
+          <MiniStat icon={<Star className="h-4 w-4" />} label="Hot Leads" value={String(live.hot_rm_leads ?? 0)} color="red" href="/leads?note_type=rm_update&customer_interest=hot" />
+          <MiniStat icon={<FileSpreadsheet className="h-4 w-4" />} label="Proposal Pending" value={String(live.proposal_pending_rm_updates ?? 0)} color="pink" href="/leads?note_type=rm_update&note_category=proposal" />
+          <MiniStat icon={<AlertTriangle className="h-4 w-4" />} label="No RM Update" value={String(live.leads_without_rm_update ?? 0)} color="rose" href="/leads?has_rm_update=false" />
+        </div>
+      )}
+
+      <div className="card-padded">
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900">Per RM Update Activity</h3>
+            <p className="text-xs text-slate-500">Latest business requirement updates, follow-ups, and coverage by RM.</p>
+          </div>
+        </div>
+        {loading ? (
+          <Skeleton className="h-64" />
+        ) : !summary.length ? (
+          <EmptyState title="No RM updates yet" description="RM update activity will appear here once RMs start saving structured updates." icon={<Users className="h-6 w-6" />} />
+        ) : (
+          <div className="overflow-x-auto scroll-thin">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-left text-[10px] uppercase tracking-wider text-slate-500">
+                  <th className="py-2 pr-3 font-medium">RM</th>
+                  <th className="py-2 pr-3 font-medium text-right">Total</th>
+                  <th className="py-2 pr-3 font-medium text-right">Today</th>
+                  <th className="py-2 pr-3 font-medium text-right">This Week</th>
+                  <th className="py-2 pr-3 font-medium text-right">Unique Leads</th>
+                  <th className="py-2 pr-3 font-medium text-right">Pending Follow-ups</th>
+                  <th className="py-2 pr-3 font-medium">Top Category</th>
+                  <th className="py-2 pr-3 font-medium">Latest Preview</th>
+                  <th className="py-2 font-medium">Last Update</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summary.map(row => (
+                  <tr key={row.id} className="table-row">
+                    <td className="py-2.5 pr-3">
+                      <Link href={`/leads?note_type=rm_update&updated_by_rm=${encodeURIComponent(row.id)}`} className="font-medium text-slate-900 hover:text-brand-700">
+                        {row.full_name}
+                      </Link>
+                    </td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums">{row.total_rm_updates}</td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums text-emerald-700">{row.today_rm_updates}</td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums">{row.week_rm_updates}</td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums">{row.unique_leads_updated}</td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums text-amber-700">{row.pending_followups}</td>
+                    <td className="py-2.5 pr-3">{row.most_common_category ? <span className="chip-slate">{humanize(row.most_common_category)}</span> : '—'}</td>
+                    <td className="py-2.5 pr-3 text-xs text-slate-600 max-w-[260px] truncate" title={row.latest_update_preview || undefined}>{row.latest_update_preview || 'No updates'}</td>
+                    <td className="py-2.5 text-xs text-slate-500">{row.last_update_time ? fmtRelative(row.last_update_time) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );

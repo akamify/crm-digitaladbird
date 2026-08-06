@@ -434,6 +434,66 @@ exports.list = asyncHandler(async (req, res) => {
       )
     )`);
   }
+  if (req.query.note_type) {
+    params.push(String(req.query.note_type).trim());
+    where.push(`EXISTS (
+      SELECT 1 FROM lead_remarks remark_note_type
+       WHERE remark_note_type.lead_id = l.id
+         AND remark_note_type.note_type = $${params.length}
+    )`);
+  }
+  if (req.query.note_category) {
+    params.push(String(req.query.note_category).trim());
+    where.push(`EXISTS (
+      SELECT 1 FROM lead_remarks remark_category
+       WHERE remark_category.lead_id = l.id
+         AND remark_category.category = $${params.length}
+    )`);
+  }
+  if (req.query.priority) {
+    params.push(String(req.query.priority).trim());
+    where.push(`EXISTS (
+      SELECT 1 FROM lead_remarks remark_priority
+       WHERE remark_priority.lead_id = l.id
+         AND remark_priority.priority = $${params.length}
+    )`);
+  }
+  if (req.query.customer_interest) {
+    params.push(String(req.query.customer_interest).trim());
+    where.push(`EXISTS (
+      SELECT 1 FROM lead_remarks remark_interest
+       WHERE remark_interest.lead_id = l.id
+         AND remark_interest.customer_interest = $${params.length}
+    )`);
+  }
+  if (req.query.has_rm_update === 'true') {
+    where.push(`EXISTS (
+      SELECT 1 FROM lead_remarks remark_rm_presence
+       WHERE remark_rm_presence.lead_id = l.id
+         AND remark_rm_presence.note_type = 'rm_update'
+    )`);
+  } else if (req.query.has_rm_update === 'false') {
+    where.push(`NOT EXISTS (
+      SELECT 1 FROM lead_remarks remark_rm_presence
+       WHERE remark_rm_presence.lead_id = l.id
+         AND remark_rm_presence.note_type = 'rm_update'
+    )`);
+  }
+  if (req.query.updated_by_rm) {
+    params.push(String(req.query.updated_by_rm).trim());
+    const updatedByRmIdx = params.length;
+    where.push(`EXISTS (
+      SELECT 1
+        FROM lead_remarks remark_rm_author
+        JOIN users rm_author ON rm_author.id = remark_rm_author.user_id
+       WHERE remark_rm_author.lead_id = l.id
+         AND remark_rm_author.note_type = 'rm_update'
+         AND (
+           rm_author.id::text = $${updatedByRmIdx}
+           OR rm_author.full_name ILIKE $${updatedByRmIdx}
+         )
+    )`);
+  }
   if (req.query.session_attendance === 'has_session') {
     where.push(`EXISTS (SELECT 1 FROM lead_sessions session_filter WHERE session_filter.lead_id = l.id AND session_filter.deleted_at IS NULL)`);
   } else if (req.query.session_attendance === 'no_session') {
@@ -555,6 +615,15 @@ exports.list = asyncHandler(async (req, res) => {
       latest_remark.source AS latest_remark_source,
       remark_user.full_name AS latest_remark_by_name,
       latest_remark.created_at AS latest_remark_at,
+      latest_rm_update.title AS latest_rm_update_title,
+      latest_rm_update.remark AS latest_rm_update_note,
+      latest_rm_update.category AS latest_rm_update_category,
+      latest_rm_update.priority AS latest_rm_update_priority,
+      latest_rm_update.customer_interest AS latest_rm_update_customer_interest,
+      latest_rm_update.next_followup AS latest_rm_update_next_followup,
+      latest_rm_update_user.full_name AS latest_rm_update_author_name,
+      latest_rm_update_user.role AS latest_rm_update_author_role,
+      latest_rm_update.created_at AS latest_rm_update_at,
       COALESCE(latest_remark.next_followup_at, l.next_followup_at) AS latest_followup_at,
       CASE
         WHEN COALESCE(latest_remark.next_followup_at, l.next_followup_at) IS NULL THEN 'none'
@@ -610,6 +679,15 @@ exports.list = asyncHandler(async (req, res) => {
     ) latest_remark ON TRUE
     LEFT JOIN users remark_user ON remark_user.id = latest_remark.user_id
     LEFT JOIN LATERAL (
+      SELECT lr.id, lr.remark, lr.category, lr.title, lr.priority, lr.customer_interest, lr.next_followup, lr.user_id, lr.created_at
+        FROM lead_remarks lr
+       WHERE lr.lead_id = l.id
+         AND lr.note_type = 'rm_update'
+       ORDER BY lr.created_at DESC
+       LIMIT 1
+    ) latest_rm_update ON TRUE
+    LEFT JOIN users latest_rm_update_user ON latest_rm_update_user.id = latest_rm_update.user_id
+    LEFT JOIN LATERAL (
       SELECT jsonb_agg(jsonb_build_object('id', ll.id, 'name', ll.name, 'color', ll.color) ORDER BY assignment.created_at DESC) AS labels,
              COUNT(*)::int AS labels_count
       FROM lead_label_assignments assignment
@@ -656,6 +734,17 @@ exports.getOne = asyncHandler(async (req, res) => {
             manual_user.role AS manual_added_by_role,
             creator_user.full_name AS created_by_name,
             creator_user.role AS created_by_role,
+            latest_rm_update.id AS latest_rm_update_id,
+            latest_rm_update.title AS latest_rm_update_title,
+            latest_rm_update.remark AS latest_rm_update_note,
+            latest_rm_update.category AS latest_rm_update_category,
+            latest_rm_update.priority AS latest_rm_update_priority,
+            latest_rm_update.customer_interest AS latest_rm_update_customer_interest,
+            latest_rm_update.next_followup AS latest_rm_update_next_followup,
+            latest_rm_update_user.id AS latest_rm_update_author_id,
+            latest_rm_update_user.full_name AS latest_rm_update_author_name,
+            latest_rm_update_user.role AS latest_rm_update_author_role,
+            latest_rm_update.created_at AS latest_rm_update_at,
             CASE
               WHEN $2::uuid[] IS NULL THEN FALSE
               WHEN l.assigned_to_user_id = ANY($2::uuid[]) THEN FALSE
@@ -670,14 +759,27 @@ exports.getOne = asyncHandler(async (req, res) => {
        LEFT JOIN users u ON u.id = l.assigned_to_user_id
        LEFT JOIN users manual_user ON manual_user.id = l.manual_added_by_user_id
        LEFT JOIN users creator_user ON creator_user.id = l.created_by_user_id
+       LEFT JOIN LATERAL (
+         SELECT lr.id, lr.remark, lr.category, lr.title, lr.priority, lr.customer_interest, lr.next_followup, lr.user_id, lr.created_at
+           FROM lead_remarks lr
+          WHERE lr.lead_id = l.id
+            AND lr.note_type = 'rm_update'
+          ORDER BY lr.created_at DESC
+          LIMIT 1
+       ) latest_rm_update ON TRUE
+       LEFT JOIN users latest_rm_update_user ON latest_rm_update_user.id = latest_rm_update.user_id
       WHERE l.id = $1 AND l.deleted_at IS NULL ${scope}`,
     visible === null && req.user.role !== 'client' ? [req.params.id, null] : params
   );
   if (!rows[0]) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
 
   const remarks = await query(
-    `SELECT r.id, r.remark, r.call_status, r.next_followup_at, r.created_at,
-            u.full_name AS by_name
+    `SELECT r.id, r.remark, r.remark AS note, r.call_status, r.next_followup_at, r.next_followup, r.created_at,
+            r.note_type, r.category, r.title, r.priority, r.customer_interest,
+            r.user_id AS created_by,
+            u.full_name AS by_name,
+            u.full_name AS author_name,
+            u.role AS author_role
        FROM lead_remarks r JOIN users u ON u.id = r.user_id
       WHERE r.lead_id = $1 ORDER BY r.created_at DESC`,
     [req.params.id]
@@ -698,7 +800,25 @@ exports.getOne = asyncHandler(async (req, res) => {
     labels = [];
   }
 
-  res.json({ success: true, data: { ...rows[0], remarks: remarks.rows, history: history.rows, labels } });
+  const lead = rows[0];
+  const latestRmUpdate = lead.latest_rm_update_id
+    ? {
+        title: lead.latest_rm_update_title,
+        note: lead.latest_rm_update_note,
+        category: lead.latest_rm_update_category,
+        priority: lead.latest_rm_update_priority,
+        customer_interest: lead.latest_rm_update_customer_interest,
+        next_followup: lead.latest_rm_update_next_followup,
+        author: {
+          id: lead.latest_rm_update_author_id,
+          name: lead.latest_rm_update_author_name,
+          role: lead.latest_rm_update_author_role,
+        },
+        updated_at: lead.latest_rm_update_at,
+      }
+    : null;
+
+  res.json({ success: true, data: { ...lead, latest_rm_update: latestRmUpdate, remarks: remarks.rows, history: history.rows, labels } });
 });
 
 exports.listSessions = asyncHandler(async (req, res) => {
@@ -776,19 +896,40 @@ exports.unlock = asyncHandler(async (req, res) => {
  * Updates lead call_status, next_followup_at, call_attempts atomically.
  */
 exports.addRemark = asyncHandler(async (req, res) => {
-  const { remark, call_status, call_statuses, remark_statuses, next_followup_at, stage, release_lock = true } = req.body;
+  const {
+    remark,
+    note,
+    call_status,
+    call_statuses,
+    remark_statuses,
+    next_followup_at,
+    next_followup,
+    stage,
+    release_lock = true,
+    note_type,
+    category,
+    title,
+    priority,
+    customer_interest,
+  } = req.body;
   const result = await withTransaction(async (client) => {
     const interaction = await createLeadInteraction({
       client,
       user: req.user,
       leadId: req.params.id,
-      note: remark,
+      note: note ?? remark,
       status: call_status,
       statuses: call_statuses || remark_statuses,
       stage,
       nextFollowupAt: next_followup_at,
+      nextFollowup: next_followup,
       source: 'manual',
       releaseLock: release_lock,
+      noteType: note_type,
+      category,
+      title,
+      priority,
+      customerInterest: customer_interest,
     });
     return interaction.remark;
   });
@@ -805,7 +946,21 @@ exports.addRemark = asyncHandler(async (req, res) => {
  */
 exports.bulkAddRemarks = asyncHandler(async (req, res) => {
   const leadIds = Array.isArray(req.body?.lead_ids) ? req.body.lead_ids : req.body?.leadIds;
-  const { remark, call_status, call_statuses, remark_statuses, next_followup_at, stage } = req.body;
+  const {
+    remark,
+    note,
+    call_status,
+    call_statuses,
+    remark_statuses,
+    next_followup_at,
+    next_followup,
+    stage,
+    note_type,
+    category,
+    title,
+    priority,
+    customer_interest,
+  } = req.body;
   if (!Array.isArray(leadIds) || leadIds.length === 0) throw new AppError(400, 'LEAD_IDS_REQUIRED', 'Select at least one lead.');
 
   const uniqueLeadIds = [...new Set(leadIds.map(String).filter(Boolean))].slice(0, 500);
@@ -839,12 +994,18 @@ exports.bulkAddRemarks = asyncHandler(async (req, res) => {
         client,
         user: req.user,
         leadId,
-        note: remark,
+        note: note ?? remark,
         status: call_status,
         statuses: call_statuses || remark_statuses,
         stage,
         nextFollowupAt: next_followup_at,
+        nextFollowup: next_followup,
         source: 'bulk',
+        noteType: note_type,
+        category,
+        title,
+        priority,
+        customerInterest: customer_interest,
       });
       updated++;
     }

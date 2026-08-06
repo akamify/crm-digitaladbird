@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tansta
 import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api';
 import type {
   Lead, LeadDetail, LeadFilters, PageResult, CallStatus, LeadSession, LeadCategory, LeadStage,
+  LeadRemarkCategory, LeadRemarkCustomerInterest, LeadRemarkNoteType, LeadRemarkPriority,
 } from '@/types';
 
 function toQueryString(f: LeadFilters): string {
@@ -60,11 +61,18 @@ export function useUnlockLead() {
 export interface AddRemarkInput {
   id: string;
   remark: string;
+  note?: string;
   call_status?: CallStatus;
   call_statuses?: CallStatus[];
   next_followup_at?: string | null;
+  next_followup?: string | null;
   stage?: string;
   release_lock?: boolean;
+  note_type?: LeadRemarkNoteType;
+  category?: LeadRemarkCategory;
+  title?: string;
+  priority?: LeadRemarkPriority;
+  customer_interest?: LeadRemarkCustomerInterest;
 }
 
 export interface ManualLeadInput {
@@ -165,10 +173,17 @@ export function useDeleteLeadSession() {
 export interface BulkAddRemarkInput {
   leadIds: string[];
   remark: string;
+  note?: string;
   call_status?: CallStatus;
   call_statuses?: CallStatus[];
   next_followup_at?: string | null;
+  next_followup?: string | null;
   stage?: string;
+  note_type?: LeadRemarkNoteType;
+  category?: LeadRemarkCategory;
+  title?: string;
+  priority?: LeadRemarkPriority;
+  customer_interest?: LeadRemarkCustomerInterest;
 }
 
 export function useBulkAddRemark() {

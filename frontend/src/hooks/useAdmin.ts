@@ -9,6 +9,9 @@ export interface AdminLiveStats {
   converted_leads: number; today_leads: number; today_assigned: number; today_conversions: number;
   today_followups: number; overdue_followups: number; pending_lead_requests: number;
   pending_approvals: number; today_remarks: number; today_active_users: number;
+  total_rm_updates: number; today_rm_updates: number; week_rm_updates: number;
+  pending_rm_followups: number; leads_without_rm_update: number; hot_rm_leads: number;
+  proposal_pending_rm_updates: number;
   today_broadcasts: number; unread_notifications: number;
 }
 

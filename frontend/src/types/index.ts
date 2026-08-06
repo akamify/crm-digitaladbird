@@ -6,6 +6,10 @@
 export type Role = 'super_admin' | 'admin' | 'rm' | 'member' | 'partner' | 'client';
 export type MemberType = 'fresher' | 'veteran';
 export type LeadCategory = 'partner' | 'trader' | 'unknown';
+export type LeadRemarkNoteType = 'general' | 'counselor_update' | 'rm_update';
+export type LeadRemarkCategory = 'meeting' | 'requirement' | 'budget' | 'problem' | 'followup' | 'status' | 'proposal' | 'other';
+export type LeadRemarkPriority = 'low' | 'medium' | 'high' | 'urgent';
+export type LeadRemarkCustomerInterest = 'cold' | 'warm' | 'hot' | 'not_interested';
 
 export type LeadStage =
   | 'new' | 'contacted' | 'qualified' | 'follow_up' | 'won' | 'lost';
@@ -117,16 +121,41 @@ export interface Lead {
   session_attendance_status?: 'has_session' | 'no_session' | null;
   labels?: Array<{ id: string; name: string; color: string }>;
   labels_count?: number;
+  latest_rm_update?: LatestRmUpdateSummary | null;
 }
 
 export interface LeadRemark {
   id: string;
   remark: string;
+  note?: string;
   call_status: CallStatus | null;
   next_followup_at: string | null;
+  next_followup?: string | null;
+  note_type?: LeadRemarkNoteType | string | null;
+  category?: LeadRemarkCategory | string | null;
+  title?: string | null;
+  priority?: LeadRemarkPriority | string | null;
+  customer_interest?: LeadRemarkCustomerInterest | string | null;
+  created_by?: string | null;
+  author_role?: Role | string | null;
   created_at: string;
   author_name?: string;
   by_name?: string;
+}
+
+export interface LatestRmUpdateSummary {
+  title?: string | null;
+  note?: string | null;
+  category?: LeadRemarkCategory | string | null;
+  priority?: LeadRemarkPriority | string | null;
+  customer_interest?: LeadRemarkCustomerInterest | string | null;
+  next_followup?: string | null;
+  author?: {
+    id?: string | null;
+    name?: string | null;
+    role?: Role | string | null;
+  } | null;
+  updated_at?: string | null;
 }
 
 export interface LeadAssignment {
@@ -184,6 +213,12 @@ export interface LeadFilters {
   assigned_to?: string;
   label_id?: string;
   remark_status?: CallStatus | '';
+  note_type?: LeadRemarkNoteType | '';
+  note_category?: LeadRemarkCategory | '';
+  priority?: LeadRemarkPriority | '';
+  customer_interest?: LeadRemarkCustomerInterest | '';
+  has_rm_update?: 'true' | 'false' | '';
+  updated_by_rm?: string;
   session_attendance?: 'has_session' | 'no_session' | '';
   page?: number;
   page_size?: number;
