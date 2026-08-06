@@ -45,6 +45,12 @@ jobs:
           port: ${{ secrets.VPS_PORT }}
 
 
+          timeout: 120s
+
+
+          command_timeout: 20m
+
+
           script: |
 
             bash /root/crm-frontend/frontend/deploy.sh
