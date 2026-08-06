@@ -4,6 +4,7 @@ const users   = require('../controllers/userController');
 const leads   = require('../controllers/leadController');
 const reports = require('../controllers/reportController');
 const meta    = require('../controllers/metaController');
+const customerNotes = require('../controllers/customerNoteController');
 const { authenticate, invalidateUser }    = require('../middleware/auth');
 const { requireRole, requireMemberType }  = require('../middleware/rbac');
 const { responseCache }                   = require('../middleware/cache');
@@ -259,6 +260,20 @@ router.get('/client/meta', authenticate, requireRole('client'), asyncHandler(asy
   const data = await clients.clientSettings(req.user);
   res.json({ success: true, data });
 }));
+
+// ---- Customer Notes -----------------------------------------------
+router.get('/notes/lookups/leads', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.lookupLeads);
+router.get('/notes/lookups/users', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.lookupUsers);
+router.get('/notes', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.list);
+router.post('/notes', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.create);
+router.get('/notes/:noteId', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.detail);
+router.patch('/notes/:noteId', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.update);
+router.delete('/notes/:noteId', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.remove);
+router.post('/notes/:noteId/entries', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.addEntry);
+router.patch('/notes/:noteId/entries/:entryId', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.updateEntry);
+router.delete('/notes/:noteId/entries/:entryId', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.removeEntry);
+router.post('/notes/:noteId/approve', authenticate, requireRole('super_admin', 'admin', 'rm'), customerNotes.approve);
+router.post('/notes/:noteId/reject', authenticate, requireRole('super_admin', 'admin', 'rm'), customerNotes.reject);
 
 // ---- Leads --------------------------------------------------------
 router.get  ('/leads',            authenticate, leads.list);

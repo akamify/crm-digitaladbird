@@ -10,6 +10,7 @@ export type LeadRemarkNoteType = 'general' | 'counselor_update' | 'rm_update';
 export type LeadRemarkCategory = 'meeting' | 'requirement' | 'budget' | 'problem' | 'followup' | 'status' | 'proposal' | 'other';
 export type LeadRemarkPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type LeadRemarkCustomerInterest = 'cold' | 'warm' | 'hot' | 'not_interested';
+export type CustomerNoteApprovalStatus = 'pending_rm_approval' | 'approved' | 'rejected';
 
 export type LeadStage =
   | 'new' | 'contacted' | 'qualified' | 'follow_up' | 'won' | 'lost';
@@ -185,6 +186,79 @@ export interface LeadSession {
 export interface LeadDetail extends Lead {
   remarks: LeadRemark[];
   history: LeadAssignment[];
+}
+
+export interface CustomerNoteEntry {
+  id: string;
+  note_id: string;
+  entry_text: string;
+  created_by_user_id: string | null;
+  created_by_name?: string | null;
+  created_by_role?: Role | string | null;
+  updated_by_user_id?: string | null;
+  updated_by_name?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CustomerNote {
+  id: string;
+  lead_id?: string | null;
+  lead_name?: string | null;
+  lead_phone?: string | null;
+  customer_phone: string;
+  customer_name: string;
+  customer_second_name?: string | null;
+  business_name?: string | null;
+  about_client?: string | null;
+  client_services_want?: string | null;
+  client_budget?: string | null;
+  meeting_name?: string | null;
+  meeting_at?: string | null;
+  counselor_user_id?: string | null;
+  counselor_name?: string | null;
+  rm_user_id?: string | null;
+  rm_name?: string | null;
+  created_by_user_id: string;
+  created_by_name?: string | null;
+  updated_by_user_id?: string | null;
+  updated_by_name?: string | null;
+  approval_status: CustomerNoteApprovalStatus;
+  submitted_to_rm_at?: string | null;
+  approved_by_user_id?: string | null;
+  approved_by_name?: string | null;
+  approved_at?: string | null;
+  rejected_by_user_id?: string | null;
+  rejected_by_name?: string | null;
+  rejected_at?: string | null;
+  rejection_note?: string | null;
+  latest_entry_text?: string | null;
+  latest_entry_author_name?: string | null;
+  latest_entry_created_at?: string | null;
+  last_activity_at?: string | null;
+  entries_count?: number;
+  created_at: string;
+  updated_at: string;
+  entries?: CustomerNoteEntry[];
+  permissions?: {
+    can_edit?: boolean;
+    can_delete?: boolean;
+    can_approve?: boolean;
+    can_reject?: boolean;
+    can_add_entry?: boolean;
+  };
+}
+
+export interface CustomerNoteFilters {
+  q?: string;
+  approval_status?: CustomerNoteApprovalStatus | '';
+  lead_id?: string;
+  rm_user_id?: string;
+  counselor_user_id?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  page_size?: number;
 }
 
 export interface LeadFilters {

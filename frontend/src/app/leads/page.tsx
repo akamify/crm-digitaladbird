@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ChevronLeft, ChevronRight, Eye, Inbox, Lock, Mail, MessageSquarePlus, Phone, Plus, Tag } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Eye, Inbox, Lock, Mail, MessageSquarePlus, Phone, Plus, ScrollText, Tag } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { LeadActions } from '@/components/leads/LeadActions';
@@ -189,15 +189,23 @@ function LeadsInner() {
 
   return (
     <div className="space-y-4">
-      {canAddManualLead && (
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={() => setAddLeadOpen(true)}
-            className="btn-primary inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"
+      {(canAddManualLead || user?.role === 'member' || user?.role === 'partner') && (
+        <div className="flex justify-end gap-2">
+          <Link
+            href="/notes"
+            className="btn-outline inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"
           >
-            <Plus className="h-4 w-4" /> Add Lead
-          </button>
+            <ScrollText className="h-4 w-4" /> Latest Notes
+          </Link>
+          {canAddManualLead && (
+            <button
+              type="button"
+              onClick={() => setAddLeadOpen(true)}
+              className="btn-primary inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"
+            >
+              <Plus className="h-4 w-4" /> Add Lead
+            </button>
+          )}
         </div>
       )}
 
@@ -557,6 +565,14 @@ function LeadsInner() {
                               onCall={() => openCommunication(lead, 'calls')}
                               onChat={() => openCommunication(lead, 'chat')}
                             />
+                            <Link
+                              href={`/notes?leadId=${encodeURIComponent(lead.id)}&compose=1`}
+                              title="Add advanced note"
+                              onClick={(event) => event.stopPropagation()}
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-1 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50"
+                            >
+                              <ScrollText className="h-3 w-3" />
+                            </Link>
                             <button
                               type="button"
                               title={isRmUser ? 'Add RM update' : 'Add remark'}

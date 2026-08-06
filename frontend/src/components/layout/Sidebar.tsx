@@ -45,6 +45,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', Icon: LayoutDashboard },
   { href: '/leads', label: 'Leads', Icon: Briefcase },
+  { href: '/notes', label: 'Latest Notes', Icon: ScrollText, roles: ['super_admin', 'admin', 'rm', 'member', 'partner'] },
   { href: '/chat', label: 'Messages', Icon: MessageSquare, roles: ['super_admin', 'admin', 'rm', 'member', 'partner'] },
   { href: '/notifications', label: 'Notifications', Icon: Bell, roles: ['super_admin', 'admin', 'rm', 'member', 'partner'] },
   // { href: '/my-google-sheet', label: 'My Google Sheet', Icon: FileSpreadsheet, roles: ['rm', 'member', 'partner'] },
