@@ -213,15 +213,26 @@ function NotesInner() {
     router.replace(`/notes${params.toString() ? `?${params.toString()}` : ''}`);
   }, [activeTab, composeOpen, filters, leadIdFromQuery, router]);
 
-  const prefillLead: LeadLookupItem | null = leadQuery.data ? {
-    id: leadQuery.data.id,
-    full_name: leadQuery.data.full_name,
-    phone: leadQuery.data.phone,
-    email: leadQuery.data.email,
-    source: leadQuery.data.source,
-    category: leadQuery.data.category,
-    assigned_to_name: leadQuery.data.assigned_to_name,
-  } : null;
+  const prefillLead: LeadLookupItem | null = useMemo(() => {
+    if (!leadQuery.data) return null;
+    return {
+      id: leadQuery.data.id,
+      full_name: leadQuery.data.full_name,
+      phone: leadQuery.data.phone,
+      email: leadQuery.data.email,
+      source: leadQuery.data.source,
+      category: leadQuery.data.category,
+      assigned_to_name: leadQuery.data.assigned_to_name,
+    };
+  }, [
+    leadQuery.data?.id,
+    leadQuery.data?.full_name,
+    leadQuery.data?.phone,
+    leadQuery.data?.email,
+    leadQuery.data?.source,
+    leadQuery.data?.category,
+    leadQuery.data?.assigned_to_name,
+  ]);
 
   const rows = notesQuery.data?.rows || [];
   const total = notesQuery.data?.total || 0;
@@ -673,6 +684,7 @@ function CustomerNoteComposerModal({
   const effectiveRmUserId = form.rm_user_id || (user?.role === 'rm' ? user.id : user?.reportToId || null);
   const rmLookup = useCustomerNoteUserLookup('rm', '', null);
   const counselorLookup = useCustomerNoteUserLookup('member', '', effectiveRmUserId);
+  const currentUserSeed = `${user?.id || ''}:${user?.role || ''}:${user?.reportToId || ''}`;
 
   useEffect(() => {
     if (!open) return;
@@ -693,7 +705,7 @@ function CustomerNoteComposerModal({
     setLinkedLead(prefillLead || null);
     setForm(emptyForm(prefillLead, user));
     setLookupText('');
-  }, [note, open, prefillLead, user]);
+  }, [open, note?.id, prefillLead?.id, prefillLead?.full_name, prefillLead?.phone, currentUserSeed]);
 
   const rmOptions = rmLookup.data || [];
   const counselorOptions = useMemo(() => {
@@ -941,6 +953,7 @@ function MeetingScheduleModal({
   const effectiveRmUserId = form.rm_user_id || (user?.role === 'rm' ? user.id : user?.reportToId || null);
   const rmLookup = useCustomerNoteUserLookup('rm', '', null);
   const counselorLookup = useCustomerNoteUserLookup('member', '', effectiveRmUserId);
+  const currentUserSeed = `${user?.id || ''}:${user?.role || ''}:${user?.reportToId || ''}`;
 
   useEffect(() => {
     if (!open) return;
@@ -955,13 +968,17 @@ function MeetingScheduleModal({
         assigned_to_name: null,
       } : null);
       setForm(buildFormFromNote(note));
+      setReminderEmails(note.meeting_notification_emails || []);
+      setReminderEmailInput('');
       setLookupText('');
       return;
     }
     setLinkedLead(prefillLead || null);
     setForm(emptyForm(prefillLead, user));
+    setReminderEmails([]);
+    setReminderEmailInput('');
     setLookupText('');
-  }, [note, open, prefillLead, user]);
+  }, [open, note?.id, prefillLead?.id, prefillLead?.full_name, prefillLead?.phone, currentUserSeed]);
 
   const rmOptions = rmLookup.data || [];
   const counselorOptions = useMemo(() => {
