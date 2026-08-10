@@ -119,7 +119,7 @@ function UsersInner() {
                         <Link onClick={(e) => e.stopPropagation()} href={`/dashboard/admin/users/${u.id}`} className="btn-outline inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs">
                           <UserRound className="h-3.5 w-3.5" /> Profile
                         </Link>
-                        {canManage && u.id !== user?.id && (
+                        {canManage && u.id !== user?.id && ['rm', 'member'].includes(u.role) && (
                           <button
                             type="button"
                             onClick={(e) => {
@@ -152,8 +152,8 @@ function UsersInner() {
         onClose={() => setDeleteTarget(null)}
         title={deleteTarget?.role === 'rm' ? 'Delete RM Team' : 'Delete User'}
         description={deleteTarget?.role === 'rm'
-          ? 'Deleting this RM will also delete all members reporting to this RM.'
-          : 'This user will be deleted from the CRM user list.'}
+          ? 'Deleting this RM will also permanently delete all members reporting to this RM.'
+          : 'This user will be permanently deleted from the CRM.'}
         size="md"
         footer={
           <>
@@ -173,7 +173,7 @@ function UsersInner() {
                   },
                   {
                     onSuccess: () => {
-                      toast.success(deleteTarget.role === 'rm' ? 'RM and team deleted successfully' : 'User deleted successfully');
+                      toast.success(deleteTarget.role === 'rm' ? 'RM and team permanently deleted' : 'User permanently deleted');
                       setDeleteTarget(null);
                     },
                     onError: (error: any) => {
@@ -196,9 +196,10 @@ function UsersInner() {
                 <div className="font-semibold">{deleteTarget.full_name}</div>
                 <div>
                   {deleteTarget.role === 'rm'
-                    ? 'If you continue, this RM and all team members under this RM will be deleted.'
-                    : 'If you continue, this user will be deleted.'}
+                    ? 'If you continue, this RM and all team members under this RM will be permanently deleted.'
+                    : 'If you continue, this user will be permanently deleted.'}
                 </div>
+                <div>This is a hard delete. The same email and phone can be reused after deletion.</div>
               </div>
             </div>
           </div>

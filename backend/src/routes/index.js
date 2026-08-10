@@ -284,6 +284,7 @@ router.get  ('/leads/:leadId/sessions', authenticate, leads.listSessions);
 router.post ('/leads/:leadId/sessions', authenticate, leads.createSession);
 router.patch('/leads/:leadId/sessions/:sessionId', authenticate, leads.updateSession);
 router.delete('/leads/:leadId/sessions/:sessionId', authenticate, leads.deleteSession);
+router.delete('/leads/:id', authenticate, requireRole('super_admin'), leads.remove);
 router.get  ('/leads/:id',        authenticate, leads.getOne);
 router.post ('/leads',            authenticate, requireRole('super_admin', 'rm'), leads.create);
 router.post ('/leads/:id/lock',   authenticate, leads.lock);

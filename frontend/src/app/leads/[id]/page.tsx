@@ -3,11 +3,11 @@
 import { Component, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { CalendarClock, MessageCircle, MessageSquarePlus, Phone, Tag, UserCog } from 'lucide-react';
+import { AlertTriangle, CalendarClock, MessageCircle, MessageSquarePlus, Phone, Tag, Trash2, UserCog } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/Button';
-import { EmptyState, PageLoader, Skeleton } from '@/components/ui/Modal';
+import { EmptyState, Modal, PageLoader, Skeleton } from '@/components/ui/Modal';
 import { LeadProfileHeader } from '@/components/leads/LeadProfileHeader';
 import {
   LeadSummaryCard,
@@ -24,7 +24,7 @@ import { WorkflowPanel } from '@/components/leads/WorkflowPanel';
 import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
 import { LeadSessionsCard } from '@/components/leads/LeadSessionsCard';
 import { LeadLabelsCard } from '@/components/leads/LeadLabelsCard';
-import { useLead } from '@/hooks/useLeads';
+import { useDeleteLead, useLead } from '@/hooks/useLeads';
 import { useLeadCommunication } from '@/hooks/useLeadCommunication';
 import { useAuth } from '@/lib/auth';
 import { useUpdateLeadCategory } from '@/hooks/useAdminEnterprise';
@@ -44,11 +44,13 @@ function LeadDetailInner() {
   const { user } = useAuth();
   const comm = useLeadCommunication(id);
   const leadQuery = useLead(id);
+  const deleteLead = useDeleteLead();
   const updateCategory = useUpdateLeadCategory();
 
   const [remarkOpen, setRemarkOpen] = useState(false);
   const [rmRemarkOpen, setRmRemarkOpen] = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [sessionCreateSignal, setSessionCreateSignal] = useState(0);
   const [labelCreateSignal, setLabelCreateSignal] = useState(0);
 
@@ -83,6 +85,7 @@ function LeadDetailInner() {
   const canEditCategory = user.role === 'super_admin' || user.role === 'admin';
   const canSeeTechnical = user.role === 'super_admin' || user.role === 'admin';
   const canSeeRmSummary = user.role === 'super_admin' || user.role === 'admin' || user.role === 'rm';
+  const canDeleteLead = user.role === 'super_admin';
   const readOnlyAccess = Boolean(lead.read_only_access);
   const leadPhone = lead.phone;
 
@@ -104,6 +107,16 @@ function LeadDetailInner() {
       toast.success('Dialer opened and call log created.');
     } catch {
       toast.error('Could not record call in CRM.');
+    }
+  }
+
+  async function handleDeleteLead() {
+    try {
+      await deleteLead.mutateAsync({ id });
+      toast.success('Lead deleted permanently.');
+      router.push('/leads');
+    } catch (error: any) {
+      toast.error(error?.response?.data?.error?.message || error?.response?.data?.message || 'Could not delete lead');
     }
   }
 
@@ -204,6 +217,16 @@ function LeadDetailInner() {
           Reassign
         </Button>
       )}
+
+      {canDeleteLead && !readOnlyAccess && (
+        <Button
+          variant="danger"
+          leftIcon={<Trash2 className="h-4 w-4" />}
+          onClick={() => setDeleteOpen(true)}
+        >
+          Delete Lead
+        </Button>
+      )}
     </>
   );
 
@@ -278,6 +301,38 @@ function LeadDetailInner() {
       {!readOnlyAccess && (
         <ReassignModal leadId={id} open={reassignOpen} onClose={() => setReassignOpen(false)} />
       )}
+
+      <Modal
+        open={deleteOpen}
+        onClose={() => setDeleteOpen(false)}
+        title="Delete Lead Permanently"
+        description="This is a hard delete and cannot be undone."
+        size="md"
+        footer={
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setDeleteOpen(false)}>Cancel</Button>
+            <Button
+              variant="danger"
+              size="sm"
+              loading={deleteLead.isPending}
+              onClick={handleDeleteLead}
+            >
+              I am sure, delete
+            </Button>
+          </>
+        }
+      >
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+            <div className="space-y-2">
+              <div className="font-semibold">{lead.full_name || 'Unnamed lead'}</div>
+              <div>This will permanently delete the lead and its direct CRM history like remarks, workflow, sessions, labels, call logs, and payment attachments.</div>
+              <div>Linked customer notes and chat records may remain in CRM but will no longer point to this lead.</div>
+            </div>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

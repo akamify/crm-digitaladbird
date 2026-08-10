@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ChevronLeft, ChevronRight, Eye, Inbox, Lock, Mail, MessageSquarePlus, Phone, Plus, ScrollText, Tag } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, ChevronRight, Eye, Inbox, Lock, Mail, MessageSquarePlus, Phone, Plus, ScrollText, Tag, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { LeadActions } from '@/components/leads/LeadActions';
@@ -15,7 +15,7 @@ import { LeadLabelPickerModal } from '@/components/leads/LeadLabelPickerModal';
 import { AddLeadModal } from '@/components/leads/AddLeadModal';
 import { EmptyState, Modal, Skeleton, StatusChip } from '@/components/ui/Modal';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
-import { useBulkAddRemark, useLeadList } from '@/hooks/useLeads';
+import { useBulkAddRemark, useDeleteLead, useLeadList } from '@/hooks/useLeads';
 import { formatISTCompact, formatISTTooltip, formatStageUpdatedAt } from '@/lib/date';
 import { clsx, fmtPhone, humanize, isDueToday, isOverdue, stageChip } from '@/lib/format';
 import { useAuth } from '@/lib/auth';
@@ -100,6 +100,7 @@ function LeadsInner() {
   const [bulkRemarkOpen, setBulkRemarkOpen] = useState(false);
   const [bulkLabelOpen, setBulkLabelOpen] = useState(false);
   const [addLeadOpen, setAddLeadOpen] = useState(false);
+  const [deleteLeadItem, setDeleteLeadItem] = useState<Lead | null>(null);
   const [bulkRemark, setBulkRemark] = useState('');
   const [bulkStatuses, setBulkStatuses] = useState<CallStatus[]>([]);
   const debouncedSearch = useDebouncedValue(filters.q || '');
@@ -112,9 +113,11 @@ function LeadsInner() {
   }, [filters, debouncedSearch]);
   const { data, isLoading, isFetching } = useLeadList(effectiveFilters);
   const bulkAddRemark = useBulkAddRemark();
+  const deleteLead = useDeleteLead();
   const isAdminLeadsView = user?.role === 'super_admin' || user?.role === 'admin';
   const isMemberLeadsView = user?.role === 'member';
   const canAddManualLead = user?.role === 'super_admin' || user?.role === 'admin' || user?.role === 'rm';
+  const canDeleteLead = user?.role === 'super_admin';
   const isRmUser = user?.role === 'rm';
 
   const rows = data?.rows ?? [];
@@ -185,6 +188,18 @@ function LeadsInner() {
 
   function toggleBulkStatus(status: CallStatus) {
     setBulkStatuses(values => values.includes(status) ? values.filter(value => value !== status) : [...values, status]);
+  }
+
+  async function confirmDeleteLead() {
+    if (!deleteLeadItem) return;
+    try {
+      await deleteLead.mutateAsync({ id: deleteLeadItem.id });
+      setSelectedIds(ids => ids.filter(id => id !== deleteLeadItem.id));
+      toast.success('Lead deleted permanently.');
+      setDeleteLeadItem(null);
+    } catch (error: any) {
+      toast.error(error?.response?.data?.error?.message || error?.response?.data?.message || 'Could not delete lead');
+    }
   }
 
   return (
@@ -581,6 +596,19 @@ function LeadsInner() {
                             >
                               <MessageSquarePlus className="h-3 w-3" />
                             </button>
+                            {canDeleteLead && (
+                              <button
+                                type="button"
+                                title="Delete lead permanently"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setDeleteLeadItem(lead);
+                                }}
+                                className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-white px-1.5 py-1 text-[11px] font-medium text-rose-600 transition hover:bg-rose-50"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            )}
                           </div>
                         )}
                       </td>
@@ -682,6 +710,38 @@ function LeadsInner() {
             {bulkAddRemark.isPending ? 'Saving...' : isRmUser ? 'Save RM Update' : 'Save Remark'}
           </button>
         </div>
+      </Modal>
+      <Modal
+        open={!!deleteLeadItem}
+        onClose={() => setDeleteLeadItem(null)}
+        title="Delete Lead Permanently"
+        description="This is a hard delete and cannot be undone."
+        size="md"
+        footer={
+          <>
+            <button onClick={() => setDeleteLeadItem(null)} className="btn-ghost rounded-lg px-4 py-2 text-sm">Cancel</button>
+            <button
+              onClick={confirmDeleteLead}
+              disabled={deleteLead.isPending}
+              className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-rose-700 disabled:opacity-50"
+            >
+              {deleteLead.isPending ? 'Deleting...' : 'I am sure, delete'}
+            </button>
+          </>
+        }
+      >
+        {deleteLeadItem && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+              <div className="space-y-2">
+                <div className="font-semibold">{deleteLeadItem.full_name || 'Unnamed lead'}</div>
+                <div>This will permanently delete the lead and its direct CRM history like remarks, workflow, sessions, labels, call logs, and payment attachments.</div>
+                <div>Linked customer notes and chat records may remain in CRM but will no longer point to this lead.</div>
+              </div>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

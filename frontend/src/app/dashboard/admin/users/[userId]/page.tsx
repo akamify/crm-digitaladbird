@@ -146,11 +146,11 @@ function UserProfileInner({ userId }: { userId: string }) {
   }
 
   function handleDelete() {
-    const reason = prompt('Disable this user profile? Historical data will be retained. Enter a reason:');
+    const reason = prompt('Permanently delete this RM/member profile? This cannot be undone. Enter a reason:');
     if (reason === null) return;
     deleteUser.mutate({ id: userId, reason: reason.trim() || 'Disabled from user profile' }, {
-      onSuccess: () => { toast.success('User disabled'); profile.refetch(); },
-      onError: (error: unknown) => toast.error(apiErrorMessage(error, 'Disable failed')),
+      onSuccess: () => { toast.success('User permanently deleted'); router.push('/dashboard/admin/users'); },
+      onError: (error: unknown) => toast.error(apiErrorMessage(error, 'Delete failed')),
     });
   }
 
@@ -233,9 +233,9 @@ function UserProfileInner({ userId }: { userId: string }) {
                 <ShieldBan className="h-4 w-4" /> Block
               </button>
             )}
-            {canEdit && user.role !== 'super_admin' && !isReadOnlyProfile && (
+            {canEdit && ['rm', 'member'].includes(user.role) && !isReadOnlyProfile && (
               <button onClick={handleDelete} disabled={deleteUser.isPending} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-700">
-                <Trash2 className="h-4 w-4" /> Disable
+                <Trash2 className="h-4 w-4" /> Delete
               </button>
             )}
           </div>

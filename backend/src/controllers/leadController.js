@@ -1,3 +1,5 @@
+const fs = require('fs/promises');
+const path = require('path');
 const { query, withTransaction } = require('../config/database');
 const { AppError, asyncHandler } = require('../utils/errors');
 const { getVisibleUserIds } = require('../middleware/rbac');
@@ -888,6 +890,82 @@ exports.unlock = asyncHandler(async (req, res) => {
     [req.params.id, req.user.id, req.user.role]
   );
   res.json({ success: true });
+});
+
+exports.remove = asyncHandler(async (req, res) => {
+  const leadId = req.params.id;
+
+  const result = await withTransaction(async (client) => {
+    const { rows: [lead] } = await client.query(
+      `SELECT l.id, l.full_name, l.phone, l.email, l.assigned_to_user_id,
+              assigned_user.full_name AS assigned_to_name
+         FROM leads l
+         LEFT JOIN users assigned_user ON assigned_user.id = l.assigned_to_user_id
+        WHERE l.id = $1 AND l.deleted_at IS NULL
+        FOR UPDATE`,
+      [leadId],
+    );
+    if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
+
+    const { rows: attachments } = await client.query(
+      `SELECT file_path
+         FROM lead_payment_attachments
+        WHERE lead_id = $1
+          AND file_path IS NOT NULL`,
+      [leadId],
+    );
+
+    const relatedCountsSql = `
+      SELECT
+        (SELECT COUNT(*)::int FROM lead_remarks WHERE lead_id = $1) AS remarks_count,
+        (SELECT COUNT(*)::int FROM lead_assignments WHERE lead_id = $1) AS assignments_count,
+        (SELECT COUNT(*)::int FROM lead_call_logs WHERE lead_id = $1) AS call_logs_count,
+        (SELECT COUNT(*)::int FROM lead_sessions WHERE lead_id = $1 AND deleted_at IS NULL) AS sessions_count,
+        (SELECT COUNT(*)::int FROM lead_label_assignments WHERE lead_id = $1) AS labels_count,
+        (SELECT COUNT(*)::int FROM lead_payment_attachments WHERE lead_id = $1 AND deleted_at IS NULL) AS attachment_count,
+        (SELECT COUNT(*)::int FROM customer_notes WHERE lead_id = $1 AND deleted_at IS NULL) AS linked_notes_count
+    `;
+    const { rows: [counts] } = await client.query(relatedCountsSql, [leadId]);
+
+    await client.query(`DELETE FROM leads WHERE id = $1`, [leadId]);
+
+    return {
+      lead,
+      counts,
+      attachmentPaths: [...new Set(attachments.map(row => String(row.file_path || '').trim()).filter(Boolean))],
+    };
+  });
+
+  const uploadsRoot = path.resolve(__dirname, '..', '..', 'uploads');
+  const cleanupTargets = result.attachmentPaths.map((filePath) => path.resolve(uploadsRoot, filePath));
+  await Promise.allSettled(cleanupTargets.map((target) => fs.unlink(target)));
+  await fs.rm(path.resolve(uploadsRoot, 'payments', result.lead.id), { recursive: true, force: true }).catch(() => {});
+
+  const { logActivity } = require('../utils/auditLog');
+  await logActivity(req, {
+    entity: 'lead',
+    entity_id: result.lead.id,
+    action: 'hard_deleted',
+    old_value: result.lead.full_name || result.lead.phone || result.lead.email || result.lead.id,
+    metadata: {
+      lead_name: result.lead.full_name || null,
+      phone: result.lead.phone || null,
+      email: result.lead.email || null,
+      assigned_to_user_id: result.lead.assigned_to_user_id || null,
+      assigned_to_name: result.lead.assigned_to_name || null,
+      deleted_related: result.counts,
+    },
+  });
+
+  res.json({
+    success: true,
+    data: {
+      id: result.lead.id,
+      deleted: true,
+      full_name: result.lead.full_name || null,
+      related: result.counts,
+    },
+  });
 });
 
 /**

@@ -340,8 +340,8 @@ function DeleteUserConfirmModal({
 
   const isRm = target.kind === 'rm';
   const description = isRm
-    ? `If you delete this RM, all ${target.memberCount || 0} team members under this RM will also be deleted.`
-    : 'This member will be deleted from the CRM team list.';
+    ? `If you delete this RM, all ${target.memberCount || 0} team members under this RM will also be permanently deleted.`
+    : 'This member will be permanently deleted from the CRM.';
 
   return (
     <Modal
@@ -379,11 +379,12 @@ function DeleteUserConfirmModal({
         <div className="flex items-start gap-3">
           <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
           <div className="space-y-2">
-            <div className="font-semibold">{target.name}</div>
-            <div>{description}</div>
+              <div className="font-semibold">{target.name}</div>
+              <div>{description}</div>
+              <div>This is a hard delete. The same email and phone can be reused after deletion.</div>
+            </div>
           </div>
         </div>
-      </div>
     </Modal>
   );
 }

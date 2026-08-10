@@ -81,6 +81,7 @@ export function useDeleteUser() {
     mutationFn: ({ id, reason }: { id: string; reason?: string }) => apiPost(`/users/${id}/delete`, { reason }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['users'] });
+      qc.invalidateQueries({ queryKey: ['users', 'deleted'] });
       qc.invalidateQueries({ queryKey: ['team-leads'] });
       qc.invalidateQueries({ queryKey: ['admin', 'user-profile'] });
     },

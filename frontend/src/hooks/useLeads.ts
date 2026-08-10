@@ -103,6 +103,21 @@ export function useCreateManualLead() {
   });
 }
 
+export function useDeleteLead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id }: { id: string }) => apiDelete<{ id: string; deleted: boolean }>(`/leads/${id}`),
+    onSuccess: (_data, { id }) => {
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.removeQueries({ queryKey: ['lead', id] });
+      qc.invalidateQueries({ queryKey: ['reports'] });
+      qc.invalidateQueries({ queryKey: ['workflow', id] });
+      qc.invalidateQueries({ queryKey: ['workflow-history', id] });
+      qc.invalidateQueries({ queryKey: ['workflow-stats'] });
+    },
+  });
+}
+
 export function useAddRemark() {
   const qc = useQueryClient();
   return useMutation({

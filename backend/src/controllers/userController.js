@@ -233,9 +233,79 @@ async function revokeUserSessionsBulk(userIds = []) {
   uniqueIds.forEach(invalidateUser);
 }
 
+function assertHardDeletableRole(target) {
+  const role = normalizeRole(target?.role);
+  if (!['rm', 'member'].includes(role)) {
+    throw new AppError(400, 'USER_HARD_DELETE_ROLE_FORBIDDEN', 'Only RM and counselor/member users can be permanently deleted.');
+  }
+}
+
+async function buildHardDeleteTargetIds(client, target) {
+  const ids = [target.id];
+  if (normalizeRole(target.role) === 'rm') {
+    const { rows } = await client.query(
+      `SELECT id
+         FROM users
+        WHERE report_to_id = $1`,
+      [target.id],
+    );
+    for (const row of rows) ids.push(row.id);
+  }
+  return [...new Set(ids)];
+}
+
+async function cleanupRestrictiveUserReferences(client, targetIds) {
+  const { rows: foreignKeys } = await client.query(
+    `SELECT
+        ns.nspname AS schema_name,
+        cls.relname AS table_name,
+        att.attname AS column_name,
+        con.confdeltype,
+        cols.is_nullable = 'YES' AS is_nullable
+       FROM pg_constraint con
+       JOIN pg_class cls
+         ON cls.oid = con.conrelid
+       JOIN pg_namespace ns
+         ON ns.oid = cls.relnamespace
+       JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS keys(attnum, ord)
+         ON TRUE
+       JOIN pg_attribute att
+         ON att.attrelid = con.conrelid
+        AND att.attnum = keys.attnum
+       JOIN information_schema.columns cols
+         ON cols.table_schema = ns.nspname
+        AND cols.table_name = cls.relname
+        AND cols.column_name = att.attname
+      WHERE con.contype = 'f'
+        AND con.confrelid = 'users'::regclass
+        AND array_length(con.conkey, 1) = 1
+        AND ns.nspname = 'public'`,
+  );
+
+  for (const fk of foreignKeys) {
+    if (!['a', 'r', 'd'].includes(String(fk.confdeltype || ''))) continue;
+    const tableSql = `"${fk.schema_name}"."${fk.table_name}"`;
+    const columnSql = `"${fk.column_name}"`;
+    if (fk.is_nullable) {
+      await client.query(
+        `UPDATE ${tableSql}
+            SET ${columnSql} = NULL
+          WHERE ${columnSql} = ANY($1::uuid[])`,
+        [targetIds],
+      );
+      continue;
+    }
+    await client.query(
+      `DELETE FROM ${tableSql}
+        WHERE ${columnSql} = ANY($1::uuid[])`,
+      [targetIds],
+    );
+  }
+}
+
 async function refuseIfProtected(req, action) {
   const { rows: [target] } = await query(
-    `SELECT id, email, role, is_protected, is_hidden, is_system_account
+    `SELECT id, full_name, email, role, deleted_at, is_protected, is_hidden, is_system_account
        FROM users WHERE id = $1`,
     [req.params.id],
   );
@@ -558,47 +628,27 @@ exports.unblock = asyncHandler(async (req, res) => {
 exports.softDelete = asyncHandler(async (req, res) => {
   if (req.user.role !== 'super_admin') throw new AppError(403, 'FORBIDDEN', 'Only super admin can delete users.');
   const target = await refuseIfProtected(req, 'delete');
+  assertHardDeletableRole(target);
   if (target.id === req.user.id) {
     throw new AppError(400, 'SELF_DELETE_FORBIDDEN', 'You cannot delete your own account.');
   }
   const reason = String(req.body?.reason || '').trim() || null;
-  const affectedIds = await withTransaction(async (client) => {
-    const targetIds = [target.id];
-    if (target.role === 'rm') {
-      const { rows: members } = await client.query(
-        `SELECT id
-           FROM users
-          WHERE report_to_id = $1
-            AND deleted_at IS NULL`,
-        [target.id],
-      );
-      for (const member of members) targetIds.push(member.id);
-    }
-
-    const deleteReason = reason || (target.role === 'rm'
-      ? `Cascade delete from RM ${target.email || target.id}`
-      : null);
-
-    await client.query(
-      `UPDATE users
-          SET deleted_at = COALESCE(deleted_at, NOW()),
-              deleted_by = $2,
-              delete_reason = COALESCE($3, delete_reason),
-              status = 'deleted',
-              is_available = FALSE,
-              lead_assignment_enabled = FALSE,
-              lead_assignment_status = 'disabled',
-              lead_assignment_disabled_reason = COALESCE($3, lead_assignment_disabled_reason),
-              lead_assignment_updated_by = $2,
-              lead_assignment_updated_at = NOW(),
-              updated_at = NOW()
+  const result = await withTransaction(async (client) => {
+    const targetIds = await buildHardDeleteTargetIds(client, target);
+    const { rows: affectedUsers } = await client.query(
+      `SELECT id, full_name, email, role, deleted_at
+         FROM users
         WHERE id = ANY($1::uuid[])`,
-      [targetIds, req.user.id, deleteReason],
+      [targetIds],
     );
+
+    const deleteReason = reason || (normalizeRole(target.role) === 'rm'
+      ? `Cascade permanent delete from RM ${target.email || target.id}`
+      : 'Permanent delete by super admin');
 
     await client.query(
       `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata, ip_address)
-         VALUES ($1, 'user', $2, 'delete', $3, $4)`,
+         VALUES ($1, 'user', $2, 'hard_delete', $3, $4)`,
       [
         req.user.id,
         target.id,
@@ -608,21 +658,31 @@ exports.softDelete = asyncHandler(async (req, res) => {
           deleted_user_ids: targetIds,
           cascade_member_count: Math.max(0, targetIds.length - 1),
           reason: deleteReason,
+          already_soft_deleted: Boolean(target.deleted_at),
         }),
         req.ip,
       ],
     ).catch(() => {});
 
-    return targetIds;
+    await cleanupRestrictiveUserReferences(client, targetIds);
+    await client.query(`DELETE FROM users WHERE id = ANY($1::uuid[])`, [targetIds]);
+
+    return {
+      targetIds,
+      affectedUsers,
+      deleteReason,
+    };
   });
 
-  await revokeUserSessionsBulk(affectedIds);
+  await revokeUserSessionsBulk(result.targetIds);
   res.json({
     success: true,
     data: {
-      deleted_user_ids: affectedIds,
-      cascade_member_count: Math.max(0, affectedIds.length - 1),
+      deleted_user_ids: result.targetIds,
+      cascade_member_count: Math.max(0, result.targetIds.length - 1),
       deleted_role: target.role,
+      hard_deleted: true,
+      reason: result.deleteReason,
     },
   });
 });
