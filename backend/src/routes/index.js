@@ -136,7 +136,7 @@ router.post  ('/users/bulk-import', authenticate, requireRole('super_admin', 'ad
 router.get   ('/users/deleted',   authenticate, requireRole('super_admin', 'admin'), users.deleted);
 router.post  ('/users/:id/block', authenticate, requireRole('super_admin', 'admin'), users.block);
 router.post  ('/users/:id/unblock', authenticate, requireRole('super_admin', 'admin'), users.unblock);
-router.post  ('/users/:id/delete', authenticate, requireRole('super_admin', 'admin'), users.softDelete);
+router.post  ('/users/:id/delete', authenticate, requireRole('super_admin'), users.softDelete);
 
 router.get('/lead-labels', authenticate, asyncHandler(async (req, res) => {
   const data = await leadLabels.listLabels(req.user);
@@ -209,7 +209,7 @@ router.patch('/users/lead-availability/bulk', authenticate, requireRole('super_a
   res.json({ success: true, data: result, message: 'Lead assignment availability updated.' });
 }));
 router.patch ('/users/:id',       authenticate, requireRole('super_admin', 'admin'), users.update);
-router.delete('/users/:id',       authenticate, requireRole('super_admin', 'admin'), users.softDelete);
+router.delete('/users/:id',       authenticate, requireRole('super_admin'), users.softDelete);
 
 // ---- Clients ------------------------------------------------------
 router.get('/admin/clients', authenticate, requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
@@ -264,6 +264,7 @@ router.get('/client/meta', authenticate, requireRole('client'), asyncHandler(asy
 // ---- Customer Notes -----------------------------------------------
 router.get('/notes/lookups/leads', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.lookupLeads);
 router.get('/notes/lookups/users', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.lookupUsers);
+router.get('/notes/upcoming-meetings', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.upcomingMeetings);
 router.get('/notes', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.list);
 router.post('/notes', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.create);
 router.get('/notes/:noteId', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.detail);

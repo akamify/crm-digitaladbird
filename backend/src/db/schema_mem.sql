@@ -311,6 +311,11 @@ CREATE TABLE IF NOT EXISTS customer_notes (
   client_budget TEXT NULL,
   meeting_name TEXT NULL,
   meeting_at TIMESTAMPTZ NULL,
+  meeting_notification_emails TEXT[] NOT NULL DEFAULT '{}',
+  meeting_invite_sent_at TIMESTAMPTZ NULL,
+  meeting_reminder_sent_at TIMESTAMPTZ NULL,
+  meeting_started_email_sent_at TIMESTAMPTZ NULL,
+  meeting_completed_at TIMESTAMPTZ NULL,
   counselor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
   rm_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
   created_by_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -333,6 +338,7 @@ CREATE INDEX IF NOT EXISTS idx_customer_notes_approval_status ON customer_notes(
 CREATE INDEX IF NOT EXISTS idx_customer_notes_rm_user_id ON customer_notes(rm_user_id);
 CREATE INDEX IF NOT EXISTS idx_customer_notes_counselor_user_id ON customer_notes(counselor_user_id);
 CREATE INDEX IF NOT EXISTS idx_customer_notes_meeting_at ON customer_notes(meeting_at);
+CREATE INDEX IF NOT EXISTS idx_customer_notes_meeting_upcoming ON customer_notes(meeting_at);
 
 CREATE TABLE IF NOT EXISTS customer_note_entries (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

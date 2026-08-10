@@ -19,6 +19,7 @@ import {
   useDeleteCustomerNote,
   useDeleteCustomerNoteEntry,
   useRejectCustomerNote,
+  useUpcomingCustomerMeetings,
   useUpdateCustomerNote,
   useUpdateCustomerNoteEntry,
   type CustomerNoteInput,
@@ -30,13 +31,6 @@ import { formatISTCompact, formatISTTooltip } from '@/lib/date';
 import { clsx, fmtPhone, humanize } from '@/lib/format';
 import type { CustomerNote, CustomerNoteApprovalStatus, CustomerNoteFilters } from '@/types';
 
-const STATUS_OPTIONS: Array<{ value: CustomerNoteApprovalStatus | ''; label: string }> = [
-  { value: '', label: 'All statuses' },
-  { value: 'pending_rm_approval', label: 'Pending RM Approval' },
-  { value: 'approved', label: 'Approved' },
-  { value: 'rejected', label: 'Rejected' },
-];
-
 function approvalChip(status?: CustomerNoteApprovalStatus | string | null) {
   if (status === 'approved') return 'chip-green';
   if (status === 'rejected') return 'chip-red';
@@ -47,10 +41,6 @@ function noteSummary(note: CustomerNote) {
   return note.latest_entry_text || note.about_client || note.client_services_want || 'No note text yet';
 }
 
-function getTodayDateString() {
-  return new Date().toISOString().slice(0, 10);
-}
-
 function getApiErrorMessage(error: unknown, fallback: string) {
   if (typeof error === 'object' && error && 'response' in error) {
     const response = (error as { response?: { data?: { error?: { message?: string }; message?: string } } }).response;
@@ -59,7 +49,7 @@ function getApiErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
-type NoteAuthUser = Pick<AuthUser, 'id' | 'role'> | null | undefined;
+type NoteAuthUser = Pick<AuthUser, 'id' | 'role' | 'reportToId'> | null | undefined;
 
 function emptyForm(prefillLead?: LeadLookupItem | null, currentUser?: NoteAuthUser): CustomerNoteInput {
   return {
@@ -73,8 +63,9 @@ function emptyForm(prefillLead?: LeadLookupItem | null, currentUser?: NoteAuthUs
     client_budget: '',
     meeting_name: '',
     meeting_at: '',
+    meeting_notification_emails: '',
     counselor_user_id: currentUser && ['member', 'partner'].includes(currentUser.role) ? currentUser.id : null,
-    rm_user_id: currentUser?.role === 'rm' ? currentUser.id : null,
+    rm_user_id: currentUser?.role === 'rm' ? currentUser.id : currentUser?.reportToId || null,
     initial_entry_text: '',
   };
 }
@@ -91,15 +82,80 @@ function buildFormFromNote(note: CustomerNote): CustomerNoteInput {
     client_budget: note.client_budget || '',
     meeting_name: note.meeting_name || '',
     meeting_at: note.meeting_at ? note.meeting_at.slice(0, 16) : '',
+    meeting_notification_emails: (note.meeting_notification_emails || []).join(', '),
     counselor_user_id: note.counselor_user_id || null,
     rm_user_id: note.rm_user_id || null,
     initial_entry_text: '',
   };
 }
 
+function countdownLabel(meetingAt?: string | null, nowMs = Date.now()) {
+  if (!meetingAt) return 'Time not set';
+  const diffMs = new Date(meetingAt).getTime() - nowMs;
+  const absMs = Math.abs(diffMs);
+  const totalMinutes = Math.floor(absMs / 60_000);
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+  const minutes = totalMinutes % 60;
+  const parts = [
+    days ? `${days}d` : '',
+    hours ? `${hours}h` : '',
+    `${minutes}m`,
+  ].filter(Boolean);
+  if (diffMs > 0) return `Starts in ${parts.join(' ')}`;
+  if (absMs < 60_000) return 'Starting now';
+  return `Started ${parts.join(' ')} ago`;
+}
+
+function normalizePhoneInput(value: string) {
+  const digits = String(value || '').replace(/\D/g, '').slice(0, 12);
+  if (digits.startsWith('91')) return digits;
+  return digits.slice(0, 10);
+}
+
+function formatPhoneForSave(value: string) {
+  const digits = normalizePhoneInput(value);
+  if (digits.length === 12 && digits.startsWith('91')) return digits;
+  if (digits.length === 10) return `91${digits}`;
+  return null;
+}
+
+function isValidReminderEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim().toLowerCase());
+}
+
+function normalizeReminderEmail(value: string) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function validateNotePayload(form: CustomerNoteInput, options: { isMeeting: boolean }) {
+  const normalizedPhone = formatPhoneForSave(String(form.customer_phone || ''));
+  if (!normalizedPhone) {
+    return { ok: false, error: 'Customer number must be 10 digits. We automatically save it with 91 prefix.', normalizedPhone: null };
+  }
+  if (!String(form.customer_name || '').trim()) {
+    return { ok: false, error: 'Customer first name is required.', normalizedPhone: null };
+  }
+  if (!String(form.initial_entry_text || '').trim() && !options.isMeeting) {
+    return { ok: false, error: 'Share notes is required before saving.', normalizedPhone: null };
+  }
+  if (options.isMeeting) {
+    if (!String(form.meeting_name || '').trim()) {
+      return { ok: false, error: 'Meeting name is required.', normalizedPhone: null };
+    }
+    if (!String(form.meeting_at || '').trim()) {
+      return { ok: false, error: 'Meeting date and time is required.', normalizedPhone: null };
+    }
+    if (!String(form.rm_user_id || '').trim()) {
+      return { ok: false, error: 'Select an RM before scheduling.', normalizedPhone: null };
+    }
+  }
+  return { ok: true, error: null, normalizedPhone };
+}
+
 export default function NotesPage() {
   return (
-    <AppShell title="Latest Notes" subtitle="Shared counselor, RM, and approved admin-facing customer notes">
+    <AppShell title="Latest Notes" subtitle="Shared counselor, RM, and admin-facing customer notes">
       <NotesInner />
     </AppShell>
   );
@@ -111,7 +167,6 @@ function NotesInner() {
   const { user } = useAuth();
   const initialFilters = useMemo<CustomerNoteFilters>(() => ({
     q: searchParams.get('q') || '',
-    approval_status: (searchParams.get('approval_status') as CustomerNoteApprovalStatus | '') || '',
     lead_id: searchParams.get('lead_id') || '',
     from: searchParams.get('from') || '',
     to: searchParams.get('to') || '',
@@ -121,17 +176,27 @@ function NotesInner() {
   }), []);
   const [filters, setFilters] = useState<CustomerNoteFilters>(initialFilters);
   const [composeOpen, setComposeOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
   const [detailNoteId, setDetailNoteId] = useState<string | null>(null);
   const [editingNote, setEditingNote] = useState<CustomerNote | null>(null);
+  const [editingMeeting, setEditingMeeting] = useState<CustomerNote | null>(null);
+  const [activeTab, setActiveTab] = useState<'notes' | 'meetings'>(() => (searchParams.get('tab') === 'meetings' ? 'meetings' : 'notes'));
 
   const leadIdFromQuery = searchParams.get('leadId');
   const composeFromQuery = searchParams.get('compose') === '1';
   const leadQuery = useLead(leadIdFromQuery);
   const debouncedSearch = useDebouncedValue(filters.q || '');
+  const upcomingMeetings = useUpcomingCustomerMeetings(12);
   const notesQuery = useCustomerNotes({
     ...filters,
     q: debouncedSearch || '',
   });
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (composeFromQuery) setComposeOpen(true);
@@ -143,9 +208,10 @@ function NotesInner() {
       if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
     });
     if (leadIdFromQuery) params.set('leadId', leadIdFromQuery);
+    if (activeTab === 'meetings') params.set('tab', 'meetings');
     if (composeOpen) params.set('compose', '1');
     router.replace(`/notes${params.toString() ? `?${params.toString()}` : ''}`);
-  }, [composeOpen, filters, leadIdFromQuery, router]);
+  }, [activeTab, composeOpen, filters, leadIdFromQuery, router]);
 
   const prefillLead: LeadLookupItem | null = leadQuery.data ? {
     id: leadQuery.data.id,
@@ -162,7 +228,7 @@ function NotesInner() {
   const page = filters.page || 1;
   const pageSize = filters.page_size || 20;
   const pages = Math.max(1, Math.ceil(total / pageSize));
-  const today = getTodayDateString();
+  const meetingRows = upcomingMeetings.data || [];
 
   return (
     <div className="space-y-4">
@@ -175,7 +241,7 @@ function NotesInner() {
             ) : user?.role === 'rm' ? (
               <span className="chip-blue">You can verify team notes</span>
             ) : (
-              <span className="chip-amber">Your updates go to RM for approval</span>
+              <span className="chip-green">Your notes are saved instantly</span>
             )}
           </div>
           <p className="text-sm text-slate-500">
@@ -193,6 +259,16 @@ function NotesInner() {
           >
             <Plus className="h-4 w-4" /> New Note
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              setEditingMeeting(null);
+              setScheduleOpen(true);
+            }}
+            className="btn-outline inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"
+          >
+            <CalendarClock className="h-4 w-4" /> Schedule Meeting
+          </button>
           <Link
             href="/leads"
             className="btn-outline inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"
@@ -202,7 +278,7 @@ function NotesInner() {
         </div>
       </div>
 
-      <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm lg:grid-cols-[minmax(0,1fr)_200px_180px_180px_auto]">
+      <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm lg:grid-cols-[minmax(0,1fr)_180px_180px_auto]">
         <label className="space-y-2">
           <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Search</span>
           <div className="relative">
@@ -214,16 +290,6 @@ function NotesInner() {
               onChange={(event) => setFilters((current) => ({ ...current, q: event.target.value, page: 1 }))}
             />
           </div>
-        </label>
-        <label className="space-y-2">
-          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Approval</span>
-          <select
-            className="input"
-            value={filters.approval_status || ''}
-            onChange={(event) => setFilters((current) => ({ ...current, approval_status: event.target.value as CustomerNoteApprovalStatus | '', page: 1 }))}
-          >
-            {STATUS_OPTIONS.map((option) => <option key={option.value || 'all'} value={option.value}>{option.label}</option>)}
-          </select>
         </label>
         <label className="space-y-2">
           <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">From</span>
@@ -246,7 +312,7 @@ function NotesInner() {
         <div className="flex items-end">
           <button
             type="button"
-            onClick={() => setFilters({ q: '', approval_status: '', lead_id: '', from: '', to: '', page: 1, page_size: pageSize })}
+            onClick={() => setFilters({ q: '', lead_id: '', from: '', to: '', page: 1, page_size: pageSize })}
             className="btn-ghost w-full rounded-lg px-4 py-2 text-sm"
           >
             Reset
@@ -257,65 +323,27 @@ function NotesInner() {
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          onClick={() => setFilters((current) => ({ ...current, approval_status: '', from: '', to: '', page: 1 }))}
+          onClick={() => setActiveTab('notes')}
           className={clsx(
             'rounded-lg px-3 py-2 text-sm font-medium transition',
-            !filters.approval_status && !filters.from && !filters.to
+            activeTab === 'notes'
               ? 'bg-brand-600 text-white'
               : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
           )}
         >
           All Notes
         </button>
-        {user?.role === 'rm' && (
-          <button
-            type="button"
-            onClick={() => setFilters((current) => ({ ...current, approval_status: 'pending_rm_approval', page: 1 }))}
-            className={clsx(
-              'rounded-lg px-3 py-2 text-sm font-medium transition',
-              filters.approval_status === 'pending_rm_approval'
-                ? 'bg-amber-500 text-white'
-                : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
-            )}
-          >
-            My Pending Approval
-          </button>
-        )}
         <button
           type="button"
-          onClick={() => setFilters((current) => ({ ...current, approval_status: 'approved', page: 1 }))}
+          onClick={() => setActiveTab('meetings')}
           className={clsx(
             'rounded-lg px-3 py-2 text-sm font-medium transition',
-            filters.approval_status === 'approved'
+            activeTab === 'meetings'
               ? 'bg-emerald-600 text-white'
               : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
           )}
         >
-          Approved
-        </button>
-        <button
-          type="button"
-          onClick={() => setFilters((current) => ({ ...current, approval_status: 'rejected', page: 1 }))}
-          className={clsx(
-            'rounded-lg px-3 py-2 text-sm font-medium transition',
-            filters.approval_status === 'rejected'
-              ? 'bg-rose-600 text-white'
-              : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
-          )}
-        >
-          Rejected
-        </button>
-        <button
-          type="button"
-          onClick={() => setFilters((current) => ({ ...current, from: today, to: today, page: 1 }))}
-          className={clsx(
-            'rounded-lg px-3 py-2 text-sm font-medium transition',
-            filters.from === today && filters.to === today
-              ? 'bg-slate-900 text-white'
-              : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
-          )}
-        >
-          Today
+          Meeting Schedule
         </button>
       </div>
 
@@ -327,13 +355,119 @@ function NotesInner() {
         </div>
       )}
 
-      <div className="card overflow-hidden">
-        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-          <div className="text-sm text-slate-600">
-            <span className="font-semibold text-slate-900">{total.toLocaleString()}</span> notes
+      {activeTab === 'meetings' ? (
+        <div className="card overflow-hidden">
+          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+            <div>
+              <div className="text-sm font-semibold text-slate-900">Scheduled Meetings</div>
+              <div className="text-xs text-slate-500">
+                {user?.role === 'rm' ? 'Only your scheduled meetings are visible here.' : 'All RM meetings appear here for company monitoring.'}
+              </div>
+            </div>
+            <span className="chip-blue">{meetingRows.length} meetings</span>
           </div>
-          <div className="text-xs text-slate-500">Newest activity first</div>
+          {upcomingMeetings.isLoading ? (
+            <div className="space-y-2 p-4">
+              {Array.from({ length: 5 }).map((_, index) => <Skeleton key={index} className="h-24" />)}
+            </div>
+          ) : meetingRows.length === 0 ? (
+            <div className="p-4">
+              <EmptyState
+                title="No meetings scheduled"
+                description="Use the Schedule Meeting button to create the next RM or counselor meeting plan."
+                action={<button type="button" onClick={() => setScheduleOpen(true)} className="btn-primary rounded-lg px-4 py-2 text-sm">Schedule Meeting</button>}
+                icon={<CalendarClock className="h-6 w-6" />}
+              />
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[1120px] text-sm">
+                <thead>
+                  <tr className="border-b border-slate-100 bg-slate-50/70 text-left text-xs uppercase tracking-wider text-slate-500">
+                    <th className="px-4 py-3 font-medium">Meeting</th>
+                    <th className="px-4 py-3 font-medium">Customer</th>
+                    <th className="px-4 py-3 font-medium">Team</th>
+                    <th className="px-4 py-3 font-medium">Service Need</th>
+                    <th className="px-4 py-3 font-medium">Time</th>
+                    <th className="px-4 py-3 font-medium">Countdown</th>
+                    <th className="px-4 py-3 font-medium">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {meetingRows.map((meeting) => (
+                    <tr
+                      key={meeting.id}
+                      className="cursor-pointer border-b border-slate-100 transition hover:bg-slate-50/70"
+                      onClick={() => setDetailNoteId(meeting.id)}
+                    >
+                      <td className="px-4 py-3">
+                        <div className="font-semibold text-slate-900">{meeting.meeting_name || 'Scheduled meeting'}</div>
+                        <div className="mt-1 text-xs text-slate-500">{meeting.business_name || 'No business name'}</div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-slate-900">{meeting.customer_name}</div>
+                        <div className="mt-1 text-xs text-slate-500">{fmtPhone(meeting.customer_phone)}</div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-1 text-[11px] text-slate-500">
+                          {meeting.rm_name && <span className="chip-slate">RM: {meeting.rm_name}</span>}
+                          {meeting.counselor_name && <span className="chip-slate">Counselor: {meeting.counselor_name}</span>}
+                        </div>
+                      </td>
+                      <td className="max-w-[280px] px-4 py-3 text-slate-700">
+                        <div className="line-clamp-2">{meeting.client_services_want || meeting.about_client || 'No service note added yet'}</div>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-slate-500" title={formatISTTooltip(meeting.meeting_at)}>
+                        {meeting.meeting_at ? formatISTCompact(meeting.meeting_at) : 'Not set'}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="chip-green">{countdownLabel(meeting.meeting_at, nowMs)}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setDetailNoteId(meeting.id);
+                            }}
+                            className="btn-outline rounded-lg px-3 py-1.5 text-xs"
+                          >
+                            Open
+                          </button>
+                          {meeting.permissions?.can_edit && (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setEditingMeeting(meeting);
+                                setScheduleOpen(true);
+                              }}
+                              className="btn-ghost rounded-lg px-3 py-1.5 text-xs"
+                            >
+                              Edit
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
+      ) : (
+        <div className="card overflow-hidden">
+          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+            <div>
+              <div className="text-sm font-semibold text-slate-900">Notes List</div>
+              <div className="text-xs text-slate-500">Newest activity first across all customer notes.</div>
+            </div>
+            <div className="text-sm text-slate-600">
+              <span className="font-semibold text-slate-900">{total.toLocaleString()}</span> notes
+            </div>
+          </div>
         {notesQuery.isLoading ? (
           <div className="space-y-2 p-4">
             {Array.from({ length: 6 }).map((_, index) => <Skeleton key={index} className="h-20" />)}
@@ -481,7 +615,8 @@ function NotesInner() {
             </button>
           </div>
         )}
-      </div>
+        </div>
+      )}
 
       <CustomerNoteComposerModal
         open={composeOpen}
@@ -491,6 +626,16 @@ function NotesInner() {
         }}
         prefillLead={prefillLead}
         note={editingNote}
+      />
+
+      <MeetingScheduleModal
+        open={scheduleOpen}
+        onClose={() => {
+          setScheduleOpen(false);
+          setEditingMeeting(null);
+        }}
+        prefillLead={prefillLead}
+        note={editingMeeting}
       />
 
       <CustomerNoteDetailModal
@@ -520,12 +665,14 @@ function CustomerNoteComposerModal({
   const { user } = useAuth();
   const createNote = useCreateCustomerNote();
   const updateNote = useUpdateCustomerNote();
-  const allUsers = useCustomerNoteUserLookup('', '');
   const [linkedLead, setLinkedLead] = useState<LeadLookupItem | null>(prefillLead || null);
   const [form, setForm] = useState<CustomerNoteInput>(emptyForm(prefillLead, user));
   const [lookupText, setLookupText] = useState('');
   const debouncedLookup = useDebouncedValue(lookupText, 250);
   const leadLookup = useCustomerNoteLeadLookup(debouncedLookup);
+  const effectiveRmUserId = form.rm_user_id || (user?.role === 'rm' ? user.id : user?.reportToId || null);
+  const rmLookup = useCustomerNoteUserLookup('rm', '', null);
+  const counselorLookup = useCustomerNoteUserLookup('member', '', effectiveRmUserId);
 
   useEffect(() => {
     if (!open) return;
@@ -548,9 +695,27 @@ function CustomerNoteComposerModal({
     setLookupText('');
   }, [note, open, prefillLead, user]);
 
-  const visibleUsers = allUsers.data || [];
-  const counselorOptions = visibleUsers.filter((entry) => ['member', 'partner', 'rm'].includes(entry.role));
-  const rmOptions = visibleUsers.filter((entry) => entry.role === 'rm');
+  const rmOptions = rmLookup.data || [];
+  const counselorOptions = useMemo(() => {
+    if (user?.role === 'super_admin' || user?.role === 'admin') {
+      return form.rm_user_id ? (counselorLookup.data || []) : [];
+    }
+    return counselorLookup.data || [];
+  }, [counselorLookup.data, form.rm_user_id, user?.role]);
+
+  useEffect(() => {
+    if (!counselorOptions.length) {
+      if (user?.role === 'super_admin' || user?.role === 'admin') {
+        setForm((current) => (current.counselor_user_id ? { ...current, counselor_user_id: null } : current));
+      }
+      return;
+    }
+    setForm((current) => {
+      if (!current.counselor_user_id) return current;
+      const exists = counselorOptions.some((entry) => entry.id === current.counselor_user_id);
+      return exists ? current : { ...current, counselor_user_id: null };
+    });
+  }, [counselorOptions, user?.role]);
 
   function selectLead(lead: LeadLookupItem) {
     setLinkedLead(lead);
@@ -564,9 +729,15 @@ function CustomerNoteComposerModal({
   }
 
   function handleSubmit() {
+    const validation = validateNotePayload(form, { isMeeting: false });
+    if (!validation.ok) {
+      toast.error(validation.error);
+      return;
+    }
+
     const payload: CustomerNoteInput = {
       lead_id: form.lead_id || null,
-      customer_phone: form.customer_phone || '',
+      customer_phone: validation.normalizedPhone,
       customer_name: form.customer_name || '',
       customer_second_name: form.customer_second_name || '',
       business_name: form.business_name || '',
@@ -575,6 +746,7 @@ function CustomerNoteComposerModal({
       client_budget: form.client_budget || '',
       meeting_name: form.meeting_name || '',
       meeting_at: form.meeting_at || null,
+      meeting_notification_emails: form.meeting_notification_emails || '',
       counselor_user_id: form.counselor_user_id || null,
       rm_user_id: form.rm_user_id || null,
       initial_entry_text: form.initial_entry_text || '',
@@ -601,7 +773,7 @@ function CustomerNoteComposerModal({
       open={open}
       onClose={onClose}
       title={note ? 'Edit Customer Note' : linkedLead ? 'Create Lead Note' : 'Create Customer Note'}
-      description={note ? 'Update customer metadata, meeting details, or ownership.' : 'Use one note thread for all call updates and RM verification.'}
+      description={note ? 'Update customer metadata, note ownership, or latest context.' : 'Use one note thread for call history and customer updates.'}
       size="xl"
     >
       <div className="space-y-5">
@@ -664,30 +836,32 @@ function CustomerNoteComposerModal({
 
         <div className="grid gap-4 md:grid-cols-2">
           <Field label="Customer number">
-            <input className="input" value={form.customer_phone || ''} onChange={(event) => setForm((current) => ({ ...current, customer_phone: event.target.value }))} />
+            <input
+              className="input"
+              inputMode="numeric"
+              placeholder="9876543210 or 919876543210"
+              value={form.customer_phone || ''}
+              onChange={(event) => setForm((current) => ({ ...current, customer_phone: normalizePhoneInput(event.target.value) }))}
+            />
+            <div className="text-xs text-slate-500">10 digits required. We auto-save with `91` prefix.</div>
           </Field>
           <Field label="Customer first name">
             <input className="input" value={form.customer_name || ''} onChange={(event) => setForm((current) => ({ ...current, customer_name: event.target.value }))} />
           </Field>
-          <Field label="Customer second name (optional)">
+          <Field label="Customer second name" optional>
             <input className="input" value={form.customer_second_name || ''} onChange={(event) => setForm((current) => ({ ...current, customer_second_name: event.target.value }))} />
           </Field>
-          <Field label="Business name">
+          <Field label="Business name" optional>
             <input className="input" value={form.business_name || ''} onChange={(event) => setForm((current) => ({ ...current, business_name: event.target.value }))} />
-          </Field>
-          <Field label="Meeting name">
-            <input className="input" value={form.meeting_name || ''} onChange={(event) => setForm((current) => ({ ...current, meeting_name: event.target.value }))} />
-          </Field>
-          <Field label="Meeting date & time">
-            <input type="datetime-local" className="input" value={form.meeting_at || ''} onChange={(event) => setForm((current) => ({ ...current, meeting_at: event.target.value }))} />
           </Field>
           <Field label="Counselor / Member">
             <select
               className="input"
               value={form.counselor_user_id || ''}
               onChange={(event) => setForm((current) => ({ ...current, counselor_user_id: event.target.value || null }))}
+              disabled={(user?.role === 'super_admin' || user?.role === 'admin') && !form.rm_user_id}
             >
-              <option value="">Select counselor</option>
+              <option value="">{(user?.role === 'super_admin' || user?.role === 'admin') && !form.rm_user_id ? 'Select RM first' : 'Select counselor'}</option>
               {counselorOptions.map((entry) => <option key={entry.id} value={entry.id}>{entry.full_name} ({humanize(entry.role)})</option>)}
             </select>
           </Field>
@@ -695,7 +869,7 @@ function CustomerNoteComposerModal({
             <select
               className="input"
               value={form.rm_user_id || ''}
-              onChange={(event) => setForm((current) => ({ ...current, rm_user_id: event.target.value || null }))}
+              onChange={(event) => setForm((current) => ({ ...current, rm_user_id: event.target.value || null, counselor_user_id: user?.role === 'super_admin' || user?.role === 'admin' ? null : current.counselor_user_id }))}
             >
               <option value="">Select RM</option>
               {rmOptions.map((entry) => <option key={entry.id} value={entry.id}>{entry.full_name}</option>)}
@@ -703,15 +877,15 @@ function CustomerNoteComposerModal({
           </Field>
         </div>
 
-        <Field label="About client">
+        <Field label="About client" optional>
           <textarea className="input min-h-[96px] resize-y" value={form.about_client || ''} onChange={(event) => setForm((current) => ({ ...current, about_client: event.target.value }))} />
         </Field>
 
         <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_220px]">
-          <Field label="Client services wanted">
+          <Field label="Client services wanted" optional>
             <textarea className="input min-h-[92px] resize-y" value={form.client_services_want || ''} onChange={(event) => setForm((current) => ({ ...current, client_services_want: event.target.value }))} />
           </Field>
-          <Field label="Client budget">
+          <Field label="Client budget" optional>
             <input className="input" value={form.client_budget || ''} onChange={(event) => setForm((current) => ({ ...current, client_budget: event.target.value }))} />
           </Field>
         </div>
@@ -737,6 +911,343 @@ function CustomerNoteComposerModal({
           className="btn-primary rounded-lg px-4 py-2 text-sm"
         >
           {createNote.isPending || updateNote.isPending ? 'Saving...' : note ? 'Update Note' : 'Create Note'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function MeetingScheduleModal({
+  open,
+  onClose,
+  prefillLead,
+  note,
+}: {
+  open: boolean;
+  onClose: () => void;
+  prefillLead?: LeadLookupItem | null;
+  note?: CustomerNote | null;
+}) {
+  const { user } = useAuth();
+  const createNote = useCreateCustomerNote();
+  const updateNote = useUpdateCustomerNote();
+  const [linkedLead, setLinkedLead] = useState<LeadLookupItem | null>(prefillLead || null);
+  const [form, setForm] = useState<CustomerNoteInput>(emptyForm(prefillLead, user));
+  const [reminderEmailInput, setReminderEmailInput] = useState('');
+  const [reminderEmails, setReminderEmails] = useState<string[]>([]);
+  const [lookupText, setLookupText] = useState('');
+  const debouncedLookup = useDebouncedValue(lookupText, 250);
+  const leadLookup = useCustomerNoteLeadLookup(debouncedLookup);
+  const effectiveRmUserId = form.rm_user_id || (user?.role === 'rm' ? user.id : user?.reportToId || null);
+  const rmLookup = useCustomerNoteUserLookup('rm', '', null);
+  const counselorLookup = useCustomerNoteUserLookup('member', '', effectiveRmUserId);
+
+  useEffect(() => {
+    if (!open) return;
+    if (note) {
+      setLinkedLead(note.lead_id ? {
+        id: note.lead_id,
+        full_name: note.lead_name,
+        phone: note.lead_phone || note.customer_phone,
+        email: null,
+        source: null,
+        category: null,
+        assigned_to_name: null,
+      } : null);
+      setForm(buildFormFromNote(note));
+      setLookupText('');
+      return;
+    }
+    setLinkedLead(prefillLead || null);
+    setForm(emptyForm(prefillLead, user));
+    setLookupText('');
+  }, [note, open, prefillLead, user]);
+
+  const rmOptions = rmLookup.data || [];
+  const counselorOptions = useMemo(() => {
+    if (user?.role === 'super_admin' || user?.role === 'admin') {
+      return form.rm_user_id ? (counselorLookup.data || []) : [];
+    }
+    return counselorLookup.data || [];
+  }, [counselorLookup.data, form.rm_user_id, user?.role]);
+
+  useEffect(() => {
+    if (!counselorOptions.length) {
+      if (user?.role === 'super_admin' || user?.role === 'admin') {
+        setForm((current) => (current.counselor_user_id ? { ...current, counselor_user_id: null } : current));
+      }
+      return;
+    }
+    setForm((current) => {
+      if (!current.counselor_user_id) return current;
+      const exists = counselorOptions.some((entry) => entry.id === current.counselor_user_id);
+      return exists ? current : { ...current, counselor_user_id: null };
+    });
+  }, [counselorOptions, user?.role]);
+
+  function selectLead(lead: LeadLookupItem) {
+    setLinkedLead(lead);
+    setForm((current) => ({
+      ...current,
+      lead_id: lead.id,
+      customer_phone: lead.phone || current.customer_phone,
+      customer_name: lead.full_name || current.customer_name,
+    }));
+    setLookupText('');
+  }
+
+  function addReminderEmail() {
+    const nextEmail = normalizeReminderEmail(reminderEmailInput);
+    if (!nextEmail) return;
+    if (!isValidReminderEmail(nextEmail)) {
+      toast.error('Enter a valid reminder email like name@gmail.com');
+      return;
+    }
+    if (reminderEmails.includes(nextEmail)) {
+      toast.error('This reminder email is already added');
+      return;
+    }
+    setReminderEmails((current) => [...current, nextEmail]);
+    setReminderEmailInput('');
+  }
+
+  function handleSubmit() {
+    const validation = validateNotePayload(form, { isMeeting: true });
+    if (!validation.ok) {
+      toast.error(validation.error);
+      return;
+    }
+
+    if (form.meeting_at) {
+      const meetingTime = new Date(form.meeting_at);
+      if (Number.isNaN(meetingTime.getTime()) || meetingTime.getTime() <= Date.now()) {
+        toast.error('Meeting date and time must be in the future.');
+        return;
+      }
+    }
+
+    const fallbackEntryText = `Meeting scheduled: ${form.meeting_name || 'Customer meeting'}${form.meeting_at ? ` on ${form.meeting_at}` : ''}.`;
+    const payload: CustomerNoteInput = {
+      lead_id: form.lead_id || null,
+      customer_phone: validation.normalizedPhone,
+      customer_name: form.customer_name || '',
+      customer_second_name: form.customer_second_name || '',
+      business_name: form.business_name || '',
+      about_client: form.about_client || '',
+      client_services_want: form.client_services_want || '',
+      client_budget: form.client_budget || '',
+      meeting_name: form.meeting_name || '',
+      meeting_at: form.meeting_at || null,
+      meeting_notification_emails: reminderEmails,
+      counselor_user_id: form.counselor_user_id || null,
+      rm_user_id: form.rm_user_id || null,
+      initial_entry_text: (form.initial_entry_text || '').trim() || (!note ? fallbackEntryText : ''),
+    };
+
+    const mutation = note
+      ? updateNote.mutateAsync({ id: note.id, ...payload })
+      : createNote.mutateAsync(payload);
+
+    toast.promise(
+      mutation.then(() => {
+        onClose();
+      }),
+      {
+        loading: note ? 'Updating meeting...' : 'Scheduling meeting...',
+        success: note ? 'Meeting updated successfully' : 'Meeting scheduled successfully',
+        error: (error) => getApiErrorMessage(error, 'Could not save meeting schedule'),
+      },
+    );
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={note ? 'Edit Scheduled Meeting' : 'Schedule Meeting'}
+      description="Create a dedicated meeting schedule note with customer details, ownership, and automatic email reminders."
+      size="xl"
+    >
+      <div className="space-y-5">
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-sm font-semibold text-slate-900">Lead Linking</div>
+              <div className="text-xs text-slate-500">Schedule against an existing lead or keep it as a manual customer meeting.</div>
+            </div>
+            {linkedLead && (
+              <button
+                type="button"
+                onClick={() => {
+                  setLinkedLead(null);
+                  setForm((current) => ({ ...current, lead_id: null }));
+                }}
+                className="btn-ghost rounded-lg px-3 py-1.5 text-xs"
+              >
+                Unlink Lead
+              </button>
+            )}
+          </div>
+
+          {linkedLead ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="chip-blue">Linked lead</span>
+              <span className="font-medium text-slate-900">{linkedLead.full_name || 'Unnamed lead'}</span>
+              {linkedLead.phone && <span className="text-sm text-slate-500">{fmtPhone(linkedLead.phone)}</span>}
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              <input
+                className="input"
+                placeholder="Search existing leads by phone, name, or email"
+                value={lookupText}
+                onChange={(event) => setLookupText(event.target.value)}
+              />
+              {leadLookup.isFetching && <div className="text-xs text-slate-500">Searching leads...</div>}
+              {!!leadLookup.data?.length && (
+                <div className="grid gap-2">
+                  {leadLookup.data.map((lead) => (
+                    <button
+                      key={lead.id}
+                      type="button"
+                      onClick={() => selectLead(lead)}
+                      className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 text-left transition hover:border-brand-300 hover:bg-brand-50/40"
+                    >
+                      <div>
+                        <div className="font-medium text-slate-900">{lead.full_name || 'Unnamed lead'}</div>
+                        <div className="text-xs text-slate-500">{fmtPhone(lead.phone)} {lead.assigned_to_name ? `· ${lead.assigned_to_name}` : ''}</div>
+                      </div>
+                      <span className="chip-slate">{humanize(lead.source || 'manual')}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="grid gap-4 rounded-2xl border border-slate-200 bg-white p-4 md:grid-cols-2">
+          <Field label="Customer number">
+            <input
+              className="input"
+              inputMode="numeric"
+              placeholder="9876543210 or 919876543210"
+              value={form.customer_phone || ''}
+              onChange={(event) => setForm((current) => ({ ...current, customer_phone: normalizePhoneInput(event.target.value) }))}
+            />
+            <div className="text-xs text-slate-500">10 digits required. We auto-save with `91` prefix.</div>
+          </Field>
+          <Field label="Customer first name">
+            <input className="input" value={form.customer_name || ''} onChange={(event) => setForm((current) => ({ ...current, customer_name: event.target.value }))} />
+          </Field>
+          <Field label="Customer second name" optional>
+            <input className="input" value={form.customer_second_name || ''} onChange={(event) => setForm((current) => ({ ...current, customer_second_name: event.target.value }))} />
+          </Field>
+          <Field label="Business name" optional>
+            <input className="input" value={form.business_name || ''} onChange={(event) => setForm((current) => ({ ...current, business_name: event.target.value }))} />
+          </Field>
+          <Field label="Meeting name">
+            <input className="input" value={form.meeting_name || ''} onChange={(event) => setForm((current) => ({ ...current, meeting_name: event.target.value }))} />
+          </Field>
+          <Field label="Meeting date & time">
+            <input type="datetime-local" className="input" value={form.meeting_at || ''} onChange={(event) => setForm((current) => ({ ...current, meeting_at: event.target.value }))} />
+          </Field>
+          <Field label="Counselor / Member">
+            <select
+              className="input"
+              value={form.counselor_user_id || ''}
+              onChange={(event) => setForm((current) => ({ ...current, counselor_user_id: event.target.value || null }))}
+              disabled={(user?.role === 'super_admin' || user?.role === 'admin') && !form.rm_user_id}
+            >
+              <option value="">{(user?.role === 'super_admin' || user?.role === 'admin') && !form.rm_user_id ? 'Select RM first' : 'Select counselor'}</option>
+              {counselorOptions.map((entry) => <option key={entry.id} value={entry.id}>{entry.full_name} ({humanize(entry.role)})</option>)}
+            </select>
+          </Field>
+          <Field label="RM">
+            <select
+              className="input"
+              value={form.rm_user_id || ''}
+              onChange={(event) => setForm((current) => ({ ...current, rm_user_id: event.target.value || null, counselor_user_id: user?.role === 'super_admin' || user?.role === 'admin' ? null : current.counselor_user_id }))}
+            >
+              <option value="">Select RM</option>
+              {rmOptions.map((entry) => <option key={entry.id} value={entry.id}>{entry.full_name}</option>)}
+            </select>
+          </Field>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          <Field label="Custom reminder emails" optional>
+            <div className="space-y-3">
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <input
+                  className="input flex-1"
+                  placeholder="name@gmail.com"
+                  value={reminderEmailInput}
+                  onChange={(event) => setReminderEmailInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      addReminderEmail();
+                    }
+                  }}
+                />
+                <button type="button" onClick={addReminderEmail} className="btn-outline rounded-lg px-4 py-2 text-sm">
+                  Add Email
+                </button>
+              </div>
+              <div className="text-xs text-slate-500">Added emails will also receive schedule, 10-minute reminder, and meeting-start mails.</div>
+              {reminderEmails.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {reminderEmails.map((email) => (
+                    <span key={email} className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800">
+                      {email}
+                      <button
+                        type="button"
+                        onClick={() => setReminderEmails((current) => current.filter((entry) => entry !== email))}
+                        className="text-emerald-700 hover:text-rose-600"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Field>
+        </div>
+
+        <Field label="About client" optional>
+          <textarea className="input min-h-[96px] resize-y" value={form.about_client || ''} onChange={(event) => setForm((current) => ({ ...current, about_client: event.target.value }))} />
+        </Field>
+
+        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_220px]">
+          <Field label="Client services wanted" optional>
+            <textarea className="input min-h-[92px] resize-y" value={form.client_services_want || ''} onChange={(event) => setForm((current) => ({ ...current, client_services_want: event.target.value }))} />
+          </Field>
+          <Field label="Client budget" optional>
+            <input className="input" value={form.client_budget || ''} onChange={(event) => setForm((current) => ({ ...current, client_budget: event.target.value }))} />
+          </Field>
+        </div>
+
+        <Field label="Meeting agenda / schedule note">
+          <textarea
+            className="input min-h-[120px] resize-y"
+            placeholder="Add agenda, expected discussion, requirement summary, or meeting context..."
+            value={form.initial_entry_text || ''}
+            onChange={(event) => setForm((current) => ({ ...current, initial_entry_text: event.target.value }))}
+          />
+        </Field>
+      </div>
+
+      <div className="mt-5 flex justify-end gap-2">
+        <button type="button" onClick={onClose} className="btn-ghost rounded-lg px-4 py-2 text-sm">Cancel</button>
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={createNote.isPending || updateNote.isPending}
+          className="btn-primary rounded-lg px-4 py-2 text-sm"
+        >
+          {createNote.isPending || updateNote.isPending ? 'Saving...' : note ? 'Update Meeting' : 'Schedule Meeting'}
         </button>
       </div>
     </Modal>
@@ -850,7 +1361,7 @@ function CustomerNoteDetailModal({
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <InfoCard icon={<UserRound className="h-4 w-4" />} label="Customer" value={note.customer_name} hint={fmtPhone(note.customer_phone)} />
             <InfoCard icon={<Users className="h-4 w-4" />} label="Ownership" value={note.rm_name || 'RM not set'} hint={note.counselor_name ? `Counselor: ${note.counselor_name}` : 'Counselor not set'} />
-            <InfoCard icon={<ShieldCheck className="h-4 w-4" />} label="Approval" value={humanize(note.approval_status)} hint={note.approved_at ? `Approved ${formatISTCompact(note.approved_at)}` : note.rejected_at ? `Rejected ${formatISTCompact(note.rejected_at)}` : 'Waiting for RM verification'} />
+            <InfoCard icon={<ShieldCheck className="h-4 w-4" />} label="Approval" value={humanize(note.approval_status)} hint={note.approved_at ? `Approved ${formatISTCompact(note.approved_at)}` : note.rejected_at ? `Rejected ${formatISTCompact(note.rejected_at)}` : 'Saved and visible in notes workspace'} />
             <InfoCard icon={<CalendarClock className="h-4 w-4" />} label="Meeting" value={note.meeting_name || 'No meeting title'} hint={note.meeting_at ? formatISTCompact(note.meeting_at) : 'No meeting time'} />
           </div>
 
@@ -860,6 +1371,7 @@ function CustomerNoteDetailModal({
               <MetaRow label="Budget" value={note.client_budget} />
               <MetaRow label="About client" value={note.about_client} />
               <MetaRow label="Services wanted" value={note.client_services_want} />
+              <MetaRow label="Meeting notifications" value={note.meeting_notification_emails?.length ? note.meeting_notification_emails.join(', ') : 'Only assigned RM / counselor'} />
               {note.rejection_note && <MetaRow label="Rejection note" value={note.rejection_note} />}
             </div>
           </div>
@@ -945,10 +1457,13 @@ function CustomerNoteDetailModal({
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({ label, children, optional = false }: { label: string; children: ReactNode; optional?: boolean }) {
   return (
     <label className="space-y-2">
-      <span className="block text-sm font-semibold text-slate-900">{label}</span>
+      <span className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+        <span>{label}</span>
+        {optional && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Optional</span>}
+      </span>
       {children}
     </label>
   );

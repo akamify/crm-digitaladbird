@@ -2,12 +2,19 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import {
-  Megaphone, Pencil, ArrowLeft, Search, Loader2,
+  Megaphone, Pencil, ArrowLeft, Search, Loader2, Trash2, AlertTriangle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
+import { Button } from '@/components/ui/Button';
 import { Modal, Skeleton, EmptyState } from '@/components/ui/Modal';
-import { useAdminCampaigns, useUpdateCampaignCategory, useBackfillCampaignCategory, type AdminCampaign } from '@/hooks/useAdminEnterprise';
+import {
+  useAdminCampaigns,
+  useUpdateCampaignCategory,
+  useBackfillCampaignCategory,
+  useDeleteCampaign,
+  type AdminCampaign,
+} from '@/hooks/useAdminEnterprise';
 import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
 import { clsx, humanize } from '@/lib/format';
 
@@ -33,10 +40,12 @@ function CampaignsInner() {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'active' | 'paused' | 'attention'>('all');
   const [editItem, setEditItem] = useState<AdminCampaign | null>(null);
+  const [deleteItem, setDeleteItem] = useState<AdminCampaign | null>(null);
   const [form, setForm] = useState({ campaign_name: '', internal_label: '', category: 'unknown' as 'trader' | 'partner' | 'unknown', ad_account_id: '', category_notes: '', backfill_mode: 'none' as 'none' | 'dry_run' | 'unknown_only' | 'force_all' });
 
   const updateCategory = useUpdateCampaignCategory();
   const backfillCategory = useBackfillCampaignCategory();
+  const deleteCampaign = useDeleteCampaign();
 
   const filtered = (campaigns || [])
     .filter(c => {
@@ -186,6 +195,13 @@ function CampaignsInner() {
                       <button onClick={() => openEdit(c)} className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-blue-600" title="Edit">
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
+                      <button
+                        onClick={() => setDeleteItem(c)}
+                        className="rounded p-1.5 text-rose-500 hover:bg-rose-50 hover:text-rose-700"
+                        title="Delete campaign"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -241,6 +257,49 @@ function CampaignsInner() {
             Save Changes
           </button>
         </div>
+      </Modal>
+
+      <Modal
+        open={!!deleteItem}
+        onClose={() => setDeleteItem(null)}
+        title="Delete Campaign"
+        description="This removes the campaign record from CRM campaign management."
+        size="md"
+        footer={
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setDeleteItem(null)}>Cancel</Button>
+            <Button
+              size="sm"
+              loading={deleteCampaign.isPending}
+              className="bg-rose-600 hover:bg-rose-700"
+              onClick={async () => {
+                if (!deleteItem) return;
+                try {
+                  await deleteCampaign.mutateAsync(deleteItem.id);
+                  toast.success('Campaign deleted successfully');
+                  setDeleteItem(null);
+                } catch (error) {
+                  toast.error(errorMessage(error, 'Campaign delete failed.'));
+                }
+              }}
+            >
+              I am sure, delete
+            </Button>
+          </>
+        }
+      >
+        {deleteItem && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+              <div className="space-y-2">
+                <div className="font-semibold">{deleteItem.campaign_name}</div>
+                <div>This campaign will be removed from CRM campaign management.</div>
+                <div>Existing leads linked to this campaign will remain in the CRM.</div>
+              </div>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

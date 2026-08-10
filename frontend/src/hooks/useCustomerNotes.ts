@@ -1,7 +1,7 @@
 'use client';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api';
-import type { CustomerNote, CustomerNoteFilters, PageResult, User } from '@/types';
+import type { CustomerNote, CustomerNoteFilters, PageResult, UpcomingMeetingSummary, User } from '@/types';
 
 function toQueryString(filters: CustomerNoteFilters): string {
   const params = new URLSearchParams();
@@ -15,6 +15,7 @@ function invalidateNotes(qc: ReturnType<typeof useQueryClient>, noteId?: string 
   qc.invalidateQueries({ queryKey: ['customer-notes'] });
   if (noteId) qc.invalidateQueries({ queryKey: ['customer-note', noteId] });
   qc.invalidateQueries({ queryKey: ['leads'] });
+  qc.invalidateQueries({ queryKey: ['customer-notes', 'upcoming-meetings'] });
 }
 
 export interface CustomerNoteInput {
@@ -28,6 +29,7 @@ export interface CustomerNoteInput {
   client_budget?: string | null;
   meeting_name?: string | null;
   meeting_at?: string | null;
+  meeting_notification_emails?: string[] | string | null;
   counselor_user_id?: string | null;
   rm_user_id?: string | null;
   initial_entry_text?: string | null;
@@ -139,14 +141,24 @@ export function useCustomerNoteLeadLookup(search: string) {
   });
 }
 
-export function useCustomerNoteUserLookup(role?: 'rm' | 'member' | 'partner' | '', search?: string) {
+export function useCustomerNoteUserLookup(role?: 'rm' | 'member' | 'partner' | '', search?: string, rmUserId?: string | null) {
   const params = new URLSearchParams();
   if (role) params.set('role', role);
   if (search?.trim()) params.set('q', search.trim());
+  if (rmUserId) params.set('rm_user_id', rmUserId);
   const qs = params.toString();
   return useQuery({
-    queryKey: ['customer-notes', 'user-lookup', role || 'all', search || ''],
+    queryKey: ['customer-notes', 'user-lookup', role || 'all', search || '', rmUserId || ''],
     queryFn: () => apiGet<User[]>(`/notes/lookups/users${qs ? `?${qs}` : ''}`),
     staleTime: 30_000,
+  });
+}
+
+export function useUpcomingCustomerMeetings(limit = 12) {
+  return useQuery({
+    queryKey: ['customer-notes', 'upcoming-meetings', limit],
+    queryFn: () => apiGet<UpcomingMeetingSummary[]>(`/notes/upcoming-meetings?limit=${limit}`),
+    staleTime: 20_000,
+    refetchInterval: 30_000,
   });
 }

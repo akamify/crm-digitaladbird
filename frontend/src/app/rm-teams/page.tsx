@@ -5,14 +5,14 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
   Users, UserCheck, UserX, RefreshCw,
-  Pencil, ShieldBan, ShieldCheck, Award, Phone, Mail, UserRound,
+  Pencil, ShieldBan, ShieldCheck, Award, Phone, Mail, UserRound, Trash2, AlertTriangle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { Modal, PageLoader } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/Input';
-import { useUsers, useUpdateLeadAvailability, useUpdateUser } from '@/hooks/useUsers';
+import { useDeleteUser, useUsers, useUpdateLeadAvailability, useUpdateUser } from '@/hooks/useUsers';
 import { apiGet } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { clsx, initials, humanize, fmtPhone } from '@/lib/format';
@@ -42,7 +42,8 @@ export default function RMTeamsPage() {
   });
 
   const loading = usersLoading || (user?.role === 'super_admin' && leadsLoading);
-  const [selectedTeam, setSelectedTeam] = useState<RMCard | null>(null);
+  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string; kind: 'rm' | 'member'; memberCount?: number } | null>(null);
 
   const rmCards = useMemo(() => {
     if (!users) return [];
@@ -81,24 +82,51 @@ export default function RMTeamsPage() {
     }).sort((a, b) => b.members.length - a.members.length);
   }, [users, teamLeads]);
 
+  const selectedTeam = useMemo(
+    () => rmCards.find(card => card.rm.id === selectedTeamId) || null,
+    [rmCards, selectedTeamId],
+  );
+
   return (
     <AppShell title="RM Teams" subtitle="View and manage RM teams" roles={['super_admin', 'rm']}>
       {loading ? <PageLoader /> : <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-lg font-semibold text-slate-950">Teams</h1><p className="text-sm text-slate-500">Select a team to view members and availability.</p></div><button onClick={() => { refetchUsers(); if (user?.role === 'super_admin') refetchLeads(); }} disabled={usersFetching || leadsFetching} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm"><RefreshCw className={clsx('h-4 w-4', (usersFetching || leadsFetching) && 'animate-spin')} />Refresh</button></div>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {rmCards.map(card => (
-            <RMCardWidget key={card.rm.id} card={card} onOpen={() => setSelectedTeam(card)} />
+            <RMCardWidget
+              key={card.rm.id}
+              card={card}
+              canDelete={user?.role === 'super_admin'}
+              onOpen={() => setSelectedTeamId(card.rm.id)}
+              onDelete={() => setDeleteTarget({ id: card.rm.id, name: card.rm.full_name, kind: 'rm', memberCount: card.members.length })}
+            />
           ))}
         </div>
         {!rmCards.length && <div className="rounded-xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">No RM teams found.</div>}
-        <TeamDetailModal card={selectedTeam} onClose={() => setSelectedTeam(null)} />
+        <TeamDetailModal
+          card={selectedTeam}
+          canDelete={user?.role === 'super_admin'}
+          onClose={() => setSelectedTeamId(null)}
+          onDeleteMember={(member) => setDeleteTarget({ id: member.id, name: member.full_name, kind: 'member' })}
+        />
+        <DeleteUserConfirmModal target={deleteTarget} onClose={() => setDeleteTarget(null)} />
       </div>}
     </AppShell>
   );
 }
 
 /* ---------- RM Card ---------- */
-function RMCardWidget({ card, onOpen }: { card: RMCard; onOpen: () => void }) {
+function RMCardWidget({
+  card,
+  onOpen,
+  canDelete,
+  onDelete,
+}: {
+  card: RMCard;
+  onOpen: () => void;
+  canDelete: boolean;
+  onDelete: () => void;
+}) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
       {/* Header */}
@@ -116,7 +144,22 @@ function RMCardWidget({ card, onOpen }: { card: RMCard; onOpen: () => void }) {
           </div>
           <div className="mt-0.5 text-xs text-slate-500">{card.rm.team_name || 'No team name'}</div>
         </div>
-        <span className="text-xs font-medium text-brand-600">View team</span>
+        <div className="flex items-center gap-2">
+          {canDelete && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete();
+              }}
+              className="rounded-md p-1.5 text-rose-500 hover:bg-rose-50 hover:text-rose-700"
+              title="Delete RM and team"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
+          <span className="text-xs font-medium text-brand-600">View team</span>
+        </div>
       </button>
 
       {/* Stats row */}
@@ -135,8 +178,18 @@ function RMCardWidget({ card, onOpen }: { card: RMCard; onOpen: () => void }) {
   );
 }
 
-function TeamDetailModal({ card, onClose }: { card: RMCard | null; onClose: () => void }) {
-  return <Modal open={!!card} onClose={onClose} title={card?.rm.team_name || 'Team Details'} description={card ? `Relationship Manager: ${card.rm.full_name}` : undefined} size="xl">{card && <div className="space-y-4"><div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><Stat label="Members" value={card.members.length} /><Stat label="Partner Leads" value={card.partnerLeads} /><Stat label="Trader Leads" value={card.traderLeads} /><Stat label="Total Leads" value={card.totalLeads} /></div><div><h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Members and availability</h3>{card.members.length ? <div className="space-y-2">{card.members.map(member => <MemberRow key={member.id} member={member} />)}</div> : <p className="rounded-lg bg-slate-50 p-6 text-center text-sm text-slate-500">No members assigned to this team.</p>}</div></div>}</Modal>;
+function TeamDetailModal({
+  card,
+  onClose,
+  canDelete,
+  onDeleteMember,
+}: {
+  card: RMCard | null;
+  onClose: () => void;
+  canDelete: boolean;
+  onDeleteMember: (member: User) => void;
+}) {
+  return <Modal open={!!card} onClose={onClose} title={card?.rm.team_name || 'Team Details'} description={card ? `Relationship Manager: ${card.rm.full_name}` : undefined} size="xl">{card && <div className="space-y-4"><div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><Stat label="Members" value={card.members.length} /><Stat label="Partner Leads" value={card.partnerLeads} /><Stat label="Trader Leads" value={card.traderLeads} /><Stat label="Total Leads" value={card.totalLeads} /></div><div><h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Members and availability</h3>{card.members.length ? <div className="space-y-2">{card.members.map(member => <MemberRow key={member.id} member={member} canDelete={canDelete} onDelete={() => onDeleteMember(member)} />)}</div> : <p className="rounded-lg bg-slate-50 p-6 text-center text-sm text-slate-500">No members assigned to this team.</p>}</div></div>}</Modal>;
 }
 
 /* ---------- Stat mini cell ---------- */
@@ -152,7 +205,7 @@ function Stat({ label, value, icon, color }: { label: string; value: number; ico
 }
 
 /* ---------- Member Row ---------- */
-function MemberRow({ member }: { member: User }) {
+function MemberRow({ member, canDelete, onDelete }: { member: User; canDelete: boolean; onDelete: () => void }) {
   const [editOpen, setEditOpen] = useState(false);
   const updateAvailability = useUpdateLeadAvailability();
 
@@ -246,6 +299,15 @@ function MemberRow({ member }: { member: User }) {
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>
+          {canDelete && (
+            <button
+              onClick={onDelete}
+              className="rounded-md p-1.5 text-rose-500 hover:bg-rose-50 hover:text-rose-700"
+              title="Delete member"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
           {leadStatus !== 'blocked' && (
             <button
               onClick={handleBlock}
@@ -263,6 +325,66 @@ function MemberRow({ member }: { member: User }) {
         <EditMemberModal member={member} open={editOpen} onClose={() => setEditOpen(false)} />
       )}
     </>
+  );
+}
+
+function DeleteUserConfirmModal({
+  target,
+  onClose,
+}: {
+  target: { id: string; name: string; kind: 'rm' | 'member'; memberCount?: number } | null;
+  onClose: () => void;
+}) {
+  const deleteUser = useDeleteUser();
+  if (!target) return null;
+
+  const isRm = target.kind === 'rm';
+  const description = isRm
+    ? `If you delete this RM, all ${target.memberCount || 0} team members under this RM will also be deleted.`
+    : 'This member will be deleted from the CRM team list.';
+
+  return (
+    <Modal
+      open={!!target}
+      onClose={onClose}
+      title={isRm ? 'Delete RM Team' : 'Delete Team Member'}
+      description={description}
+      size="md"
+      footer={
+        <>
+          <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
+          <Button
+            size="sm"
+            loading={deleteUser.isPending}
+            className="bg-rose-600 hover:bg-rose-700"
+            onClick={() => {
+              deleteUser.mutate(
+                { id: target.id, reason: isRm ? 'RM and team deleted by super admin' : 'Member deleted by super admin' },
+                {
+                  onSuccess: () => {
+                    toast.success(isRm ? 'RM and team deleted successfully' : 'Member deleted successfully');
+                    onClose();
+                  },
+                  onError: (error: any) => toast.error(error?.response?.data?.error?.message || 'Could not delete user'),
+                },
+              );
+            }}
+          >
+            I am sure, delete
+          </Button>
+        </>
+      }
+    >
+      <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+          <div className="space-y-2">
+            <div className="font-semibold">{target.name}</div>
+            <div>{description}</div>
+          </div>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

@@ -1,4 +1,4 @@
-const { query } = require('../config/database');
+const { query, withTransaction } = require('../config/database');
 const bcrypt = require('bcryptjs');
 const { AppError, asyncHandler } = require('../utils/errors');
 const { invalidateUser } = require('../middleware/auth');
@@ -218,6 +218,19 @@ async function logBulkImportActivity({ actor, request, entityId = null, action, 
 async function revokeUserSessions(userId) {
   await query(`UPDATE auth_sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL`, [userId]);
   invalidateUser(userId);
+}
+
+async function revokeUserSessionsBulk(userIds = []) {
+  const uniqueIds = Array.from(new Set((userIds || []).filter(Boolean)));
+  if (!uniqueIds.length) return;
+  await query(
+    `UPDATE auth_sessions
+        SET revoked_at = NOW()
+      WHERE user_id = ANY($1::uuid[])
+        AND revoked_at IS NULL`,
+    [uniqueIds],
+  );
+  uniqueIds.forEach(invalidateUser);
 }
 
 async function refuseIfProtected(req, action) {
@@ -543,25 +556,73 @@ exports.unblock = asyncHandler(async (req, res) => {
 });
 
 exports.softDelete = asyncHandler(async (req, res) => {
-  if (!ADMIN_ROLES.has(req.user.role)) throw new AppError(403, 'FORBIDDEN', 'Admin only');
-  await refuseIfProtected(req, 'delete');
+  if (req.user.role !== 'super_admin') throw new AppError(403, 'FORBIDDEN', 'Only super admin can delete users.');
+  const target = await refuseIfProtected(req, 'delete');
+  if (target.id === req.user.id) {
+    throw new AppError(400, 'SELF_DELETE_FORBIDDEN', 'You cannot delete your own account.');
+  }
   const reason = String(req.body?.reason || '').trim() || null;
-  await query(
-    `UPDATE users
-        SET deleted_at = COALESCE(deleted_at, NOW()),
-            deleted_by = $2,
-            delete_reason = COALESCE($3, delete_reason),
-            status = 'deleted',
-            is_available = FALSE,
-            lead_assignment_enabled = FALSE,
-            lead_assignment_status = 'disabled',
-            lead_assignment_disabled_reason = COALESCE($3, lead_assignment_disabled_reason),
-            lead_assignment_updated_by = $2,
-            lead_assignment_updated_at = NOW(),
-            updated_at = NOW()
-      WHERE id = $1`,
-    [req.params.id, req.user.id, reason],
-  );
-  await revokeUserSessions(req.params.id);
-  res.json({ success: true });
+  const affectedIds = await withTransaction(async (client) => {
+    const targetIds = [target.id];
+    if (target.role === 'rm') {
+      const { rows: members } = await client.query(
+        `SELECT id
+           FROM users
+          WHERE report_to_id = $1
+            AND deleted_at IS NULL`,
+        [target.id],
+      );
+      for (const member of members) targetIds.push(member.id);
+    }
+
+    const deleteReason = reason || (target.role === 'rm'
+      ? `Cascade delete from RM ${target.email || target.id}`
+      : null);
+
+    await client.query(
+      `UPDATE users
+          SET deleted_at = COALESCE(deleted_at, NOW()),
+              deleted_by = $2,
+              delete_reason = COALESCE($3, delete_reason),
+              status = 'deleted',
+              is_available = FALSE,
+              lead_assignment_enabled = FALSE,
+              lead_assignment_status = 'disabled',
+              lead_assignment_disabled_reason = COALESCE($3, lead_assignment_disabled_reason),
+              lead_assignment_updated_by = $2,
+              lead_assignment_updated_at = NOW(),
+              updated_at = NOW()
+        WHERE id = ANY($1::uuid[])`,
+      [targetIds, req.user.id, deleteReason],
+    );
+
+    await client.query(
+      `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata, ip_address)
+         VALUES ($1, 'user', $2, 'delete', $3, $4)`,
+      [
+        req.user.id,
+        target.id,
+        JSON.stringify({
+          target_role: target.role,
+          target_email: target.email,
+          deleted_user_ids: targetIds,
+          cascade_member_count: Math.max(0, targetIds.length - 1),
+          reason: deleteReason,
+        }),
+        req.ip,
+      ],
+    ).catch(() => {});
+
+    return targetIds;
+  });
+
+  await revokeUserSessionsBulk(affectedIds);
+  res.json({
+    success: true,
+    data: {
+      deleted_user_ids: affectedIds,
+      cascade_member_count: Math.max(0, affectedIds.length - 1),
+      deleted_role: target.role,
+    },
+  });
 });

@@ -215,6 +215,11 @@ export interface CustomerNote {
   client_budget?: string | null;
   meeting_name?: string | null;
   meeting_at?: string | null;
+  meeting_notification_emails?: string[] | null;
+  meeting_invite_sent_at?: string | null;
+  meeting_reminder_sent_at?: string | null;
+  meeting_started_email_sent_at?: string | null;
+  meeting_completed_at?: string | null;
   counselor_user_id?: string | null;
   counselor_name?: string | null;
   rm_user_id?: string | null;
@@ -248,6 +253,8 @@ export interface CustomerNote {
     can_add_entry?: boolean;
   };
 }
+
+export type UpcomingMeetingSummary = CustomerNote;
 
 export interface CustomerNoteFilters {
   q?: string;

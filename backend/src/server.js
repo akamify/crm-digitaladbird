@@ -14,6 +14,7 @@ const { startSheetImportJob } = require('./jobs/sheetImportJob');
 const { startMetaPullJob } = require('./jobs/metaPullJob');
 const { startMetaTokenHealthJob } = require('./jobs/metaTokenHealthJob');
 const { startGoogleSheetSyncJob } = require('./jobs/googleSheetSyncJob');
+const { startCustomerMeetingReminderJob } = require('./jobs/customerMeetingReminderJob');
 const { startDistributionScheduler } = require('./services/distributionScheduler');
 const { syncAllCampaigns } = require('./services/metaSyncService');
 const { initSocket } = require('./services/socketService');
@@ -46,6 +47,7 @@ const metaPullTimer         = startMetaPullJob();
 const tokenHealthTimer      = startMetaTokenHealthJob();
 const distributionTimer     = startDistributionScheduler();
 const googleSheetSyncTimer  = startGoogleSheetSyncJob();
+const customerMeetingTimer  = startCustomerMeetingReminderJob();
 
 // Auto-sync Meta campaigns on startup + every 30 min
 (async () => {
@@ -74,6 +76,7 @@ function shutdown(signal) {
   clearInterval(tokenHealthTimer);
   clearInterval(distributionTimer);
   clearInterval(googleSheetSyncTimer);
+  clearInterval(customerMeetingTimer);
   clearInterval(campaignSyncTimer);
   server.close(async () => {
     await closePool();

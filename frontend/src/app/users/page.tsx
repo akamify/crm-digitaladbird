@@ -2,13 +2,14 @@
 import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { UserPlus, Users as UsersIcon, Eye, UserRound } from 'lucide-react';
+import { UserPlus, Users as UsersIcon, UserRound, Trash2, AlertTriangle } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Skeleton, EmptyState } from '@/components/ui/Modal';
+import { Skeleton, EmptyState, Modal } from '@/components/ui/Modal';
 import { UserFormModal } from '@/components/users/UserFormModal';
-import { useUsers } from '@/hooks/useUsers';
+import { useDeleteUser, useUsers } from '@/hooks/useUsers';
 import { useAuth } from '@/lib/auth';
 import { fmtRelative, fmtDate, humanize, initials, clsx } from '@/lib/format';
 import type { User } from '@/types';
@@ -25,10 +26,12 @@ function UsersInner() {
   const router = useRouter();
   const { user } = useAuth();
   const { data: users, isLoading } = useUsers();
+  const deleteUser = useDeleteUser();
 
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<User | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
 
   const filtered = useMemo(() => {
     const list = users ?? [];
@@ -116,6 +119,20 @@ function UsersInner() {
                         <Link onClick={(e) => e.stopPropagation()} href={`/dashboard/admin/users/${u.id}`} className="btn-outline inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs">
                           <UserRound className="h-3.5 w-3.5" /> Profile
                         </Link>
+                        {canManage && u.id !== user?.id && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteTarget(u);
+                            }}
+                            className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-rose-600 hover:bg-rose-50"
+                            title={u.role === 'rm' ? 'Delete RM and team' : 'Delete user'}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Delete
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -129,6 +146,64 @@ function UsersInner() {
       {canManage && (
         <UserFormModal open={open} onClose={() => setOpen(false)} initial={editing} rms={rms} />
       )}
+
+      <Modal
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title={deleteTarget?.role === 'rm' ? 'Delete RM Team' : 'Delete User'}
+        description={deleteTarget?.role === 'rm'
+          ? 'Deleting this RM will also delete all members reporting to this RM.'
+          : 'This user will be deleted from the CRM user list.'}
+        size="md"
+        footer={
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button
+              size="sm"
+              loading={deleteUser.isPending}
+              className="bg-rose-600 hover:bg-rose-700"
+              onClick={() => {
+                if (!deleteTarget) return;
+                deleteUser.mutate(
+                  {
+                    id: deleteTarget.id,
+                    reason: deleteTarget.role === 'rm'
+                      ? 'RM and reporting team deleted by super admin'
+                      : 'User deleted by super admin',
+                  },
+                  {
+                    onSuccess: () => {
+                      toast.success(deleteTarget.role === 'rm' ? 'RM and team deleted successfully' : 'User deleted successfully');
+                      setDeleteTarget(null);
+                    },
+                    onError: (error: any) => {
+                      toast.error(error?.response?.data?.error?.message || 'Could not delete user');
+                    },
+                  },
+                );
+              }}
+            >
+              I am sure, delete
+            </Button>
+          </>
+        }
+      >
+        {deleteTarget && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+              <div className="space-y-2">
+                <div className="font-semibold">{deleteTarget.full_name}</div>
+                <div>
+                  {deleteTarget.role === 'rm'
+                    ? 'If you continue, this RM and all team members under this RM will be deleted.'
+                    : 'If you continue, this user will be deleted.'}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

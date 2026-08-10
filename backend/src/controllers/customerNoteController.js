@@ -60,3 +60,8 @@ exports.lookupUsers = asyncHandler(async (req, res) => {
   const data = await customerNotes.lookupUsers(req.user, req.query);
   res.json({ success: true, data });
 });
+
+exports.upcomingMeetings = asyncHandler(async (req, res) => {
+  const data = await customerNotes.listUpcomingMeetings(req.user, req.query);
+  res.json({ success: true, data });
+});

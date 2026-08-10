@@ -79,7 +79,11 @@ export function useDeleteUser() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, reason }: { id: string; reason?: string }) => apiPost(`/users/${id}/delete`, { reason }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['users'] });
+      qc.invalidateQueries({ queryKey: ['team-leads'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'user-profile'] });
+    },
   });
 }
 
