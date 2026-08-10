@@ -88,6 +88,23 @@ export function useDeleteUser() {
   });
 }
 
+export function useBulkDeleteUsers() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userIds, reason }: { userIds: string[]; reason?: string }) =>
+      apiPost<{ requested_count: number; deleted_count: number; deleted_user_ids: string[] }>('/users/delete/bulk', {
+        user_ids: userIds,
+        reason,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['users'] });
+      qc.invalidateQueries({ queryKey: ['users', 'deleted'] });
+      qc.invalidateQueries({ queryKey: ['team-leads'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'user-profile'] });
+    },
+  });
+}
+
 export function useBulkImportUsers() {
   const qc = useQueryClient();
   return useMutation({

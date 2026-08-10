@@ -303,6 +303,45 @@ async function cleanupRestrictiveUserReferences(client, targetIds) {
   }
 }
 
+async function collectHardDeleteSet(client, requestedIds, actorId) {
+  const uniqueRequestedIds = [...new Set((requestedIds || []).map(id => String(id || '').trim()).filter(Boolean))];
+  if (!uniqueRequestedIds.length) {
+    throw new AppError(400, 'USER_IDS_REQUIRED', 'Select at least one deleted RM/member user.');
+  }
+  if (uniqueRequestedIds.length > 500) {
+    throw new AppError(400, 'USER_DELETE_LIMIT_EXCEEDED', 'You can permanently delete up to 500 users at once.');
+  }
+
+  const { rows } = await client.query(
+    `SELECT id, full_name, email, role, deleted_at, is_protected, is_hidden, is_system_account
+       FROM users
+      WHERE id = ANY($1::uuid[])`,
+    [uniqueRequestedIds],
+  );
+  const byId = new Map(rows.map(row => [row.id, row]));
+
+  for (const id of uniqueRequestedIds) {
+    const target = byId.get(id);
+    if (!target || target.is_hidden) throw new AppError(404, 'NOT_FOUND', 'One or more users were not found.');
+    if (target.is_protected) throw new AppError(403, 'PROTECTED_ACCOUNT', 'Protected system accounts cannot be deleted.');
+    if (target.id === actorId) throw new AppError(400, 'SELF_DELETE_FORBIDDEN', 'You cannot delete your own account.');
+    assertHardDeletableRole(target);
+  }
+
+  const primaryTargets = uniqueRequestedIds.map(id => byId.get(id)).filter(Boolean);
+  const cascadeSet = new Set();
+  for (const target of primaryTargets) {
+    const ids = await buildHardDeleteTargetIds(client, target);
+    ids.forEach(id => cascadeSet.add(id));
+  }
+
+  return {
+    requestedIds: uniqueRequestedIds,
+    primaryTargets,
+    targetIds: [...cascadeSet],
+  };
+}
+
 async function refuseIfProtected(req, action) {
   const { rows: [target] } = await query(
     `SELECT id, full_name, email, role, deleted_at, is_protected, is_hidden, is_system_account
@@ -683,6 +722,65 @@ exports.softDelete = asyncHandler(async (req, res) => {
       deleted_role: target.role,
       hard_deleted: true,
       reason: result.deleteReason,
+    },
+  });
+});
+
+exports.bulkDelete = asyncHandler(async (req, res) => {
+  if (req.user.role !== 'super_admin') throw new AppError(403, 'FORBIDDEN', 'Only super admin can delete users.');
+
+  const userIds = Array.isArray(req.body?.user_ids) ? req.body.user_ids : req.body?.userIds;
+  const reason = String(req.body?.reason || '').trim() || 'Bulk permanent delete by super admin';
+
+  const result = await withTransaction(async (client) => {
+    const deleteSet = await collectHardDeleteSet(client, userIds, req.user.id);
+    const { targetIds, primaryTargets } = deleteSet;
+
+    await client.query(
+      `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata, ip_address)
+         VALUES ($1, 'user', NULL, 'bulk_hard_delete', $2, $3)`,
+      [
+        req.user.id,
+        JSON.stringify({
+          requested_user_ids: deleteSet.requestedIds,
+          deleted_user_ids: targetIds,
+          requested_count: deleteSet.requestedIds.length,
+          deleted_count: targetIds.length,
+          primary_targets: primaryTargets.map(target => ({
+            id: target.id,
+            full_name: target.full_name,
+            email: target.email,
+            role: normalizeRole(target.role),
+            already_soft_deleted: Boolean(target.deleted_at),
+          })),
+          reason,
+        }),
+        req.ip,
+      ],
+    ).catch(() => {});
+
+    await cleanupRestrictiveUserReferences(client, targetIds);
+    await client.query(`DELETE FROM users WHERE id = ANY($1::uuid[])`, [targetIds]);
+
+    return {
+      requestedCount: deleteSet.requestedIds.length,
+      deletedIds: targetIds,
+      primaryTargets,
+    };
+  });
+
+  await revokeUserSessionsBulk(result.deletedIds);
+  res.json({
+    success: true,
+    data: {
+      requested_count: result.requestedCount,
+      deleted_count: result.deletedIds.length,
+      deleted_user_ids: result.deletedIds,
+      primary_users: result.primaryTargets.map(target => ({
+        id: target.id,
+        full_name: target.full_name,
+        role: normalizeRole(target.role),
+      })),
     },
   });
 });

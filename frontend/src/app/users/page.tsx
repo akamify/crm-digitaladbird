@@ -56,6 +56,11 @@ function UsersInner() {
           <Input placeholder="Search by name, email, phone, team…" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         {canManage && (
+          <Link href="/users/deleted" className="btn-outline inline-flex items-center rounded-lg px-3 py-2 text-sm">
+            Deleted users
+          </Link>
+        )}
+        {canManage && (
           <Button leftIcon={<UserPlus className="h-4 w-4" />} onClick={() => { setEditing(null); setOpen(true); }}>
             Add member
           </Button>

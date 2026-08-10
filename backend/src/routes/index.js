@@ -133,6 +133,7 @@ router.get   ('/users',           authenticate, requireRole('super_admin', 'admi
 router.get   ('/users/hierarchy', authenticate, requireRole('super_admin', 'rm'), users.hierarchy);
 router.post  ('/users',           authenticate, requireRole('super_admin', 'admin'), users.create);
 router.post  ('/users/bulk-import', authenticate, requireRole('super_admin', 'admin'), users.bulkImport);
+router.post  ('/users/delete/bulk', authenticate, requireRole('super_admin'), users.bulkDelete);
 router.get   ('/users/deleted',   authenticate, requireRole('super_admin', 'admin'), users.deleted);
 router.post  ('/users/:id/block', authenticate, requireRole('super_admin', 'admin'), users.block);
 router.post  ('/users/:id/unblock', authenticate, requireRole('super_admin', 'admin'), users.unblock);
