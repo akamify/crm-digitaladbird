@@ -216,6 +216,8 @@ export interface CustomerNote {
   meeting_name?: string | null;
   meeting_at?: string | null;
   meeting_notification_emails?: string[] | null;
+  meeting_counselor_user_ids?: string[] | null;
+  meeting_counselor_names?: string[] | null;
   meeting_invite_sent_at?: string | null;
   meeting_reminder_sent_at?: string | null;
   meeting_started_email_sent_at?: string | null;

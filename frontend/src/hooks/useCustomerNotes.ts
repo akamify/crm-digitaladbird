@@ -30,6 +30,7 @@ export interface CustomerNoteInput {
   meeting_name?: string | null;
   meeting_at?: string | null;
   meeting_notification_emails?: string[] | string | null;
+  meeting_counselor_user_ids?: string[] | null;
   counselor_user_id?: string | null;
   rm_user_id?: string | null;
   initial_entry_text?: string | null;

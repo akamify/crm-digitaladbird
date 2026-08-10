@@ -43,6 +43,24 @@ function normalizeUuid(value) {
   return text || null;
 }
 
+function normalizeUuidList(value) {
+  if (value === undefined) return undefined;
+  const source = Array.isArray(value)
+    ? value
+    : String(value || '')
+      .split(/[\n,;]+/g)
+      .map(item => item.trim());
+  const unique = [];
+  const seen = new Set();
+  for (const item of source) {
+    const id = normalizeUuid(item);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    unique.push(id);
+  }
+  return unique;
+}
+
 function normalizeEmailList(value) {
   if (value === undefined) return undefined;
   const source = Array.isArray(value)
@@ -66,6 +84,11 @@ function normalizeEmailList(value) {
 }
 
 function sameEmailList(a = [], b = []) {
+  if (a.length !== b.length) return false;
+  return a.every((value, index) => value === b[index]);
+}
+
+function sameUuidList(a = [], b = []) {
   if (a.length !== b.length) return false;
   return a.every((value, index) => value === b[index]);
 }
@@ -137,10 +160,8 @@ function buildVisibilityClause(actor, params, options = {}) {
   const includePendingForAdmin = options.includePendingForAdmin === true;
 
   if (['super_admin', 'admin'].includes(role)) {
-    if (includePendingForAdmin) {
-      return 'n.deleted_at IS NULL';
-    }
-    return `n.deleted_at IS NULL AND (n.approval_status = 'approved' OR n.created_by_user_id = ${pushParam(params, actor.id)}::uuid)`;
+    if (includePendingForAdmin) return 'n.deleted_at IS NULL';
+    return 'n.deleted_at IS NULL';
   }
 
   if (role === 'rm') {
@@ -167,6 +188,7 @@ function buildVisibilityClause(actor, params, options = {}) {
     AND (
       n.created_by_user_id = $${selfIdx}::uuid
       OR COALESCE(n.counselor_user_id, '00000000-0000-0000-0000-000000000000'::uuid) = $${selfIdx}::uuid
+      OR $${selfIdx}::uuid = ANY(COALESCE(n.meeting_counselor_user_ids, ARRAY[]::uuid[]))
       OR EXISTS (
         SELECT 1
           FROM leads scope_lead
@@ -195,6 +217,7 @@ function normalizeNotePayload(body = {}) {
     meetingName: normalizeText(body.meeting_name || body.meetingName, 190),
     meetingAt: normalizeDateTime(body.meeting_at || body.meetingAt, 'INVALID_MEETING_AT', 'Enter a valid meeting date and time.'),
     meetingNotificationEmails: normalizeEmailList(body.meeting_notification_emails || body.meetingNotificationEmails),
+    meetingCounselorUserIds: normalizeUuidList(body.meeting_counselor_user_ids || body.meetingCounselorUserIds),
     counselorUserId: normalizeUuid(body.counselor_user_id || body.counselorUserId),
     rmUserId: normalizeUuid(body.rm_user_id || body.rmUserId),
     initialEntryText: normalizeLongText(
@@ -218,6 +241,7 @@ function normalizeEntryPayload(body = {}) {
 }
 
 async function validateCreatePermission(actor, payload, lead, counselorUser, rmUser) {
+  const meetingCounselorUsers = Array.isArray(payload.meetingCounselorUsers) ? payload.meetingCounselorUsers : [];
   if (isAdminActor(actor)) return;
 
   if (isRmActor(actor)) {
@@ -226,6 +250,11 @@ async function validateCreatePermission(actor, payload, lead, counselorUser, rmU
     }
     if (counselorUser && counselorUser.report_to_id !== actor.id && counselorUser.id !== actor.id) {
       throw new AppError(403, 'RM_NOTE_SCOPE_DENIED', 'This counselor is not in your RM team.');
+    }
+    for (const meetingCounselorUser of meetingCounselorUsers) {
+      if (meetingCounselorUser.report_to_id !== actor.id) {
+        throw new AppError(403, 'RM_NOTE_SCOPE_DENIED', 'You can only schedule meetings for counselors in your RM team.');
+      }
     }
     if (lead) {
       const assigneeId = lead.assigned_to_user_id || null;
@@ -244,6 +273,9 @@ async function validateCreatePermission(actor, payload, lead, counselorUser, rmU
   if (counselorUser && counselorUser.id !== actor.id) {
     throw new AppError(403, 'COUNSELOR_NOTE_SCOPE_DENIED', 'You can only create notes as yourself.');
   }
+  if (meetingCounselorUsers.some((entry) => entry.id !== actor.id)) {
+    throw new AppError(403, 'COUNSELOR_NOTE_SCOPE_DENIED', 'You cannot assign meeting visibility to other counselors.');
+  }
 
   if (lead && lead.assigned_to_user_id && lead.assigned_to_user_id !== actor.id) {
     throw new AppError(403, 'COUNSELOR_NOTE_SCOPE_DENIED', 'You can only create notes on your assigned leads.');
@@ -255,7 +287,7 @@ async function validateCreatePermission(actor, payload, lead, counselorUser, rmU
 }
 
 function deriveApprovalState(actor) {
-  if (isAdminActor(actor) || isRmActor(actor) || isMemberActor(actor)) {
+  if (isAdminActor(actor) || isRmActor(actor)) {
     return {
       approvalStatus: 'approved',
       approvedByUserId: actor.id,
@@ -277,6 +309,21 @@ function deriveApprovalState(actor) {
   };
 }
 
+function hasMeetingSchedulingIntent(payload = {}) {
+  return payload.meetingName !== null
+    || payload.meetingAt !== null
+    || payload.meetingNotificationEmails !== undefined
+    || payload.meetingCounselorUserIds !== undefined;
+}
+
+function assertMeetingSchedulePermission(actor, payload = {}, existing = null) {
+  const touchesMeetingFields = hasMeetingSchedulingIntent(payload)
+    || Boolean(existing && hasMeetingSchedule(existing));
+  if (touchesMeetingFields && !isRmActor(actor)) {
+    throw new AppError(403, 'MEETING_SCHEDULE_FORBIDDEN', 'Only RM users can schedule or edit meetings.');
+  }
+}
+
 async function mapNoteRow(row, actor) {
   if (!row) return null;
   const userIds = [row.created_by_user_id, row.updated_by_user_id, row.approved_by_user_id, row.rejected_by_user_id].filter(Boolean);
@@ -296,6 +343,8 @@ async function mapNoteRow(row, actor) {
     meeting_name: row.meeting_name,
     meeting_at: row.meeting_at,
     meeting_notification_emails: Array.isArray(row.meeting_notification_emails) ? row.meeting_notification_emails : [],
+    meeting_counselor_user_ids: Array.isArray(row.meeting_counselor_user_ids) ? row.meeting_counselor_user_ids : [],
+    meeting_counselor_names: Array.isArray(row.meeting_counselor_names) ? row.meeting_counselor_names : [],
     meeting_invite_sent_at: row.meeting_invite_sent_at || null,
     meeting_reminder_sent_at: row.meeting_reminder_sent_at || null,
     meeting_started_email_sent_at: row.meeting_started_email_sent_at || null,
@@ -355,6 +404,9 @@ function shouldResetMeetingNotifications(existing, payload, counselorUser, rmUse
     : (payload.meetingAt || null);
   const nextCounselorId = counselorUser?.id || null;
   const nextRmId = rmUser?.id || null;
+  const nextMeetingCounselorIds = payload.meetingCounselorUserIds === undefined
+    ? (Array.isArray(existing.meeting_counselor_user_ids) ? existing.meeting_counselor_user_ids : [])
+    : payload.meetingCounselorUserIds;
   const nextEmails = payload.meetingNotificationEmails === undefined
     ? (Array.isArray(existing.meeting_notification_emails) ? existing.meeting_notification_emails : [])
     : payload.meetingNotificationEmails;
@@ -363,6 +415,7 @@ function shouldResetMeetingNotifications(existing, payload, counselorUser, rmUse
     || nextMeetingAt !== existing.meeting_at
     || nextCounselorId !== (existing.counselor_user_id || null)
     || nextRmId !== (existing.rm_user_id || null)
+    || !sameUuidList(nextMeetingCounselorIds, Array.isArray(existing.meeting_counselor_user_ids) ? existing.meeting_counselor_user_ids : [])
     || !sameEmailList(nextEmails, Array.isArray(existing.meeting_notification_emails) ? existing.meeting_notification_emails : []);
 }
 
@@ -383,6 +436,13 @@ async function getNoteRowById(noteId, actor, options = {}) {
             l.full_name AS lead_name,
             l.phone AS lead_phone,
             counselor.full_name AS counselor_name,
+            ARRAY(
+              SELECT u.full_name
+                FROM users u
+               WHERE u.id = ANY(COALESCE(n.meeting_counselor_user_ids, ARRAY[]::uuid[]))
+                 AND u.deleted_at IS NULL
+               ORDER BY u.full_name
+            ) AS meeting_counselor_names,
             rm.full_name AS rm_name,
             creator.full_name AS created_by_name,
             updater.full_name AS updated_by_name,
@@ -479,6 +539,25 @@ async function getNoteEntries(noteId) {
 async function validateNoteParticipants(actor, payload, lead) {
   let counselorUser = null;
   let rmUser = null;
+  let meetingCounselorUsers = [];
+
+  const requestedMeetingCounselorIds = Array.isArray(payload.meetingCounselorUserIds)
+    ? payload.meetingCounselorUserIds
+    : [];
+  if (requestedMeetingCounselorIds.length) {
+    meetingCounselorUsers = await Promise.all(requestedMeetingCounselorIds.map(async (userId) => {
+      const user = await requireAssignableUser(
+        userId,
+        null,
+        'INVALID_COUNSELOR',
+        'Select a valid counselor/member user.',
+      );
+      if (!['member', 'partner'].includes(user.role)) {
+        throw new AppError(400, 'INVALID_COUNSELOR', 'Select a valid counselor/member user.');
+      }
+      return user;
+    }));
+  }
 
   if (payload.counselorUserId) {
     counselorUser = await requireAssignableUser(
@@ -490,6 +569,12 @@ async function validateNoteParticipants(actor, payload, lead) {
     if (!['member', 'partner'].includes(counselorUser.role)) {
       throw new AppError(400, 'INVALID_COUNSELOR', 'Select a valid counselor/member user.');
     }
+  }
+  if (!counselorUser && meetingCounselorUsers.length) {
+    [counselorUser] = meetingCounselorUsers;
+  }
+  if (counselorUser && !meetingCounselorUsers.some((entry) => entry.id === counselorUser.id)) {
+    meetingCounselorUsers = [counselorUser, ...meetingCounselorUsers];
   }
 
   if (payload.rmUserId) {
@@ -544,20 +629,24 @@ async function validateNoteParticipants(actor, payload, lead) {
 
   if (!counselorUser && isMemberActor(actor)) {
     counselorUser = await requireAssignableUser(actor.id, null, 'INVALID_COUNSELOR', 'Select a valid counselor/member user.');
+    if (!meetingCounselorUsers.some((entry) => entry.id === counselorUser.id)) {
+      meetingCounselorUsers = [counselorUser, ...meetingCounselorUsers];
+    }
   }
 
-  return { counselorUser, rmUser };
+  return { counselorUser, rmUser, meetingCounselorUsers };
 }
 
 async function createNote(actor, body) {
   const payload = normalizeNotePayload(body);
+  assertMeetingSchedulePermission(actor, payload);
   if (!payload.customerPhone && !payload.leadId) {
     throw new AppError(400, 'CUSTOMER_PHONE_REQUIRED', 'Enter customer phone or link the note to a lead.');
   }
 
   const lead = payload.leadId ? await getLeadForScope(payload.leadId) : null;
-  const { counselorUser, rmUser } = await validateNoteParticipants(actor, payload, lead);
-  await validateCreatePermission(actor, payload, lead, counselorUser, rmUser);
+  const { counselorUser, rmUser, meetingCounselorUsers } = await validateNoteParticipants(actor, payload, lead);
+  await validateCreatePermission(actor, { ...payload, meetingCounselorUsers }, lead, counselorUser, rmUser);
 
   const customerPhone = payload.customerPhone || normalizePhone(lead?.phone);
   const customerName = payload.customerName || normalizeText(lead?.full_name, 190);
@@ -569,6 +658,9 @@ async function createNote(actor, body) {
   }
   if (!payload.initialEntryText) {
     throw new AppError(400, 'NOTE_ENTRY_REQUIRED', 'Write notes before saving.');
+  }
+  if (hasMeetingSchedulingIntent(payload) && !meetingCounselorUsers.length) {
+    throw new AppError(400, 'MEETING_COUNSELOR_REQUIRED', 'Select at least one counselor/member for the meeting.');
   }
 
   const approvalState = deriveApprovalState(actor);
@@ -587,6 +679,7 @@ async function createNote(actor, body) {
        meeting_name,
        meeting_at,
        meeting_notification_emails,
+       meeting_counselor_user_ids,
         counselor_user_id,
         rm_user_id,
         created_by_user_id,
@@ -601,7 +694,7 @@ async function createNote(actor, body) {
        )
        VALUES (
          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-         $11, $12, $13, $14, $14, $15, $16, $17, $18, $19, $20, $21
+         $11, $12, $13, $14, $15, $15, $16, $17, $18, $19, $20, $21, $22
        )
        RETURNING id`,
       [
@@ -616,6 +709,7 @@ async function createNote(actor, body) {
         payload.meetingName,
         payload.meetingAt,
         payload.meetingNotificationEmails || [],
+        meetingCounselorUsers.map((entry) => entry.id),
         counselorUser?.id || null,
         rmUser?.id || null,
         actor.id,
@@ -682,7 +776,13 @@ async function listNotes(actor, rawQuery = {}) {
   }
   if (leadId) where.push(`n.lead_id = $${pushParam(params, leadId)}::uuid`);
   if (rmUserId) where.push(`n.rm_user_id = $${pushParam(params, rmUserId)}::uuid`);
-  if (counselorUserId) where.push(`n.counselor_user_id = $${pushParam(params, counselorUserId)}::uuid`);
+  if (counselorUserId) {
+    const counselorIdx = pushParam(params, counselorUserId);
+    where.push(`(
+      n.counselor_user_id = $${counselorIdx}::uuid
+      OR $${counselorIdx}::uuid = ANY(COALESCE(n.meeting_counselor_user_ids, ARRAY[]::uuid[]))
+    )`);
+  }
   if (from) where.push(`COALESCE((SELECT MAX(e.created_at) FROM customer_note_entries e WHERE e.note_id = n.id AND e.deleted_at IS NULL), n.updated_at, n.created_at) >= $${pushParam(params, from)}::timestamptz`);
   if (to) where.push(`COALESCE((SELECT MAX(e.created_at) FROM customer_note_entries e WHERE e.note_id = n.id AND e.deleted_at IS NULL), n.updated_at, n.created_at) <= $${pushParam(params, to)}::timestamptz`);
 
@@ -696,6 +796,13 @@ async function listNotes(actor, rawQuery = {}) {
             l.full_name AS lead_name,
             l.phone AS lead_phone,
             counselor.full_name AS counselor_name,
+            ARRAY(
+              SELECT u.full_name
+                FROM users u
+               WHERE u.id = ANY(COALESCE(n.meeting_counselor_user_ids, ARRAY[]::uuid[]))
+                 AND u.deleted_at IS NULL
+               ORDER BY u.full_name
+            ) AS meeting_counselor_names,
             rm.full_name AS rm_name,
             creator.full_name AS created_by_name,
             updater.full_name AS updated_by_name,
@@ -784,20 +891,35 @@ async function listUpcomingMeetings(actor, rawQuery = {}) {
   } else if (isRmActor(actor)) {
     where.push(`n.rm_user_id = $${pushParam(params, actor.id)}::uuid`);
   } else {
+    const actorIdx = pushParam(params, actor.id);
     where.push(`(
-      n.created_by_user_id = $${pushParam(params, actor.id)}::uuid
-      OR COALESCE(n.counselor_user_id, '00000000-0000-0000-0000-000000000000'::uuid) = $${params.length}::uuid
+      n.created_by_user_id = $${actorIdx}::uuid
+      OR COALESCE(n.counselor_user_id, '00000000-0000-0000-0000-000000000000'::uuid) = $${actorIdx}::uuid
+      OR $${actorIdx}::uuid = ANY(COALESCE(n.meeting_counselor_user_ids, ARRAY[]::uuid[]))
     )`);
   }
 
   if (rmUserId) where.push(`n.rm_user_id = $${pushParam(params, rmUserId)}::uuid`);
-  if (counselorUserId) where.push(`n.counselor_user_id = $${pushParam(params, counselorUserId)}::uuid`);
+  if (counselorUserId) {
+    const counselorIdx = pushParam(params, counselorUserId);
+    where.push(`(
+      n.counselor_user_id = $${counselorIdx}::uuid
+      OR $${counselorIdx}::uuid = ANY(COALESCE(n.meeting_counselor_user_ids, ARRAY[]::uuid[]))
+    )`);
+  }
 
   const { rows } = await query(
     `SELECT n.*,
             l.full_name AS lead_name,
             l.phone AS lead_phone,
             counselor.full_name AS counselor_name,
+            ARRAY(
+              SELECT u.full_name
+                FROM users u
+               WHERE u.id = ANY(COALESCE(n.meeting_counselor_user_ids, ARRAY[]::uuid[]))
+                 AND u.deleted_at IS NULL
+               ORDER BY u.full_name
+            ) AS meeting_counselor_names,
             rm.full_name AS rm_name,
             creator.full_name AS created_by_name,
             updater.full_name AS updated_by_name,
@@ -887,15 +1009,24 @@ async function updateNote(actor, noteId, body) {
   await assertCanMutate(actor, existing);
 
   const payload = normalizeNotePayload(body);
+  assertMeetingSchedulePermission(actor, payload, existing);
   const lead = payload.leadId ? await getLeadForScope(payload.leadId) : (existing.lead_id ? await getLeadForScope(existing.lead_id) : null);
-  const { counselorUser, rmUser } = await validateNoteParticipants(actor, {
+  const { counselorUser, rmUser, meetingCounselorUsers } = await validateNoteParticipants(actor, {
     ...payload,
+    meetingCounselorUserIds: payload.meetingCounselorUserIds !== undefined
+      ? payload.meetingCounselorUserIds
+      : (
+        Array.isArray(existing.meeting_counselor_user_ids) && existing.meeting_counselor_user_ids.length
+          ? existing.meeting_counselor_user_ids
+          : (existing.counselor_user_id ? [existing.counselor_user_id] : [])
+      ),
     counselorUserId: payload.counselorUserId || existing.counselor_user_id,
     rmUserId: payload.rmUserId || existing.rm_user_id,
   }, lead);
 
   await validateCreatePermission(actor, {
     ...payload,
+    meetingCounselorUsers,
     counselorUserId: counselorUser?.id || null,
     rmUserId: rmUser?.id || null,
   }, lead, counselorUser, rmUser);
@@ -904,9 +1035,20 @@ async function updateNote(actor, noteId, body) {
   const customerName = payload.customerName || existing.customer_name || normalizeText(lead?.full_name, 190);
   if (!customerPhone) throw new AppError(400, 'CUSTOMER_PHONE_REQUIRED', 'Enter customer phone before saving.');
   if (!customerName) throw new AppError(400, 'CUSTOMER_NAME_REQUIRED', 'Enter customer name before saving.');
+  if ((hasMeetingSchedulingIntent(payload) || hasMeetingSchedule(existing)) && !meetingCounselorUsers.length) {
+    throw new AppError(400, 'MEETING_COUNSELOR_REQUIRED', 'Select at least one counselor/member for the meeting.');
+  }
 
   const approvalState = deriveApprovalState(actor);
-  const resetMeetingNotifications = shouldResetMeetingNotifications(existing, payload, counselorUser, rmUser);
+  const effectiveMeetingCounselorIds = payload.meetingCounselorUserIds !== undefined
+    ? meetingCounselorUsers.map((entry) => entry.id)
+    : (Array.isArray(existing.meeting_counselor_user_ids) ? existing.meeting_counselor_user_ids : []);
+  const resetMeetingNotifications = shouldResetMeetingNotifications(
+    existing,
+    { ...payload, meetingCounselorUserIds: effectiveMeetingCounselorIds },
+    counselorUser,
+    rmUser,
+  );
 
   await query(
     `UPDATE customer_notes
@@ -921,21 +1063,22 @@ async function updateNote(actor, noteId, body) {
             meeting_name = $10,
             meeting_at = $11,
             meeting_notification_emails = $12,
-            counselor_user_id = $13,
-            rm_user_id = $14,
-            updated_by_user_id = $15,
+            meeting_counselor_user_ids = $13,
+            counselor_user_id = $14,
+            rm_user_id = $15,
+            updated_by_user_id = $16,
             updated_at = NOW(),
-            approval_status = $16,
-            submitted_to_rm_at = $17,
-            approved_by_user_id = $18,
-            approved_at = $19,
-            rejected_by_user_id = $20,
-            rejected_at = $21,
-            rejection_note = $22,
-            meeting_invite_sent_at = CASE WHEN $23::boolean THEN NULL ELSE meeting_invite_sent_at END,
-            meeting_reminder_sent_at = CASE WHEN $23::boolean THEN NULL ELSE meeting_reminder_sent_at END,
-            meeting_started_email_sent_at = CASE WHEN $23::boolean THEN NULL ELSE meeting_started_email_sent_at END,
-            meeting_completed_at = CASE WHEN $23::boolean THEN NULL ELSE meeting_completed_at END
+            approval_status = $17,
+            submitted_to_rm_at = $18,
+            approved_by_user_id = $19,
+            approved_at = $20,
+            rejected_by_user_id = $21,
+            rejected_at = $22,
+            rejection_note = $23,
+            meeting_invite_sent_at = CASE WHEN $24::boolean THEN NULL ELSE meeting_invite_sent_at END,
+            meeting_reminder_sent_at = CASE WHEN $24::boolean THEN NULL ELSE meeting_reminder_sent_at END,
+            meeting_started_email_sent_at = CASE WHEN $24::boolean THEN NULL ELSE meeting_started_email_sent_at END,
+            meeting_completed_at = CASE WHEN $24::boolean THEN NULL ELSE meeting_completed_at END
       WHERE id = $1`,
     [
       noteId,
@@ -952,6 +1095,7 @@ async function updateNote(actor, noteId, body) {
       payload.meetingNotificationEmails === undefined
         ? (Array.isArray(existing.meeting_notification_emails) ? existing.meeting_notification_emails : [])
         : payload.meetingNotificationEmails,
+      effectiveMeetingCounselorIds,
       counselorUser?.id || null,
       rmUser?.id || null,
       actor.id,

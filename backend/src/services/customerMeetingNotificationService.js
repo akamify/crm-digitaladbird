@@ -66,6 +66,21 @@ async function getMeetingRecipients(note) {
     if (rm?.email) pushRecipient({ email: rm.email, fullName: rm.full_name, userId: rm.id, kind: 'rm' });
   }
 
+  if (Array.isArray(note.meeting_counselor_user_ids) && note.meeting_counselor_user_ids.length) {
+    const { rows: counselors } = await query(
+      `SELECT id, full_name, email
+         FROM users
+        WHERE id = ANY($1::uuid[])
+          AND deleted_at IS NULL`,
+      [note.meeting_counselor_user_ids],
+    );
+    for (const counselor of counselors) {
+      if (counselor?.email) {
+        pushRecipient({ email: counselor.email, fullName: counselor.full_name, userId: counselor.id, kind: 'counselor' });
+      }
+    }
+  }
+
   if (note.counselor_user_id) {
     const { rows: [counselor] } = await query(
       `SELECT id, full_name, email
@@ -142,6 +157,7 @@ async function fetchMeetingNotesToNotify() {
             n.meeting_name,
             n.meeting_at,
             n.meeting_notification_emails,
+            n.meeting_counselor_user_ids,
             n.meeting_invite_sent_at,
             n.meeting_reminder_sent_at,
             n.meeting_started_email_sent_at,

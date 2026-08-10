@@ -41,6 +41,17 @@ function noteSummary(note: CustomerNote) {
   return note.latest_entry_text || note.about_client || note.client_services_want || 'No note text yet';
 }
 
+function hasMeetingScheduleNote(note?: Pick<CustomerNote, 'meeting_name' | 'meeting_at'> | null) {
+  return Boolean(note?.meeting_name && note?.meeting_at);
+}
+
+function meetingCounselorNames(note?: CustomerNote | null) {
+  if (!note) return [];
+  const names = Array.isArray(note.meeting_counselor_names) ? note.meeting_counselor_names.filter(Boolean) : [];
+  if (names.length) return names;
+  return note.counselor_name ? [note.counselor_name] : [];
+}
+
 function getApiErrorMessage(error: unknown, fallback: string) {
   if (typeof error === 'object' && error && 'response' in error) {
     const response = (error as { response?: { data?: { error?: { message?: string }; message?: string } } }).response;
@@ -64,6 +75,7 @@ function emptyForm(prefillLead?: LeadLookupItem | null, currentUser?: NoteAuthUs
     meeting_name: '',
     meeting_at: '',
     meeting_notification_emails: '',
+    meeting_counselor_user_ids: [],
     counselor_user_id: currentUser && ['member', 'partner'].includes(currentUser.role) ? currentUser.id : null,
     rm_user_id: currentUser?.role === 'rm' ? currentUser.id : currentUser?.reportToId || null,
     initial_entry_text: '',
@@ -83,6 +95,7 @@ function buildFormFromNote(note: CustomerNote): CustomerNoteInput {
     meeting_name: note.meeting_name || '',
     meeting_at: note.meeting_at ? note.meeting_at.slice(0, 16) : '',
     meeting_notification_emails: (note.meeting_notification_emails || []).join(', '),
+    meeting_counselor_user_ids: note.meeting_counselor_user_ids || (note.counselor_user_id ? [note.counselor_user_id] : []),
     counselor_user_id: note.counselor_user_id || null,
     rm_user_id: note.rm_user_id || null,
     initial_entry_text: '',
@@ -240,6 +253,7 @@ function NotesInner() {
   const pageSize = filters.page_size || 20;
   const pages = Math.max(1, Math.ceil(total / pageSize));
   const meetingRows = upcomingMeetings.data || [];
+  const canScheduleMeetings = user?.role === 'rm';
 
   return (
     <div className="space-y-4">
@@ -248,11 +262,11 @@ function NotesInner() {
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-lg font-semibold text-slate-950">Notes Workspace</span>
             {user?.role === 'super_admin' || user?.role === 'admin' ? (
-              <span className="chip-green">Approved notes visible to company</span>
+              <span className="chip-green">All created notes are visible to company</span>
             ) : user?.role === 'rm' ? (
               <span className="chip-blue">You can verify team notes</span>
             ) : (
-              <span className="chip-green">Your notes are saved instantly</span>
+              <span className="chip-amber">Your notes go to RM approval</span>
             )}
           </div>
           <p className="text-sm text-slate-500">
@@ -270,16 +284,18 @@ function NotesInner() {
           >
             <Plus className="h-4 w-4" /> New Note
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              setEditingMeeting(null);
-              setScheduleOpen(true);
-            }}
-            className="btn-outline inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"
-          >
-            <CalendarClock className="h-4 w-4" /> Schedule Meeting
-          </button>
+          {canScheduleMeetings && (
+            <button
+              type="button"
+              onClick={() => {
+                setEditingMeeting(null);
+                setScheduleOpen(true);
+              }}
+              className="btn-outline inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"
+            >
+              <CalendarClock className="h-4 w-4" /> Schedule Meeting
+            </button>
+          )}
           <Link
             href="/leads"
             className="btn-outline inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"
@@ -384,11 +400,11 @@ function NotesInner() {
           ) : meetingRows.length === 0 ? (
             <div className="p-4">
               <EmptyState
-                title="No meetings scheduled"
-                description="Use the Schedule Meeting button to create the next RM or counselor meeting plan."
-                action={<button type="button" onClick={() => setScheduleOpen(true)} className="btn-primary rounded-lg px-4 py-2 text-sm">Schedule Meeting</button>}
-                icon={<CalendarClock className="h-6 w-6" />}
-              />
+              title="No meetings scheduled"
+              description={canScheduleMeetings ? 'Use the Schedule Meeting button to create the next RM meeting plan.' : 'Meetings scheduled by your RM will appear here.'}
+              action={canScheduleMeetings ? <button type="button" onClick={() => setScheduleOpen(true)} className="btn-primary rounded-lg px-4 py-2 text-sm">Schedule Meeting</button> : undefined}
+              icon={<CalendarClock className="h-6 w-6" />}
+            />
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -422,7 +438,7 @@ function NotesInner() {
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap gap-1 text-[11px] text-slate-500">
                           {meeting.rm_name && <span className="chip-slate">RM: {meeting.rm_name}</span>}
-                          {meeting.counselor_name && <span className="chip-slate">Counselor: {meeting.counselor_name}</span>}
+                          {meetingCounselorNames(meeting).map((name) => <span key={name} className="chip-slate">Counselor: {name}</span>)}
                         </div>
                       </td>
                       <td className="max-w-[280px] px-4 py-3 text-slate-700">
@@ -446,7 +462,7 @@ function NotesInner() {
                           >
                             Open
                           </button>
-                          {meeting.permissions?.can_edit && (
+                          {canScheduleMeetings && meeting.permissions?.can_edit && (
                             <button
                               type="button"
                               onClick={(event) => {
@@ -528,7 +544,7 @@ function NotesInner() {
                             <Link2 className="h-3.5 w-3.5" /> {note.lead_name || 'Open lead'}
                           </Link>
                           <div className="flex flex-wrap gap-1 text-[11px] text-slate-500">
-                            {note.counselor_name && <span className="chip-slate">Counselor: {note.counselor_name}</span>}
+                            {meetingCounselorNames(note).map((name) => <span key={name} className="chip-slate">Counselor: {name}</span>)}
                             {note.rm_name && <span className="chip-slate">RM: {note.rm_name}</span>}
                           </div>
                         </div>
@@ -536,7 +552,7 @@ function NotesInner() {
                         <div className="space-y-1">
                           <span className="chip-amber">Custom customer note</span>
                           <div className="flex flex-wrap gap-1 text-[11px] text-slate-500">
-                            {note.counselor_name && <span className="chip-slate">Counselor: {note.counselor_name}</span>}
+                            {meetingCounselorNames(note).map((name) => <span key={name} className="chip-slate">Counselor: {name}</span>)}
                             {note.rm_name && <span className="chip-slate">RM: {note.rm_name}</span>}
                           </div>
                         </div>
@@ -581,13 +597,18 @@ function NotesInner() {
                         >
                           Open
                         </button>
-                        {note.permissions?.can_edit && (
+                        {note.permissions?.can_edit && (!hasMeetingScheduleNote(note) || canScheduleMeetings) && (
                           <button
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
-                              setEditingNote(note);
-                              setComposeOpen(true);
+                              if (hasMeetingScheduleNote(note)) {
+                                setEditingMeeting(note);
+                                setScheduleOpen(true);
+                              } else {
+                                setEditingNote(note);
+                                setComposeOpen(true);
+                              }
                             }}
                             className="btn-ghost rounded-lg px-3 py-1.5 text-xs"
                           >
@@ -654,6 +675,11 @@ function NotesInner() {
         onClose={() => setDetailNoteId(null)}
         onEdit={(note) => {
           setDetailNoteId(null);
+          if (hasMeetingScheduleNote(note) && canScheduleMeetings) {
+            setEditingMeeting(note);
+            setScheduleOpen(true);
+            return;
+          }
           setEditingNote(note);
           setComposeOpen(true);
         }}
@@ -950,10 +976,10 @@ function MeetingScheduleModal({
   const [lookupText, setLookupText] = useState('');
   const debouncedLookup = useDebouncedValue(lookupText, 250);
   const leadLookup = useCustomerNoteLeadLookup(debouncedLookup);
-  const effectiveRmUserId = form.rm_user_id || (user?.role === 'rm' ? user.id : user?.reportToId || null);
-  const rmLookup = useCustomerNoteUserLookup('rm', '', null);
+  const effectiveRmUserId = user?.role === 'rm' ? user.id : form.rm_user_id || null;
   const counselorLookup = useCustomerNoteUserLookup('member', '', effectiveRmUserId);
   const currentUserSeed = `${user?.id || ''}:${user?.role || ''}:${user?.reportToId || ''}`;
+  const selectedMeetingCounselorIds = Array.isArray(form.meeting_counselor_user_ids) ? form.meeting_counselor_user_ids : [];
 
   useEffect(() => {
     if (!open) return;
@@ -980,27 +1006,23 @@ function MeetingScheduleModal({
     setLookupText('');
   }, [open, note?.id, prefillLead?.id, prefillLead?.full_name, prefillLead?.phone, currentUserSeed]);
 
-  const rmOptions = rmLookup.data || [];
-  const counselorOptions = useMemo(() => {
-    if (user?.role === 'super_admin' || user?.role === 'admin') {
-      return form.rm_user_id ? (counselorLookup.data || []) : [];
-    }
-    return counselorLookup.data || [];
-  }, [counselorLookup.data, form.rm_user_id, user?.role]);
+  const counselorOptions = useMemo(() => counselorLookup.data || [], [counselorLookup.data]);
 
   useEffect(() => {
-    if (!counselorOptions.length) {
-      if (user?.role === 'super_admin' || user?.role === 'admin') {
-        setForm((current) => (current.counselor_user_id ? { ...current, counselor_user_id: null } : current));
-      }
-      return;
-    }
+    if (!counselorOptions.length) return;
     setForm((current) => {
-      if (!current.counselor_user_id) return current;
-      const exists = counselorOptions.some((entry) => entry.id === current.counselor_user_id);
-      return exists ? current : { ...current, counselor_user_id: null };
+      const nextIds = (Array.isArray(current.meeting_counselor_user_ids) ? current.meeting_counselor_user_ids : [])
+        .filter((id) => counselorOptions.some((entry) => entry.id === id));
+      const nextPrimaryCounselorId = nextIds[0] || null;
+      const sameIds = nextIds.length === selectedMeetingCounselorIds.length && nextIds.every((id, index) => id === selectedMeetingCounselorIds[index]);
+      if (sameIds && current.counselor_user_id === nextPrimaryCounselorId) return current;
+      return {
+        ...current,
+        meeting_counselor_user_ids: nextIds,
+        counselor_user_id: nextPrimaryCounselorId,
+      };
     });
-  }, [counselorOptions, user?.role]);
+  }, [counselorOptions, selectedMeetingCounselorIds]);
 
   function selectLead(lead: LeadLookupItem) {
     setLinkedLead(lead);
@@ -1028,10 +1050,28 @@ function MeetingScheduleModal({
     setReminderEmailInput('');
   }
 
+  function toggleMeetingCounselor(userId: string) {
+    setForm((current) => {
+      const currentIds = Array.isArray(current.meeting_counselor_user_ids) ? current.meeting_counselor_user_ids : [];
+      const nextIds = currentIds.includes(userId)
+        ? currentIds.filter((entry) => entry !== userId)
+        : [...currentIds, userId];
+      return {
+        ...current,
+        meeting_counselor_user_ids: nextIds,
+        counselor_user_id: nextIds[0] || null,
+      };
+    });
+  }
+
   function handleSubmit() {
     const validation = validateNotePayload(form, { isMeeting: true });
     if (!validation.ok) {
       toast.error(validation.error);
+      return;
+    }
+    if (!selectedMeetingCounselorIds.length) {
+      toast.error('Select at least one counselor/member for this meeting.');
       return;
     }
 
@@ -1056,8 +1096,9 @@ function MeetingScheduleModal({
       meeting_name: form.meeting_name || '',
       meeting_at: form.meeting_at || null,
       meeting_notification_emails: reminderEmails,
-      counselor_user_id: form.counselor_user_id || null,
-      rm_user_id: form.rm_user_id || null,
+      meeting_counselor_user_ids: selectedMeetingCounselorIds,
+      counselor_user_id: selectedMeetingCounselorIds[0] || null,
+      rm_user_id: user?.id || form.rm_user_id || null,
       initial_entry_text: (form.initial_entry_text || '').trim() || (!note ? fallbackEntryText : ''),
     };
 
@@ -1169,26 +1210,51 @@ function MeetingScheduleModal({
           <Field label="Meeting date & time">
             <input type="datetime-local" className="input" value={form.meeting_at || ''} onChange={(event) => setForm((current) => ({ ...current, meeting_at: event.target.value }))} />
           </Field>
-          <Field label="Counselor / Member">
-            <select
-              className="input"
-              value={form.counselor_user_id || ''}
-              onChange={(event) => setForm((current) => ({ ...current, counselor_user_id: event.target.value || null }))}
-              disabled={(user?.role === 'super_admin' || user?.role === 'admin') && !form.rm_user_id}
-            >
-              <option value="">{(user?.role === 'super_admin' || user?.role === 'admin') && !form.rm_user_id ? 'Select RM first' : 'Select counselor'}</option>
-              {counselorOptions.map((entry) => <option key={entry.id} value={entry.id}>{entry.full_name} ({humanize(entry.role)})</option>)}
-            </select>
-          </Field>
           <Field label="RM">
-            <select
-              className="input"
-              value={form.rm_user_id || ''}
-              onChange={(event) => setForm((current) => ({ ...current, rm_user_id: event.target.value || null, counselor_user_id: user?.role === 'super_admin' || user?.role === 'admin' ? null : current.counselor_user_id }))}
-            >
-              <option value="">Select RM</option>
-              {rmOptions.map((entry) => <option key={entry.id} value={entry.id}>{entry.full_name}</option>)}
-            </select>
+            <input className="input bg-slate-50 text-slate-600" value={user?.name || 'Assigned RM'} readOnly />
+            <div className="text-xs text-slate-500">Only RM can schedule meetings. This schedule stays under your RM account.</div>
+          </Field>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          <Field label="Counselor / Member">
+            {counselorLookup.isLoading ? (
+              <div className="text-sm text-slate-500">Loading your counselor list...</div>
+            ) : !counselorOptions.length ? (
+              <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                No counselors are assigned under your RM account yet.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="text-xs text-slate-500">Select one or more counselors who should see this meeting in their schedule tab and receive meeting emails.</div>
+                <div className="grid gap-2 md:grid-cols-2">
+                  {counselorOptions.map((entry) => {
+                    const selected = selectedMeetingCounselorIds.includes(entry.id);
+                    return (
+                      <button
+                        key={entry.id}
+                        type="button"
+                        onClick={() => toggleMeetingCounselor(entry.id)}
+                        className={clsx(
+                          'rounded-xl border px-4 py-3 text-left transition',
+                          selected
+                            ? 'border-brand-400 bg-brand-50 text-brand-900'
+                            : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50',
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="font-medium">{entry.full_name}</div>
+                            <div className="mt-1 text-xs text-slate-500">{humanize(entry.role)}</div>
+                          </div>
+                          <span className={selected ? 'chip-blue' : 'chip-slate'}>{selected ? 'Selected' : 'Select'}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </Field>
         </div>
 
@@ -1280,6 +1346,7 @@ function CustomerNoteDetailModal({
   onClose: () => void;
   onEdit: (note: CustomerNote) => void;
 }) {
+  const { user } = useAuth();
   const detail = useCustomerNote(noteId);
   const addEntry = useAddCustomerNoteEntry();
   const updateEntry = useUpdateCustomerNoteEntry();
@@ -1377,8 +1444,8 @@ function CustomerNoteDetailModal({
         <div className="space-y-5">
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <InfoCard icon={<UserRound className="h-4 w-4" />} label="Customer" value={note.customer_name} hint={fmtPhone(note.customer_phone)} />
-            <InfoCard icon={<Users className="h-4 w-4" />} label="Ownership" value={note.rm_name || 'RM not set'} hint={note.counselor_name ? `Counselor: ${note.counselor_name}` : 'Counselor not set'} />
-            <InfoCard icon={<ShieldCheck className="h-4 w-4" />} label="Approval" value={humanize(note.approval_status)} hint={note.approved_at ? `Approved ${formatISTCompact(note.approved_at)}` : note.rejected_at ? `Rejected ${formatISTCompact(note.rejected_at)}` : 'Saved and visible in notes workspace'} />
+            <InfoCard icon={<Users className="h-4 w-4" />} label="Ownership" value={note.rm_name || 'RM not set'} hint={meetingCounselorNames(note).length ? `Counselor: ${meetingCounselorNames(note).join(', ')}` : 'Counselor not set'} />
+            <InfoCard icon={<ShieldCheck className="h-4 w-4" />} label="Approval" value={humanize(note.approval_status)} hint={note.approved_at ? `Approved ${formatISTCompact(note.approved_at)}` : note.rejected_at ? `Rejected ${formatISTCompact(note.rejected_at)}` : note.approval_status === 'pending_rm_approval' ? 'Waiting for RM approval' : 'Saved and visible in notes workspace'} />
             <InfoCard icon={<CalendarClock className="h-4 w-4" />} label="Meeting" value={note.meeting_name || 'No meeting title'} hint={note.meeting_at ? formatISTCompact(note.meeting_at) : 'No meeting time'} />
           </div>
 
@@ -1388,13 +1455,14 @@ function CustomerNoteDetailModal({
               <MetaRow label="Budget" value={note.client_budget} />
               <MetaRow label="About client" value={note.about_client} />
               <MetaRow label="Services wanted" value={note.client_services_want} />
-              <MetaRow label="Meeting notifications" value={note.meeting_notification_emails?.length ? note.meeting_notification_emails.join(', ') : 'Only assigned RM / counselor'} />
+              <MetaRow label="Meeting counselors" value={meetingCounselorNames(note).length ? meetingCounselorNames(note).join(', ') : 'No counselor selected'} />
+              <MetaRow label="Meeting notifications" value={note.meeting_notification_emails?.length ? note.meeting_notification_emails.join(', ') : 'Only assigned RM and selected counselors'} />
               {note.rejection_note && <MetaRow label="Rejection note" value={note.rejection_note} />}
             </div>
           </div>
 
           <div className="flex flex-wrap gap-2">
-            {note.permissions?.can_edit && (
+            {note.permissions?.can_edit && (!hasMeetingScheduleNote(note) || note.rm_user_id === user?.id) && (
               <button type="button" onClick={() => onEdit(note)} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
                 <Pencil className="h-4 w-4" /> Edit Note
               </button>
