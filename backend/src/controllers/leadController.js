@@ -71,6 +71,15 @@ function normalizeUuidList(value, max = 25) {
   return [...new Set(values.map(item => String(item || '').trim()).filter(Boolean))].slice(0, max);
 }
 
+async function cleanupLeadPaymentFiles({ attachmentPaths = [], leadIds = [] }) {
+  const uploadsRoot = path.resolve(__dirname, '..', '..', 'uploads');
+  const cleanupTargets = [...new Set((attachmentPaths || []).map(filePath => path.resolve(uploadsRoot, filePath)))];
+  const paymentDirectories = [...new Set((leadIds || []).map(id => path.resolve(uploadsRoot, 'payments', id)))];
+
+  await Promise.allSettled(cleanupTargets.map(target => fs.unlink(target)));
+  await Promise.allSettled(paymentDirectories.map(target => fs.rm(target, { recursive: true, force: true })));
+}
+
 function toManualLeadCreateAppError(error) {
   if (error instanceof AppError) return error;
   if (error?.code === '23505') {
@@ -936,10 +945,10 @@ exports.remove = asyncHandler(async (req, res) => {
     };
   });
 
-  const uploadsRoot = path.resolve(__dirname, '..', '..', 'uploads');
-  const cleanupTargets = result.attachmentPaths.map((filePath) => path.resolve(uploadsRoot, filePath));
-  await Promise.allSettled(cleanupTargets.map((target) => fs.unlink(target)));
-  await fs.rm(path.resolve(uploadsRoot, 'payments', result.lead.id), { recursive: true, force: true }).catch(() => {});
+  await cleanupLeadPaymentFiles({
+    attachmentPaths: result.attachmentPaths,
+    leadIds: [result.lead.id],
+  });
 
   const { logActivity } = require('../utils/auditLog');
   await logActivity(req, {
@@ -964,6 +973,126 @@ exports.remove = asyncHandler(async (req, res) => {
       deleted: true,
       full_name: result.lead.full_name || null,
       related: result.counts,
+    },
+  });
+});
+
+exports.removeAll = asyncHandler(async (req, res) => {
+  const confirmation = String(req.body?.confirmation || '').trim().toUpperCase();
+  if (confirmation !== 'DELETE ALL LEADS') {
+    throw new AppError(400, 'CONFIRMATION_REQUIRED', 'Type DELETE ALL LEADS to confirm permanent lead deletion.');
+  }
+
+  const result = await withTransaction(async (client) => {
+    const { rows: [summary] } = await client.query(`
+      SELECT
+        COUNT(*)::int AS total_leads,
+        (SELECT COUNT(*)::int FROM lead_remarks lr JOIN leads l ON l.id = lr.lead_id WHERE l.deleted_at IS NULL) AS remarks_count,
+        (SELECT COUNT(*)::int FROM lead_assignments la JOIN leads l ON l.id = la.lead_id WHERE l.deleted_at IS NULL) AS assignments_count,
+        (SELECT COUNT(*)::int FROM lead_call_logs lc JOIN leads l ON l.id = lc.lead_id WHERE l.deleted_at IS NULL) AS call_logs_count,
+        (SELECT COUNT(*)::int FROM lead_sessions ls JOIN leads l ON l.id = ls.lead_id WHERE l.deleted_at IS NULL AND ls.deleted_at IS NULL) AS sessions_count,
+        (SELECT COUNT(*)::int FROM lead_label_assignments lla JOIN leads l ON l.id = lla.lead_id WHERE l.deleted_at IS NULL) AS labels_count,
+        (SELECT COUNT(*)::int FROM lead_payment_attachments lpa JOIN leads l ON l.id = lpa.lead_id WHERE l.deleted_at IS NULL AND lpa.deleted_at IS NULL) AS attachment_count,
+        (SELECT COUNT(*)::int FROM customer_notes cn JOIN leads l ON l.id = cn.lead_id WHERE l.deleted_at IS NULL AND cn.deleted_at IS NULL) AS linked_notes_count
+      FROM leads
+      WHERE deleted_at IS NULL
+    `);
+
+    if (!summary?.total_leads) {
+      return {
+        deletedCount: 0,
+        deletedLeadIds: [],
+        attachmentPaths: [],
+        related: {
+          remarks_count: 0,
+          assignments_count: 0,
+          call_logs_count: 0,
+          sessions_count: 0,
+          labels_count: 0,
+          attachment_count: 0,
+          linked_notes_count: 0,
+        },
+      };
+    }
+
+    const { rows: attachmentRows } = await client.query(
+      `SELECT lpa.file_path, lpa.lead_id
+         FROM lead_payment_attachments lpa
+         JOIN leads l ON l.id = lpa.lead_id
+        WHERE l.deleted_at IS NULL
+          AND lpa.file_path IS NOT NULL`,
+    );
+
+    const { rows: leadRows } = await client.query(
+      `SELECT id
+         FROM leads
+        WHERE deleted_at IS NULL`,
+    );
+
+    const deletedLeadIds = leadRows.map(row => row.id);
+    await client.query(`DELETE FROM leads WHERE deleted_at IS NULL`);
+
+    await client.query(
+      `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata, ip_address)
+         VALUES ($1, 'lead', NULL, 'hard_delete_all', $2, $3)`,
+      [
+        req.user.id,
+        JSON.stringify({
+          deleted_count: summary.total_leads,
+          deleted_lead_ids_preview: deletedLeadIds.slice(0, 25),
+          deleted_related: {
+            remarks_count: summary.remarks_count,
+            assignments_count: summary.assignments_count,
+            call_logs_count: summary.call_logs_count,
+            sessions_count: summary.sessions_count,
+            labels_count: summary.labels_count,
+            attachment_count: summary.attachment_count,
+            linked_notes_count: summary.linked_notes_count,
+          },
+        }),
+        req.ip,
+      ],
+    ).catch(() => {});
+
+    return {
+      deletedCount: summary.total_leads,
+      deletedLeadIds,
+      attachmentPaths: attachmentRows.map(row => String(row.file_path || '').trim()).filter(Boolean),
+      related: {
+        remarks_count: summary.remarks_count,
+        assignments_count: summary.assignments_count,
+        call_logs_count: summary.call_logs_count,
+        sessions_count: summary.sessions_count,
+        labels_count: summary.labels_count,
+        attachment_count: summary.attachment_count,
+        linked_notes_count: summary.linked_notes_count,
+      },
+    };
+  });
+
+  await cleanupLeadPaymentFiles({
+    attachmentPaths: result.attachmentPaths,
+    leadIds: result.deletedLeadIds,
+  });
+
+  const { logActivity } = require('../utils/auditLog');
+  await logActivity(req, {
+    entity: 'lead',
+    entity_id: null,
+    action: 'hard_deleted_all',
+    old_value: `${result.deletedCount} active leads`,
+    metadata: {
+      deleted_count: result.deletedCount,
+      deleted_related: result.related,
+    },
+  });
+
+  res.json({
+    success: true,
+    data: {
+      deleted: true,
+      deleted_count: result.deletedCount,
+      related: result.related,
     },
   });
 });

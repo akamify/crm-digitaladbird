@@ -14,6 +14,7 @@ import { RemarkModal } from '@/components/leads/RemarkModal';
 import { LeadLabelPickerModal } from '@/components/leads/LeadLabelPickerModal';
 import { AddLeadModal } from '@/components/leads/AddLeadModal';
 import { EmptyState, Modal, Skeleton, StatusChip } from '@/components/ui/Modal';
+import { useDeleteAllLeads } from '@/hooks/useAdmin';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useBulkAddRemark, useDeleteLead, useLeadList } from '@/hooks/useLeads';
 import { formatISTCompact, formatISTTooltip, formatStageUpdatedAt } from '@/lib/date';
@@ -101,6 +102,8 @@ function LeadsInner() {
   const [bulkLabelOpen, setBulkLabelOpen] = useState(false);
   const [addLeadOpen, setAddLeadOpen] = useState(false);
   const [deleteLeadItem, setDeleteLeadItem] = useState<Lead | null>(null);
+  const [deleteAllOpen, setDeleteAllOpen] = useState(false);
+  const [deleteAllConfirmation, setDeleteAllConfirmation] = useState('');
   const [bulkRemark, setBulkRemark] = useState('');
   const [bulkStatuses, setBulkStatuses] = useState<CallStatus[]>([]);
   const debouncedSearch = useDebouncedValue(filters.q || '');
@@ -114,6 +117,7 @@ function LeadsInner() {
   const { data, isLoading, isFetching } = useLeadList(effectiveFilters);
   const bulkAddRemark = useBulkAddRemark();
   const deleteLead = useDeleteLead();
+  const deleteAllLeads = useDeleteAllLeads();
   const isAdminLeadsView = user?.role === 'super_admin' || user?.role === 'admin';
   const isMemberLeadsView = user?.role === 'member';
   const canAddManualLead = user?.role === 'super_admin' || user?.role === 'admin' || user?.role === 'rm';
@@ -202,10 +206,31 @@ function LeadsInner() {
     }
   }
 
+  async function confirmDeleteAllLeads() {
+    try {
+      const response = await deleteAllLeads.mutateAsync({ confirmation: deleteAllConfirmation.trim() });
+      toast.success(`${response.deleted_count} lead${response.deleted_count === 1 ? '' : 's'} deleted permanently.`);
+      setSelectedIds([]);
+      setDeleteAllConfirmation('');
+      setDeleteAllOpen(false);
+    } catch (error: any) {
+      toast.error(error?.response?.data?.error?.message || error?.response?.data?.message || 'Could not delete all leads');
+    }
+  }
+
   return (
     <div className="space-y-4">
       {(canAddManualLead || user?.role === 'member' || user?.role === 'partner') && (
         <div className="flex justify-end gap-2">
+          {canDeleteLead && (
+            <button
+              type="button"
+              onClick={() => setDeleteAllOpen(true)}
+              className="inline-flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-100"
+            >
+              <Trash2 className="h-4 w-4" /> Delete All Leads
+            </button>
+          )}
           <Link
             href="/notes"
             className="btn-outline inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"
@@ -742,6 +767,63 @@ function LeadsInner() {
             </div>
           </div>
         )}
+      </Modal>
+      <Modal
+        open={deleteAllOpen}
+        onClose={() => {
+          if (deleteAllLeads.isPending) return;
+          setDeleteAllOpen(false);
+          setDeleteAllConfirmation('');
+        }}
+        title="Delete All Leads Permanently"
+        description="This will hard delete every active lead in the CRM."
+        size="md"
+        footer={
+          <>
+            <button
+              onClick={() => {
+                setDeleteAllOpen(false);
+                setDeleteAllConfirmation('');
+              }}
+              disabled={deleteAllLeads.isPending}
+              className="btn-ghost rounded-lg px-4 py-2 text-sm"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={confirmDeleteAllLeads}
+              disabled={deleteAllLeads.isPending || deleteAllConfirmation.trim().toUpperCase() !== 'DELETE ALL LEADS'}
+              className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-rose-700 disabled:opacity-50"
+            >
+              {deleteAllLeads.isPending ? 'Deleting all...' : 'I am sure, delete all'}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+            <div className="space-y-2">
+              <div className="font-semibold">This will permanently remove every active lead from the CRM.</div>
+              <div>It is not limited to the current page, current filters, or selected leads.</div>
+              <div>Lead remarks, workflow, sessions, labels, call logs, and payment attachments linked to those leads will also be deleted.</div>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <label className="block text-xs font-semibold uppercase tracking-wide text-rose-800">
+              Type `DELETE ALL LEADS` to continue
+            </label>
+            <input
+              className="input"
+              value={deleteAllConfirmation}
+              onChange={(event) => setDeleteAllConfirmation(event.target.value)}
+              placeholder="DELETE ALL LEADS"
+            />
+            <div className="text-xs text-rose-700">
+              Current visible total: {total.toLocaleString()} lead{total === 1 ? '' : 's'}. Final deletion runs for all active leads in CRM.
+            </div>
+          </div>
+        </div>
       </Modal>
     </div>
   );

@@ -285,6 +285,7 @@ router.get  ('/leads/:leadId/sessions', authenticate, leads.listSessions);
 router.post ('/leads/:leadId/sessions', authenticate, leads.createSession);
 router.patch('/leads/:leadId/sessions/:sessionId', authenticate, leads.updateSession);
 router.delete('/leads/:leadId/sessions/:sessionId', authenticate, leads.deleteSession);
+router.post ('/admin/leads/delete-all', authenticate, requireRole('super_admin'), leads.removeAll);
 router.delete('/leads/:id', authenticate, requireRole('super_admin'), leads.remove);
 router.get  ('/leads/:id',        authenticate, leads.getOne);
 router.post ('/leads',            authenticate, requireRole('super_admin', 'rm'), leads.create);
@@ -1902,8 +1903,12 @@ router.post('/admin/reassign-member', authenticate, requireRole('super_admin'), 
 }));
 
 // --- 10. Bulk Lead Actions ---
-router.post('/admin/bulk-leads', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+router.post('/admin/bulk-leads', authenticate, requireRole('super_admin'), asyncHandler(async (req, res, next) => {
   const { action, lead_ids, params: actionParams } = req.body;
+  if (action === 'delete_all') {
+    return leads.removeAll(req, res, next);
+  }
+
   if (!lead_ids || !Array.isArray(lead_ids) || lead_ids.length === 0) {
     throw new AppError(400, 'INVALID', 'lead_ids array required');
   }

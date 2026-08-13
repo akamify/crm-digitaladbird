@@ -199,6 +199,26 @@ export function useBulkLeadAction() {
   });
 }
 
+export function useDeleteAllLeads() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { confirmation: string }) =>
+      apiPost<{ deleted: boolean; deleted_count: number; related: Record<string, number> }>('/admin/bulk-leads', {
+        action: 'delete_all',
+        confirmation: body.confirmation,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['admin'] });
+      qc.invalidateQueries({ queryKey: ['reports'] });
+      qc.invalidateQueries({ queryKey: ['workflow-stats'] });
+      qc.removeQueries({ queryKey: ['lead'] });
+      qc.removeQueries({ queryKey: ['workflow'] });
+      qc.removeQueries({ queryKey: ['workflow-history'] });
+    },
+  });
+}
+
 // --- Export (these return files, use axios directly) ---
 export function exportLeadsCsv(filters?: Record<string, string>) {
   const qs = new URLSearchParams(filters || {}).toString();
