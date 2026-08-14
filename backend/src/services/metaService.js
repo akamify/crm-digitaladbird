@@ -23,6 +23,7 @@ const { validateLead } = require('./leadValidator');
 const metaTokens = require('./metaTokenResolver');
 const { graphGet } = require('./metaGraphClient');
 const { resolveCampaignName } = require('./leadCampaignResolver');
+const { backfillLeadName, normalizeFieldKey, parseNameFromFieldData } = require('./leadNameService');
 
 /** Constant-time HMAC compare of Meta webhook payloads. */
 function verifySignature(rawBody, signatureHeader) {
@@ -57,16 +58,14 @@ function parseFieldData(fieldData = []) {
   const out = {};
   for (const { name, values } of fieldData) {
     const v = Array.isArray(values) ? values[0] : values;
-    const key = (name || '').toLowerCase();
-    if      (['full_name', 'name', 'first_name'].includes(key)) out.full_name = (out.full_name || '') + ' ' + v;
-    else if (['last_name'].includes(key))                       out.full_name = (out.full_name || '') + ' ' + v;
-    else if (['email'].includes(key))                           out.email     = v;
-    else if (['phone_number', 'phone'].includes(key))           out.phone     = v;
-    else if (['city'].includes(key))                            out.city      = v;
-    else if (['state'].includes(key))                           out.state     = v;
+    const key = normalizeFieldKey(name);
+    if      (['email', 'email_address', 'mail'].includes(key)) out.email = v;
+    else if (['phone_number', 'phone', 'mobile', 'mobile_number', 'contact_number'].includes(key)) out.phone = v;
+    else if (['city', 'town'].includes(key)) out.city = v;
+    else if (['state', 'region'].includes(key)) out.state = v;
     else { out.custom = out.custom || {}; out.custom[name] = v; out[key] = v; }
   }
-  if (out.full_name) out.full_name = out.full_name.trim();
+  out.full_name = parseNameFromFieldData(fieldData);
   return out;
 }
 
@@ -128,6 +127,7 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
   // creates separate meta_lead_id values but should not create separate leads.
   const dupContact = await findExistingByContact({ phone: fields.phone, email: fields.email });
   if (dupContact) {
+    await backfillLeadName(dupContact.id, { ...fields, field_data: detail.field_data }).catch(() => {});
     await resolveAndPersistLeadCategory(dupContact.id, {
       leadPayload: { ...fields, ...detail, meta_campaign_id: detail.campaign_id, meta_form_id: form_id, meta_page_id: page_id },
     }).catch(() => {});

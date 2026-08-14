@@ -48,6 +48,23 @@ function latestStatusList(lead: Lead) {
   return [...new Set(values.filter(Boolean))].slice(0, 4);
 }
 
+function displayLeadName(lead: Pick<Lead, 'full_name' | 'email' | 'phone'>) {
+  const fullName = String(lead.full_name || '').trim();
+  if (fullName) return fullName;
+
+  const email = String(lead.email || '').trim();
+  if (email.includes('@')) {
+    const localPart = email.split('@')[0].replace(/[._-]+/g, ' ').trim();
+    if (localPart) {
+      return localPart.replace(/\b\w/g, char => char.toUpperCase());
+    }
+  }
+
+  const digits = String(lead.phone || '').replace(/\D/g, '');
+  if (digits) return `Lead ${digits.slice(-4)}`;
+  return 'No name';
+}
+
 export default function LeadsPage() {
   return (
     <AppShell title="Leads" subtitle="Browse, filter, and action your assigned leads">
@@ -442,14 +459,14 @@ function LeadsInner() {
                           disabled={lead.read_only_access}
                           checked={selectedIds.includes(lead.id)}
                           onChange={event => toggleLeadSelection(lead.id, event.target.checked)}
-                          aria-label={`Select ${lead.full_name || 'lead'}`}
+                          aria-label={`Select ${displayLeadName(lead)}`}
                           title={lead.read_only_access ? 'Read-only reassigned lead' : undefined}
                         />
                       </td>
                       <td className="px-4 py-3">
                         <Link href={`/leads/${lead.id}`} className="block">
                           <div className="flex min-w-0 items-center gap-2 font-medium text-slate-900 hover:text-brand-700">
-                            <span className="truncate">{lead.full_name || 'No name'}</span>
+                            <span className="truncate">{displayLeadName(lead)}</span>
                             {locked && <Lock className="h-3 w-3 text-amber-500" aria-label="Locked" />}
                           </div>
                           <div className="truncate text-xs text-slate-500">
@@ -760,7 +777,7 @@ function LeadsInner() {
             <div className="flex items-start gap-3">
               <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
               <div className="space-y-2">
-                <div className="font-semibold">{deleteLeadItem.full_name || 'Unnamed lead'}</div>
+                <div className="font-semibold">{displayLeadName(deleteLeadItem)}</div>
                 <div>This will permanently delete the lead and its direct CRM history like remarks, workflow, sessions, labels, call logs, and payment attachments.</div>
                 <div>Linked customer notes and chat records may remain in CRM but will no longer point to this lead.</div>
               </div>

@@ -23,6 +23,7 @@ const { validateLead } = require('./leadValidator');
 const graphClient = require('./metaGraphClient');
 const metaTokens = require('./metaTokenResolver');
 const { resolveCampaignName } = require('./leadCampaignResolver');
+const { backfillLeadName, normalizeFieldKey, parseNameFromFieldData } = require('./leadNameService');
 let campaignSyncRunning = false;
 
 
@@ -597,18 +598,17 @@ async function syncFormLeads(formId, options = {}) {
  */
 async function ingestGraphLead(lead, formId) {
   const leadgenId = lead.id;
+  const fields = parseFieldData(lead.field_data || []);
 
   // Check duplicate by meta_lead_id first (fast path)
   const dup = await query(`SELECT id FROM leads WHERE meta_lead_id = $1`, [leadgenId]);
   if (dup.rowCount > 0) {
+    await backfillLeadName(dup.rows[0].id, { ...fields, field_data: lead.field_data }).catch(() => {});
     await resolveAndPersistLeadCategory(dup.rows[0].id, {
       leadPayload: { ...lead, meta_campaign_id: lead.campaign_id, meta_form_id: formId },
     }).catch(() => {});
     return { status: 'duplicate', leadId: dup.rows[0].id, reason: 'meta_lead_id' };
   }
-
-  // Parse field data
-  const fields = parseFieldData(lead.field_data || []);
 
   // Same fake/test/invalid filter the webhook path uses — see leadValidator.js.
   const v = validateLead(fields);
@@ -628,6 +628,7 @@ async function ingestGraphLead(lead, formId) {
   // forms doesn't generate a duplicate CRM lead.
   const dupContact = await findExistingByContact({ phone: fields.phone, email: fields.email });
   if (dupContact) {
+    await backfillLeadName(dupContact.id, { ...fields, field_data: lead.field_data }).catch(() => {});
     await resolveAndPersistLeadCategory(dupContact.id, {
       leadPayload: { ...fields, ...lead, meta_campaign_id: lead.campaign_id, meta_form_id: formId },
     }).catch(() => {});
@@ -752,16 +753,14 @@ function parseFieldData(fieldData = []) {
   const out = {};
   for (const { name, values } of fieldData) {
     const v = Array.isArray(values) ? values[0] : values;
-    const key = (name || '').toLowerCase();
-    if (['full_name', 'name', 'first_name'].includes(key)) out.full_name = (out.full_name || '') + ' ' + v;
-    else if (['last_name'].includes(key)) out.full_name = (out.full_name || '') + ' ' + v;
-    else if (['email'].includes(key)) out.email = v;
-    else if (['phone_number', 'phone'].includes(key)) out.phone = v;
-    else if (['city'].includes(key)) out.city = v;
-    else if (['state'].includes(key)) out.state = v;
+    const key = normalizeFieldKey(name);
+    if (['email', 'email_address', 'mail'].includes(key)) out.email = v;
+    else if (['phone_number', 'phone', 'mobile', 'mobile_number', 'contact_number'].includes(key)) out.phone = v;
+    else if (['city', 'town'].includes(key)) out.city = v;
+    else if (['state', 'region'].includes(key)) out.state = v;
     else { out.custom = out.custom || {}; out.custom[name] = v; out[key] = v; }
   }
-  if (out.full_name) out.full_name = out.full_name.trim();
+  out.full_name = parseNameFromFieldData(fieldData);
   return out;
 }
 

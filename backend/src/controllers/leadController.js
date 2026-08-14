@@ -16,6 +16,7 @@ const { assertLabelVisible } = require('../services/leadLabelService');
 const { createLeadInteraction } = require('../services/leadInteractionService');
 const { validateLeadAssignee } = require('../services/leadAssigneeValidator');
 const { assertCreateReady } = require('../services/createReadinessService');
+const { applyLeadDisplayName } = require('../services/leadNameService');
 
 function humanizeValue(value) {
   return String(value || '')
@@ -596,7 +597,7 @@ exports.list = asyncHandler(async (req, res) => {
 
   const sql = `
     SELECT
-      l.id, l.full_name, l.phone, l.email, l.city, l.state,
+      l.id, l.full_name, l.phone, l.email, l.city, l.state, l.raw_payload,
       l.source, l.meta_form_id, l.campaign_label, l.product_tag,
       CASE WHEN l.source = 'manual' THEN 'Manual' ELSE INITCAP(l.source::text) END AS source_label,
       l.manual_added_by_user_id, manual_user.full_name AS manual_added_by_name, manual_user.role AS manual_added_by_role, l.manual_added_at,
@@ -712,7 +713,7 @@ exports.list = asyncHandler(async (req, res) => {
   `;
   const { rows } = await query(sql, params);
 
-  res.json({ success: true, data: { rows, total, page, pageSize } });
+  res.json({ success: true, data: { rows: rows.map(row => applyLeadDisplayName({ ...row })), total, page, pageSize } });
 });
 
 exports.getOne = asyncHandler(async (req, res) => {
@@ -811,7 +812,7 @@ exports.getOne = asyncHandler(async (req, res) => {
     labels = [];
   }
 
-  const lead = rows[0];
+  const lead = applyLeadDisplayName({ ...rows[0] });
   const latestRmUpdate = lead.latest_rm_update_id
     ? {
         title: lead.latest_rm_update_title,
