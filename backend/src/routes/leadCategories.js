@@ -5,7 +5,10 @@ const { asyncHandler, AppError } = require('../utils/errors');
 const service = require('../services/leadCategory/leadCategoryService');
 const { logActivity } = require('../utils/auditLog');
 
-router.use(authenticate, requireRole('super_admin', 'admin'));
+// This router is mounted at /api. Scope the admin guard to its own routes so
+// unrelated /api paths (notably /api/chat for RM/member users) can fall through
+// to their dedicated routers instead of being rejected here.
+router.use('/admin', authenticate, requireRole('super_admin', 'admin'));
 
 router.get('/admin/lead-category-rules', asyncHandler(async (_req, res) => {
   res.json({ success: true, data: await service.listRules() });
