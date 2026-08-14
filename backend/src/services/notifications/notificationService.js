@@ -219,8 +219,6 @@ async function notifyLeadsAssigned(input, runner = null) {
     entityType: leadIds.length === 1 ? 'lead' : 'lead_batch',
     entityId: leadIds.length === 1 ? leadIds[0] : null,
     dedupeKey: dedupeBase,
-    email: tpl.email,
-    emailType: tpl.emailType,
   }, runner);
 
   const rm = await recipients.getUserRm(assignedToUserId, runner);
@@ -233,12 +231,6 @@ async function notifyLeadsAssigned(input, runner = null) {
       metadata: { ...baseMeta, rm_user_id: rm.id },
       eventType: 'leads_assigned',
       dedupeKey: `${dedupeBase}:rm:${rm.id}`,
-      email: templates.shell({
-        title: `Team update: ${count} lead(s) assigned to ${assignedUser.full_name}`,
-        body: `${count} lead(s) were assigned to ${assignedUser.full_name}.`,
-        actionUrl: templates.frontendUrl('/leads'),
-      }),
-      emailType: 'leads_assigned',
     }, runner);
   }
 
