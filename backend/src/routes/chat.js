@@ -175,7 +175,16 @@ router.get('/conversations', asyncHandler(async (req, res) => {
     assignedFilter = `AND c.type = 'lead' AND EXISTS (
       SELECT 1 FROM leads assigned_filter_lead
        WHERE assigned_filter_lead.id = c.lead_id
-         AND assigned_filter_lead.assigned_to_user_id = $1
+         AND (
+           assigned_filter_lead.assigned_to_user_id = $1
+           OR EXISTS (
+             SELECT 1
+               FROM lead_assignments assigned_filter_la
+              WHERE assigned_filter_la.lead_id = assigned_filter_lead.id
+                AND assigned_filter_la.user_id = $1
+                AND assigned_filter_la.unassigned_at IS NULL
+           )
+         )
     )`;
   }
   if (session === 'open') {
@@ -192,7 +201,16 @@ router.get('/conversations', asyncHandler(async (req, res) => {
         SELECT 1 FROM leads l
          WHERE l.id = c.lead_id
            AND l.deleted_at IS NULL
-           AND l.assigned_to_user_id = $1
+           AND (
+             l.assigned_to_user_id = $1
+             OR EXISTS (
+               SELECT 1
+                 FROM lead_assignments la_scope
+                WHERE la_scope.lead_id = l.id
+                  AND la_scope.user_id = $1
+                  AND la_scope.unassigned_at IS NULL
+             )
+           )
       )`;
   } else if (req.user.role === 'rm') {
     roleScopeFilter = `AND (
@@ -205,10 +223,26 @@ router.get('/conversations', asyncHandler(async (req, res) => {
              l.assigned_to_user_id = $1
              OR l.pool_rm_id = $1
              OR EXISTS (
+               SELECT 1
+                 FROM lead_assignments la_scope
+                WHERE la_scope.lead_id = l.id
+                  AND la_scope.user_id = $1
+                  AND la_scope.unassigned_at IS NULL
+             )
+             OR EXISTS (
                SELECT 1 FROM users au
                 WHERE au.id = l.assigned_to_user_id
                   AND au.report_to_id = $1
                   AND au.deleted_at IS NULL
+             )
+             OR EXISTS (
+               SELECT 1
+                 FROM lead_assignments la_team_scope
+                 JOIN users au2 ON au2.id = la_team_scope.user_id
+                WHERE la_team_scope.lead_id = l.id
+                  AND la_team_scope.unassigned_at IS NULL
+                  AND au2.report_to_id = $1
+                  AND au2.deleted_at IS NULL
              )
            )
       )

@@ -9,11 +9,22 @@ async function loadLead(leadId, runner = { query }) {
     `SELECT l.id, l.full_name, l.phone, l.email, l.source, l.campaign_name,
             l.campaign_label, l.meta_campaign_id, l.meta_form_id,
             l.category, l.category_source, l.stage, l.call_status,
-            l.assigned_to_user_id, l.pool_rm_id, l.deleted_at,
+            l.assigned_to_user_id, active_assignment.user_id AS active_assignment_user_id,
+            l.pool_rm_id, l.deleted_at,
             u.full_name AS assigned_to_name,
-            u.report_to_id AS assigned_user_rm_id
+            u.report_to_id AS assigned_user_rm_id,
+            active_assignment_user.report_to_id AS active_assignment_user_rm_id
        FROM leads l
        LEFT JOIN users u ON u.id = l.assigned_to_user_id
+       LEFT JOIN LATERAL (
+         SELECT la.user_id
+           FROM lead_assignments la
+          WHERE la.lead_id = l.id
+            AND la.unassigned_at IS NULL
+          ORDER BY la.assigned_at DESC, la.id DESC
+          LIMIT 1
+       ) active_assignment ON TRUE
+       LEFT JOIN users active_assignment_user ON active_assignment_user.id = active_assignment.user_id
       WHERE l.id = $1 AND l.deleted_at IS NULL`,
     [leadId],
   );
@@ -41,16 +52,17 @@ async function canAccessLeadCommunication(user, leadId, runner = { query }) {
   }
 
   if (user.role === 'member' || user.role === 'partner') {
+    const isAssignedToUser = lead.assigned_to_user_id === user.id || lead.active_assignment_user_id === user.id;
     return {
-      allowed: lead.assigned_to_user_id === user.id,
-      reason: lead.assigned_to_user_id === user.id ? 'assigned_user' : 'not_assigned',
+      allowed: isAssignedToUser,
+      reason: isAssignedToUser ? 'assigned_user' : 'not_assigned',
       lead,
     };
   }
 
   if (user.role === 'rm') {
-    const isDirectlyAssignedToRm = lead.assigned_to_user_id === user.id;
-    const isAssignedInsideRmTeam = lead.assigned_user_rm_id === user.id;
+    const isDirectlyAssignedToRm = lead.assigned_to_user_id === user.id || lead.active_assignment_user_id === user.id;
+    const isAssignedInsideRmTeam = lead.assigned_user_rm_id === user.id || lead.active_assignment_user_rm_id === user.id;
     const isInRmPool = lead.pool_rm_id === user.id;
     return {
       allowed: isDirectlyAssignedToRm || isAssignedInsideRmTeam || isInRmPool,
@@ -81,7 +93,19 @@ async function getLeadCommunicationScope(user) {
   if (!user) return { sql: 'FALSE', params: [] };
   if (user.role === 'super_admin' || user.role === 'admin') return { sql: 'TRUE', params: [] };
   if (user.role === 'member' || user.role === 'partner') {
-    return { sql: 'l.assigned_to_user_id = $1', params: [user.id] };
+    return {
+      sql: `(
+        l.assigned_to_user_id = $1
+        OR EXISTS (
+          SELECT 1
+            FROM lead_assignments la_scope
+           WHERE la_scope.lead_id = l.id
+             AND la_scope.user_id = $1
+             AND la_scope.unassigned_at IS NULL
+        )
+      )`,
+      params: [user.id],
+    };
   }
   if (user.role === 'rm') {
     return {
@@ -90,10 +114,26 @@ async function getLeadCommunicationScope(user) {
         OR l.pool_rm_id = $1
         OR EXISTS (
           SELECT 1
+            FROM lead_assignments la_scope
+           WHERE la_scope.lead_id = l.id
+             AND la_scope.user_id = $1
+             AND la_scope.unassigned_at IS NULL
+        )
+        OR EXISTS (
+          SELECT 1
             FROM users au
            WHERE au.id = l.assigned_to_user_id
              AND au.report_to_id = $1
              AND au.deleted_at IS NULL
+        )
+        OR EXISTS (
+          SELECT 1
+            FROM lead_assignments la_team_scope
+            JOIN users au2 ON au2.id = la_team_scope.user_id
+           WHERE la_team_scope.lead_id = l.id
+             AND la_team_scope.unassigned_at IS NULL
+             AND au2.report_to_id = $1
+             AND au2.deleted_at IS NULL
         )
       )`,
       params: [user.id],
