@@ -181,7 +181,7 @@ router.get('/conversations', asyncHandler(async (req, res) => {
              SELECT 1
                FROM lead_assignments assigned_filter_la
               WHERE assigned_filter_la.lead_id = assigned_filter_lead.id
-                AND assigned_filter_la.user_id = $1
+                AND COALESCE(assigned_filter_la.assigned_to_user_id, assigned_filter_la.user_id) = $1
                 AND assigned_filter_la.unassigned_at IS NULL
            )
          )
@@ -207,7 +207,7 @@ router.get('/conversations', asyncHandler(async (req, res) => {
                SELECT 1
                  FROM lead_assignments la_scope
                 WHERE la_scope.lead_id = l.id
-                  AND la_scope.user_id = $1
+                  AND COALESCE(la_scope.assigned_to_user_id, la_scope.user_id) = $1
                   AND la_scope.unassigned_at IS NULL
              )
            )
@@ -226,7 +226,7 @@ router.get('/conversations', asyncHandler(async (req, res) => {
                SELECT 1
                  FROM lead_assignments la_scope
                 WHERE la_scope.lead_id = l.id
-                  AND la_scope.user_id = $1
+                  AND COALESCE(la_scope.assigned_to_user_id, la_scope.user_id) = $1
                   AND la_scope.unassigned_at IS NULL
              )
              OR EXISTS (
@@ -238,7 +238,7 @@ router.get('/conversations', asyncHandler(async (req, res) => {
              OR EXISTS (
                SELECT 1
                  FROM lead_assignments la_team_scope
-                 JOIN users au2 ON au2.id = la_team_scope.user_id
+                 JOIN users au2 ON au2.id = COALESCE(la_team_scope.assigned_to_user_id, la_team_scope.user_id)
                 WHERE la_team_scope.lead_id = l.id
                   AND la_team_scope.unassigned_at IS NULL
                   AND au2.report_to_id = $1

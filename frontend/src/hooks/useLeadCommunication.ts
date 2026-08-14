@@ -179,7 +179,7 @@ export function useLeadCommunication(leadId: string | null | undefined) {
 function isLeadCommunicationForbidden(error: unknown) {
   const response = (error as { response?: { status?: number; data?: { code?: string; error?: { code?: string } } } })?.response;
   const code = response?.data?.code || response?.data?.error?.code;
-  return response?.status === 403 || code === 'LEAD_COMMUNICATION_FORBIDDEN';
+  return code === 'LEAD_COMMUNICATION_FORBIDDEN';
 }
 
 export function leadCommunicationErrorMessage(error: unknown) {

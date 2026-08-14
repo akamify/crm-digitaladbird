@@ -182,7 +182,7 @@ function getFileUrl(path: string) {
 function chatErrorText(error: unknown) {
   const data = (error as { response?: { status?: number; data?: { code?: string; message?: string; error?: { code?: string; message?: string } } } })?.response?.data;
   const code = data?.code || data?.error?.code;
-  if (code === 'LEAD_COMMUNICATION_FORBIDDEN' || (error as { response?: { status?: number } })?.response?.status === 403) {
+  if (code === 'LEAD_COMMUNICATION_FORBIDDEN') {
     return 'You can communicate only with leads assigned to you.';
   }
   if (code === 'DIRECT_CHAT_DISABLED_FOR_ROLE') {

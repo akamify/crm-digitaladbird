@@ -9,7 +9,7 @@ async function loadLead(leadId, runner = { query }) {
     `SELECT l.id, l.full_name, l.phone, l.email, l.source, l.campaign_name,
             l.campaign_label, l.meta_campaign_id, l.meta_form_id,
             l.category, l.category_source, l.stage, l.call_status,
-            l.assigned_to_user_id, active_assignment.user_id AS active_assignment_user_id,
+            l.assigned_to_user_id, active_assignment.assigned_user_id AS active_assignment_user_id,
             l.pool_rm_id, l.deleted_at,
             u.full_name AS assigned_to_name,
             u.report_to_id AS assigned_user_rm_id,
@@ -17,14 +17,14 @@ async function loadLead(leadId, runner = { query }) {
        FROM leads l
        LEFT JOIN users u ON u.id = l.assigned_to_user_id
        LEFT JOIN LATERAL (
-         SELECT la.user_id
+         SELECT COALESCE(la.assigned_to_user_id, la.user_id) AS assigned_user_id
            FROM lead_assignments la
           WHERE la.lead_id = l.id
             AND la.unassigned_at IS NULL
           ORDER BY la.assigned_at DESC, la.id DESC
           LIMIT 1
        ) active_assignment ON TRUE
-       LEFT JOIN users active_assignment_user ON active_assignment_user.id = active_assignment.user_id
+       LEFT JOIN users active_assignment_user ON active_assignment_user.id = active_assignment.assigned_user_id
       WHERE l.id = $1 AND l.deleted_at IS NULL`,
     [leadId],
   );
@@ -100,7 +100,7 @@ async function getLeadCommunicationScope(user) {
           SELECT 1
             FROM lead_assignments la_scope
            WHERE la_scope.lead_id = l.id
-             AND la_scope.user_id = $1
+             AND COALESCE(la_scope.assigned_to_user_id, la_scope.user_id) = $1
              AND la_scope.unassigned_at IS NULL
         )
       )`,
@@ -116,7 +116,7 @@ async function getLeadCommunicationScope(user) {
           SELECT 1
             FROM lead_assignments la_scope
            WHERE la_scope.lead_id = l.id
-             AND la_scope.user_id = $1
+             AND COALESCE(la_scope.assigned_to_user_id, la_scope.user_id) = $1
              AND la_scope.unassigned_at IS NULL
         )
         OR EXISTS (
@@ -129,7 +129,7 @@ async function getLeadCommunicationScope(user) {
         OR EXISTS (
           SELECT 1
             FROM lead_assignments la_team_scope
-            JOIN users au2 ON au2.id = la_team_scope.user_id
+            JOIN users au2 ON au2.id = COALESCE(la_team_scope.assigned_to_user_id, la_team_scope.user_id)
            WHERE la_team_scope.lead_id = l.id
              AND la_team_scope.unassigned_at IS NULL
              AND au2.report_to_id = $1
