@@ -233,10 +233,12 @@ function ActivityInner() {
                         {log.old_value && <div className="truncate" title={log.old_value}><span className="text-slate-400">−</span> {log.old_value}</div>}
                         {log.new_value && <div className="truncate font-medium text-slate-800" title={log.new_value}><span className="text-emerald-500">+</span> {log.new_value}</div>}
                       </div>
+
                     ) : '—'}
                   </td>
-                  
+
                   <td className="py-3 pr-3 text-xs whitespace-nowrap">
+                    
                     <div className="text-slate-500 tabular-nums">{log.ip_address || '—'}</div>
                     {log.user_agent && (() => {
                       const p = parseUA(log.user_agent);
