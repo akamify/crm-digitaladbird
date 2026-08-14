@@ -199,11 +199,18 @@ router.get('/conversations', asyncHandler(async (req, res) => {
       (c.type != 'lead' AND COALESCE(c.is_external_unknown, FALSE) = FALSE)
       OR EXISTS (
         SELECT 1 FROM leads l
-        JOIN users au ON au.id = l.assigned_to_user_id
          WHERE l.id = c.lead_id
            AND l.deleted_at IS NULL
-           AND au.report_to_id = $1
-           AND au.deleted_at IS NULL
+           AND (
+             l.assigned_to_user_id = $1
+             OR l.pool_rm_id = $1
+             OR EXISTS (
+               SELECT 1 FROM users au
+                WHERE au.id = l.assigned_to_user_id
+                  AND au.report_to_id = $1
+                  AND au.deleted_at IS NULL
+             )
+           )
       )
     )`;
   }

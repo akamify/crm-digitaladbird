@@ -9,7 +9,7 @@ async function loadLead(leadId, runner = { query }) {
     `SELECT l.id, l.full_name, l.phone, l.email, l.source, l.campaign_name,
             l.campaign_label, l.meta_campaign_id, l.meta_form_id,
             l.category, l.category_source, l.stage, l.call_status,
-            l.assigned_to_user_id, l.deleted_at,
+            l.assigned_to_user_id, l.pool_rm_id, l.deleted_at,
             u.full_name AS assigned_to_name,
             u.report_to_id AS assigned_user_rm_id
        FROM leads l
@@ -49,9 +49,18 @@ async function canAccessLeadCommunication(user, leadId, runner = { query }) {
   }
 
   if (user.role === 'rm') {
+    const isDirectlyAssignedToRm = lead.assigned_to_user_id === user.id;
+    const isAssignedInsideRmTeam = lead.assigned_user_rm_id === user.id;
+    const isInRmPool = lead.pool_rm_id === user.id;
     return {
-      allowed: lead.assigned_user_rm_id === user.id,
-      reason: lead.assigned_user_rm_id === user.id ? 'rm_team' : 'outside_rm_team',
+      allowed: isDirectlyAssignedToRm || isAssignedInsideRmTeam || isInRmPool,
+      reason: isDirectlyAssignedToRm
+        ? 'rm_direct_assignment'
+        : isAssignedInsideRmTeam
+          ? 'rm_team'
+          : isInRmPool
+            ? 'rm_pool'
+            : 'outside_rm_team',
       lead,
     };
   }
@@ -76,11 +85,16 @@ async function getLeadCommunicationScope(user) {
   }
   if (user.role === 'rm') {
     return {
-      sql: `EXISTS (
-        SELECT 1 FROM users au
-         WHERE au.id = l.assigned_to_user_id
-           AND au.report_to_id = $1
-           AND au.deleted_at IS NULL
+      sql: `(
+        l.assigned_to_user_id = $1
+        OR l.pool_rm_id = $1
+        OR EXISTS (
+          SELECT 1
+            FROM users au
+           WHERE au.id = l.assigned_to_user_id
+             AND au.report_to_id = $1
+             AND au.deleted_at IS NULL
+        )
       )`,
       params: [user.id],
     };
