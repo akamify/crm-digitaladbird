@@ -4,6 +4,7 @@ import { apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api';
 
 export interface AssignmentSettings {
   autoAssignEnabled: boolean;
+  instantDistributionEnabled?: boolean;
   assignStartHour: number;
   assignEndHour: number;
   timezone: string;

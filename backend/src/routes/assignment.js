@@ -49,6 +49,7 @@ router.get('/admin/assignment/settings', authenticate, requireRole(...ADMINS), a
 router.patch('/admin/assignment/settings', authenticate, requireRole(...ADMINS), asyncHandler(async (req, res) => {
   const map = {
     autoAssignEnabled: ['auto_assign_enabled', 'auto_distribution_enabled'],
+    instantDistributionEnabled: ['instant_distribution_enabled'],
     assignStartHour: ['assign_start_hour', 'distribution_start_hour'],
     assignEndHour: ['assign_end_hour', 'distribution_end_hour'],
     timezone: ['assignment_timezone', 'distribution_timezone'],

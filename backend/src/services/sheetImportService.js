@@ -23,7 +23,7 @@ const { query, withTransaction } = require('../config/database');
 const logger         = require('../utils/logger');
 const assignmentEngine = require('./leadAssignmentEngine');
 const { onLeadCreated } = require('./leadEventService');
-const { isDistributionActive } = require('./distributionScheduler');
+const { isInstantDistributionEnabled } = require('./distributionScheduler');
 const { resolveLeadCategory, resolveAndPersistLeadCategory } = require('./leadCategory/leadCategoryResolver');
 const { normalizeCategory, sanitizeSheetName } = require('./googleSheets/googleSheetNameResolver');
 
@@ -375,8 +375,8 @@ async function importFromConfig(opts) {
       if (assign) {
         try {
           await assignmentEngine.runApprovedRequestFulfillment({ limit: 100 });
-          if (await isDistributionActive()) {
-            await assignmentEngine.runAutoAssignment({ limit: 100, reason: 'sheet_import' });
+          if (await isInstantDistributionEnabled()) {
+            await assignmentEngine.runAutoAssignment({ limit: 100, reason: 'sheet_import', bypassWindow: true });
           }
         } catch (e) {
           logger.warn({ leadId: newId, err: e.message }, '[SheetImport] distribution failed (lead saved, will re-assign later)');

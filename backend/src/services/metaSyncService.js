@@ -15,7 +15,7 @@ const config = require('../config/env');
 const { randomUUID } = require('crypto');
 const { query, withTransaction } = require('../config/database');
 const logger = require('../utils/logger');
-const { isDistributionActive } = require('./distributionScheduler');
+const { isInstantDistributionEnabled } = require('./distributionScheduler');
 const assignmentEngine = require('./leadAssignmentEngine');
 const { onLeadCreated, findExistingByContact } = require('./leadEventService');
 const { resolveLeadCategory, resolveAndPersistLeadCategory } = require('./leadCategory/leadCategoryResolver');
@@ -732,8 +732,8 @@ async function ingestGraphLead(lead, formId) {
   try {
     const request = await assignmentEngine.runApprovedRequestFulfillment({ limit: 100 });
     let auto = { reason: 'QUEUED_OUTSIDE_HOURS' };
-    if (await isDistributionActive()) {
-      auto = await assignmentEngine.runAutoAssignment({ limit: 100, reason: 'meta_periodic_sync' });
+    if (await isInstantDistributionEnabled()) {
+      auto = await assignmentEngine.runAutoAssignment({ limit: 100, reason: 'meta_periodic_sync', bypassWindow: true });
     }
     assigned = { request, auto };
   } catch (err) {

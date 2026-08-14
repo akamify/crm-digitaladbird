@@ -14,7 +14,7 @@ const crypto = require('crypto');
 const config = require('../config/env');
 const { query, withTransaction } = require('../config/database');
 const logger = require('../utils/logger');
-const { isDistributionActive } = require('./distributionScheduler');
+const { isInstantDistributionEnabled } = require('./distributionScheduler');
 const assignmentEngine = require('./leadAssignmentEngine');
 const { appendLead: sheetAppend } = require('./googleSheetsService');
 const { onLeadCreated, findExistingByContact } = require('./leadEventService');
@@ -239,12 +239,12 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
   // Outside those hours the lead stays in the queue and will be distributed at 8 AM.
   const request = await assignmentEngine.runApprovedRequestFulfillment({ limit: 100 });
   let auto = { reason: 'QUEUED_OUTSIDE_HOURS' };
-  if (await isDistributionActive()) {
-    auto = await assignmentEngine.runAutoAssignment({ limit: 100, reason: 'meta_webhook' });
+  if (await isInstantDistributionEnabled()) {
+    auto = await assignmentEngine.runAutoAssignment({ limit: 100, reason: 'meta_webhook', bypassWindow: true });
     const assigned = { request, auto };
     logger.info({ ...ctx, step: 'H.assigned', leadId: inserted, assigned }, '[meta-ingest]');
   } else {
-    logger.info({ ...ctx, step: 'H.queued_off_hours', leadId: inserted }, '[meta-ingest] distribution paused — lead stays unassigned until 08:00 IST');
+    logger.info({ ...ctx, step: 'H.queued_off_hours', leadId: inserted }, '[meta-ingest] instant distribution is off — lead stays unassigned until scheduled/manual run');
   }
 
   const assigned = { request, auto };

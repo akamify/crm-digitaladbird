@@ -53,6 +53,12 @@ async function isDistributionActive() {
     && !!normalizeTime(settings.scheduled_assignment_time);
 }
 
+async function isInstantDistributionEnabled() {
+  const settings = await getSettings();
+  return asBool(settings.auto_assign_enabled ?? settings.auto_distribution_enabled)
+    && asBool(settings.instant_distribution_enabled);
+}
+
 async function acquireRunLock() {
   return withTransaction(async (client) => {
     await client.query(
@@ -186,6 +192,7 @@ module.exports = {
   distributeQueue: runScheduledDistribution,
   runScheduledDistribution,
   isDistributionActive,
+  isInstantDistributionEnabled,
   getSetting: async (key, fallback) => {
     const settings = await getSettings();
     return settings[key] ?? fallback;

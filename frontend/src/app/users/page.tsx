@@ -2,17 +2,19 @@
 import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { UserPlus, Users as UsersIcon, UserRound, Trash2, AlertTriangle } from 'lucide-react';
+import { UserPlus, Users as UsersIcon, UserRound, Trash2, AlertTriangle, Gauge } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Skeleton, EmptyState, Modal } from '@/components/ui/Modal';
 import { UserFormModal } from '@/components/users/UserFormModal';
-import { useDeleteUser, useUsers } from '@/hooks/useUsers';
+import { useDeleteUser, useUpdateUser, useUsers } from '@/hooks/useUsers';
 import { useAuth } from '@/lib/auth';
 import { fmtRelative, fmtDate, humanize, initials, clsx } from '@/lib/format';
 import type { User } from '@/types';
+
+const QUICK_CAPS = [10, 20, 40, 100, 200];
 
 export default function UsersPage() {
   return (
@@ -27,11 +29,14 @@ function UsersInner() {
   const { user } = useAuth();
   const { data: users, isLoading } = useUsers();
   const deleteUser = useDeleteUser();
+  const updateUser = useUpdateUser();
 
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<User | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
+  const [capTarget, setCapTarget] = useState<User | null>(null);
+  const [capValue, setCapValue] = useState('');
 
   const filtered = useMemo(() => {
     const list = users ?? [];
@@ -48,6 +53,34 @@ function UsersInner() {
 
   const rms = useMemo(() => (users ?? []).filter(u => u.role === 'rm' || u.role === 'super_admin'), [users]);
   const canManage = user?.role === 'super_admin';
+
+  const openCapModal = (target: User) => {
+    setCapTarget(target);
+    setCapValue(target.daily_lead_cap && target.daily_lead_cap > 0 ? String(target.daily_lead_cap) : '');
+  };
+
+  const saveLeadCap = () => {
+    if (!capTarget) return;
+    const parsed = Number.parseInt(capValue.trim(), 10);
+    if (!Number.isFinite(parsed) || parsed < 1 || parsed > 5000) {
+      toast.error('Enter a daily lead cap between 1 and 5000');
+      return;
+    }
+
+    updateUser.mutate(
+      { id: capTarget.id, daily_lead_cap: parsed },
+      {
+        onSuccess: () => {
+          toast.success(`Daily lead cap updated to ${parsed}`);
+          setCapTarget(null);
+          setCapValue('');
+        },
+        onError: (error: any) => {
+          toast.error(error?.response?.data?.error?.message || 'Could not update daily lead cap');
+        },
+      },
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -124,6 +157,20 @@ function UsersInner() {
                         <Link onClick={(e) => e.stopPropagation()} href={`/dashboard/admin/users/${u.id}`} className="btn-outline inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs">
                           <UserRound className="h-3.5 w-3.5" /> Profile
                         </Link>
+                        {canManage && u.role === 'member' && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openCapModal(u);
+                            }}
+                            className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-brand-700 hover:bg-brand-50"
+                            title="Set daily lead cap"
+                          >
+                            <Gauge className="h-3.5 w-3.5" />
+                            Daily leads
+                          </button>
+                        )}
                         {canManage && u.id !== user?.id && ['rm', 'member'].includes(u.role) && (
                           <button
                             type="button"
@@ -151,6 +198,76 @@ function UsersInner() {
       {canManage && (
         <UserFormModal open={open} onClose={() => setOpen(false)} initial={editing} rms={rms} />
       )}
+
+      <Modal
+        open={!!capTarget}
+        onClose={() => {
+          setCapTarget(null);
+          setCapValue('');
+        }}
+        title="Set Daily Lead Limit"
+        description="This is a hard blocker. Auto distribution will stop assigning new leads to this member after the daily cap is reached."
+        size="md"
+        footer={(
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setCapTarget(null);
+                setCapValue('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button size="sm" loading={updateUser.isPending} onClick={saveLeadCap}>
+              Save limit
+            </Button>
+          </>
+        )}
+      >
+        <div className="space-y-4">
+          <div className="rounded-xl border border-brand-100 bg-brand-50/70 p-4">
+            <div className="text-sm font-medium text-slate-900">{capTarget?.full_name || 'Member'}</div>
+            <div className="mt-1 text-xs text-slate-600">
+              Current cap: {capTarget?.daily_lead_cap ?? 50} leads per day
+            </div>
+          </div>
+
+          <Input
+            label="Daily lead cap"
+            type="number"
+            min={1}
+            max={5000}
+            step={1}
+            value={capValue}
+            onChange={(e) => setCapValue(e.target.value)}
+            placeholder="Enter daily lead limit"
+            hint="Examples: 10, 20, 40, 100, 200. Once this limit is reached, no more fresh leads will be auto-assigned today."
+          />
+
+          <div className="space-y-2">
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Quick set</div>
+            <div className="flex flex-wrap gap-2">
+              {QUICK_CAPS.map((cap) => (
+                <button
+                  key={cap}
+                  type="button"
+                  onClick={() => setCapValue(String(cap))}
+                  className={clsx(
+                    'rounded-lg border px-3 py-2 text-sm transition',
+                    capValue === String(cap)
+                      ? 'border-brand-300 bg-brand-50 text-brand-700'
+                      : 'border-slate-200 bg-white text-slate-700 hover:border-brand-200 hover:text-brand-700',
+                  )}
+                >
+                  {cap} / day
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         open={!!deleteTarget}

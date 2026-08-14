@@ -45,6 +45,7 @@ async function getAssignmentSettings(client = null) {
   const s = await settingRows(client);
   return {
     autoAssignEnabled: asBool(s.auto_assign_enabled ?? s.auto_distribution_enabled, false),
+    instantDistributionEnabled: asBool(s.instant_distribution_enabled, false),
     assignStartHour: asInt(s.assign_start_hour ?? s.distribution_start_hour, 8),
     assignEndHour: asInt(s.assign_end_hour ?? s.distribution_end_hour, 19),
     timezone: s.assignment_timezone || s.distribution_timezone || 'Asia/Kolkata',
@@ -256,6 +257,75 @@ async function getEligibleRmTeams(client) {
     if (members.length) teams.push({ rm, members });
   }
   return teams;
+}
+
+function memberAssignedInRun(member) {
+  return Number(member?.assigned_in_run || 0);
+}
+
+function memberEffectiveTodayCount(member) {
+  return Number(member?.today_count || 0) + memberAssignedInRun(member);
+}
+
+function memberHasRemainingDailyCapacity(member) {
+  const cap = Number(member?.daily_lead_cap ?? 50);
+  if (!Number.isFinite(cap) || cap <= 0) return true;
+  return memberEffectiveTodayCount(member) < cap;
+}
+
+function normalizeTeamStateForRun(teams) {
+  return (teams || []).map(team => ({
+    ...team,
+    members: (team.members || []).map(member => ({
+      ...member,
+      daily_lead_cap: Number(member?.daily_lead_cap ?? 50),
+      today_count: Number(member?.today_count || 0),
+      pending_count: Number(member?.pending_count || 0),
+      assigned_in_run: 0,
+    })),
+  }));
+}
+
+function getEligibleTeamsForRun(teams) {
+  return (teams || [])
+    .map(team => ({
+      ...team,
+      eligibleMembers: (team.members || []).filter(memberHasRemainingDailyCapacity),
+    }))
+    .filter(team => team.eligibleMembers.length > 0);
+}
+
+function compareTeamDistributionLoad(left, right) {
+  const leftEligible = Math.max(1, left.eligibleMembers.length);
+  const rightEligible = Math.max(1, right.eligibleMembers.length);
+  const leftAssigned = left.members.reduce((sum, member) => sum + memberAssignedInRun(member), 0);
+  const rightAssigned = right.members.reduce((sum, member) => sum + memberAssignedInRun(member), 0);
+  const assignedCompare = (leftAssigned * rightEligible) - (rightAssigned * leftEligible);
+  if (assignedCompare !== 0) return assignedCompare;
+
+  const leftLoad = left.members.reduce((sum, member) => sum + memberEffectiveTodayCount(member), 0);
+  const rightLoad = right.members.reduce((sum, member) => sum + memberEffectiveTodayCount(member), 0);
+  const loadCompare = (leftLoad * rightEligible) - (rightLoad * leftEligible);
+  if (loadCompare !== 0) return loadCompare;
+
+  return 0;
+}
+
+async function pickBalancedRmTeam(client, teams) {
+  if (!teams.length) return null;
+  if (teams.length === 1) return teams[0];
+
+  const ranked = [...teams].sort((left, right) => {
+    const loadCompare = compareTeamDistributionLoad(left, right);
+    if (loadCompare !== 0) return loadCompare;
+    return String(left.rm?.id || '').localeCompare(String(right.rm?.id || ''));
+  });
+  const best = ranked[0];
+  const tied = ranked.filter(team => compareTeamDistributionLoad(team, best) === 0);
+  if (tied.length === 1) return best;
+
+  const pickedRm = await pickRoundRobinFromScope(client, RM_POOL_RULE_NAME, tied.map(team => team.rm));
+  return tied.find(team => team.rm.id === pickedRm?.id) || best;
 }
 
 async function validateTargetMember(client, memberId, actor = null) {
@@ -803,7 +873,7 @@ async function runAutoAssignment({ limit = 100, reason = 'auto_round_robin', act
       remainingLimit = Math.max(0, remainingLimit - Number(approvedRequestFulfillment.assigned || 0));
     }
 
-    const teams = await getEligibleRmTeams(client);
+    const teams = normalizeTeamStateForRun(await getEligibleRmTeams(client));
     if (!teams.length) {
       if (Number(approvedRequestFulfillment.assigned || 0) > 0) {
         return {
@@ -839,9 +909,11 @@ async function runAutoAssignment({ limit = 100, reason = 'auto_round_robin', act
     const results = [];
     const assignedByMember = new Map();
     for (const lead of leads) {
-      const team = await pickRoundRobinFromScope(client, RM_POOL_RULE_NAME, teams.map(t => t.rm));
-      const fullTeam = teams.find(t => t.rm.id === team?.id);
-      const member = fullTeam ? await pickRoundRobinFromScope(client, `__assignment_engine_rm_team__:${fullTeam.rm.id}`, fullTeam.members) : null;
+      const eligibleTeams = getEligibleTeamsForRun(teams);
+      const team = await pickBalancedRmTeam(client, eligibleTeams);
+      const member = team
+        ? await pickRoundRobinFromScope(client, `__assignment_engine_rm_team__:${team.rm.id}`, team.eligibleMembers)
+        : null;
       if (!member) break;
       const upd = await client.query(
         `UPDATE leads
@@ -861,6 +933,8 @@ async function runAutoAssignment({ limit = 100, reason = 'auto_round_robin', act
         reason,
       });
       assigned++;
+      const trackedMember = team.members.find(item => item.id === member.id);
+      if (trackedMember) trackedMember.assigned_in_run = memberAssignedInRun(trackedMember) + 1;
       if (!assignedByMember.has(member.id)) assignedByMember.set(member.id, []);
       assignedByMember.get(member.id).push(lead.id);
       results.push({ leadId: lead.id, assigned: true, memberId: member.id });

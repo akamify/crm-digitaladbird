@@ -74,22 +74,37 @@ function DistributionInner() {
           <div className="space-y-1">
             <h2 className="text-sm font-semibold text-slate-900">Scheduled Lead Assignment</h2>
             <p className="text-sm text-slate-500">Saved leads are assigned once per day at the configured IST time.</p>
+            <p className="text-xs text-slate-500">When Instant Distribution is on, every newly saved lead will try to assign immediately using the same RM-team round robin logic.</p>
             <p className="text-xs text-slate-500">Leads are first divided among eligible RMs, then each RM&apos;s leads are assigned to available team members using round robin.</p>
             <p className="text-xs text-slate-500">Leads will be assigned only to active Members and Partners.</p>
             <p className="text-xs text-slate-500">Manual assignment and request approval will continue to work even when auto distribution is off.</p>
           </div>
-          <label className="flex items-center gap-3 rounded-full border border-slate-200 px-3 py-2">
-            <span className={clsx('text-sm font-medium', settings?.autoAssignEnabled ? 'text-emerald-700' : 'text-slate-600')}>
-              {settings?.autoAssignEnabled ? 'ON' : 'OFF'}
-            </span>
-            <input
-              type="checkbox"
-              className="h-4 w-4"
-              checked={!!settings?.autoAssignEnabled}
-              onChange={(e) => saveSetting({ autoAssignEnabled: e.target.checked })}
-              disabled={updateSettings.isPending || overview.isLoading}
-            />
-          </label>
+          <div className="flex flex-col gap-2">
+            <label className="flex items-center gap-3 rounded-full border border-slate-200 px-3 py-2">
+              <span className={clsx('text-sm font-medium', settings?.autoAssignEnabled ? 'text-emerald-700' : 'text-slate-600')}>
+                Scheduled Auto Distribution {settings?.autoAssignEnabled ? 'ON' : 'OFF'}
+              </span>
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={!!settings?.autoAssignEnabled}
+                onChange={(e) => saveSetting({ autoAssignEnabled: e.target.checked })}
+                disabled={updateSettings.isPending || overview.isLoading}
+              />
+            </label>
+            <label className="flex items-center gap-3 rounded-full border border-slate-200 px-3 py-2">
+              <span className={clsx('text-sm font-medium', settings?.instantDistributionEnabled ? 'text-emerald-700' : 'text-slate-600')}>
+                Instant Distribution {settings?.instantDistributionEnabled ? 'ON' : 'OFF'}
+              </span>
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={!!settings?.instantDistributionEnabled}
+                onChange={(e) => saveSetting({ instantDistributionEnabled: e.target.checked })}
+                disabled={updateSettings.isPending || overview.isLoading || !settings?.autoAssignEnabled}
+              />
+            </label>
+          </div>
         </div>
 
         <div className="mt-5 grid gap-3 md:grid-cols-3">
@@ -99,9 +114,11 @@ function DistributionInner() {
           <InfoCard label="Available team members" value={String(stats.available_team_members ?? 0)} hint="Members and partners only" />
           <InfoCard
             label="Current State"
-            value={settings?.autoAssignEnabled
-              ? `Saved leads will be assigned daily at ${settings.scheduledAssignmentTime || 'not set'} IST.`
-              : 'Scheduled assignment is disabled. Saved leads will not auto-assign.'}
+            value={!settings?.autoAssignEnabled
+              ? 'Auto distribution is disabled. New leads will stay queued until manual assignment.'
+              : settings?.instantDistributionEnabled
+                ? 'New leads will try to assign immediately on arrival using the same round robin logic.'
+                : `Saved leads will be assigned daily at ${settings.scheduledAssignmentTime || 'not set'} IST.`}
           />
           <InfoCard label="Last Run" value={settings?.lastScheduledRunAt ? formatISTDateTime(settings.lastScheduledRunAt) : 'Not run yet'} />
           <InfoCard label="Last Result" value={settings?.lastDistributionStatus || 'Not available'} />

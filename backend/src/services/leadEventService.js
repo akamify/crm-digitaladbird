@@ -123,8 +123,8 @@ function onLeadCreated(leadId, { source = 'unknown' } = {}) {
           const scheduler = require('./distributionScheduler');
           const request = await assignmentEngine.runApprovedRequestFulfillment({ limit: 100 });
           let auto = { assigned: 0, skipped: true, reason: 'SCHEDULED_DISTRIBUTION_INACTIVE' };
-          if (await scheduler.isDistributionActive()) {
-            auto = await assignmentEngine.runAutoAssignment({ limit: 100, reason: `${source}_fanout` });
+          if (await scheduler.isInstantDistributionEnabled()) {
+            auto = await assignmentEngine.runAutoAssignment({ limit: 100, reason: `${source}_fanout`, bypassWindow: true });
           }
           if ((request.assigned || 0) > 0 || (auto.assigned || 0) > 0) {
             logger.info({ leadId, source, requestAssigned: request.assigned, autoAssigned: auto.assigned }, '[lead-fanout] assignment engine topped up on new lead');
