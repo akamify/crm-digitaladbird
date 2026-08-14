@@ -183,4 +183,3 @@ run().catch((e) => {
   logger.error({ e }, 'Migration failed');
   process.exit(1);
 });
-
