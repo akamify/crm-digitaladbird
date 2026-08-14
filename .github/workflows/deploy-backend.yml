@@ -4,28 +4,30 @@ on:
   push:
     branches:
       - main
+    paths:
+      - "backend/**"
+      - "ecosystem.config.js"
+      - "deploy*.sh"
+      - "update-vps.sh"
+      - ".github/workflows/deploy-backend.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-crm-backend-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-
   deploy:
-
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
-
       - name: Deploy Backend VPS
-
         uses: appleboy/ssh-action@v1.2.0
-
         with:
-
           host: ${{ secrets.VPS_HOST }}
-
           username: ${{ secrets.VPS_USER }}
-
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-
           port: ${{ secrets.VPS_PORT }}
-
           script: |
             bash /root/crm-digitaladbird/backend/deploy.sh
