@@ -1,5 +1,6 @@
 const { AppError } = require('../utils/errors');
 const { query } = require('../config/database');
+const logger = require('../utils/logger');
 
 /**
  * Role hierarchy: super_admin > rm > member
@@ -10,8 +11,16 @@ const { query } = require('../config/database');
 function requireRole(...roles) {
   return (req, _res, next) => {
     if (!req.user)                    return next(new AppError(401, 'NO_USER',   'Not authenticated'));
-    if (!roles.includes(req.user.role))
-                                      return next(new AppError(403, 'FORBIDDEN', 'Insufficient permissions'));
+    if (!roles.includes(req.user.role)) {
+      logger.warn({
+        path: req.originalUrl || req.path,
+        method: req.method,
+        userId: req.user.id,
+        role: req.user.role,
+        requiredRoles: roles,
+      }, 'RBAC denied request');
+      return next(new AppError(403, 'FORBIDDEN', 'Insufficient permissions'));
+    }
     next();
   };
 }

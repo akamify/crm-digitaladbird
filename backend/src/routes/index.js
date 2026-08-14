@@ -31,6 +31,7 @@ const {
   saveWorkflowRemark,
 } = require('../services/leadWorkflowRemarkService');
 const { createLeadInteraction } = require('../services/leadInteractionService');
+const { assertLeadCommunicationAccess } = require('../services/leadCommunicationAccess');
 
 // Loads a lead-request enriched with user + RM context and emits the
 // appropriate `lead-request:<kind>` Socket.IO event so admin + RM + the
@@ -5560,14 +5561,7 @@ function hasColdStep2Status(value) {
 router.get('/leads/:id/workflow', authenticate, asyncHandler(async (req, res) => {
   const leadId = req.params.id;
 
-  const { rows: [lead] } = await query(
-    `SELECT id, assigned_to_user_id, category FROM leads WHERE id = $1 AND deleted_at IS NULL`, [leadId]
-  );
-  if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
-
-  if (req.user.role === 'member' && lead.assigned_to_user_id !== req.user.id) {
-    throw new AppError(403, 'FORBIDDEN', 'Lead not assigned to you');
-  }
+  const lead = await assertLeadCommunicationAccess(req.user, leadId);
 
   const { rows: [wf] } = await query(
     `SELECT * FROM lead_workflow WHERE lead_id = $1`, [leadId]
@@ -5666,13 +5660,7 @@ router.post('/leads/:id/workflow/level', authenticate, asyncHandler(async (req, 
   if (step2Statuses.length === 0) throw new AppError(400, 'INVALID', 'At least one Step 2 status is required.');
   const primaryLeadLevel = step2Statuses[0];
 
-  const { rows: [lead] } = await query(
-    `SELECT id, assigned_to_user_id, category FROM leads WHERE id = $1 AND deleted_at IS NULL`, [leadId]
-  );
-  if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
-  if (req.user.role === 'member' && lead.assigned_to_user_id !== req.user.id) {
-    throw new AppError(403, 'FORBIDDEN', 'Lead not assigned to you');
-  }
+  const lead = await assertLeadCommunicationAccess(req.user, leadId);
 
   const allowedForCategory = levelOptionsForCategory(lead.category);
   if (step2Statuses.some(status => !allowedForCategory.includes(status))) {
@@ -5729,13 +5717,7 @@ router.patch('/leads/:id/workflow/followup', authenticate, asyncHandler(async (r
   const leadId = req.params.id;
   const fields = req.body;
 
-  const { rows: [lead] } = await query(
-    `SELECT id, assigned_to_user_id FROM leads WHERE id = $1 AND deleted_at IS NULL`, [leadId]
-  );
-  if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
-  if (req.user.role === 'member' && lead.assigned_to_user_id !== req.user.id) {
-    throw new AppError(403, 'FORBIDDEN', 'Lead not assigned to you');
-  }
+  await assertLeadCommunicationAccess(req.user, leadId);
 
   const { rows: [existing] } = await query(
     `SELECT lead_level, step_2_statuses FROM lead_workflow WHERE lead_id = $1`, [leadId]
@@ -5841,13 +5823,7 @@ router.post('/leads/:id/workflow/conversion', authenticate, asyncHandler(async (
   const { followup_status, address, total_payment, part_payment, services } = req.body;
   const transactionId = String(req.body.transaction_id || '').trim();
 
-  const { rows: [lead] } = await query(
-    `SELECT id, assigned_to_user_id, category FROM leads WHERE id = $1 AND deleted_at IS NULL`, [leadId]
-  );
-  if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
-  if (req.user.role === 'member' && lead.assigned_to_user_id !== req.user.id) {
-    throw new AppError(403, 'FORBIDDEN', 'Lead not assigned to you');
-  }
+  const lead = await assertLeadCommunicationAccess(req.user, leadId);
   const customerType = String(lead.category || '').toLowerCase();
   if (!['partner', 'trader'].includes(customerType)) {
     throw new AppError(400, 'INVALID_LEAD_CATEGORY', 'Conversion requires a Partner or Trader lead category.');
