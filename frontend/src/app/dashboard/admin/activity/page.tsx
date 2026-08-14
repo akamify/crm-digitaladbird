@@ -235,6 +235,7 @@ function ActivityInner() {
                       </div>
                     ) : '—'}
                   </td>
+                  
                   <td className="py-3 pr-3 text-xs whitespace-nowrap">
                     <div className="text-slate-500 tabular-nums">{log.ip_address || '—'}</div>
                     {log.user_agent && (() => {
