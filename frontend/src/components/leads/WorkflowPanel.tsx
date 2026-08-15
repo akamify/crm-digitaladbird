@@ -29,8 +29,8 @@ const REMARK_DISPLAY: Record<string, { label: string; bg: string; text: string; 
   ni:                       { label: 'NI (No Incoming)',         bg: 'bg-pink-50',    text: 'text-pink-700',    ring: 'ring-pink-400' },
   in:                       { label: 'IN (Invalid Number)',      bg: 'bg-slate-50',   text: 'text-slate-700',   ring: 'ring-slate-400' },
   cb:                       { label: 'CB (Call Busy)',           bg: 'bg-yellow-50',  text: 'text-yellow-700',  ring: 'ring-yellow-400' },
-  session_730_attend:       { label: '7:30 Session Attend',      bg: 'bg-emerald-50', text: 'text-emerald-700', ring: 'ring-emerald-400' },
-  yes_after_730_session:    { label: 'Yes After 7:30 Session',   bg: 'bg-teal-50',    text: 'text-teal-700',    ring: 'ring-teal-400' },
+  session_730_attend:       { label: '9:00 Session Attend',      bg: 'bg-emerald-50', text: 'text-emerald-700', ring: 'ring-emerald-400' },
+  yes_after_730_session:    { label: 'Yes After 9:00 Session',   bg: 'bg-teal-50',    text: 'text-teal-700',    ring: 'ring-teal-400' },
 };
 
 /* ── Level display labels + colors ──────────────────────────────────── */
@@ -70,7 +70,7 @@ const STEP_CONFIG = [
 ];
 
 const FOLLOWUP_FIELDS = [
-  { key: 'attendance_730', label: '7:30 PM Attendance', icon: '🕢' },
+  { key: 'attendance_730', label: '9:00 PM Session Attend', icon: '🕢' },
   { key: 'yes_confirmation', label: 'Yes Confirmation', icon: '✅' },
   { key: 'day_1',  label: 'Day 1',  icon: '1️⃣' },
   { key: 'day_2',  label: 'Day 2',  icon: '2️⃣' },

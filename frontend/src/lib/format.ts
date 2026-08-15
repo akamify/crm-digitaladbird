@@ -68,6 +68,8 @@ export const callStatusChip: Record<string, string> = {
   rnr:            'chip-slate',
   invalid_number: 'chip-red',
   custom_remark:  'chip-blue',
+  session_730_attend: 'chip-green',
+  yes_after_730_session: 'chip-blue',
 };
 
 export const stageChip: Record<string, string> = {
@@ -102,6 +104,8 @@ const CALL_STATUS_LABELS: Record<string, string> = {
   rnr:            'RNR',
   invalid_number: 'Invalid Number',
   custom_remark:  'Remark',
+  session_730_attend: '9:00 Session Attend',
+  yes_after_730_session: 'Yes After 9:00 Session',
 };
 
 export function humanize(s: string | null | undefined): string {

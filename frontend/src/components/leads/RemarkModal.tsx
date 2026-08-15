@@ -45,7 +45,7 @@ export function RemarkModal({ leadId, open, onClose, mode = 'default' }: Props) 
   const isRmMode = mode === 'rm_update';
   const { user } = useAuth();
   const [remark,   setRemark]   = useState('');
-  const [statuses, setStatuses] = useState<CallStatus[]>(['not_called']);
+  const [statuses, setStatuses] = useState<CallStatus[]>([]);
   const [stage,    setStage]    = useState<LeadStage | ''>('');
   const [followAt, setFollowAt] = useState('');
   const [releaseLock, setReleaseLock] = useState(true);
@@ -68,7 +68,7 @@ export function RemarkModal({ leadId, open, onClose, mode = 'default' }: Props) 
   useEffect(() => {
     if (!open) return;
     setRemark('');
-    setStatuses(['not_called']);
+    setStatuses([]);
     setStage('');
     setFollowAt('');
     setReleaseLock(true);
@@ -81,8 +81,7 @@ export function RemarkModal({ leadId, open, onClose, mode = 'default' }: Props) 
     setNextFollowup('');
   }, [open, isRmMode]);
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
+  async function submitRemark() {
     if (followAt && new Date(followAt).getTime() <= Date.now()) { toast.error('Follow-up must be scheduled in the future'); return; }
     if (nextFollowup && new Date(nextFollowup).getTime() <= Date.now()) { toast.error('RM follow-up must be scheduled in the future'); return; }
     if (statuses.length === 0 && !remark.trim()) { toast.error('Select at least one status or write a remark.'); return; }
@@ -109,13 +108,18 @@ export function RemarkModal({ leadId, open, onClose, mode = 'default' }: Props) 
       });
 
       toast.success('Remark saved');
-      setRemark(''); setStatuses(['not_called']); setStage(''); setFollowAt(''); setReleaseLock(true); setCustomResponse('');
+      setRemark(''); setStatuses([]); setStage(''); setFollowAt(''); setReleaseLock(true); setCustomResponse('');
       setNoteType(isRmMode ? 'rm_update' : 'general'); setCategory(''); setTitle(''); setPriority(''); setCustomerInterest(''); setNextFollowup('');
       onClose();
     } catch (err: unknown) {
       const data = (err as { response?: { data?: { message?: string; error?: string | { message?: string } } } })?.response?.data;
       toast.error(data?.message || (typeof data?.error === 'string' ? data.error : data?.error?.message) || 'Could not save remark');
     }
+  }
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    await submitRemark();
   }
 
   function toggleStatus(status: CallStatus) {
@@ -132,7 +136,7 @@ export function RemarkModal({ leadId, open, onClose, mode = 'default' }: Props) 
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={isPending}>Cancel</Button>
-          <Button onClick={handleSubmit} loading={isPending}>Save Remark</Button>
+          <Button type="button" onClick={() => { void submitRemark(); }} loading={isPending}>Save Remark</Button>
         </>
       }
     >

@@ -12,6 +12,7 @@ const { notifyLeadAssigned, notifyLeadRequestResolved } = require('./notificatio
 
 const DEFAULT_RULE_NAME = '__assignment_engine_default__';
 const RM_POOL_RULE_NAME = '__assignment_engine_rm_pool__';
+const GLOBAL_MEMBER_RULE_NAME = '__assignment_engine_global_member__';
 const CLOSED_STAGES = new Set(['won', 'lost', 'dropped']);
 const CLOSED_CALL_STATUSES = new Set(['converted', 'not_interested', 'wrong_number', 'invalid_number']);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -154,7 +155,7 @@ async function getAvailableMembers(options = {}, client = null) {
            COALESCE(u.daily_lead_cap, 50) AS daily_lead_cap,
            (SELECT COUNT(*)::int FROM leads l
              WHERE l.assigned_to_user_id = u.id
-               AND l.assigned_at >= CURRENT_DATE
+               AND (l.assigned_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
                AND l.deleted_at IS NULL) AS today_count,
            (SELECT COUNT(*)::int FROM leads l
              WHERE l.assigned_to_user_id = u.id
@@ -166,7 +167,7 @@ async function getAvailableMembers(options = {}, client = null) {
          COALESCE(u.daily_lead_cap, 50) <= 0
          OR (SELECT COUNT(*)::int FROM leads l
               WHERE l.assigned_to_user_id = u.id
-                AND l.assigned_at >= CURRENT_DATE
+                AND (l.assigned_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
                 AND l.deleted_at IS NULL) < COALESCE(u.daily_lead_cap, 50)
        )
      ORDER BY u.created_at ASC NULLS LAST, u.full_name ASC NULLS LAST, u.id ASC
@@ -263,14 +264,70 @@ function memberAssignedInRun(member) {
   return Number(member?.assigned_in_run || 0);
 }
 
+function memberWeight(member) {
+  const weight = Number(member?.distribution_weight || 1);
+  return Number.isFinite(weight) && weight > 0 ? weight : 1;
+}
+
 function memberEffectiveTodayCount(member) {
   return Number(member?.today_count || 0) + memberAssignedInRun(member);
+}
+
+function memberPendingCount(member) {
+  return Number(member?.pending_count || 0);
 }
 
 function memberHasRemainingDailyCapacity(member) {
   const cap = Number(member?.daily_lead_cap ?? 50);
   if (!Number.isFinite(cap) || cap <= 0) return true;
   return memberEffectiveTodayCount(member) < cap;
+}
+
+function normalizeMembersForRun(members) {
+  return (members || []).map(member => ({
+    ...member,
+    distribution_weight: memberWeight(member),
+    daily_lead_cap: Number(member?.daily_lead_cap ?? 50),
+    today_count: Number(member?.today_count || 0),
+    pending_count: Number(member?.pending_count || 0),
+    assigned_in_run: 0,
+  }));
+}
+
+function getEligibleMembersForRun(members) {
+  return (members || []).filter(memberHasRemainingDailyCapacity);
+}
+
+function compareMemberDistributionLoad(left, right) {
+  const leftWeight = memberWeight(left);
+  const rightWeight = memberWeight(right);
+
+  const assignedCompare = (memberAssignedInRun(left) * rightWeight) - (memberAssignedInRun(right) * leftWeight);
+  if (assignedCompare !== 0) return assignedCompare;
+
+  const loadCompare = (memberEffectiveTodayCount(left) * rightWeight) - (memberEffectiveTodayCount(right) * leftWeight);
+  if (loadCompare !== 0) return loadCompare;
+
+  const pendingCompare = (memberPendingCount(left) * rightWeight) - (memberPendingCount(right) * leftWeight);
+  if (pendingCompare !== 0) return pendingCompare;
+
+  return 0;
+}
+
+async function pickBalancedMember(client, members) {
+  if (!members.length) return null;
+  if (members.length === 1) return members[0];
+
+  const ranked = [...members].sort((left, right) => {
+    const loadCompare = compareMemberDistributionLoad(left, right);
+    if (loadCompare !== 0) return loadCompare;
+    return String(left.id || '').localeCompare(String(right.id || ''));
+  });
+  const best = ranked[0];
+  const tied = ranked.filter(member => compareMemberDistributionLoad(member, best) === 0);
+  if (tied.length === 1) return best;
+
+  return pickRoundRobinFromScope(client, GLOBAL_MEMBER_RULE_NAME, tied);
 }
 
 function normalizeTeamStateForRun(teams) {
@@ -873,8 +930,8 @@ async function runAutoAssignment({ limit = 100, reason = 'auto_round_robin', act
       remainingLimit = Math.max(0, remainingLimit - Number(approvedRequestFulfillment.assigned || 0));
     }
 
-    const teams = normalizeTeamStateForRun(await getEligibleRmTeams(client));
-    if (!teams.length) {
+    const members = normalizeMembersForRun(await getAvailableMembers({}, client));
+    if (!members.length) {
       if (Number(approvedRequestFulfillment.assigned || 0) > 0) {
         return {
           success: true,
@@ -909,11 +966,8 @@ async function runAutoAssignment({ limit = 100, reason = 'auto_round_robin', act
     const results = [];
     const assignedByMember = new Map();
     for (const lead of leads) {
-      const eligibleTeams = getEligibleTeamsForRun(teams);
-      const team = await pickBalancedRmTeam(client, eligibleTeams);
-      const member = team
-        ? await pickRoundRobinFromScope(client, `__assignment_engine_rm_team__:${team.rm.id}`, team.eligibleMembers)
-        : null;
+      const eligibleMembers = getEligibleMembersForRun(members);
+      const member = await pickBalancedMember(client, eligibleMembers);
       if (!member) break;
       const upd = await client.query(
         `UPDATE leads
@@ -933,7 +987,7 @@ async function runAutoAssignment({ limit = 100, reason = 'auto_round_robin', act
         reason,
       });
       assigned++;
-      const trackedMember = team.members.find(item => item.id === member.id);
+      const trackedMember = members.find(item => item.id === member.id);
       if (trackedMember) trackedMember.assigned_in_run = memberAssignedInRun(trackedMember) + 1;
       if (!assignedByMember.has(member.id)) assignedByMember.set(member.id, []);
       assignedByMember.get(member.id).push(lead.id);
@@ -1129,13 +1183,15 @@ async function getAssignmentOverview() {
   const { rows: [s] } = await query(`
     SELECT
       (SELECT COUNT(*)::int FROM leads WHERE assigned_to_user_id IS NULL AND deleted_at IS NULL) AS unassigned_leads,
-      (SELECT COUNT(*)::int FROM leads WHERE assigned_at::date = CURRENT_DATE AND deleted_at IS NULL) AS assigned_today,
+      (SELECT COUNT(*)::int FROM leads
+        WHERE (assigned_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+          AND deleted_at IS NULL) AS assigned_today,
       (SELECT COUNT(*)::int FROM lead_requests WHERE status = 'approved') AS approved_requests,
       (SELECT COUNT(*)::int FROM lead_requests WHERE status = 'partially_fulfilled') AS partially_fulfilled_requests,
       (SELECT COUNT(*)::int FROM lead_assignments WHERE assignment_type = 'auto_reassign'
-        AND created_at::date = CURRENT_DATE) AS reassigned_today,
+        AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS reassigned_today,
       (SELECT COUNT(*)::int FROM lead_assignments WHERE assignment_type = 'manual_reassign'
-        AND created_at::date = CURRENT_DATE) AS manual_reassigned_today,
+        AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS manual_reassigned_today,
       (SELECT COUNT(*)::int
          FROM users rm
         WHERE rm.role = 'rm'

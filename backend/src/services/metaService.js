@@ -24,6 +24,7 @@ const metaTokens = require('./metaTokenResolver');
 const { graphGet } = require('./metaGraphClient');
 const { resolveCampaignName } = require('./leadCampaignResolver');
 const { backfillLeadName, normalizeFieldKey, parseNameFromFieldData } = require('./leadNameService');
+const { getCampaignLeadReceptionPolicy, recordSkippedCampaignLead } = require('./metaCampaignLeadControlService');
 
 /** Constant-time HMAC compare of Meta webhook payloads. */
 function verifySignature(rawBody, signatureHeader) {
@@ -106,6 +107,27 @@ async function ingestLeadgenEvent({ leadgen_id, page_id, form_id, created_time }
 
   const fields = parseFieldData(detail.field_data);
   logger.info({ ...ctx, step: 'E.parsed', has_name: !!fields.full_name, has_phone: !!fields.phone, has_email: !!fields.email }, '[meta-ingest]');
+
+  const receptionPolicy = await getCampaignLeadReceptionPolicy(detail.campaign_id);
+  if (!receptionPolicy.allowed) {
+    logger.info({
+      ...ctx,
+      step: 'E1.campaign_receiving_disabled',
+      campaign_id: detail.campaign_id || null,
+      campaign_name: detail.campaign_name || null,
+    }, '[meta-ingest] lead ignored because campaign receiving is disabled in CRM');
+    await recordSkippedCampaignLead({
+      source: 'meta_webhook',
+      leadgenId: leadgen_id,
+      campaignId: detail.campaign_id || null,
+      campaignName: detail.campaign_name || null,
+      pageId: page_id,
+      formId: form_id,
+      adsetId: detail.adset_id || null,
+      adId: detail.ad_id || null,
+    });
+    return { status: 'ignored', reason: 'campaign_receiving_disabled', campaignId: detail.campaign_id || null };
+  }
 
   // Gate: drop obviously-fake leads (test names, fake phones, no contact)
   // BEFORE we burn dedup-check time + distribution slot on them.

@@ -143,6 +143,126 @@ function normalizeInteractionStatuses(value) {
   return normalized;
 }
 
+function isLeadRemarkSchemaCompatibilityError(error) {
+  if (!error) return false;
+  return ['42703', '42704', '42P01'].includes(error.code);
+}
+
+async function insertLeadRemarkRecord(client, {
+  leadId,
+  userId,
+  remarkText,
+  dbCallStatus,
+  normalizedStage,
+  nextFollowupAt,
+  source,
+  workflowStep,
+  completed,
+  normalizedStatuses,
+  normalizedNoteType,
+  normalizedCategory,
+  normalizedTitle,
+  normalizedPriority,
+  normalizedCustomerInterest,
+  nextFollowup,
+}) {
+  const attempts = [
+    {
+      sql: `INSERT INTO lead_remarks(
+         lead_id, user_id, remark, call_status, stage, next_followup_at,
+         source, workflow_step, is_completed_response, call_statuses,
+         note_type, category, title, priority, customer_interest, next_followup
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15, $16)
+       RETURNING *`,
+      params: [
+        leadId,
+        userId,
+        remarkText,
+        dbCallStatus,
+        normalizedStage || null,
+        nextFollowupAt || null,
+        source,
+        workflowStep,
+        completed,
+        JSON.stringify(normalizedStatuses),
+        normalizedNoteType,
+        normalizedCategory,
+        normalizedTitle,
+        normalizedPriority,
+        normalizedCustomerInterest,
+        nextFollowup || nextFollowupAt || null,
+      ],
+    },
+    {
+      sql: `INSERT INTO lead_remarks(
+         lead_id, user_id, remark, call_status, stage, next_followup_at,
+         source, workflow_step, is_completed_response, call_statuses
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+       RETURNING *`,
+      params: [
+        leadId,
+        userId,
+        remarkText,
+        dbCallStatus,
+        normalizedStage || null,
+        nextFollowupAt || null,
+        source,
+        workflowStep,
+        completed,
+        JSON.stringify(normalizedStatuses),
+      ],
+    },
+    {
+      sql: `INSERT INTO lead_remarks(
+         lead_id, user_id, remark, call_status, next_followup_at
+       )
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      params: [
+        leadId,
+        userId,
+        remarkText,
+        dbCallStatus,
+        nextFollowupAt || null,
+      ],
+    },
+  ];
+
+  let lastError = null;
+  for (const attempt of attempts) {
+    try {
+      const { rows } = await client.query(attempt.sql, attempt.params);
+      const row = rows[0] || {};
+      return {
+        ...row,
+        lead_id: row.lead_id || leadId,
+        user_id: row.user_id || userId,
+        remark: row.remark ?? remarkText,
+        call_status: row.call_status ?? dbCallStatus ?? null,
+        stage: row.stage ?? normalizedStage ?? null,
+        next_followup_at: row.next_followup_at ?? nextFollowupAt ?? null,
+        source: row.source ?? source,
+        workflow_step: row.workflow_step ?? workflowStep ?? null,
+        is_completed_response: typeof row.is_completed_response === 'boolean' ? row.is_completed_response : completed,
+        call_statuses: row.call_statuses ?? normalizedStatuses,
+        note_type: row.note_type ?? normalizedNoteType,
+        category: row.category ?? normalizedCategory,
+        title: row.title ?? normalizedTitle,
+        priority: row.priority ?? normalizedPriority,
+        customer_interest: row.customer_interest ?? normalizedCustomerInterest,
+        next_followup: row.next_followup ?? nextFollowup ?? nextFollowupAt ?? null,
+      };
+    } catch (error) {
+      lastError = error;
+      if (!isLeadRemarkSchemaCompatibilityError(error)) throw error;
+    }
+  }
+
+  throw lastError;
+}
+
 async function createLeadInteraction({
   client,
   user,
@@ -188,33 +308,24 @@ async function createLeadInteraction({
   const workflowStatus = workflowStatuses[0] || normalizeWorkflowRemarkStatus(normalizedStatus);
   const completed = isAnyWorkflowRemarkCompleted(workflowStatuses.length ? workflowStatuses : workflowStatus);
 
-  const { rows: [remark] } = await client.query(
-    `INSERT INTO lead_remarks(
-       lead_id, user_id, remark, call_status, stage, next_followup_at,
-       source, workflow_step, is_completed_response, call_statuses,
-       note_type, category, title, priority, customer_interest, next_followup
-     )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15, $16)
-     RETURNING *`,
-    [
-      leadId,
-      user.id,
-      remarkText,
-      dbCallStatus,
-      normalizedStage || null,
-      nextFollowupAt || null,
-      source,
-      workflowStep,
-      completed,
-      JSON.stringify(normalizedStatuses),
-      normalizedNoteType,
-      normalizedCategory,
-      normalizedTitle,
-      normalizedPriority,
-      normalizedCustomerInterest,
-      nextFollowup || nextFollowupAt || null,
-    ],
-  );
+  const remark = await insertLeadRemarkRecord(client, {
+    leadId,
+    userId: user.id,
+    remarkText,
+    dbCallStatus,
+    normalizedStage,
+    nextFollowupAt,
+    source,
+    workflowStep,
+    completed,
+    normalizedStatuses,
+    normalizedNoteType,
+    normalizedCategory,
+    normalizedTitle,
+    normalizedPriority,
+    normalizedCustomerInterest,
+    nextFollowup,
+  });
 
   let workflow = null;
   if (syncWorkflowStep1 && workflowStatus) {

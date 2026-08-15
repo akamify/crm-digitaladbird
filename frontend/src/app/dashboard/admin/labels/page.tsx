@@ -9,7 +9,7 @@ import { useLabels } from '@/hooks/useLeadLabels';
 import { useState } from 'react';
 
 export default function LabelsPage() {
-  return <AppShell title="Labels" subtitle="Create labels and open the leads assigned to each label" roles={['super_admin', 'admin']}><LabelsInner /></AppShell>;
+  return <AppShell title="Labels" subtitle="Create labels and open the leads assigned to each label" roles={['super_admin']}><LabelsInner /></AppShell>;
 }
 
 function LabelsInner() {

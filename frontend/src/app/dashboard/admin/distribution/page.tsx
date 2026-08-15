@@ -74,9 +74,9 @@ function DistributionInner() {
           <div className="space-y-1">
             <h2 className="text-sm font-semibold text-slate-900">Scheduled Lead Assignment</h2>
             <p className="text-sm text-slate-500">Saved leads are assigned once per day at the configured IST time.</p>
-            <p className="text-xs text-slate-500">When Instant Distribution is on, every newly saved lead will try to assign immediately using the same RM-team round robin logic.</p>
-            <p className="text-xs text-slate-500">Leads are first divided among eligible RMs, then each RM&apos;s leads are assigned to available team members using round robin.</p>
-            <p className="text-xs text-slate-500">Leads will be assigned only to active Members and Partners.</p>
+            <p className="text-xs text-slate-500">When Instant Distribution is on, every newly saved lead will try to assign immediately using the same global member balancing logic.</p>
+            <p className="text-xs text-slate-500">New leads are spread across all available Members and Partners so one small RM team does not absorb a bigger share than the rest.</p>
+            <p className="text-xs text-slate-500">RM availability, member availability, block status, and daily lead caps are still respected before any lead is assigned.</p>
             <p className="text-xs text-slate-500">Manual assignment and request approval will continue to work even when auto distribution is off.</p>
           </div>
           <div className="flex flex-col gap-2">
@@ -108,16 +108,16 @@ function DistributionInner() {
         </div>
 
         <div className="mt-5 grid gap-3 md:grid-cols-3">
-          <InfoCard label="Current Method" value="RM Team Round Robin" hint="Readonly" />
+          <InfoCard label="Current Method" value="Global Member Round Robin" hint="Readonly" />
           <InfoCard label="Unassigned Leads" value={String(stats.unassigned_leads ?? 0)} hint="Queue waiting for assignment" />
-          <InfoCard label="Eligible RMs" value={String(stats.eligible_rms ?? 0)} hint="RMs with available team members" />
+          <InfoCard label="Eligible RMs" value={String(stats.eligible_rms ?? 0)} hint="Supervising RMs with available team members" />
           <InfoCard label="Available team members" value={String(stats.available_team_members ?? 0)} hint="Members and partners only" />
           <InfoCard
             label="Current State"
             value={!settings?.autoAssignEnabled
               ? 'Auto distribution is disabled. New leads will stay queued until manual assignment.'
               : settings?.instantDistributionEnabled
-                ? 'New leads will try to assign immediately on arrival using the same round robin logic.'
+                ? 'New leads will try to assign immediately on arrival using the same global member balancing logic.'
                 : `Saved leads will be assigned daily at ${settings.scheduledAssignmentTime || 'not set'} IST.`}
           />
           <InfoCard label="Last Run" value={settings?.lastScheduledRunAt ? formatISTDateTime(settings.lastScheduledRunAt) : 'Not run yet'} />
@@ -132,7 +132,7 @@ function DistributionInner() {
         )}
         {Number(stats.eligible_rms || 0) === 0 && (
           <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            No eligible RMs with available team members were found. Scheduled distribution will not assign leads.
+            No eligible RMs with available team members were found. Distribution will not assign leads until at least one active RM-team path is available.
           </div>
         )}
 

@@ -70,6 +70,7 @@ export function LeadLabelsCard({ leadId, canManage, createSignal = 0 }: { leadId
         mode="single"
         leadId={leadId}
         selectedLabels={assigned.data || []}
+        canCreate={false}
         onSuccess={() => {
           assigned.refetch();
           labels.refetch();

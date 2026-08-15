@@ -222,6 +222,7 @@ export interface MetaCampaign {
   internal_label: string | null;
   ad_account_id: string | null;
   is_active: boolean;
+  lead_receiving_enabled?: boolean;
   category: string | null;
 }
 
@@ -270,7 +271,7 @@ export function useReassignLead() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, userId, reason }: { id: string; userId: string; reason?: string }) =>
-      apiPost(`/leads/${id}/reassign`, { user_id: userId, reason }),
+      apiPost(`/leads/${id}/reassign`, { to_user_id: userId, user_id: userId, reason }),
     onSuccess: (_d, { id }) => {
       qc.invalidateQueries({ queryKey: ['lead', id] });
       qc.invalidateQueries({ queryKey: ['leads'] });

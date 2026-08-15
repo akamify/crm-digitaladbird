@@ -82,7 +82,9 @@ const aliases = new Map([
   ['talk response', 'talk_response'],
   ['custom remark', 'custom_remark'],
   ['yes after 7:30 session', 'yes_after_730_session'],
+  ['yes after 9:00 session', 'yes_after_730_session'],
   ['session after 7:30', 'yes_after_730_session'],
+  ['session after 9:00', 'yes_after_730_session'],
   ['session_after_730', 'yes_after_730_session'],
 ]);
 

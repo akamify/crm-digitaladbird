@@ -102,7 +102,7 @@ function scheduledRunSignature(settings) {
     scheduledTime,
     timezone,
     maxLeads,
-    method: 'rm_team_round_robin',
+    method: 'global_member_round_robin',
   });
 }
 
@@ -155,7 +155,11 @@ async function runScheduledDistribution({ actor = null, manual = false } = {}) {
       bypassEnabled: manual,
     });
     const assigned = Number(result.assigned || 0);
-    const status = assigned > 0 ? `assigned:${assigned}` : 'completed_no_leads';
+    const status = result?.code === 'NO_ELIGIBLE_ASSIGNEES'
+      ? 'no_eligible_assignees'
+      : assigned > 0
+        ? `assigned:${assigned}`
+        : 'completed_no_leads';
     await setSetting('last_scheduled_run_at', new Date().toISOString());
     if (!manual) {
       await setSetting('last_scheduled_run_signature', due.signature || scheduledRunSignature(settings));

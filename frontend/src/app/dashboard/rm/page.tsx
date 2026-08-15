@@ -198,7 +198,7 @@ function MonitoringCounters({ data, loading }: { data: RmLiveCounters | null; lo
         <CounterCard label="Requests Today" value={data.requests_today} sub={`${data.requests_pending} pending`} icon={<Send className="h-4 w-4" />} color="blue"   href="/partner-requests?status=pending" />
         <CounterCard label="Leads Distributed" value={data.leads_distributed_today} sub="today"        icon={<Briefcase className="h-4 w-4" />}  color="emerald" href="/leads?assigned=today" />
         <CounterCard label="Conversions"      value={data.conversions_today}        sub="today"        icon={<CheckCircle2 className="h-4 w-4" />} color="green"  href="/leads?call_status=converted" />
-        <CounterCard label="Active Members"   value={data.active_today}             sub={`of ${data.team_size}`} icon={<UserCheck className="h-4 w-4" />} color="brand" href="/rm-teams?filter=active" />
+        <CounterCard label="Available Members" value={data.active_today}            sub={`of ${data.team_size}`} icon={<UserCheck className="h-4 w-4" />} color="brand" href="/rm-teams?filter=active" />
         <CounterCard label="Pending Work"     value={data.pending_work_users}       sub="members"      icon={<Clock className="h-4 w-4" />}        color="amber"  href="/leads?pending=true" />
         <CounterCard label="Waiting for Leads" value={data.members_waiting}         sub="members"      icon={<Users className="h-4 w-4" />}        color="rose"   href="/partner-requests?status=pending" />
       </div>

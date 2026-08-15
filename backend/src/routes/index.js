@@ -32,6 +32,8 @@ const {
 } = require('../services/leadWorkflowRemarkService');
 const { createLeadInteraction } = require('../services/leadInteractionService');
 const { assertLeadCommunicationAccess } = require('../services/leadCommunicationAccess');
+const { workedLeadCondition } = require('../utils/leadWorkMetrics');
+const { logActivity } = require('../utils/auditLog');
 
 // Loads a lead-request enriched with user + RM context and emits the
 // appropriate `lead-request:<kind>` Socket.IO event so admin + RM + the
@@ -144,7 +146,7 @@ router.get('/lead-labels', authenticate, asyncHandler(async (req, res) => {
   const data = await leadLabels.listLabels(req.user);
   res.json({ success: true, data });
 }));
-router.post('/lead-labels', authenticate, asyncHandler(async (req, res) => {
+router.post('/lead-labels', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
   const data = await leadLabels.createLabel(req.user, req.body || {});
   res.status(201).json({ success: true, data });
 }));
@@ -675,7 +677,7 @@ router.get('/distribution/blocked', authenticate, requireRole('super_admin', 'rm
            (SELECT COUNT(*) FROM leads l2 WHERE l2.assigned_to_user_id = u.id
               AND l2.deleted_at IS NULL) AS total_leads,
            (SELECT COUNT(*) FROM leads l3 WHERE l3.assigned_to_user_id = u.id
-              AND l3.call_status <> 'not_called' AND l3.deleted_at IS NULL) AS worked_count
+              AND ${workedLeadCondition('l3')} AND l3.deleted_at IS NULL) AS worked_count
       FROM users u
      WHERE u.distribution_blocked = TRUE AND u.deleted_at IS NULL
      ORDER BY u.distribution_blocked_at DESC
@@ -2351,20 +2353,53 @@ router.get('/meta/campaigns', authenticate, requireRole('super_admin', 'admin', 
 // Update campaign label/category
 router.patch('/meta/campaigns/:campaignId', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
   const { campaignId } = req.params;
-  const { internal_label, category, description } = req.body;
+  const { internal_label, category, description, lead_receiving_enabled } = req.body;
+  const { rows: [current] } = await query(
+    `SELECT * FROM meta_campaigns WHERE campaign_id = $1 LIMIT 1`,
+    [campaignId],
+  );
+  if (!current) throw new AppError(404, 'NOT_FOUND', 'Campaign not found');
   const sets = [];
   const vals = [];
   let idx = 1;
   if (internal_label) { sets.push(`internal_label = $${idx++}`); vals.push(internal_label); }
   if (category) { sets.push(`category = $${idx++}`); vals.push(category); }
   if (description !== undefined) { sets.push(`description = $${idx++}`); vals.push(description); }
+  if (lead_receiving_enabled !== undefined) {
+    if (typeof lead_receiving_enabled !== 'boolean') {
+      throw new AppError(400, 'INVALID', 'lead_receiving_enabled must be a boolean');
+    }
+    sets.push(`lead_receiving_enabled = $${idx++}`);
+    vals.push(lead_receiving_enabled);
+  }
   if (!sets.length) throw new AppError(400, 'INVALID', 'Nothing to update');
   vals.push(campaignId);
   const { rows: [r] } = await query(
     `UPDATE meta_campaigns SET ${sets.join(', ')} WHERE campaign_id = $${idx} RETURNING *`,
     vals
   );
-  if (!r) throw new AppError(404, 'NOT_FOUND', 'Campaign not found');
+  await logActivity(req, {
+    entity: 'campaign',
+    entity_id: r.id,
+    action: 'meta_campaign_updated',
+    old_value: {
+      internal_label: current.internal_label,
+      category: current.category,
+      description: current.description,
+      lead_receiving_enabled: current.lead_receiving_enabled,
+    },
+    new_value: {
+      internal_label: r.internal_label,
+      category: r.category,
+      description: r.description,
+      lead_receiving_enabled: r.lead_receiving_enabled,
+    },
+    metadata: {
+      meta_campaign_id: r.campaign_id,
+      campaign_name: r.campaign_name,
+      lead_receiving_enabled: r.lead_receiving_enabled,
+    },
+  });
   res.json({ success: true, data: r });
 }));
 
@@ -3595,8 +3630,7 @@ router.get('/rm-monitoring/live-counters', authenticate, requireRole('rm', 'supe
         WHERE report_to_id = $1
           AND deleted_at IS NULL
           AND role = 'member'
-          AND status = 'active'
-          AND is_available = TRUE
+          AND COALESCE(is_available, TRUE) = TRUE
           AND COALESCE(distribution_blocked, FALSE) = FALSE
       ) AS active_today,
 
@@ -3690,7 +3724,7 @@ router.get('/rm-monitoring/team-overview', authenticate, requireRole('rm', 'supe
       SELECT COUNT(*) AS total,
              COUNT(*) FILTER (WHERE l.assigned_at::date = CURRENT_DATE) AS today_count,
              COUNT(*) FILTER (WHERE l.is_pending = TRUE) AS pending,
-             COUNT(*) FILTER (WHERE l.call_status <> 'not_called') AS worked,
+             COUNT(*) FILTER (WHERE ${workedLeadCondition('l')}) AS worked,
              COUNT(*) FILTER (WHERE l.call_status = 'converted') AS converted
       FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
     ) lc ON true
@@ -3810,7 +3844,7 @@ router.get('/rm-monitoring/member-requests', authenticate, requireRole('rm', 'su
            (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
               AND l.is_pending = TRUE) AS member_leads_pending,
            (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
-              AND l.call_status <> 'not_called') AS member_leads_worked,
+              AND ${workedLeadCondition('l')}) AS member_leads_worked,
            (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
               AND l.call_status = 'converted') AS member_leads_converted
     FROM lead_requests lr
@@ -3838,7 +3872,7 @@ router.get('/rm-monitoring/member-requests', authenticate, requireRole('rm', 'su
            (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
               AND l.is_pending = TRUE) AS member_leads_pending,
            (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
-              AND l.call_status <> 'not_called') AS member_leads_worked,
+              AND ${workedLeadCondition('l')}) AS member_leads_worked,
            (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
               AND l.call_status = 'converted') AS member_leads_converted
     FROM partner_lead_requests pr
@@ -5450,7 +5484,7 @@ router.get('/admin/meta/campaigns-enriched', authenticate, requireRole('super_ad
 
   const { rows } = await query(`
     SELECT mc.id, mc.campaign_id, mc.campaign_name, mc.internal_label, mc.ad_account_id,
-      mc.is_active, mc.category, mc.description, mc.created_at,
+      mc.is_active, mc.lead_receiving_enabled, mc.category, mc.description, mc.created_at,
       mc.status, mc.meta_status, mc.effective_status, mc.configured_status,
       COALESCE(mc.ui_status,
         CASE COALESCE(mc.effective_status, mc.configured_status, mc.status, mc.meta_status)

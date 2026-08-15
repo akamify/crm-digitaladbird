@@ -18,8 +18,8 @@ export const LEAD_REMARK_GROUPS: LeadRemarkGroup[] = [
     options: [
       { value: 'communication_completed', label: 'Communication Completed' },
       { value: 'respond_hi', label: 'Respond (HI)' },
-      { value: 'session_730_attend', label: '7:30 Session Attend' },
-      { value: 'yes_after_730_session', label: 'Yes After 7:30 Session' },
+      { value: 'session_730_attend', label: '9:00 Session Attend' },
+      { value: 'yes_after_730_session', label: 'Yes After 9:00 Session' },
     ],
   },
   {

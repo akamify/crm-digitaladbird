@@ -1237,8 +1237,8 @@ exports.bulkAddRemarks = asyncHandler(async (req, res) => {
 /** Admin/RM only: change assignment manually. */
 exports.reassign = asyncHandler(async (req, res) => {
   if (!['super_admin', 'rm'].includes(req.user.role)) throw new AppError(403, 'FORBIDDEN', 'Not allowed');
-  const { to_user_id } = req.body;
-  if (!to_user_id) throw new AppError(400, 'TO_USER_REQUIRED', 'to_user_id required');
+  const toUserId = String(req.body?.to_user_id || req.body?.user_id || '').trim();
+  if (!toUserId) throw new AppError(400, 'TO_USER_REQUIRED', 'to_user_id required');
 
   // Capture old assignee + names for the audit row BEFORE the reassign happens.
   const { rows: [prev] } = await query(
@@ -1249,16 +1249,16 @@ exports.reassign = asyncHandler(async (req, res) => {
   if (req.user.role === 'rm' && prev?.prev_rm_id !== req.user.id) {
     throw new AppError(403, 'REASSIGNED_LEAD_READ_ONLY', 'This lead has been reassigned. You can view it, but cannot edit it.');
   }
-  const { rows: [target] } = await query(`SELECT full_name FROM users WHERE id = $1`, [to_user_id]);
+  const { rows: [target] } = await query(`SELECT full_name FROM users WHERE id = $1`, [toUserId]);
 
-  const out = await reassignLead(req.params.id, to_user_id, req.user.id, 'manual');
+  const out = await reassignLead(req.params.id, toUserId, req.user.id, 'manual');
 
   const { logActivity } = require('../utils/auditLog');
   await logActivity(req, {
     entity: 'lead', entity_id: req.params.id, action: 'reassigned',
     old_value: prev?.prev_name || prev?.assigned_to_user_id || '(unassigned)',
-    new_value: target?.full_name || to_user_id,
-    metadata: { from_user_id: prev?.assigned_to_user_id || null, to_user_id, reason: 'manual' },
+    new_value: target?.full_name || toUserId,
+    metadata: { from_user_id: prev?.assigned_to_user_id || null, to_user_id: toUserId, reason: 'manual' },
   });
 
   res.json({ success: true, data: out });

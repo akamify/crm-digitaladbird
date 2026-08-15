@@ -26,6 +26,7 @@ import {
   useMetaSubscriptionStatus, useCampaignsEnriched, useMetaAdAccounts,
   useMetaDebugAccountsCampaigns, useMetaCampaignStatusDebug,
   useSyncCampaigns, useSyncLeads, useUpdateMetaToken, useSubscribePage,
+  useUpdateMetaCampaign,
   useSyncMetaAdAccountCampaigns,
   useTestPageToken, useUpdatePageToken, useSyncMetaPageForms, useSetMetaPageActivation,
   // Dynamic Google Sheets credential management
@@ -1371,6 +1372,7 @@ function CampaignsTab() {
   const statusDebug = useMetaCampaignStatusDebug(showDebug && selectedAccount !== 'all', selectedAccount === 'all' ? undefined : selectedAccount);
   const syncCampaigns = useSyncCampaigns();
   const syncAccount = useSyncMetaAdAccountCampaigns();
+  const updateMetaCampaign = useUpdateMetaCampaign();
   const totalCampaigns = accounts?.reduce((sum, account) => sum + (account.campaign_count || 0), 0) || campaigns?.length || 0;
   const selectedAccountRow = selectedAccount === 'all' ? null : accounts?.find(account => account.account_id === selectedAccount) || null;
   const selectedAccountProblem = selectedAccountRow?.sync_status === 'failed' || selectedAccountRow?.sync_status === 'stale_failed' || selectedAccountRow?.sync_status === 'not_accessible';
@@ -1608,7 +1610,30 @@ function CampaignsTab() {
                   <div className={clsx('h-2.5 w-2.5 rounded-full', c.is_active ? 'bg-emerald-500' : 'bg-slate-300')} />
                   <span className="font-semibold text-slate-900 truncate max-w-[250px]">{c.campaign_name}</span>
                 </div>
-                <span className={metaStatusClass(c.effective_status || c.configured_status || c.status || c.meta_status)}>{metaCampaignStatusLabel(c)}</span>
+                <div className="flex items-center gap-2">
+                  <span className={metaStatusClass(c.effective_status || c.configured_status || c.status || c.meta_status)}>{metaCampaignStatusLabel(c)}</span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={c.lead_receiving_enabled ? 'outline' : 'ghost'}
+                    loading={updateMetaCampaign.isPending && updateMetaCampaign.variables?.campaignId === c.campaign_id}
+                    className={clsx(
+                      'min-w-[124px]',
+                      c.lead_receiving_enabled
+                        ? 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'
+                        : 'border-rose-200 text-rose-700 hover:bg-rose-50',
+                    )}
+                    onClick={() => updateMetaCampaign.mutate(
+                      { campaignId: c.campaign_id, lead_receiving_enabled: !c.lead_receiving_enabled },
+                      {
+                        onSuccess: () => toast.success(`CRM lead receiving ${!c.lead_receiving_enabled ? 'enabled' : 'disabled'} for ${c.campaign_name}`),
+                        onError: () => toast.error('Could not update campaign lead receiving'),
+                      },
+                    )}
+                  >
+                    {c.lead_receiving_enabled ? 'Receiving On' : 'Receiving Off'}
+                  </Button>
+                </div>
               </div>
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 {c.internal_label && <span className="chip-blue text-[10px]">{c.internal_label}</span>}
@@ -1616,6 +1641,9 @@ function CampaignsTab() {
                 <span className={clsx('chip-blue text-[10px]', c.source === 'meta_api' ? 'chip-blue' : 'chip-red')}>{c.source === 'meta_api' ? 'Meta API' : 'Lead-derived legacy'}</span>
                 {c.ad_account_id && <span className="chip-slate text-[10px]">{c.account_name || `Ad account ${c.ad_account_id}`}</span>}
                 <span className="chip-slate text-[10px]">ID {c.campaign_id}</span>
+                <span className={clsx(c.lead_receiving_enabled ? 'chip-green' : 'chip-red', 'text-[10px]')}>
+                  CRM intake {c.lead_receiving_enabled ? 'enabled' : 'disabled'}
+                </span>
               </div>
 
               <div className="grid grid-cols-4 gap-4 mb-3">
@@ -1627,6 +1655,7 @@ function CampaignsTab() {
 
               <div className="text-xs text-slate-500 space-y-0.5">
                 <div>Live / effective: <strong className="text-slate-700">{humanize(c.effective_status || 'unknown')}</strong></div>
+                <div>CRM lead receiving: <strong className={c.lead_receiving_enabled ? 'text-emerald-700' : 'text-rose-700'}>{c.lead_receiving_enabled ? 'Enabled' : 'Disabled'}</strong></div>
                 {c.configured_status && <div>Configured: <strong className="text-slate-700">{humanize(c.configured_status)}</strong></div>}
                 {c.meta_status && <div>Meta status: <strong className="text-slate-700">{humanize(c.meta_status)}</strong></div>}
                 <div>Raw fallback: <strong className="text-slate-700">{humanize(metaCampaignRawStatus(c))}</strong></div>

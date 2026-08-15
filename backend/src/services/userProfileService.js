@@ -1,5 +1,6 @@
 const { query } = require('../config/database');
 const { AppError } = require('../utils/errors');
+const { workedLeadCondition, notWorkedLeadCondition } = require('../utils/leadWorkMetrics');
 const { assertCpIdNotEditable, normalizeRole } = require('./userIdentityService');
 const { updateSingleLeadAvailability } = require('./userAvailabilityService');
 
@@ -86,7 +87,7 @@ async function getBasicCounts(userId) {
     SELECT
       COUNT(*)::int AS total_assigned_leads,
       COUNT(*) FILTER (WHERE l.is_pending = TRUE)::int AS pending_leads,
-      COUNT(*) FILTER (WHERE l.call_status <> 'not_called')::int AS worked_leads,
+      COUNT(*) FILTER (WHERE ${workedLeadCondition('l')})::int AS worked_leads,
       COUNT(*) FILTER (WHERE l.call_status = 'converted')::int AS converted_leads,
       COUNT(*) FILTER (WHERE l.stage = 'lost' OR l.call_status IN ('not_interested','wrong_number','invalid_number'))::int AS lost_not_interested_leads,
       COUNT(*) FILTER (WHERE l.next_followup_at IS NOT NULL AND l.next_followup_at <= NOW())::int AS followups_due,
@@ -162,7 +163,7 @@ async function getRmMetrics(userId) {
       (SELECT COUNT(*)::int FROM users u JOIN team t ON t.id = u.id WHERE u.status = 'active') AS active_members,
       COUNT(l.id)::int AS team_assigned_leads,
       COUNT(l.id) FILTER (WHERE l.is_pending = TRUE)::int AS team_pending_leads,
-      COUNT(l.id) FILTER (WHERE l.call_status <> 'not_called')::int AS team_worked_leads,
+      COUNT(l.id) FILTER (WHERE ${workedLeadCondition('l')})::int AS team_worked_leads,
       COUNT(l.id) FILTER (WHERE l.call_status = 'converted')::int AS team_conversions,
       COUNT(l.id) FILTER (WHERE l.next_followup_at IS NOT NULL AND l.next_followup_at <= NOW())::int AS overdue_followups,
       (SELECT COUNT(*)::int FROM lead_requests lr JOIN team t ON t.id = lr.user_id WHERE lr.status = 'pending') AS requests_pending,
@@ -243,7 +244,7 @@ async function getPerformance(actor, userId, opts = {}) {
   const { rows: [summary] } = await query(`
     SELECT
       COUNT(*)::int AS assigned,
-      COUNT(*) FILTER (WHERE call_status <> 'not_called')::int AS worked,
+      COUNT(*) FILTER (WHERE ${workedLeadCondition('l')})::int AS worked,
       COUNT(*) FILTER (WHERE is_pending = TRUE)::int AS pending,
       COUNT(*) FILTER (WHERE call_status = 'converted')::int AS converted,
       ROUND(
@@ -252,7 +253,7 @@ async function getPerformance(actor, userId, opts = {}) {
         2
       ) AS conversion_rate,
       COUNT(*) FILTER (WHERE next_followup_at IS NOT NULL AND next_followup_at <= NOW())::int AS overdue_leads
-    FROM leads
+    FROM leads l
     WHERE assigned_to_user_id = $1 AND deleted_at IS NULL
       AND assigned_at::date BETWEEN $2::date AND $3::date
   `, params);
@@ -263,7 +264,7 @@ async function getPerformance(actor, userId, opts = {}) {
     )
     SELECT d.day::text AS date,
            COUNT(l.id)::int AS assigned_count,
-           COUNT(l.id) FILTER (WHERE l.call_status <> 'not_called')::int AS worked_count,
+           COUNT(l.id) FILTER (WHERE ${workedLeadCondition('l')})::int AS worked_count,
            COUNT(l.id) FILTER (WHERE l.call_status = 'converted')::int AS converted_count,
            COUNT(r.id)::int AS followups_done
       FROM days d
@@ -370,8 +371,8 @@ async function getPerformance(actor, userId, opts = {}) {
       COUNT(*) FILTER (WHERE is_pending = TRUE)::int AS currently_pending,
       COUNT(*) FILTER (WHERE next_followup_at IS NOT NULL AND next_followup_at < NOW())::int AS overdue_leads,
       COUNT(*) FILTER (WHERE assigned_at < NOW() - INTERVAL '24 hours'
-        AND call_status = 'not_called')::int AS inactive_assigned_leads
-    FROM leads
+        AND ${notWorkedLeadCondition('l')})::int AS inactive_assigned_leads
+    FROM leads l
     WHERE assigned_to_user_id = $1 AND deleted_at IS NULL
   `, [userId]);
 

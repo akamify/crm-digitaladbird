@@ -880,7 +880,7 @@ export function useMetaSubscriptionStatus() {
 // ── Campaigns Enriched ──────────────────────────────────────────
 export interface CampaignEnriched {
   id: string; campaign_id: string; campaign_name: string; internal_label: string | null;
-  ad_account_id: string | null; is_active: boolean; category: string | null;
+  ad_account_id: string | null; is_active: boolean; lead_receiving_enabled: boolean; category: string | null;
   description: string | null; lead_count: number; today_leads: number; conversions: number;
   pending_leads: number; last_lead_at: string | null; connected_form: string | null;
   connected_page: string | null; created_at: string;
@@ -905,6 +905,28 @@ export function useCampaignsEnriched(filters?: { account?: string; status?: stri
     }),
     staleTime: 30_000,
     refetchInterval: 60_000,
+  });
+}
+
+export function useUpdateMetaCampaign() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      campaignId,
+      ...body
+    }: {
+      campaignId: string;
+      internal_label?: string;
+      category?: string;
+      description?: string | null;
+      lead_receiving_enabled?: boolean;
+    }) => apiPatch(`/meta/campaigns/${campaignId}`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'campaigns-enriched'] });
+      qc.invalidateQueries({ queryKey: ['admin', 'meta-ad-accounts'] });
+      qc.invalidateQueries({ queryKey: ['meta-campaigns-full'] });
+      qc.invalidateQueries({ queryKey: ['admin'] });
+    },
   });
 }
 

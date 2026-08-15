@@ -18,6 +18,7 @@ const logger = require('../utils/logger');
 const { validateLeadAssignee } = require('./leadAssigneeValidator');
 const { notifyLeadAssigned } = require('./notificationService');
 const { getAssignmentSettings, isInsideAssignmentWindow } = require('./leadAssignmentEngine');
+const { workedLeadCondition } = require('../utils/leadWorkMetrics');
 
 const FALLBACK_RULE_NAME = '__default__';
 
@@ -109,7 +110,7 @@ async function checkPendingBlocking() {
               WHERE l2.assigned_to_user_id = u.id AND l2.deleted_at IS NULL) AS total_assigned,
            (SELECT COUNT(*) FROM leads l3
               WHERE l3.assigned_to_user_id = u.id AND l3.deleted_at IS NULL
-                AND l3.call_status <> 'not_called') AS worked_count
+                AND ${workedLeadCondition('l3')}) AS worked_count
       FROM users u
       JOIN leads l ON l.assigned_to_user_id = u.id
         AND l.is_pending = TRUE AND l.deleted_at IS NULL

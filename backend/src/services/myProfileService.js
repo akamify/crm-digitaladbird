@@ -1,6 +1,7 @@
 const { query } = require('../config/database');
 const { AppError } = require('../utils/errors');
 const logger = require('../utils/logger');
+const { workedLeadCondition, notWorkedLeadCondition } = require('../utils/leadWorkMetrics');
 
 function normalizeRole(role) {
   return role === 'partner' ? 'member' : role;
@@ -70,12 +71,12 @@ async function memberStats(userId) {
     `SELECT
         COUNT(*)::int AS total_assigned_leads,
         COUNT(*) FILTER (WHERE assigned_at::date = CURRENT_DATE)::int AS today_assigned_leads,
-        COUNT(*) FILTER (WHERE COALESCE(call_status, 'not_called') <> 'not_called')::int AS contacted_leads,
-        COUNT(*) FILTER (WHERE COALESCE(call_status, 'not_called') = 'not_called')::int AS pending_not_called_leads,
+        COUNT(*) FILTER (WHERE ${workedLeadCondition('l')})::int AS contacted_leads,
+        COUNT(*) FILTER (WHERE ${notWorkedLeadCondition('l')})::int AS pending_not_called_leads,
         COUNT(*) FILTER (WHERE call_status = 'converted' OR stage::text = 'won')::int AS converted_leads,
         COUNT(*) FILTER (WHERE next_followup_at::date = CURRENT_DATE)::int AS followups_today,
         COUNT(*) FILTER (WHERE next_followup_at IS NOT NULL AND next_followup_at <= NOW())::int AS followups_due
-       FROM leads
+       FROM leads l
       WHERE assigned_to_user_id = $1
         AND deleted_at IS NULL`,
     [userId],
@@ -104,6 +105,7 @@ async function rmStats(userId) {
        (SELECT COUNT(*)::int FROM team WHERE status = 'active' AND COALESCE(is_available, TRUE) = TRUE AND COALESCE(lead_assignment_status, 'available') = 'available') AS available_team_members,
        COUNT(l.id)::int AS total_team_assigned_leads,
        COUNT(l.id) FILTER (WHERE l.assigned_at::date = CURRENT_DATE)::int AS today_team_assigned_leads,
+       COUNT(l.id) FILTER (WHERE ${workedLeadCondition('l')})::int AS team_worked_leads,
        COUNT(l.id) FILTER (WHERE l.call_status = 'converted' OR l.stage::text = 'won')::int AS team_converted_leads,
        (SELECT COUNT(*)::int FROM lead_requests lr JOIN team t ON t.id = lr.user_id WHERE lr.status = 'pending') AS pending_lead_requests
       FROM leads l
@@ -126,8 +128,8 @@ async function clientStats(userId) {
     `SELECT
        COUNT(l.id)::int AS total_assigned_leads,
        COUNT(l.id) FILTER (WHERE (l.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date)::int AS today_assigned_leads,
-       COUNT(l.id) FILTER (WHERE COALESCE(call_status, 'not_called') <> 'not_called')::int AS contacted_leads,
-       COUNT(l.id) FILTER (WHERE COALESCE(call_status, 'not_called') = 'not_called')::int AS pending_not_called_leads,
+       COUNT(l.id) FILTER (WHERE ${workedLeadCondition('l')})::int AS contacted_leads,
+       COUNT(l.id) FILTER (WHERE ${notWorkedLeadCondition('l')})::int AS pending_not_called_leads,
        COUNT(l.id) FILTER (WHERE call_status = 'converted' OR stage::text = 'won')::int AS converted_leads,
        COUNT(l.id) FILTER (WHERE next_followup_at::date = CURRENT_DATE)::int AS followups_today,
        COUNT(l.id) FILTER (WHERE next_followup_at IS NOT NULL AND next_followup_at <= NOW())::int AS followups_due,

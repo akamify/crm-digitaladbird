@@ -24,6 +24,7 @@ const graphClient = require('./metaGraphClient');
 const metaTokens = require('./metaTokenResolver');
 const { resolveCampaignName } = require('./leadCampaignResolver');
 const { backfillLeadName, normalizeFieldKey, parseNameFromFieldData } = require('./leadNameService');
+const { getCampaignLeadReceptionPolicy, recordSkippedCampaignLead } = require('./metaCampaignLeadControlService');
 let campaignSyncRunning = false;
 
 
@@ -599,6 +600,27 @@ async function syncFormLeads(formId, options = {}) {
 async function ingestGraphLead(lead, formId) {
   const leadgenId = lead.id;
   const fields = parseFieldData(lead.field_data || []);
+
+  const receptionPolicy = await getCampaignLeadReceptionPolicy(lead.campaign_id);
+  if (!receptionPolicy.allowed) {
+    logger.info({
+      leadgen_id: leadgenId,
+      formId,
+      campaign_id: lead.campaign_id || null,
+      campaign_name: lead.campaign_name || null,
+    }, '[sync] lead ignored because campaign receiving is disabled in CRM');
+    await recordSkippedCampaignLead({
+      source: 'meta_sync',
+      leadgenId,
+      campaignId: lead.campaign_id || null,
+      campaignName: lead.campaign_name || null,
+      pageId: null,
+      formId,
+      adsetId: lead.adset_id || null,
+      adId: lead.ad_id || null,
+    });
+    return { status: 'ignored', reason: 'campaign_receiving_disabled', campaignId: lead.campaign_id || null };
+  }
 
   // Check duplicate by meta_lead_id first (fast path)
   const dup = await query(`SELECT id FROM leads WHERE meta_lead_id = $1`, [leadgenId]);

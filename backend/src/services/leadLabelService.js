@@ -77,9 +77,12 @@ async function listLabels(actor) {
 }
 
 async function createLabel(actor, input) {
+  if (actor?.role !== 'super_admin') {
+    throw new AppError(403, 'LABEL_CREATE_FORBIDDEN', 'Only super admin can create labels.');
+  }
   const name = validateLabelName(input?.name);
   const color = normalizeColor(input?.color);
-  const visibility = ADMIN_ROLES.has(actor.role) ? (input?.visibility === 'custom' ? 'custom' : 'global') : 'custom';
+  const visibility = input?.visibility === 'custom' ? 'custom' : 'global';
   try {
     const { rows: [label] } = await query(`
       INSERT INTO lead_labels(name, color, visibility, created_by_user_id)

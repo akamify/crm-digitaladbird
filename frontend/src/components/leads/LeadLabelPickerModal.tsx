@@ -25,6 +25,7 @@ interface Props {
   title?: string;
   description?: string;
   onSuccess?: () => void;
+  canCreate?: boolean;
 }
 
 export function LeadLabelPickerModal({
@@ -37,6 +38,7 @@ export function LeadLabelPickerModal({
   title,
   description,
   onSuccess,
+  canCreate = false,
 }: Props) {
   const labels = useLabels();
   const assign = useAssignLeadLabel();
@@ -97,6 +99,7 @@ export function LeadLabelPickerModal({
   }
 
   function createAndApply() {
+    if (!canCreate) return;
     create.mutate({ name: name.trim(), color }, {
       onSuccess: label => {
         setName('');
@@ -159,18 +162,20 @@ export function LeadLabelPickerModal({
             );
           })}
         </div>
-        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-          <div className="mb-2 text-sm font-semibold text-slate-900">Create Label</div>
-          <input value={name} maxLength={60} onChange={event => setName(event.target.value)} className="input w-full" placeholder="Label name" />
-          <div className="mt-3 flex flex-wrap gap-2">
-            {COLORS.map(value => (
-              <button key={value} type="button" onClick={() => setColor(value)} className="h-7 w-7 rounded-full ring-offset-2" style={{ backgroundColor: value, outline: color === value ? '2px solid #0F172A' : undefined }} aria-label={`Select ${value}`} />
-            ))}
+        {canCreate ? (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <div className="mb-2 text-sm font-semibold text-slate-900">Create Label</div>
+            <input value={name} maxLength={60} onChange={event => setName(event.target.value)} className="input w-full" placeholder="Label name" />
+            <div className="mt-3 flex flex-wrap gap-2">
+              {COLORS.map(value => (
+                <button key={value} type="button" onClick={() => setColor(value)} className="h-7 w-7 rounded-full ring-offset-2" style={{ backgroundColor: value, outline: color === value ? '2px solid #0F172A' : undefined }} aria-label={`Select ${value}`} />
+              ))}
+            </div>
+            <button type="button" onClick={createAndApply} disabled={!name.trim() || pending} className="btn-primary mt-3 rounded-lg px-4 py-2 text-sm">
+              {mode === 'bulk' ? 'Create and Add' : 'Create and Apply'}
+            </button>
           </div>
-          <button type="button" onClick={createAndApply} disabled={!name.trim() || pending} className="btn-primary mt-3 rounded-lg px-4 py-2 text-sm">
-            {mode === 'bulk' ? 'Create and Add' : 'Create and Apply'}
-          </button>
-        </div>
+        ) : null}
       </div>
     </Modal>
   );
