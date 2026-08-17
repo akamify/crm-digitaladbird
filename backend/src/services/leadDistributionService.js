@@ -18,7 +18,7 @@ const logger = require('../utils/logger');
 const { validateLeadAssignee } = require('./leadAssigneeValidator');
 const { notifyLeadAssigned } = require('./notificationService');
 const { getAssignmentSettings, isInsideAssignmentWindow } = require('./leadAssignmentEngine');
-const { workedLeadCondition } = require('../utils/leadWorkMetrics');
+const { workedLeadCondition, notWorkedLeadCondition } = require('../utils/leadWorkMetrics');
 
 const FALLBACK_RULE_NAME = '__default__';
 
@@ -80,7 +80,7 @@ async function getEligibleMembers(client, rule) {
     SELECT u.id, u.full_name, u.distribution_weight, u.daily_lead_cap,
            COALESCE(tc.cnt, 0) AS today_count,
            (SELECT COUNT(*) FROM leads l
-              WHERE l.assigned_to_user_id = u.id AND l.is_pending = TRUE AND l.deleted_at IS NULL
+              WHERE l.assigned_to_user_id = u.id AND ${notWorkedLeadCondition('l')} AND l.deleted_at IS NULL
            ) AS pending_count
       FROM users u
       LEFT JOIN today_counts tc ON tc.assigned_to_user_id = u.id
@@ -113,7 +113,7 @@ async function checkPendingBlocking() {
                 AND ${workedLeadCondition('l3')}) AS worked_count
       FROM users u
       JOIN leads l ON l.assigned_to_user_id = u.id
-        AND l.is_pending = TRUE AND l.deleted_at IS NULL
+        AND ${notWorkedLeadCondition('l')} AND l.deleted_at IS NULL
      WHERE u.role = 'member' AND u.status = 'active'
        AND u.distribution_blocked = FALSE AND u.deleted_at IS NULL
      GROUP BY u.id HAVING COUNT(l.id) >= $1

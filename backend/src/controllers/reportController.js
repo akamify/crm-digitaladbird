@@ -1,6 +1,7 @@
 const { query } = require('../config/database');
 const { asyncHandler } = require('../utils/errors');
 const { getVisibleUserIds } = require('../middleware/rbac');
+const { notWorkedLeadCondition } = require('../utils/leadWorkMetrics');
 
 function buildScope(visible, offset = 0) {
   if (visible === null) return { sql: '', params: [] };
@@ -41,7 +42,7 @@ exports.summary = asyncHandler(async (req, res) => {
   const { rows: [k] } = await query(
     `SELECT
         COUNT(*)                                                              AS total_leads,
-        COUNT(*) FILTER (WHERE l.is_pending)                                  AS pending,
+        COUNT(*) FILTER (WHERE ${notWorkedLeadCondition('l')})                AS pending,
         COUNT(*) FILTER (WHERE l.call_status = 'converted')                   AS converted,
         COUNT(*) FILTER (WHERE l.call_status = 'follow_up' OR l.next_followup_at IS NOT NULL) AS followups,
         COUNT(*) FILTER (WHERE l.stage = 'lost' OR l.call_status = 'not_interested') AS lost,
@@ -65,7 +66,7 @@ exports.categories = asyncHandler(async (req, res) => {
     `SELECT COALESCE(l.category, 'unknown') AS category,
             COUNT(*)::int AS total,
             COUNT(*) FILTER (WHERE l.call_status = 'converted')::int AS conversions,
-            COUNT(*) FILTER (WHERE l.is_pending)::int AS pending,
+            COUNT(*) FILTER (WHERE ${notWorkedLeadCondition('l')})::int AS pending,
             COUNT(*) FILTER (WHERE l.next_followup_at IS NOT NULL AND l.next_followup_at <= NOW())::int AS followups_due
        FROM leads l
       WHERE l.deleted_at IS NULL ${scope.sql}${filters}
@@ -89,7 +90,7 @@ exports.daily = asyncHandler(async (req, res) => {
      SELECT s.day,
             COUNT(l.id)                                                AS leads,
             COUNT(l.id) FILTER (WHERE l.call_status = 'converted')     AS conversions,
-            COUNT(l.id) FILTER (WHERE l.is_pending)                    AS pending
+            COUNT(l.id) FILTER (WHERE ${notWorkedLeadCondition('l')})  AS pending
        FROM series s
        LEFT JOIN leads l ON l.created_at::date = s.day AND l.deleted_at IS NULL ${scope.sql}
       GROUP BY s.day ORDER BY s.day`,
@@ -107,7 +108,7 @@ exports.byUser = asyncHandler(async (req, res) => {
   const { rows } = await query(
     `SELECT u.id, u.full_name, u.role, u.team_name,
             COUNT(l.id)                                                AS leads,
-            COUNT(l.id) FILTER (WHERE l.is_pending)                    AS pending,
+            COUNT(l.id) FILTER (WHERE ${notWorkedLeadCondition('l')})  AS pending,
             COUNT(l.id) FILTER (WHERE l.call_status = 'converted')     AS conversions,
             COUNT(l.id) FILTER (WHERE l.call_status = 'rnr')           AS rnr,
             COUNT(l.id) FILTER (WHERE l.call_status = 'not_interested')AS not_interested,

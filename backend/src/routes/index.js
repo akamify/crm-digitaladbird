@@ -32,7 +32,7 @@ const {
 } = require('../services/leadWorkflowRemarkService');
 const { createLeadInteraction } = require('../services/leadInteractionService');
 const { assertLeadCommunicationAccess } = require('../services/leadCommunicationAccess');
-const { workedLeadCondition } = require('../utils/leadWorkMetrics');
+const { workedLeadCondition, notWorkedLeadCondition } = require('../utils/leadWorkMetrics');
 const { logActivity } = require('../utils/auditLog');
 
 // Loads a lead-request enriched with user + RM context and emits the
@@ -673,7 +673,8 @@ router.get('/distribution/blocked', authenticate, requireRole('super_admin', 'rm
     SELECT u.id, u.full_name, u.email, u.team_name, u.distribution_blocked_reason,
            u.distribution_blocked_at,
            (SELECT COUNT(*) FROM leads l WHERE l.assigned_to_user_id = u.id
-              AND l.is_pending = TRUE AND l.deleted_at IS NULL) AS pending_count,
+              AND l.deleted_at IS NULL
+              AND ${notWorkedLeadCondition('l')}) AS pending_count,
            (SELECT COUNT(*) FROM leads l2 WHERE l2.assigned_to_user_id = u.id
               AND l2.deleted_at IS NULL) AS total_leads,
            (SELECT COUNT(*) FROM leads l3 WHERE l3.assigned_to_user_id = u.id
@@ -840,7 +841,7 @@ router.get('/distribution/stats', authenticate, requireRole('super_admin', 'rm')
   const { rows: [stats] } = await query(`
     SELECT
       (SELECT COUNT(*) FROM leads WHERE assigned_to_user_id IS NULL AND deleted_at IS NULL ${visible === null ? '' : 'AND FALSE'}) AS queued_leads,
-      (SELECT COUNT(*) FROM leads WHERE is_pending = TRUE AND deleted_at IS NULL ${scopeSql}) AS total_pending,
+      (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL ${scopeSql} AND ${notWorkedLeadCondition('leads')}) AS total_pending,
       (SELECT COUNT(*) FROM leads WHERE assigned_at::date = CURRENT_DATE AND deleted_at IS NULL ${scopeSql}) AS today_distributed,
       (SELECT COUNT(*) FROM leads WHERE (COALESCE(meta_created_time, created_at) AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date AND deleted_at IS NULL ${scopeSql}) AS today_received,
       (SELECT COUNT(*) FROM users WHERE distribution_blocked = TRUE AND deleted_at IS NULL ${visible === null ? '' : `AND (id = ANY($1::uuid[]))`}) AS blocked_members,
@@ -902,7 +903,7 @@ router.post('/lead-requests', authenticate, asyncHandler(async (req, res) => {
          FROM leads
         WHERE assigned_to_user_id = $1
           AND deleted_at IS NULL
-          AND is_pending = TRUE`,
+          AND ${notWorkedLeadCondition('leads')}`,
       [req.user.id],
     );
     if (pc.pending >= threshold) {
@@ -1273,7 +1274,7 @@ router.get('/lead-requests/stats', authenticate, asyncHandler(async (req, res) =
   // My assigned leads count
   const { rows: [my] } = await query(`
     SELECT COUNT(*) AS my_leads,
-           COUNT(*) FILTER (WHERE is_pending = TRUE) AS my_pending,
+           COUNT(*) FILTER (WHERE ${notWorkedLeadCondition('leads')}) AS my_pending,
            COUNT(*) FILTER (WHERE assigned_at::date = CURRENT_DATE) AS my_assigned_today
       FROM leads WHERE assigned_to_user_id = $1 AND deleted_at IS NULL
   `, [userId]);
@@ -1678,7 +1679,7 @@ router.get('/admin/export/reports', authenticate, requireRole('super_admin'), as
   const { rows } = await query(`
     SELECT u.id, u.full_name, u.email, u.role, u.team_name, u.member_type,
            COUNT(l.id) AS total_leads,
-           COUNT(l.id) FILTER (WHERE l.is_pending) AS pending,
+           COUNT(l.id) FILTER (WHERE ${notWorkedLeadCondition('l')}) AS pending,
            COUNT(l.id) FILTER (WHERE l.call_status = 'converted') AS conversions,
            COUNT(l.id) FILTER (WHERE l.call_status IN ('ni', 'not_interested')) AS not_interested,
            COUNT(l.id) FILTER (WHERE l.call_status = 'cnr') AS cnr,
@@ -1992,7 +1993,7 @@ router.get('/admin/live-stats', authenticate, requireRole('super_admin', 'admin'
       (SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND is_available = TRUE AND role = 'member') AS available_members,
       (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL) AS total_leads,
       (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND assigned_to_user_id IS NULL) AS unassigned_leads,
-      (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND is_pending = TRUE) AS pending_leads,
+      (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND ${notWorkedLeadCondition('leads')}) AS pending_leads,
       (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND call_status = 'converted') AS converted_leads,
       (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND (COALESCE(meta_created_time, created_at) AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS today_leads,
       (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND assigned_at::date = CURRENT_DATE) AS today_assigned,
@@ -2056,7 +2057,7 @@ router.get('/admin/active-members', authenticate, requireRole('super_admin', 'ad
     SELECT u.id, u.full_name, u.role, u.team_name, u.member_type, u.is_available,
            r.full_name AS rm_name,
            (SELECT COUNT(*) FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL) AS lead_count,
-           (SELECT COUNT(*) FROM leads l2 WHERE l2.assigned_to_user_id = u.id AND l2.is_pending = TRUE AND l2.deleted_at IS NULL) AS pending_count
+           (SELECT COUNT(*) FROM leads l2 WHERE l2.assigned_to_user_id = u.id AND l2.deleted_at IS NULL AND ${notWorkedLeadCondition('l2')}) AS pending_count
       FROM users u
       LEFT JOIN users r ON r.id = u.report_to_id
      WHERE u.deleted_at IS NULL
@@ -2107,7 +2108,7 @@ router.get('/reports/campaigns', authenticate, requireRole('super_admin', 'admin
       COUNT(*) FILTER (WHERE l.call_status = 'interested') AS interested,
       COUNT(*) FILTER (WHERE l.call_status = 'not_interested') AS not_interested,
       COUNT(*) FILTER (WHERE l.stage = 'new') AS new_leads,
-      COUNT(*) FILTER (WHERE l.is_pending = TRUE) AS pending,
+      COUNT(*) FILTER (WHERE ${notWorkedLeadCondition('l')}) AS pending,
       ROUND(
         COUNT(*) FILTER (WHERE l.call_status = 'converted')::numeric /
         NULLIF(COUNT(*), 0) * 100, 2
@@ -3638,7 +3639,7 @@ router.get('/rm-monitoring/live-counters', authenticate, requireRole('rm', 'supe
         SELECT COUNT(DISTINCT l2.assigned_to_user_id)
         FROM leads l2
         WHERE l2.assigned_to_user_id IN (SELECT id FROM rm_people)
-          AND l2.is_pending = TRUE
+          AND ${notWorkedLeadCondition('l2')}
           AND l2.deleted_at IS NULL
       ) AS pending_work_users,
 
@@ -3723,7 +3724,7 @@ router.get('/rm-monitoring/team-overview', authenticate, requireRole('rm', 'supe
     LEFT JOIN LATERAL (
       SELECT COUNT(*) AS total,
              COUNT(*) FILTER (WHERE l.assigned_at::date = CURRENT_DATE) AS today_count,
-             COUNT(*) FILTER (WHERE l.is_pending = TRUE) AS pending,
+             COUNT(*) FILTER (WHERE ${notWorkedLeadCondition('l')}) AS pending,
              COUNT(*) FILTER (WHERE ${workedLeadCondition('l')}) AS worked,
              COUNT(*) FILTER (WHERE l.call_status = 'converted') AS converted
       FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
@@ -3842,7 +3843,7 @@ router.get('/rm-monitoring/member-requests', authenticate, requireRole('rm', 'su
            (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
               AND l.assigned_at::date = CURRENT_DATE) AS member_leads_today,
            (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
-              AND l.is_pending = TRUE) AS member_leads_pending,
+              AND ${notWorkedLeadCondition('l')}) AS member_leads_pending,
            (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
               AND ${workedLeadCondition('l')}) AS member_leads_worked,
            (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
@@ -3870,7 +3871,7 @@ router.get('/rm-monitoring/member-requests', authenticate, requireRole('rm', 'su
            (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
               AND l.assigned_at::date = CURRENT_DATE) AS member_leads_today,
            (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
-              AND l.is_pending = TRUE) AS member_leads_pending,
+              AND ${notWorkedLeadCondition('l')}) AS member_leads_pending,
            (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
               AND ${workedLeadCondition('l')}) AS member_leads_worked,
            (SELECT COUNT(*)::int FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
@@ -3907,7 +3908,7 @@ router.get('/admin/campaigns', authenticate, requireRole('super_admin'), asyncHa
       (SELECT COUNT(*)::int FROM leads l WHERE l.meta_campaign_id = mc.campaign_id AND l.deleted_at IS NULL
         AND l.call_status = 'converted') AS conversions,
       (SELECT COUNT(*)::int FROM leads l WHERE l.meta_campaign_id = mc.campaign_id AND l.deleted_at IS NULL
-        AND l.is_pending = TRUE) AS pending_leads
+        AND ${notWorkedLeadCondition('l')}) AS pending_leads
     FROM meta_campaigns mc
     LEFT JOIN users category_user ON category_user.id = mc.category_updated_by_user_id
     ORDER BY mc.created_at DESC
@@ -3990,7 +3991,7 @@ router.get('/admin/lead-sources', authenticate, requireRole('super_admin'), resp
       COUNT(*)::int AS total_leads,
       COUNT(*) FILTER (WHERE (COALESCE(l.meta_created_time, l.created_at) AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date)::int AS today_leads,
       COUNT(*) FILTER (WHERE l.call_status = 'converted')::int AS conversions,
-      COUNT(*) FILTER (WHERE l.is_pending = TRUE)::int AS pending,
+      COUNT(*) FILTER (WHERE ${notWorkedLeadCondition('l')})::int AS pending,
       COUNT(*) FILTER (WHERE l.stage = 'won')::int AS won,
       ROUND(COUNT(*) FILTER (WHERE l.call_status = 'converted')::numeric / NULLIF(COUNT(*), 0) * 100, 1) AS conv_rate,
       MAX(l.created_at) AS last_lead_at
@@ -4867,7 +4868,7 @@ router.get('/admin/analytics/overview', authenticate, requireRole('super_admin')
       (SELECT COUNT(*)::int FROM users WHERE deleted_at IS NULL AND status = 'blocked') AS blocked_users,
       (SELECT COUNT(*)::int FROM leads WHERE deleted_at IS NULL) AS total_leads,
       (SELECT COUNT(*)::int FROM leads WHERE deleted_at IS NULL AND assigned_to_user_id IS NULL) AS unassigned_leads,
-      (SELECT COUNT(*)::int FROM leads WHERE deleted_at IS NULL AND is_pending = TRUE) AS pending_leads,
+      (SELECT COUNT(*)::int FROM leads WHERE deleted_at IS NULL AND ${notWorkedLeadCondition('leads')}) AS pending_leads,
       (SELECT COUNT(*)::int FROM leads WHERE deleted_at IS NULL AND call_status = 'converted') AS converted_leads,
       (SELECT COUNT(*)::int FROM leads WHERE deleted_at IS NULL AND stage = 'won') AS won_leads,
       (SELECT COUNT(*)::int FROM leads WHERE deleted_at IS NULL AND stage = 'lost') AS lost_leads,
@@ -4926,7 +4927,7 @@ router.get('/admin/users/:userId/detail', authenticate, requireRole('super_admin
   const { rows: leadStats } = await query(`
     SELECT
       COUNT(*)::int AS total_leads,
-      COUNT(*) FILTER (WHERE is_pending = TRUE)::int AS pending,
+      COUNT(*) FILTER (WHERE ${notWorkedLeadCondition('leads')})::int AS pending,
       COUNT(*) FILTER (WHERE call_status = 'converted')::int AS conversions,
       COUNT(*) FILTER (WHERE call_status = 'not_called')::int AS not_called,
       COUNT(*) FILTER (WHERE (COALESCE(meta_created_time, created_at) AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date)::int AS today_received,
@@ -5143,7 +5144,7 @@ router.get('/admin/meta/forms-enriched', authenticate, requireRole('super_admin'
       (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_form_id = f.form_id) AS lead_count,
       (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_form_id = f.form_id AND (COALESCE(l.meta_created_time, l.created_at) AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS today_leads,
       (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_form_id = f.form_id AND l.call_status = 'converted') AS conversions,
-      (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_form_id = f.form_id AND l.is_pending = TRUE) AS pending_leads,
+      (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_form_id = f.form_id AND ${notWorkedLeadCondition('l')}) AS pending_leads,
       (SELECT MAX(l.created_at) FROM leads l WHERE l.deleted_at IS NULL AND l.meta_form_id = f.form_id) AS last_lead_at
     FROM meta_forms f
     JOIN meta_pages p ON p.page_id = f.page_id AND p.is_active = TRUE AND p.connection_status = 'active'
@@ -5517,7 +5518,7 @@ router.get('/admin/meta/campaigns-enriched', authenticate, requireRole('super_ad
       (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_campaign_id = mc.campaign_id) AS lead_count,
       (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_campaign_id = mc.campaign_id AND (COALESCE(l.meta_created_time, l.created_at) AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS today_leads,
       (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_campaign_id = mc.campaign_id AND l.call_status = 'converted') AS conversions,
-      (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_campaign_id = mc.campaign_id AND l.is_pending = TRUE) AS pending_leads,
+      (SELECT COUNT(*)::int FROM leads l WHERE l.deleted_at IS NULL AND l.meta_campaign_id = mc.campaign_id AND ${notWorkedLeadCondition('l')}) AS pending_leads,
       (SELECT MAX(l.created_at) FROM leads l WHERE l.deleted_at IS NULL AND l.meta_campaign_id = mc.campaign_id) AS last_lead_at,
       (SELECT DISTINCT f.form_name FROM meta_forms f WHERE f.campaign_label = mc.internal_label LIMIT 1) AS connected_form,
       (SELECT p.page_name FROM meta_pages p WHERE p.page_id = (

@@ -17,6 +17,7 @@ const { createLeadInteraction } = require('../services/leadInteractionService');
 const { validateLeadAssignee } = require('../services/leadAssigneeValidator');
 const { assertCreateReady } = require('../services/createReadinessService');
 const { applyLeadDisplayName } = require('../services/leadNameService');
+const { notWorkedLeadCondition } = require('../utils/leadWorkMetrics');
 
 function humanizeValue(value) {
   return String(value || '')
@@ -258,7 +259,7 @@ async function assertLeadWriteAccess(client, leadId, user) {
  *   assigned_to       user id  (admin only — RM auto-scoped, members locked to self)
  *   from, to          ISO dates (filters created_at)
  *   created_preset    today|yesterday|day_before (IST created_at date)
- *   pending           true => only is_pending leads
+ *   pending           true => only unworked leads
  *   followup          today|overdue|week
  *   page, page_size
  *   sort              created_at | assigned_at | next_followup_at  (default created_at)
@@ -387,7 +388,7 @@ exports.list = asyncHandler(async (req, res) => {
   }
   if (req.query.from) { params.push(req.query.from); where.push(`l.created_at >= $${params.length}`); }
   if (req.query.to) { params.push(req.query.to); where.push(`l.created_at <= $${params.length}`); }
-  if (req.query.pending === 'true') where.push(`l.is_pending = TRUE`);
+  if (req.query.pending === 'true') where.push(`${notWorkedLeadCondition('l')}`);
   if (req.query.unworked === 'true') {
     where.push(`NOT EXISTS (
       SELECT 1 FROM lead_remarks lr

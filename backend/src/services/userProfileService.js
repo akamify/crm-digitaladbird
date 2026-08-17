@@ -86,7 +86,7 @@ async function getBasicCounts(userId) {
   const { rows: [counts] } = await query(`
     SELECT
       COUNT(*)::int AS total_assigned_leads,
-      COUNT(*) FILTER (WHERE l.is_pending = TRUE)::int AS pending_leads,
+      COUNT(*) FILTER (WHERE ${notWorkedLeadCondition('l')})::int AS pending_leads,
       COUNT(*) FILTER (WHERE ${workedLeadCondition('l')})::int AS worked_leads,
       COUNT(*) FILTER (WHERE l.call_status = 'converted')::int AS converted_leads,
       COUNT(*) FILTER (WHERE l.stage = 'lost' OR l.call_status IN ('not_interested','wrong_number','invalid_number'))::int AS lost_not_interested_leads,
@@ -162,7 +162,7 @@ async function getRmMetrics(userId) {
       (SELECT COUNT(*)::int FROM team) AS team_members_count,
       (SELECT COUNT(*)::int FROM users u JOIN team t ON t.id = u.id WHERE u.status = 'active') AS active_members,
       COUNT(l.id)::int AS team_assigned_leads,
-      COUNT(l.id) FILTER (WHERE l.is_pending = TRUE)::int AS team_pending_leads,
+      COUNT(l.id) FILTER (WHERE ${notWorkedLeadCondition('l')})::int AS team_pending_leads,
       COUNT(l.id) FILTER (WHERE ${workedLeadCondition('l')})::int AS team_worked_leads,
       COUNT(l.id) FILTER (WHERE l.call_status = 'converted')::int AS team_conversions,
       COUNT(l.id) FILTER (WHERE l.next_followup_at IS NOT NULL AND l.next_followup_at <= NOW())::int AS overdue_followups,
@@ -245,7 +245,7 @@ async function getPerformance(actor, userId, opts = {}) {
     SELECT
       COUNT(*)::int AS assigned,
       COUNT(*) FILTER (WHERE ${workedLeadCondition('l')})::int AS worked,
-      COUNT(*) FILTER (WHERE is_pending = TRUE)::int AS pending,
+      COUNT(*) FILTER (WHERE ${notWorkedLeadCondition('l')})::int AS pending,
       COUNT(*) FILTER (WHERE call_status = 'converted')::int AS converted,
       ROUND(
         CASE WHEN COUNT(*) = 0 THEN 0
@@ -368,7 +368,7 @@ async function getPerformance(actor, userId, opts = {}) {
 
   const { rows: [workload] } = await query(`
     SELECT
-      COUNT(*) FILTER (WHERE is_pending = TRUE)::int AS currently_pending,
+      COUNT(*) FILTER (WHERE ${notWorkedLeadCondition('l')})::int AS currently_pending,
       COUNT(*) FILTER (WHERE next_followup_at IS NOT NULL AND next_followup_at < NOW())::int AS overdue_leads,
       COUNT(*) FILTER (WHERE assigned_at < NOW() - INTERVAL '24 hours'
         AND ${notWorkedLeadCondition('l')})::int AS inactive_assigned_leads

@@ -3,14 +3,13 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { CalendarClock, CheckCircle2, ChevronRight, Link2, Pencil, Plus, Search, ShieldCheck, Trash2, UserRound, Users, XCircle } from 'lucide-react';
+import { CalendarClock, ChevronRight, Link2, Pencil, Plus, Search, ShieldCheck, Trash2, UserRound, Users } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { EmptyState, Modal, Skeleton } from '@/components/ui/Modal';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import {
   useAddCustomerNoteEntry,
-  useApproveCustomerNote,
   useCreateCustomerNote,
   useCustomerNote,
   useCustomerNoteLeadLookup,
@@ -18,7 +17,6 @@ import {
   useCustomerNotes,
   useDeleteCustomerNote,
   useDeleteCustomerNoteEntry,
-  useRejectCustomerNote,
   useUpcomingCustomerMeetings,
   useUpdateCustomerNote,
   useUpdateCustomerNoteEntry,
@@ -35,6 +33,10 @@ function approvalChip(status?: CustomerNoteApprovalStatus | string | null) {
   if (status === 'approved') return 'chip-green';
   if (status === 'rejected') return 'chip-red';
   return 'chip-amber';
+}
+
+function noteStatusLabel(status?: CustomerNoteApprovalStatus | string | null) {
+  return status === 'rejected' ? 'Rejected' : 'Visible';
 }
 
 function noteSummary(note: CustomerNote) {
@@ -264,9 +266,9 @@ function NotesInner() {
             {user?.role === 'super_admin' || user?.role === 'admin' ? (
               <span className="chip-green">All created notes are visible to company</span>
             ) : user?.role === 'rm' ? (
-              <span className="chip-blue">You can verify team notes</span>
+              <span className="chip-blue">Team notes stay visible here instantly</span>
             ) : (
-              <span className="chip-amber">Your notes go to RM approval</span>
+              <span className="chip-amber">Your notes save instantly in workspace</span>
             )}
           </div>
           <p className="text-sm text-slate-500">
@@ -578,7 +580,7 @@ function NotesInner() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="space-y-1">
-                        <span className={approvalChip(note.approval_status)}>{humanize(note.approval_status)}</span>
+                        <span className={approvalChip(note.approval_status)}>{noteStatusLabel(note.approval_status)}</span>
                         {note.rejection_note && <div className="line-clamp-2 text-xs text-rose-600">{note.rejection_note}</div>}
                       </div>
                     </td>
@@ -1351,8 +1353,6 @@ function CustomerNoteDetailModal({
   const addEntry = useAddCustomerNoteEntry();
   const updateEntry = useUpdateCustomerNoteEntry();
   const deleteEntry = useDeleteCustomerNoteEntry();
-  const approveNote = useApproveCustomerNote();
-  const rejectNote = useRejectCustomerNote();
   const deleteNote = useDeleteCustomerNote();
   const [newEntryText, setNewEntryText] = useState('');
 
@@ -1396,23 +1396,6 @@ function CustomerNoteDetailModal({
     });
   }
 
-  function handleApprove() {
-    if (!noteId) return;
-    approveNote.mutate(noteId, {
-      onSuccess: () => toast.success('Note approved and visible to admin'),
-      onError: (error) => toast.error(getApiErrorMessage(error, 'Could not approve note')),
-    });
-  }
-
-  function handleReject() {
-    if (!noteId) return;
-    const reason = window.prompt('Reason for rejection (optional)');
-    rejectNote.mutate({ noteId, rejection_note: reason || '' }, {
-      onSuccess: () => toast.success('Note rejected'),
-      onError: (error) => toast.error(getApiErrorMessage(error, 'Could not reject note')),
-    });
-  }
-
   function handleDeleteNote() {
     if (!noteId) return;
     if (!window.confirm('Delete this note thread?')) return;
@@ -1445,7 +1428,7 @@ function CustomerNoteDetailModal({
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <InfoCard icon={<UserRound className="h-4 w-4" />} label="Customer" value={note.customer_name} hint={fmtPhone(note.customer_phone)} />
             <InfoCard icon={<Users className="h-4 w-4" />} label="Ownership" value={note.rm_name || 'RM not set'} hint={meetingCounselorNames(note).length ? `Counselor: ${meetingCounselorNames(note).join(', ')}` : 'Counselor not set'} />
-            <InfoCard icon={<ShieldCheck className="h-4 w-4" />} label="Approval" value={humanize(note.approval_status)} hint={note.approved_at ? `Approved ${formatISTCompact(note.approved_at)}` : note.rejected_at ? `Rejected ${formatISTCompact(note.rejected_at)}` : note.approval_status === 'pending_rm_approval' ? 'Waiting for RM approval' : 'Saved and visible in notes workspace'} />
+            <InfoCard icon={<ShieldCheck className="h-4 w-4" />} label="Status" value={noteStatusLabel(note.approval_status)} hint={note.rejected_at ? `Rejected ${formatISTCompact(note.rejected_at)}` : 'Saved and visible in notes workspace'} />
             <InfoCard icon={<CalendarClock className="h-4 w-4" />} label="Meeting" value={note.meeting_name || 'No meeting title'} hint={note.meeting_at ? formatISTCompact(note.meeting_at) : 'No meeting time'} />
           </div>
 
@@ -1475,16 +1458,6 @@ function CustomerNoteDetailModal({
             {note.permissions?.can_delete && (
               <button type="button" onClick={handleDeleteNote} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-700">
                 <Trash2 className="h-4 w-4" /> Delete
-              </button>
-            )}
-            {note.permissions?.can_approve && note.approval_status !== 'approved' && (
-              <button type="button" onClick={handleApprove} className="btn-primary inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
-                <CheckCircle2 className="h-4 w-4" /> Approve for Admin
-              </button>
-            )}
-            {note.permissions?.can_reject && note.approval_status !== 'rejected' && (
-              <button type="button" onClick={handleReject} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-amber-700">
-                <XCircle className="h-4 w-4" /> Reject
               </button>
             )}
           </div>

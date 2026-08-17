@@ -385,17 +385,26 @@ function Step1Remark({ leadId, current, options, completed }: {
   }, [current]);
 
   function toggle(value: string) {
-    setSelected(values => values.includes(value) ? values.filter(item => item !== value) : [...values, value]);
-  }
+    if (save.isPending) return;
 
-  function submit() {
-    if (selected.length === 0) {
-      toast.error('Select at least one Step 1 status.');
+    const nextSelection = selected.includes(value)
+      ? selected.filter(item => item !== value)
+      : [...selected, value];
+
+    if (nextSelection.length === 0) {
+      toast.error('At least one Step 1 status must stay selected.');
       return;
     }
-    save.mutate({ leadId, remark_status: selected[0], remark_statuses: selected }, {
-      onSuccess: () => toast.success('Step 1 updated'),
-      onError: (e: any) => toast.error(e?.response?.data?.error?.message || 'Failed to save Step 1'),
+
+    const previousSelection = selected;
+    setSelected(nextSelection);
+
+    save.mutate({ leadId, remark_status: nextSelection[0], remark_statuses: nextSelection }, {
+      onSuccess: () => toast.success('Remark updated'),
+      onError: (e: any) => {
+        setSelected(previousSelection);
+        toast.error(e?.response?.data?.error?.message || 'Failed to save Step 1');
+      },
     });
   }
 
@@ -404,9 +413,9 @@ function Step1Remark({ leadId, current, options, completed }: {
   return (
     <div>
       <p className="text-xs text-slate-500 mb-3">
-        Selecting any completed response will unlock Step 2. Existing completed responses are editable from this panel.
+        Clicking any option saves it instantly. Selecting any completed response unlocks Step 2.
       </p>
-      {hasCompletingSelection && <p className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">A completed response is selected, so Step 2 can unlock after saving.</p>}
+      {hasCompletingSelection && <p className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">A completed response is selected, so Step 2 unlocks automatically after this save.</p>}
       <div className="space-y-4">
         {availableGroups.map(group => (
           <div key={group.key}>
@@ -446,10 +455,10 @@ function Step1Remark({ leadId, current, options, completed }: {
           {selected.map(value => <span key={value} className="chip-blue">{REMARK_DISPLAY[value]?.label || humanize(value)}</span>)}
         </div>
       )}
-      <div className="mt-4 flex justify-end">
-        <button type="button" disabled={save.isPending || selected.length === 0} onClick={submit} className="btn-primary rounded-lg px-4 py-2 text-sm">
-          {save.isPending ? 'Saving...' : completed ? 'Update Step 1' : 'Save Step 1'}
-        </button>
+      <div className="mt-4 flex items-center justify-end">
+        <span className="text-xs text-slate-500">
+          {save.isPending ? 'Saving remark...' : completed ? 'Step 1 stays editable.' : 'Step 1 saves automatically.'}
+        </span>
       </div>
     </div>
   );

@@ -1,12 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { AlertTriangle, ChevronLeft, ChevronRight, Eye, Inbox, Lock, Mail, MessageSquarePlus, Phone, Plus, ScrollText, Tag, Trash2 } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, ChevronRight, Eye, Inbox, Lock, Mail, MessageCircle, MessageSquarePlus, MoreVertical, Phone, Plus, ScrollText, Tag, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
-import { LeadActions } from '@/components/leads/LeadActions';
 import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
 import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
 import { LeadFilters } from '@/components/leads/LeadFilters';
@@ -19,6 +18,7 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useBulkAddRemark, useDeleteLead, useLeadList } from '@/hooks/useLeads';
 import { formatISTCompact, formatISTTooltip, formatStageUpdatedAt } from '@/lib/date';
 import { clsx, fmtPhone, humanize, isDueToday, isOverdue, stageChip } from '@/lib/format';
+import { triggerPhoneCall } from '@/lib/phone';
 import { useAuth } from '@/lib/auth';
 import { LEAD_REMARK_GROUPS } from '@/constants/leadRemarkOptions';
 import type { CallStatus, Lead, LeadFilters as LeadFilterType } from '@/types';
@@ -63,6 +63,129 @@ function displayLeadName(lead: Pick<Lead, 'full_name' | 'email' | 'phone'>) {
   const digits = String(lead.phone || '').replace(/\D/g, '');
   if (digits) return `Lead ${digits.slice(-4)}`;
   return 'No name';
+}
+
+function LeadRowActionsMenu({
+  phone,
+  isRmUser,
+  onCall,
+  onChat,
+  onCreateNotes,
+  onAddRemark,
+  onDelete,
+}: {
+  phone?: string | null;
+  isRmUser: boolean;
+  onCall: () => void;
+  onChat: () => void;
+  onCreateNotes: () => void;
+  onAddRemark: () => void;
+  onDelete?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const hasPhone = Boolean(String(phone || '').trim());
+
+  useEffect(() => {
+    if (!open) return undefined;
+
+    function handlePointer(event: MouseEvent | TouchEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setOpen(false);
+    }
+
+    document.addEventListener('mousedown', handlePointer);
+    document.addEventListener('touchstart', handlePointer);
+    document.addEventListener('keydown', handleEscape);
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointer);
+      document.removeEventListener('touchstart', handlePointer);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [open]);
+
+  function runAndClose(action: () => void) {
+    setOpen(false);
+    action();
+  }
+
+  return (
+    <div
+      ref={menuRef}
+      className="relative inline-flex"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <button
+        type="button"
+        aria-label="Open lead actions"
+        aria-expanded={open}
+        onClick={() => setOpen(value => !value)}
+        className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+      >
+        <MoreVertical className="h-5 w-5" />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-[calc(100%+0.5rem)] z-30 w-52 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl shadow-slate-200/80">
+          <button
+            type="button"
+            disabled={!hasPhone}
+            onClick={() => runAndClose(onCall)}
+            className={clsx(
+              'flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium transition',
+              hasPhone ? 'text-slate-700 hover:bg-blue-50 hover:text-blue-700' : 'cursor-not-allowed text-slate-300'
+            )}
+          >
+            <Phone className="h-4 w-4" />
+            <span>Call now</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => runAndClose(onChat)}
+            className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-emerald-50 hover:text-emerald-700"
+          >
+            <MessageCircle className="h-4 w-4" />
+            <span>Chat here</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => runAndClose(onCreateNotes)}
+            className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-amber-50 hover:text-amber-700"
+          >
+            <ScrollText className="h-4 w-4" />
+            <span>Create notes</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => runAndClose(onAddRemark)}
+            className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-violet-50 hover:text-violet-700"
+          >
+            <MessageSquarePlus className="h-4 w-4" />
+            <span>{isRmUser ? 'Add RM update' : 'Add remark'}</span>
+          </button>
+          {onDelete && (
+            <>
+              <div className="my-1 h-px bg-slate-100" />
+              <button
+                type="button"
+                onClick={() => runAndClose(onDelete)}
+                className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium text-rose-600 transition hover:bg-rose-50"
+              >
+                <Trash2 className="h-4 w-4" />
+                <span>Delete lead</span>
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function LeadsPage() {
@@ -615,43 +738,18 @@ function LeadsInner() {
                             <Eye className="h-3 w-3" /> View
                           </Link>
                         ) : (
-                          <div className="flex items-center gap-1">
-                            <LeadActions
-                              phone={lead.phone}
-                              compact
-                              onCall={() => openCommunication(lead, 'calls')}
-                              onChat={() => openCommunication(lead, 'chat')}
-                            />
-                            <Link
-                              href={`/notes?leadId=${encodeURIComponent(lead.id)}&compose=1`}
-                              title="Add advanced note"
-                              onClick={(event) => event.stopPropagation()}
-                              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-1 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50"
-                            >
-                              <ScrollText className="h-3 w-3" />
-                            </Link>
-                            <button
-                              type="button"
-                              title={isRmUser ? 'Add RM update' : 'Add remark'}
-                              onClick={() => setRemarkLeadId(lead.id)}
-                              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-1 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50"
-                            >
-                              <MessageSquarePlus className="h-3 w-3" />
-                            </button>
-                            {canDeleteLead && (
-                              <button
-                                type="button"
-                                title="Delete lead permanently"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  setDeleteLeadItem(lead);
-                                }}
-                                className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-white px-1.5 py-1 text-[11px] font-medium text-rose-600 transition hover:bg-rose-50"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </button>
-                            )}
-                          </div>
+                          <LeadRowActionsMenu
+                            phone={lead.phone}
+                            isRmUser={isRmUser}
+                            onCall={() => {
+                              triggerPhoneCall(lead.phone);
+                              openCommunication(lead, 'calls');
+                            }}
+                            onChat={() => openCommunication(lead, 'chat')}
+                            onCreateNotes={() => router.push(`/notes?leadId=${encodeURIComponent(lead.id)}&compose=1`)}
+                            onAddRemark={() => setRemarkLeadId(lead.id)}
+                            onDelete={canDeleteLead ? () => setDeleteLeadItem(lead) : undefined}
+                          />
                         )}
                       </td>
                     </tr>

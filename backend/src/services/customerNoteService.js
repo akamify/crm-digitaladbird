@@ -109,6 +109,10 @@ function isMemberActor(actor) {
   return ['member', 'partner'].includes(actorRole(actor));
 }
 
+function effectiveApprovalStatus(status) {
+  return status === 'rejected' ? 'rejected' : 'approved';
+}
+
 async function getUser(userId) {
   if (!userId) return null;
   const { rows: [user] } = await query(
@@ -287,22 +291,11 @@ async function validateCreatePermission(actor, payload, lead, counselorUser, rmU
 }
 
 function deriveApprovalState(actor) {
-  if (isAdminActor(actor) || isRmActor(actor)) {
-    return {
-      approvalStatus: 'approved',
-      approvedByUserId: actor.id,
-      approvedAt: new Date().toISOString(),
-      submittedToRmAt: null,
-      rejectedByUserId: null,
-      rejectedAt: null,
-      rejectionNote: null,
-    };
-  }
   return {
-    approvalStatus: 'pending_rm_approval',
-    approvedByUserId: null,
-    approvedAt: null,
-    submittedToRmAt: new Date().toISOString(),
+    approvalStatus: 'approved',
+    approvedByUserId: actor.id,
+    approvedAt: new Date().toISOString(),
+    submittedToRmAt: null,
     rejectedByUserId: null,
     rejectedAt: null,
     rejectionNote: null,
@@ -328,6 +321,7 @@ async function mapNoteRow(row, actor) {
   if (!row) return null;
   const userIds = [row.created_by_user_id, row.updated_by_user_id, row.approved_by_user_id, row.rejected_by_user_id].filter(Boolean);
   const actorIds = getVisibleUserIds(actor) || [];
+  const approvalStatus = effectiveApprovalStatus(row.approval_status);
   return {
     id: row.id,
     lead_id: row.lead_id,
@@ -357,7 +351,7 @@ async function mapNoteRow(row, actor) {
     created_by_name: row.created_by_name || null,
     updated_by_user_id: row.updated_by_user_id,
     updated_by_name: row.updated_by_name || null,
-    approval_status: row.approval_status,
+    approval_status: approvalStatus,
     submitted_to_rm_at: row.submitted_to_rm_at,
     approved_by_user_id: row.approved_by_user_id,
     approved_by_name: row.approved_by_name || null,
@@ -380,8 +374,8 @@ async function mapNoteRow(row, actor) {
         || row.counselor_user_id === actor.id
         || (isRmActor(actor) && actorIds.includes(row.created_by_user_id)),
       can_delete: isAdminActor(actor) || row.created_by_user_id === actor.id || row.rm_user_id === actor.id,
-      can_approve: isAdminActor(actor) || (isRmActor(actor) && row.approval_status === 'pending_rm_approval'),
-      can_reject: isAdminActor(actor) || (isRmActor(actor) && row.approval_status === 'pending_rm_approval'),
+      can_approve: false,
+      can_reject: false,
       can_add_entry: isAdminActor(actor)
         || row.created_by_user_id === actor.id
         || row.rm_user_id === actor.id

@@ -9,6 +9,7 @@ const { AppError } = require('../utils/errors');
 const logger = require('../utils/logger');
 const { assertLeadAssigneeUser, validateLeadAssignee } = require('./leadAssigneeValidator');
 const { notifyLeadAssigned, notifyLeadRequestResolved } = require('./notificationService');
+const { notWorkedLeadCondition } = require('../utils/leadWorkMetrics');
 
 const DEFAULT_RULE_NAME = '__assignment_engine_default__';
 const RM_POOL_RULE_NAME = '__assignment_engine_rm_pool__';
@@ -159,7 +160,7 @@ async function getAvailableMembers(options = {}, client = null) {
                AND l.deleted_at IS NULL) AS today_count,
            (SELECT COUNT(*)::int FROM leads l
              WHERE l.assigned_to_user_id = u.id
-               AND l.is_pending = TRUE
+               AND ${notWorkedLeadCondition('l')}
                AND l.deleted_at IS NULL) AS pending_count
       FROM users u
      WHERE ${where}
@@ -188,7 +189,7 @@ async function getHighPerformanceMembers(options = {}, client = null) {
            + (COUNT(l.id) FILTER (WHERE l.call_status <> 'not_called'
               AND l.updated_at > NOW() - INTERVAL '7 days') * 2)
            + (COUNT(r.id) FILTER (WHERE r.created_at > NOW() - INTERVAL '7 days'))
-           - (COUNT(l.id) FILTER (WHERE l.is_pending = TRUE) * 3) AS score
+           - (COUNT(l.id) FILTER (WHERE ${notWorkedLeadCondition('l')}) * 3) AS score
       FROM users u
       LEFT JOIN leads l ON l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
       LEFT JOIN lead_remarks r ON r.user_id = u.id

@@ -2,6 +2,17 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiGet, apiPost, apiPatch } from '@/lib/api';
 
+function invalidateWorkflowRelatedQueries(qc: ReturnType<typeof useQueryClient>, leadId: string) {
+  qc.invalidateQueries({ queryKey: ['workflow', leadId] });
+  qc.invalidateQueries({ queryKey: ['workflow-history', leadId] });
+  qc.invalidateQueries({ queryKey: ['lead', leadId] });
+  qc.invalidateQueries({ queryKey: ['leads'] });
+  qc.invalidateQueries({ queryKey: ['reports'] });
+  qc.invalidateQueries({ queryKey: ['lead-request-stats'] });
+  qc.invalidateQueries({ queryKey: ['workflow-stats'] });
+  qc.invalidateQueries({ queryKey: ['workflow-summary'] });
+}
+
 export interface WorkflowState {
   id: string;
   lead_id: string;
@@ -130,8 +141,7 @@ export function useSaveRemark() {
     mutationFn: ({ leadId, remark_status, remark_statuses }: { leadId: string; remark_status?: string; remark_statuses?: string[] }) =>
       apiPost<WorkflowState>(`/leads/${leadId}/workflow/remark`, { remark_status, remark_statuses }),
     onSuccess: (_d, { leadId }) => {
-      qc.invalidateQueries({ queryKey: ['workflow', leadId] });
-      qc.invalidateQueries({ queryKey: ['lead', leadId] });
+      invalidateWorkflowRelatedQueries(qc, leadId);
     },
   });
 }
@@ -142,8 +152,7 @@ export function useSaveLeadLevel() {
     mutationFn: ({ leadId, lead_level, step_2_statuses }: { leadId: string; lead_level?: string; step_2_statuses?: string[] }) =>
       apiPost<WorkflowState>(`/leads/${leadId}/workflow/level`, { lead_level, step_2_statuses }),
     onSuccess: (_d, { leadId }) => {
-      qc.invalidateQueries({ queryKey: ['workflow', leadId] });
-      qc.invalidateQueries({ queryKey: ['lead', leadId] });
+      invalidateWorkflowRelatedQueries(qc, leadId);
     },
   });
 }
@@ -156,7 +165,7 @@ export function useUpdateFollowup() {
         `/leads/${leadId}/workflow/followup`, fields
       ),
     onSuccess: (_d, { leadId }) => {
-      qc.invalidateQueries({ queryKey: ['workflow', leadId] });
+      invalidateWorkflowRelatedQueries(qc, leadId);
     },
   });
 }
@@ -174,9 +183,7 @@ export function useSaveConversion() {
       transaction_id?: string;
     }) => apiPost<ConversionData>(`/leads/${leadId}/workflow/conversion`, data),
     onSuccess: (_d, { leadId }) => {
-      qc.invalidateQueries({ queryKey: ['workflow', leadId] });
-      qc.invalidateQueries({ queryKey: ['lead', leadId] });
-      qc.invalidateQueries({ queryKey: ['leads'] });
+      invalidateWorkflowRelatedQueries(qc, leadId);
     },
   });
 }
