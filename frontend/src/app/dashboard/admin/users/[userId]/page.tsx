@@ -17,7 +17,9 @@ import { EmptyState, Modal, Skeleton, StatusChip } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import { clsx, fmtDate, fmtPhone, fmtRelative, humanize, initials } from '@/lib/format';
 import { useActiveMembers, useBlockUser, useBulkReassignLeads, useUnblockUser } from '@/hooks/useAdmin';
+import { useCustomerNotes } from '@/hooks/useCustomerNotes';
 import { useDeleteUser, useSendPasswordResetLink, useUpdateLeadAvailability, useUsers } from '@/hooks/useUsers';
+import type { CustomerNote } from '@/types';
 import { validateEmail, validatePhone } from '@/lib/uiData';
 import {
   ActivityRow,
@@ -45,6 +47,8 @@ type TabKey =
   | 'team_performance'
   | 'settings'
   | 'leads'
+  | 'pending_leads'
+  | 'notes'
   | 'requests'
   | 'assignment_history'
   | 'notifications'
@@ -120,7 +124,7 @@ function UserProfileInner({ userId }: { userId: string }) {
   const isMemberProfile = profileType === 'member';
   const isRmProfile = profileType === 'rm';
   const isAdminProfile = profileType === 'admin';
-  const availableTabs = (tabs.length ? tabs : ['leads', 'requests', 'assignment_history', 'activity'])
+  const availableTabs = (tabs.length ? tabs : ['leads', 'pending_leads', 'notes', 'requests', 'assignment_history', 'activity'])
     .filter(tabKey => !(isAdminProfile && tabKey === 'permissions')) as TabKey[];
   const activeTab = availableTabs.includes(tab) ? tab : availableTabs[0];
   const isReadOnlyProfile = profileType === 'deleted' || user.status === 'deleted';
@@ -393,6 +397,8 @@ function UserProfileInner({ userId }: { userId: string }) {
           {activeTab === 'team_performance' && <RmTeamPerformanceTab metrics={metrics} />}
           {activeTab === 'settings' && <SettingsTab profile={profile.data} />}
           {activeTab === 'leads' && <AssignedLeadsTab userId={userId} canReassign={canEdit && isMemberProfile} />}
+          {activeTab === 'pending_leads' && <AssignedLeadsTab userId={userId} canReassign={false} pendingOnly />}
+          {activeTab === 'notes' && <UserNotesTab userId={userId} />}
           {activeTab === 'requests' && <RequestsTab userId={userId} />}
           {activeTab === 'assignment_history' && <HistoryTab userId={userId} profileType={profileType} />}
           {activeTab === 'notifications' && <EmptyState title="Notifications history" description="User notification history is visible from the notification audit endpoints when available." icon={<Mail className="h-6 w-6" />} />}
@@ -587,7 +593,7 @@ function EditProfileButton({ profile, userId }: { profile: UserProfileResponse; 
   );
 }
 
-function AssignedLeadsTab({ userId, canReassign }: { userId: string; canReassign: boolean }) {
+function AssignedLeadsTab({ userId, canReassign, pendingOnly = false }: { userId: string; canReassign: boolean; pendingOnly?: boolean }) {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [callStatus, setCallStatus] = useState('');
@@ -595,7 +601,13 @@ function AssignedLeadsTab({ userId, canReassign }: { userId: string; canReassign
   const [modalOpen, setModalOpen] = useState(false);
   const [targetUser, setTargetUser] = useState('');
   const [reason, setReason] = useState('');
-  const leads = useAdminUserLeads(userId, { page, page_size: 20, search: search || undefined, call_status: callStatus || undefined });
+  const leads = useAdminUserLeads(userId, {
+    page,
+    page_size: 20,
+    search: search || undefined,
+    call_status: callStatus || undefined,
+    pending: pendingOnly ? 'true' : undefined,
+  });
   const members = useActiveMembers();
   const reassign = useBulkReassignLeads();
   const rows = leads.data?.rows || [];
@@ -627,7 +639,7 @@ function AssignedLeadsTab({ userId, canReassign }: { userId: string; canReassign
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative min-w-[220px] flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input className="input pl-10" placeholder="Search assigned leads..." value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
+          <input className="input pl-10" placeholder={pendingOnly ? 'Search pending leads...' : 'Search assigned leads...'} value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
         </div>
         <select className="input w-44" value={callStatus} onChange={e => { setCallStatus(e.target.value); setPage(1); }}>
           <option value="">All call statuses</option>
@@ -644,8 +656,18 @@ function AssignedLeadsTab({ userId, canReassign }: { userId: string; canReassign
         )}
       </div>
 
+      {pendingOnly && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Pending leads are the leads that still need fresh work from this user. As soon as a valid remark/workflow action is added, they should move out of this list.
+        </div>
+      )}
+
       {leads.isLoading ? <Skeleton className="h-64" /> : rows.length === 0 ? (
-        <EmptyState title="No assigned leads" description="No leads match the current filters." icon={<Briefcase className="h-6 w-6" />} />
+        <EmptyState
+          title={pendingOnly ? 'No pending leads' : 'No assigned leads'}
+          description={pendingOnly ? 'This user has no pending-work leads for the current filters.' : 'No leads match the current filters.'}
+          icon={<Briefcase className="h-6 w-6" />}
+        />
       ) : (
         <div className="overflow-hidden rounded-xl border border-slate-200">
           <table className="min-w-full divide-y divide-slate-200 text-sm">
@@ -726,6 +748,110 @@ function AssignedLeadsTab({ userId, canReassign }: { userId: string; canReassign
           </label>
         </div>
       </Modal>
+    </div>
+  );
+}
+
+function UserNotesTab({ userId }: { userId: string }) {
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState('');
+  const notes = useCustomerNotes({
+    created_by_user_id: userId,
+    q: search || undefined,
+    page,
+    page_size: 12,
+  });
+  const rows = notes.data?.rows || [];
+  const total = notes.data?.total || 0;
+  const totalPages = Math.max(1, Math.ceil(total / 12));
+
+  function statusChip(status?: string | null) {
+    if (status === 'approved') return 'chip-green';
+    if (status === 'rejected') return 'chip-red';
+    return 'chip-slate';
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative min-w-[220px] flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input
+            className="input pl-10"
+            placeholder="Search customer, lead, phone, business..."
+            value={search}
+            onChange={event => {
+              setSearch(event.target.value);
+              setPage(1);
+            }}
+          />
+        </div>
+        <div className="text-xs text-slate-500">
+          Showing notes created by this user
+        </div>
+      </div>
+
+      {notes.isLoading ? <Skeleton className="h-64" /> : rows.length === 0 ? (
+        <EmptyState
+          title="No notes found"
+          description="This user has not created any customer notes for the current search."
+          icon={<Mail className="h-6 w-6" />}
+        />
+      ) : (
+        <div className="space-y-3">
+          {rows.map((note: CustomerNote) => (
+            <div key={note.id} className="rounded-xl border border-slate-200 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold text-slate-900">{note.customer_name || 'Unnamed customer'}</span>
+                    <span className="chip-blue">{note.lead_id ? 'Lead linked' : 'Custom note'}</span>
+                    <span className={statusChip(note.approval_status)}>{humanize(note.approval_status)}</span>
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {fmtPhone(note.customer_phone)} {note.business_name ? `· ${note.business_name}` : ''}
+                  </div>
+                </div>
+                <div className="text-right text-xs text-slate-500">
+                  <div>Updated {fmtRelative(note.last_activity_at || note.updated_at)}</div>
+                  <div>{fmtDate(note.last_activity_at || note.updated_at)}</div>
+                </div>
+              </div>
+
+              <div className="mt-3 grid gap-3 lg:grid-cols-[1.1fr_1.4fr_auto]">
+                <div className="space-y-1 text-sm text-slate-600">
+                  <div><span className="font-medium text-slate-900">Lead:</span> {note.lead_name || 'Not linked'}</div>
+                  <div><span className="font-medium text-slate-900">Counselor:</span> {note.counselor_name || 'Not set'}</div>
+                  <div><span className="font-medium text-slate-900">RM:</span> {note.rm_name || 'Not set'}</div>
+                </div>
+                <div className="space-y-1 text-sm text-slate-600">
+                  <div className="font-medium text-slate-900">Latest note</div>
+                  <p className="line-clamp-3">{note.latest_entry_text || note.about_client || note.client_services_want || 'No note text available yet.'}</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                  {note.lead_id && (
+                    <Link href={`/leads/${note.lead_id}`} className="btn-outline rounded-lg px-3 py-2 text-sm">
+                      Open lead
+                    </Link>
+                  )}
+                  <Link href={`/notes?noteId=${note.id}`} className="btn-outline rounded-lg px-3 py-2 text-sm">
+                    Open note
+                  </Link>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center justify-between text-sm text-slate-500">
+        <span>{total.toLocaleString()} note(s)</span>
+        <div className="flex items-center gap-2">
+          <button className="btn-outline rounded-lg px-3 py-1.5 text-xs" disabled={page <= 1} onClick={() => setPage(current => Math.max(1, current - 1))}>Previous</button>
+          <span>Page {page} / {totalPages}</span>
+          <button className="btn-outline rounded-lg px-3 py-1.5 text-xs" disabled={page >= totalPages} onClick={() => setPage(current => Math.min(totalPages, current + 1))}>Next</button>
+        </div>
+      </div>
     </div>
   );
 }

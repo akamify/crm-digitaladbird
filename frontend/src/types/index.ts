@@ -264,6 +264,7 @@ export interface CustomerNoteFilters {
   lead_id?: string;
   rm_user_id?: string;
   counselor_user_id?: string;
+  created_by_user_id?: string;
   from?: string;
   to?: string;
   page?: number;

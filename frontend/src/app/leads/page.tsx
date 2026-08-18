@@ -209,6 +209,7 @@ function LeadsInner() {
     reassignment: (sp.get('reassignment') as LeadFilterType['reassignment']) || '',
     assignment: (sp.get('assignment') as LeadFilterType['assignment']) || '',
     assigned_today: (sp.get('assigned_today') as LeadFilterType['assigned_today']) || '',
+    pending: (sp.get('pending') as LeadFilterType['pending']) || '',
     unworked: (sp.get('unworked') as LeadFilterType['unworked']) || '',
     created_preset: (sp.get('created_preset') as LeadFilterType['created_preset']) || '',
     label_id: sp.get('label_id') || '',
@@ -395,17 +396,21 @@ function LeadsInner() {
             { key: 'all', label: 'Leads', assignment: '' },
             { key: 'unassigned', label: 'Unassigned Leads', assignment: 'unassigned' },
             { key: 'assigned', label: 'Assigned Leads', assignment: 'assigned' },
+            { key: 'pending', label: 'Pending Work', assignment: '', pending: 'true' },
             { key: 'today_assigned', label: 'Today Assigned', assignment: '', assigned_today: 'true' },
             { key: 'today_created', label: 'Today Leads', created_preset: 'today' },
             { key: 'yesterday_created', label: 'Yesterday Leads', created_preset: 'yesterday' },
             { key: 'day_before_created', label: 'Day Before Leads', created_preset: 'day_before' },
           ].map(tab => {
-            const active = tab.key === 'today_assigned'
+            const active = tab.key === 'pending'
+              ? filters.pending === 'true'
+              : tab.key === 'today_assigned'
               ? filters.assigned_today === 'true'
               : tab.created_preset
                 ? filters.created_preset === tab.created_preset
                 : (filters.assignment || '') === tab.assignment
                   && !filters.reassignment
+                  && filters.pending !== 'true'
                   && filters.unworked !== 'true'
                   && filters.assigned_today !== 'true'
                   && !filters.created_preset;
@@ -417,6 +422,7 @@ function LeadsInner() {
                   ...f,
                   assignment: (tab.assignment || '') as LeadFilterType['assignment'],
                   assigned_today: (tab.assigned_today || '') as LeadFilterType['assigned_today'],
+                  pending: (tab.pending || '') as LeadFilterType['pending'],
                   created_preset: (tab.created_preset || '') as LeadFilterType['created_preset'],
                   from: tab.created_preset ? '' : f.from,
                   to: tab.created_preset ? '' : f.to,
@@ -437,17 +443,20 @@ function LeadsInner() {
       ) : (
         <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
           {[
-            { key: 'current', label: 'Current Leads', next: { reassignment: '', unworked: '' } },
-            { key: 'to_me', label: 'Reassigned To Me', next: { reassignment: 'to_me', unworked: '' } },
-            ...(!isMemberLeadsView ? [{ key: 'to_others', label: 'Reassigned To Others', next: { reassignment: 'to_others', unworked: '' } }] : []),
-            { key: 'unworked', label: 'Unworked Leads', next: { reassignment: '', unworked: 'true' } },
-            { key: 'today', label: 'Today Assigned', next: { reassignment: '', unworked: '', assigned_today: 'true' } },
+            { key: 'current', label: 'Current Leads', next: { reassignment: '', unworked: '', pending: '' } },
+            { key: 'pending', label: 'Pending Work', next: { reassignment: '', unworked: '', pending: 'true' } },
+            { key: 'to_me', label: 'Reassigned To Me', next: { reassignment: 'to_me', unworked: '', pending: '' } },
+            ...(!isMemberLeadsView ? [{ key: 'to_others', label: 'Reassigned To Others', next: { reassignment: 'to_others', unworked: '', pending: '' } }] : []),
+            { key: 'unworked', label: 'Unworked Leads', next: { reassignment: '', unworked: 'true', pending: '' } },
+            { key: 'today', label: 'Today Assigned', next: { reassignment: '', unworked: '', assigned_today: 'true', pending: '' } },
           ].map(tab => {
-            const active = tab.key === 'unworked'
+            const active = tab.key === 'pending'
+              ? filters.pending === 'true'
+              : tab.key === 'unworked'
               ? filters.unworked === 'true'
               : tab.key === 'today'
                 ? filters.assigned_today === 'true'
-                : (filters.reassignment || '') === tab.next.reassignment && filters.unworked !== 'true' && filters.assigned_today !== 'true';
+                : (filters.reassignment || '') === tab.next.reassignment && filters.pending !== 'true' && filters.unworked !== 'true' && filters.assigned_today !== 'true';
             return (
               <button
                 key={tab.key}
@@ -456,6 +465,7 @@ function LeadsInner() {
                   ...f,
                   reassignment: tab.next.reassignment as LeadFilterType['reassignment'],
                   unworked: tab.next.unworked as LeadFilterType['unworked'],
+                  pending: (tab.next.pending || '') as LeadFilterType['pending'],
                   assigned_today: (tab.next.assigned_today || '') as LeadFilterType['assigned_today'],
                   assignment: '',
                   page: 1,
@@ -480,6 +490,11 @@ function LeadsInner() {
       {filters.unworked === 'true' && (
         <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
           Unworked leads are leads with no call log or remark saved yet.
+        </div>
+      )}
+      {filters.pending === 'true' && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Pending work shows leads that still need active work follow-up from you based on CRM workflow metrics.
         </div>
       )}
 

@@ -17,6 +17,8 @@ const STEP_TWO_UNLOCKING_REMARKS = new Set([
 ]);
 
 const REMARK_ALIASES = {
+  invalid_number: 'in',
+  'invalid number': 'in',
   session_after_730: 'yes_after_730_session',
 };
 

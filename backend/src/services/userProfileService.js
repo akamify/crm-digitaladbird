@@ -180,7 +180,7 @@ function tabsFor(type) {
   if (type === 'admin') return ['overview', 'security', 'admin_actions', 'email_history', 'activity', 'permissions'];
   if (type === 'rm') return ['overview', 'team_members', 'team_leads', 'requests', 'team_performance', 'activity', 'settings'];
   if (type === 'deleted') return ['overview', 'activity', 'email_history'];
-  return ['leads', 'requests', 'assignment_history', 'notifications', 'activity', 'settings'];
+  return ['leads', 'pending_leads', 'notes', 'requests', 'assignment_history', 'notifications', 'activity', 'settings'];
 }
 
 function actionsFor(actor, user, type) {
@@ -409,6 +409,7 @@ async function getUserLeads(actor, userId, opts = {}) {
   if (opts.call_status) { params.push(opts.call_status); where.push(`l.call_status = $${params.length}`); }
   if (opts.status) { params.push(opts.status); where.push(`l.stage = $${params.length}`); }
   if (opts.source) { params.push(opts.source); where.push(`l.source = $${params.length}`); }
+  if (opts.pending === 'true') where.push(`${notWorkedLeadCondition('l')}`);
   if (opts.assigned_from) { params.push(opts.assigned_from); where.push(`l.assigned_at >= $${params.length}`); }
   if (opts.assigned_to) { params.push(opts.assigned_to); where.push(`l.assigned_at <= $${params.length}`); }
   if (opts.search) {

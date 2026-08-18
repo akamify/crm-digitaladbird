@@ -745,6 +745,7 @@ async function listNotes(actor, rawQuery = {}) {
   const leadId = normalizeUuid(rawQuery.lead_id || rawQuery.leadId);
   const rmUserId = normalizeUuid(rawQuery.rm_user_id || rawQuery.rmUserId);
   const counselorUserId = normalizeUuid(rawQuery.counselor_user_id || rawQuery.counselorUserId);
+  const createdByUserId = normalizeUuid(rawQuery.created_by_user_id || rawQuery.createdByUserId);
   const from = normalizeDateTime(rawQuery.from, 'INVALID_FROM_DATE', 'Enter a valid from date.');
   const to = normalizeDateTime(rawQuery.to, 'INVALID_TO_DATE', 'Enter a valid to date.');
   const page = Math.max(1, Number(rawQuery.page || 1) || 1);
@@ -770,6 +771,7 @@ async function listNotes(actor, rawQuery = {}) {
   }
   if (leadId) where.push(`n.lead_id = $${pushParam(params, leadId)}::uuid`);
   if (rmUserId) where.push(`n.rm_user_id = $${pushParam(params, rmUserId)}::uuid`);
+  if (createdByUserId) where.push(`n.created_by_user_id = $${pushParam(params, createdByUserId)}::uuid`);
   if (counselorUserId) {
     const counselorIdx = pushParam(params, counselorUserId);
     where.push(`(

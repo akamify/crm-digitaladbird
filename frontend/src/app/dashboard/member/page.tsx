@@ -103,13 +103,16 @@ function MemberDashboardInner() {
               <div className="text-[10px] uppercase tracking-wide text-emerald-700">Assigned Today</div>
             </div>
           </div>
-          <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+          <Link
+            href="/leads?pending=true"
+            className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 transition hover:border-amber-300 hover:bg-amber-50"
+          >
             <Clock className="h-4 w-4 text-amber-600" />
             <div>
               <div className="text-lg font-bold tabular-nums text-slate-900">{stats?.my_pending ?? '—'}</div>
               <div className="text-[10px] uppercase tracking-wide text-slate-500">Pending Work</div>
             </div>
-          </div>
+          </Link>
           <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
             <Activity className="h-4 w-4 text-emerald-600" />
             <div>
