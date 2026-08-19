@@ -8,10 +8,10 @@ function normalizeOption(value) {
 function isCustomerNoteApprovalStatus(value) {
   return CUSTOMER_NOTE_APPROVAL_STATUSES.includes(normalizeOption(value));
 }
-
 function isCustomerNoteUserRole(value) {
   return CUSTOMER_NOTE_USER_ROLES.includes(normalizeOption(value));
 }
+
 
 module.exports = {
   CUSTOMER_NOTE_APPROVAL_STATUSES,
