@@ -17,7 +17,7 @@ const { createLeadInteraction } = require('../services/leadInteractionService');
 const { validateLeadAssignee } = require('../services/leadAssigneeValidator');
 const { assertCreateReady } = require('../services/createReadinessService');
 const { applyLeadDisplayName } = require('../services/leadNameService');
-const { notWorkedLeadCondition } = require('../utils/leadWorkMetrics');
+const { workedLeadCondition, notWorkedLeadCondition } = require('../utils/leadWorkMetrics');
 
 function humanizeValue(value) {
   return String(value || '')
@@ -80,6 +80,128 @@ async function cleanupLeadPaymentFiles({ attachmentPaths = [], leadIds = [] }) {
 
   await Promise.allSettled(cleanupTargets.map(target => fs.unlink(target)));
   await Promise.allSettled(paymentDirectories.map(target => fs.rm(target, { recursive: true, force: true })));
+}
+
+function normalizeLeadDeleteScope(value) {
+  const normalized = String(value || 'all').trim().toLowerCase();
+  const allowed = new Set([
+    'all',
+    'unworked',
+    'worked',
+    'unassigned',
+    'assigned',
+    'pending',
+    'today_assigned',
+    'today_created',
+    'yesterday_created',
+    'day_before_created',
+  ]);
+  if (!allowed.has(normalized)) {
+    throw new AppError(400, 'INVALID_DELETE_SCOPE', 'Select a valid lead delete scope.');
+  }
+  return normalized;
+}
+
+function getLeadDeleteScopeLabel(scope) {
+  return {
+    all: 'All Leads',
+    unworked: 'Unworked Leads',
+    worked: 'Worked Leads',
+    unassigned: 'Unassigned Leads',
+    assigned: 'Assigned Leads',
+    pending: 'Pending Work',
+    today_assigned: 'Today Assigned',
+    today_created: 'Today Leads',
+    yesterday_created: 'Yesterday Leads',
+    day_before_created: 'Day Before Leads',
+  }[scope] || 'Scoped Leads';
+}
+
+function buildLeadDeleteScopeCondition(scope, alias = 'l') {
+  const lead = String(alias || 'l').trim();
+  switch (scope) {
+    case 'unworked':
+      return `AND NOT EXISTS (
+        SELECT 1 FROM lead_remarks delete_unworked_lr WHERE delete_unworked_lr.lead_id = ${lead}.id
+      )
+      AND NOT EXISTS (
+        SELECT 1
+          FROM lead_workflow delete_unworked_wf
+         WHERE delete_unworked_wf.lead_id = ${lead}.id
+           AND delete_unworked_wf.remark_status IS NOT NULL
+      )`;
+    case 'worked':
+      return `AND ${workedLeadCondition(lead)}`;
+    case 'unassigned':
+      return `AND ${lead}.assigned_to_user_id IS NULL`;
+    case 'assigned':
+      return `AND ${lead}.assigned_to_user_id IS NOT NULL`;
+    case 'pending':
+      return `AND ${notWorkedLeadCondition(lead)}`;
+    case 'today_assigned':
+      return `AND ${lead}.assigned_to_user_id IS NOT NULL
+      AND ${lead}.assigned_at IS NOT NULL
+      AND (${lead}.assigned_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date`;
+    case 'today_created':
+      return `AND (${lead}.created_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date`;
+    case 'yesterday_created':
+      return `AND (${lead}.created_at AT TIME ZONE 'Asia/Kolkata')::date = ((NOW() AT TIME ZONE 'Asia/Kolkata')::date - INTERVAL '1 day')`;
+    case 'day_before_created':
+      return `AND (${lead}.created_at AT TIME ZONE 'Asia/Kolkata')::date = ((NOW() AT TIME ZONE 'Asia/Kolkata')::date - INTERVAL '2 day')`;
+    case 'all':
+    default:
+      return '';
+  }
+}
+
+async function countLeadDeleteRelation(client, label, sql, leadIds) {
+  try {
+    const { rows: [result] } = await client.query(sql, [leadIds]);
+    return [label, Number(result?.count || 0)];
+  } catch (error) {
+    if (['42P01', '42703'].includes(error?.code)) {
+      logger.warn({ label, code: error.code, message: error.message }, '[LeadDelete] relation count skipped due to missing schema');
+      return [label, 0];
+    }
+    throw error;
+  }
+}
+
+async function collectLeadDeleteCounts(client, leadIds) {
+  const entries = await Promise.all([
+    countLeadDeleteRelation(client, 'remarks_count', `SELECT COUNT(*)::int AS count FROM lead_remarks WHERE lead_id = ANY($1::uuid[])`, leadIds),
+    countLeadDeleteRelation(client, 'assignments_count', `SELECT COUNT(*)::int AS count FROM lead_assignments WHERE lead_id = ANY($1::uuid[])`, leadIds),
+    countLeadDeleteRelation(client, 'call_logs_count', `SELECT COUNT(*)::int AS count FROM lead_call_logs WHERE lead_id = ANY($1::uuid[])`, leadIds),
+    countLeadDeleteRelation(client, 'sessions_count', `SELECT COUNT(*)::int AS count FROM lead_sessions WHERE lead_id = ANY($1::uuid[]) AND deleted_at IS NULL`, leadIds),
+    countLeadDeleteRelation(client, 'labels_count', `SELECT COUNT(*)::int AS count FROM lead_label_assignments WHERE lead_id = ANY($1::uuid[])`, leadIds),
+    countLeadDeleteRelation(client, 'attachment_count', `SELECT COUNT(*)::int AS count FROM lead_payment_attachments WHERE lead_id = ANY($1::uuid[]) AND deleted_at IS NULL`, leadIds),
+    countLeadDeleteRelation(client, 'linked_notes_count', `SELECT COUNT(*)::int AS count FROM customer_notes WHERE lead_id = ANY($1::uuid[]) AND deleted_at IS NULL`, leadIds),
+    countLeadDeleteRelation(client, 'workflow_count', `SELECT COUNT(*)::int AS count FROM lead_workflow WHERE lead_id = ANY($1::uuid[])`, leadIds),
+    countLeadDeleteRelation(client, 'chat_conversations_count', `SELECT COUNT(*)::int AS count FROM chat_conversations WHERE lead_id = ANY($1::uuid[])`, leadIds),
+    countLeadDeleteRelation(client, 'chat_notifications_count', `SELECT COUNT(*)::int AS count FROM chat_notifications WHERE lead_id = ANY($1::uuid[])`, leadIds),
+  ]);
+  return Object.fromEntries(entries);
+}
+
+async function detachNullableLeadReferences(client, leadIds) {
+  const statements = [
+    `UPDATE customer_notes SET lead_id = NULL, updated_at = NOW() WHERE lead_id = ANY($1::uuid[])`,
+    `UPDATE chat_conversations SET lead_id = NULL, updated_at = NOW() WHERE lead_id = ANY($1::uuid[])`,
+    `UPDATE chat_notifications SET lead_id = NULL WHERE lead_id = ANY($1::uuid[])`,
+    `UPDATE wasp_webhook_logs SET matched_lead_id = NULL WHERE matched_lead_id = ANY($1::uuid[])`,
+  ];
+
+  for (const sql of statements) {
+    try {
+      await client.query(sql, [leadIds]);
+    } catch (error) {
+      if (['42P01', '42703'].includes(error?.code)) {
+        logger.warn({ code: error.code, message: error.message }, '[LeadDelete] nullable lead reference detach skipped');
+        continue;
+      }
+      throw error;
+    }
+  }
 }
 
 function toManualLeadCreateAppError(error) {
@@ -918,6 +1040,7 @@ exports.remove = asyncHandler(async (req, res) => {
     );
     if (!lead) throw new AppError(404, 'NOT_FOUND', 'Lead not found');
 
+    const counts = await collectLeadDeleteCounts(client, [leadId]);
     const { rows: attachments } = await client.query(
       `SELECT file_path
          FROM lead_payment_attachments
@@ -925,20 +1048,20 @@ exports.remove = asyncHandler(async (req, res) => {
           AND file_path IS NOT NULL`,
       [leadId],
     );
-
-    const relatedCountsSql = `
-      SELECT
-        (SELECT COUNT(*)::int FROM lead_remarks WHERE lead_id = $1) AS remarks_count,
-        (SELECT COUNT(*)::int FROM lead_assignments WHERE lead_id = $1) AS assignments_count,
-        (SELECT COUNT(*)::int FROM lead_call_logs WHERE lead_id = $1) AS call_logs_count,
-        (SELECT COUNT(*)::int FROM lead_sessions WHERE lead_id = $1 AND deleted_at IS NULL) AS sessions_count,
-        (SELECT COUNT(*)::int FROM lead_label_assignments WHERE lead_id = $1) AS labels_count,
-        (SELECT COUNT(*)::int FROM lead_payment_attachments WHERE lead_id = $1 AND deleted_at IS NULL) AS attachment_count,
-        (SELECT COUNT(*)::int FROM customer_notes WHERE lead_id = $1 AND deleted_at IS NULL) AS linked_notes_count
-    `;
-    const { rows: [counts] } = await client.query(relatedCountsSql, [leadId]);
-
-    await client.query(`DELETE FROM leads WHERE id = $1`, [leadId]);
+    await detachNullableLeadReferences(client, [leadId]);
+    try {
+      await client.query(`DELETE FROM leads WHERE id = $1`, [leadId]);
+    } catch (error) {
+      if (error?.code === '23503') {
+        throw new AppError(
+          409,
+          'LEAD_DELETE_BLOCKED',
+          'Lead delete is blocked by related records. Update schema constraints or detach the related records first.',
+          { detail: error.detail || null, table: error.table || null, constraint: error.constraint || null },
+        );
+      }
+      throw error;
+    }
 
     return {
       lead,
@@ -984,24 +1107,24 @@ exports.removeAll = asyncHandler(async (req, res) => {
   if (confirmation !== 'DELETE ALL LEADS') {
     throw new AppError(400, 'CONFIRMATION_REQUIRED', 'Type DELETE ALL LEADS to confirm permanent lead deletion.');
   }
+  const scope = normalizeLeadDeleteScope(req.body?.scope || req.body?.delete_scope);
+  const scopeLabel = getLeadDeleteScopeLabel(scope);
 
   const result = await withTransaction(async (client) => {
-    const { rows: [summary] } = await client.query(`
-      SELECT
-        COUNT(*)::int AS total_leads,
-        (SELECT COUNT(*)::int FROM lead_remarks lr JOIN leads l ON l.id = lr.lead_id WHERE l.deleted_at IS NULL) AS remarks_count,
-        (SELECT COUNT(*)::int FROM lead_assignments la JOIN leads l ON l.id = la.lead_id WHERE l.deleted_at IS NULL) AS assignments_count,
-        (SELECT COUNT(*)::int FROM lead_call_logs lc JOIN leads l ON l.id = lc.lead_id WHERE l.deleted_at IS NULL) AS call_logs_count,
-        (SELECT COUNT(*)::int FROM lead_sessions ls JOIN leads l ON l.id = ls.lead_id WHERE l.deleted_at IS NULL AND ls.deleted_at IS NULL) AS sessions_count,
-        (SELECT COUNT(*)::int FROM lead_label_assignments lla JOIN leads l ON l.id = lla.lead_id WHERE l.deleted_at IS NULL) AS labels_count,
-        (SELECT COUNT(*)::int FROM lead_payment_attachments lpa JOIN leads l ON l.id = lpa.lead_id WHERE l.deleted_at IS NULL AND lpa.deleted_at IS NULL) AS attachment_count,
-        (SELECT COUNT(*)::int FROM customer_notes cn JOIN leads l ON l.id = cn.lead_id WHERE l.deleted_at IS NULL AND cn.deleted_at IS NULL) AS linked_notes_count
-      FROM leads
-      WHERE deleted_at IS NULL
-    `);
+    const scopeCondition = buildLeadDeleteScopeCondition(scope, 'l');
+    const { rows: leadRows } = await client.query(
+      `SELECT l.id
+         FROM leads l
+        WHERE l.deleted_at IS NULL
+          ${scopeCondition}
+        FOR UPDATE`,
+    );
 
-    if (!summary?.total_leads) {
+    const deletedLeadIds = leadRows.map(row => row.id);
+    if (deletedLeadIds.length === 0) {
       return {
+        scope,
+        scopeLabel,
         deletedCount: 0,
         deletedLeadIds: [],
         attachmentPaths: [],
@@ -1013,26 +1136,35 @@ exports.removeAll = asyncHandler(async (req, res) => {
           labels_count: 0,
           attachment_count: 0,
           linked_notes_count: 0,
+          workflow_count: 0,
+          chat_conversations_count: 0,
+          chat_notifications_count: 0,
         },
       };
     }
 
+    const counts = await collectLeadDeleteCounts(client, deletedLeadIds);
     const { rows: attachmentRows } = await client.query(
       `SELECT lpa.file_path, lpa.lead_id
          FROM lead_payment_attachments lpa
-         JOIN leads l ON l.id = lpa.lead_id
-        WHERE l.deleted_at IS NULL
+        WHERE lpa.lead_id = ANY($1::uuid[])
           AND lpa.file_path IS NOT NULL`,
+      [deletedLeadIds],
     );
-
-    const { rows: leadRows } = await client.query(
-      `SELECT id
-         FROM leads
-        WHERE deleted_at IS NULL`,
-    );
-
-    const deletedLeadIds = leadRows.map(row => row.id);
-    await client.query(`DELETE FROM leads WHERE deleted_at IS NULL`);
+    await detachNullableLeadReferences(client, deletedLeadIds);
+    try {
+      await client.query(`DELETE FROM leads WHERE id = ANY($1::uuid[])`, [deletedLeadIds]);
+    } catch (error) {
+      if (error?.code === '23503') {
+        throw new AppError(
+          409,
+          'LEAD_DELETE_BLOCKED',
+          'Some leads could not be deleted because related records still reference them. Update schema constraints or detach the related records first.',
+          { detail: error.detail || null, table: error.table || null, constraint: error.constraint || null },
+        );
+      }
+      throw error;
+    }
 
     await client.query(
       `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata, ip_address)
@@ -1040,35 +1172,23 @@ exports.removeAll = asyncHandler(async (req, res) => {
       [
         req.user.id,
         JSON.stringify({
-          deleted_count: summary.total_leads,
+          scope,
+          scope_label: scopeLabel,
+          deleted_count: deletedLeadIds.length,
           deleted_lead_ids_preview: deletedLeadIds.slice(0, 25),
-          deleted_related: {
-            remarks_count: summary.remarks_count,
-            assignments_count: summary.assignments_count,
-            call_logs_count: summary.call_logs_count,
-            sessions_count: summary.sessions_count,
-            labels_count: summary.labels_count,
-            attachment_count: summary.attachment_count,
-            linked_notes_count: summary.linked_notes_count,
-          },
+          deleted_related: counts,
         }),
         req.ip,
       ],
     ).catch(() => {});
 
     return {
-      deletedCount: summary.total_leads,
+      scope,
+      scopeLabel,
+      deletedCount: deletedLeadIds.length,
       deletedLeadIds,
       attachmentPaths: attachmentRows.map(row => String(row.file_path || '').trim()).filter(Boolean),
-      related: {
-        remarks_count: summary.remarks_count,
-        assignments_count: summary.assignments_count,
-        call_logs_count: summary.call_logs_count,
-        sessions_count: summary.sessions_count,
-        labels_count: summary.labels_count,
-        attachment_count: summary.attachment_count,
-        linked_notes_count: summary.linked_notes_count,
-      },
+      related: counts,
     };
   });
 
@@ -1082,8 +1202,10 @@ exports.removeAll = asyncHandler(async (req, res) => {
     entity: 'lead',
     entity_id: null,
     action: 'hard_deleted_all',
-    old_value: `${result.deletedCount} active leads`,
+    old_value: `${result.deletedCount} ${result.scopeLabel.toLowerCase()}`,
     metadata: {
+      scope: result.scope,
+      scope_label: result.scopeLabel,
       deleted_count: result.deletedCount,
       deleted_related: result.related,
     },
@@ -1093,6 +1215,8 @@ exports.removeAll = asyncHandler(async (req, res) => {
     success: true,
     data: {
       deleted: true,
+      scope: result.scope,
+      scope_label: result.scopeLabel,
       deleted_count: result.deletedCount,
       related: result.related,
     },

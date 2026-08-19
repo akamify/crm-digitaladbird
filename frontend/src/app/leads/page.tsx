@@ -24,6 +24,30 @@ import { LEAD_REMARK_GROUPS } from '@/constants/leadRemarkOptions';
 import type { CallStatus, Lead, LeadFilters as LeadFilterType } from '@/types';
 
 type CommunicationTab = 'chat' | 'calls';
+type DeleteAllLeadScope =
+  | 'all'
+  | 'unworked'
+  | 'worked'
+  | 'unassigned'
+  | 'assigned'
+  | 'pending'
+  | 'today_assigned'
+  | 'today_created'
+  | 'yesterday_created'
+  | 'day_before_created';
+
+const DELETE_ALL_SCOPE_OPTIONS: Array<{ value: DeleteAllLeadScope; label: string; hint: string }> = [
+  { value: 'all', label: 'All Leads', hint: 'Delete every active lead in CRM.' },
+  { value: 'unworked', label: 'Unworked Leads', hint: 'Delete leads with no remark or workflow action yet.' },
+  { value: 'worked', label: 'Worked Leads', hint: 'Delete leads that already have call activity, remark, or workflow work.' },
+  { value: 'unassigned', label: 'Unassigned Leads', hint: 'Delete only leads that are not assigned to any user.' },
+  { value: 'assigned', label: 'Assigned Leads', hint: 'Delete only leads that are already assigned to a user.' },
+  { value: 'pending', label: 'Pending Work', hint: 'Delete leads still counted in pending-work queues.' },
+  { value: 'today_assigned', label: 'Today Assigned', hint: 'Delete leads assigned today in IST.' },
+  { value: 'today_created', label: 'Today Leads', hint: 'Delete leads created today in IST.' },
+  { value: 'yesterday_created', label: 'Yesterday Leads', hint: 'Delete leads created yesterday in IST.' },
+  { value: 'day_before_created', label: 'Day Before Leads', hint: 'Delete leads created two days ago in IST.' },
+];
 
 function followupChipClass(state?: Lead['followup_state']) {
   if (state === 'overdue') return 'chip-red';
@@ -63,6 +87,19 @@ function displayLeadName(lead: Pick<Lead, 'full_name' | 'email' | 'phone'>) {
   const digits = String(lead.phone || '').replace(/\D/g, '');
   if (digits) return `Lead ${digits.slice(-4)}`;
   return 'No name';
+}
+
+function inferDeleteScopeFromFilters(filters: LeadFilterType, isAdminLeadsView: boolean): DeleteAllLeadScope {
+  if (!isAdminLeadsView) return 'all';
+  if (filters.pending === 'true') return 'pending';
+  if (filters.unworked === 'true') return 'unworked';
+  if (filters.assigned_today === 'true') return 'today_assigned';
+  if (filters.created_preset === 'today') return 'today_created';
+  if (filters.created_preset === 'yesterday') return 'yesterday_created';
+  if (filters.created_preset === 'day_before') return 'day_before_created';
+  if (filters.assignment === 'unassigned') return 'unassigned';
+  if (filters.assignment === 'assigned') return 'assigned';
+  return 'all';
 }
 
 function LeadRowActionsMenu({
@@ -245,6 +282,7 @@ function LeadsInner() {
   const [deleteLeadItem, setDeleteLeadItem] = useState<Lead | null>(null);
   const [deleteAllOpen, setDeleteAllOpen] = useState(false);
   const [deleteAllConfirmation, setDeleteAllConfirmation] = useState('');
+  const [deleteAllScope, setDeleteAllScope] = useState<DeleteAllLeadScope>('all');
   const [bulkRemark, setBulkRemark] = useState('');
   const [bulkStatuses, setBulkStatuses] = useState<CallStatus[]>([]);
   const debouncedSearch = useDebouncedValue(filters.q || '');
@@ -272,6 +310,7 @@ function LeadsInner() {
   const pages = Math.max(1, Math.ceil(total / size));
   const selectablePageIds = rows.filter(lead => !lead.read_only_access).map(lead => lead.id);
   const allCurrentPageSelected = selectablePageIds.length > 0 && selectablePageIds.every(id => selectedIds.includes(id));
+  const selectedDeleteScope = DELETE_ALL_SCOPE_OPTIONS.find(option => option.value === deleteAllScope) || DELETE_ALL_SCOPE_OPTIONS[0];
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -349,10 +388,15 @@ function LeadsInner() {
 
   async function confirmDeleteAllLeads() {
     try {
-      const response = await deleteAllLeads.mutateAsync({ confirmation: deleteAllConfirmation.trim() });
-      toast.success(`${response.deleted_count} lead${response.deleted_count === 1 ? '' : 's'} deleted permanently.`);
+      const response = await deleteAllLeads.mutateAsync({
+        confirmation: deleteAllConfirmation.trim(),
+        scope: deleteAllScope,
+      });
+      const scopeLabel = response.scope_label || selectedDeleteScope.label;
+      toast.success(`${response.deleted_count} ${scopeLabel.toLowerCase()} deleted permanently.`);
       setSelectedIds([]);
       setDeleteAllConfirmation('');
+      setDeleteAllScope('all');
       setDeleteAllOpen(false);
     } catch (error: any) {
       toast.error(error?.response?.data?.error?.message || error?.response?.data?.message || 'Could not delete all leads');
@@ -366,7 +410,10 @@ function LeadsInner() {
           {canDeleteLead && (
             <button
               type="button"
-              onClick={() => setDeleteAllOpen(true)}
+              onClick={() => {
+                setDeleteAllScope(inferDeleteScopeFromFilters(filters, isAdminLeadsView));
+                setDeleteAllOpen(true);
+              }}
               className="inline-flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-100"
             >
               <Trash2 className="h-4 w-4" /> Delete All Leads
@@ -904,9 +951,10 @@ function LeadsInner() {
           if (deleteAllLeads.isPending) return;
           setDeleteAllOpen(false);
           setDeleteAllConfirmation('');
+          setDeleteAllScope('all');
         }}
-        title="Delete All Leads Permanently"
-        description="This will hard delete every active lead in the CRM."
+        title="Delete Leads Permanently"
+        description="Choose which lead bucket to hard delete from the CRM."
         size="md"
         footer={
           <>
@@ -914,6 +962,7 @@ function LeadsInner() {
               onClick={() => {
                 setDeleteAllOpen(false);
                 setDeleteAllConfirmation('');
+                setDeleteAllScope('all');
               }}
               disabled={deleteAllLeads.isPending}
               className="btn-ghost rounded-lg px-4 py-2 text-sm"
@@ -934,9 +983,29 @@ function LeadsInner() {
           <div className="flex items-start gap-3">
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
             <div className="space-y-2">
-              <div className="font-semibold">This will permanently remove every active lead from the CRM.</div>
-              <div>It is not limited to the current page, current filters, or selected leads.</div>
+              <div className="font-semibold">This is a hard delete for the selected lead bucket.</div>
+              <div>The delete is not limited to the current page rows. It runs against the full matching bucket in CRM.</div>
               <div>Lead remarks, workflow, sessions, labels, call logs, and payment attachments linked to those leads will also be deleted.</div>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <label className="block text-xs font-semibold uppercase tracking-wide text-rose-800">
+              Which leads do you want to delete?
+            </label>
+            <select
+              className="input"
+              value={deleteAllScope}
+              onChange={(event) => setDeleteAllScope(event.target.value as DeleteAllLeadScope)}
+            >
+              {DELETE_ALL_SCOPE_OPTIONS.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <div className="text-xs text-rose-700">
+              {selectedDeleteScope.hint}
+            </div>
+            <div className="text-xs text-rose-700">
+              Current visible count for this screen: {total.toLocaleString()} lead{total === 1 ? '' : 's'}.
             </div>
           </div>
           <div className="space-y-2">
@@ -950,7 +1019,7 @@ function LeadsInner() {
               placeholder="DELETE ALL LEADS"
             />
             <div className="text-xs text-rose-700">
-              Current visible total: {total.toLocaleString()} lead{total === 1 ? '' : 's'}. Final deletion runs for all active leads in CRM.
+              Final deletion scope: <strong>{selectedDeleteScope.label}</strong>.
             </div>
           </div>
         </div>

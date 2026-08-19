@@ -202,10 +202,11 @@ export function useBulkLeadAction() {
 export function useDeleteAllLeads() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { confirmation: string }) =>
-      apiPost<{ deleted: boolean; deleted_count: number; related: Record<string, number> }>('/admin/bulk-leads', {
+    mutationFn: (body: { confirmation: string; scope?: string }) =>
+      apiPost<{ deleted: boolean; deleted_count: number; related: Record<string, number>; scope?: string; scope_label?: string }>('/admin/bulk-leads', {
         action: 'delete_all',
         confirmation: body.confirmation,
+        scope: body.scope || 'all',
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['leads'] });
