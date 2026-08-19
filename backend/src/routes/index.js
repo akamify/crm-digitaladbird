@@ -150,6 +150,14 @@ router.post('/lead-labels', authenticate, requireRole('super_admin'), asyncHandl
   const data = await leadLabels.createLabel(req.user, req.body || {});
   res.status(201).json({ success: true, data });
 }));
+router.patch('/lead-labels/:labelId', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const data = await leadLabels.updateLabel(req.user, req.params.labelId, req.body || {});
+  res.json({ success: true, data });
+}));
+router.delete('/lead-labels/:labelId', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
+  const data = await leadLabels.deleteLabel(req.user, req.params.labelId);
+  res.json({ success: true, data, message: 'Label deleted.' });
+}));
 router.post('/leads/bulk/labels', authenticate, asyncHandler(async (req, res) => {
   const result = await leadLabels.bulkApplyLabels(req.user, req.body || {});
   try {

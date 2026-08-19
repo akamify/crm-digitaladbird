@@ -5,7 +5,7 @@ import { Plus, Tag, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Modal, Skeleton } from '@/components/ui/Modal';
 import { LeadLabelPickerModal } from '@/components/leads/LeadLabelPickerModal';
-import { useAssignLeadLabel, useCreateLeadLabel, useLabels, useLeadLabels, useRemoveLeadLabel } from '@/hooks/useLeadLabels';
+import { useAssignLeadLabel, useCreateLeadLabel, useLabels, useLeadLabels, useRemoveLeadLabel, useUpdateLeadLabel, type LeadLabel } from '@/hooks/useLeadLabels';
 
 const COLORS = ['#2563EB', '#16A34A', '#EA580C', '#9333EA', '#DC2626', '#0891B2', '#475569'];
 
@@ -80,35 +80,67 @@ export function LeadLabelsCard({ leadId, canManage, createSignal = 0 }: { leadId
   );
 }
 
-export function CreateLabelModal({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated?: (labelId: string) => void }) {
+export function CreateLabelModal({
+  open,
+  onClose,
+  onCreated,
+  mode = 'create',
+  initialLabel = null,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onCreated?: (labelId: string) => void;
+  mode?: 'create' | 'edit';
+  initialLabel?: LeadLabel | null;
+}) {
   const [name, setName] = useState('');
   const [color, setColor] = useState(COLORS[0]);
+  const [customColor, setCustomColor] = useState(COLORS[0]);
   const create = useCreateLeadLabel();
+  const update = useUpdateLeadLabel();
+
+  useEffect(() => {
+    if (!open) return;
+    const nextName = initialLabel?.name || '';
+    const nextColor = (initialLabel?.color || COLORS[0]).toUpperCase();
+    setName(nextName);
+    setColor(nextColor);
+    setCustomColor(nextColor);
+  }, [open, initialLabel]);
 
   function submit() {
-    create.mutate({ name: name.trim(), color }, {
-      onSuccess: label => {
-        toast.success('Label created');
+    const handlers = {
+      onSuccess: (label: LeadLabel) => {
+        toast.success(mode === 'edit' ? 'Label updated' : 'Label created');
         setName('');
         onCreated?.(label.id);
         onClose();
       },
-      onError: (error: any) => toast.error(error?.response?.data?.error?.message || 'Could not create label'),
-    });
+      onError: (error: any) => toast.error(error?.response?.data?.error?.message || `Could not ${mode === 'edit' ? 'update' : 'create'} label`),
+    };
+
+    if (mode === 'edit' && initialLabel?.id) {
+      update.mutate({ labelId: initialLabel.id, name: name.trim(), color }, handlers);
+      return;
+    }
+
+    create.mutate({ name: name.trim(), color }, handlers);
   }
+
+  const isPending = create.isPending || update.isPending;
 
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title="Create Label"
-      description="Create a label for organizing leads."
+      title={mode === 'edit' ? 'Edit Label' : 'Create Label'}
+      description={mode === 'edit' ? 'Update label name and color.' : 'Create a label for organizing leads.'}
       size="sm"
       footer={(
         <>
           <button type="button" onClick={onClose} className="btn-outline rounded-lg px-4 py-2 text-sm">Cancel</button>
-          <button type="button" onClick={submit} disabled={!name.trim() || create.isPending} className="btn-primary rounded-lg px-4 py-2 text-sm">
-            {create.isPending ? 'Creating...' : 'Create Label'}
+          <button type="button" onClick={submit} disabled={!name.trim() || isPending} className="btn-primary rounded-lg px-4 py-2 text-sm">
+            {isPending ? (mode === 'edit' ? 'Saving...' : 'Creating...') : (mode === 'edit' ? 'Save Changes' : 'Create Label')}
           </button>
         </>
       )}
@@ -122,8 +154,32 @@ export function CreateLabelModal({ open, onClose, onCreated }: { open: boolean; 
           <span className="label">Color</span>
           <div className="mt-2 flex flex-wrap gap-2">
             {COLORS.map(value => (
-              <button key={value} type="button" onClick={() => setColor(value)} className="h-7 w-7 rounded-full ring-offset-2" style={{ backgroundColor: value, outline: color === value ? '2px solid #0F172A' : undefined }} aria-label={`Select ${value}`} />
+              <button key={value} type="button" onClick={() => { setColor(value); setCustomColor(value); }} className="h-7 w-7 rounded-full ring-offset-2" style={{ backgroundColor: value, outline: color === value ? '2px solid #0F172A' : undefined }} aria-label={`Select ${value}`} />
             ))}
+          </div>
+          <div className="mt-3 grid grid-cols-[auto_1fr] items-center gap-3">
+            <input
+              type="color"
+              value={customColor}
+              onChange={event => {
+                const nextColor = event.target.value.toUpperCase();
+                setCustomColor(nextColor);
+                setColor(nextColor);
+              }}
+              className="h-10 w-14 cursor-pointer rounded-lg border border-slate-200 bg-white p-1"
+              aria-label="Pick custom label color"
+            />
+            <input
+              value={customColor}
+              onChange={event => {
+                const value = event.target.value.toUpperCase();
+                setCustomColor(value);
+                if (/^#[0-9A-F]{6}$/.test(value)) setColor(value);
+              }}
+              maxLength={7}
+              className="input w-full"
+              placeholder="#2563EB"
+            />
           </div>
         </div>
       </div>

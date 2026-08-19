@@ -96,6 +96,49 @@ async function createLabel(actor, input) {
   }
 }
 
+async function updateLabel(actor, labelId, input) {
+  if (actor?.role !== 'super_admin') {
+    throw new AppError(403, 'LABEL_UPDATE_FORBIDDEN', 'Only super admin can edit labels.');
+  }
+  const existing = await assertLabelVisible(actor, labelId);
+  const name = validateLabelName(input?.name ?? existing.name);
+  const color = normalizeColor(input?.color ?? existing.color);
+  const visibility = input?.visibility === 'custom' ? 'custom' : 'global';
+  try {
+    const { rows: [label] } = await query(`
+      UPDATE lead_labels
+         SET name = $1,
+             color = $2,
+             visibility = $3,
+             updated_at = NOW()
+       WHERE id = $4
+         AND deleted_at IS NULL
+      RETURNING *
+    `, [name, color, visibility, labelId]);
+    if (!label) throw new AppError(404, 'LABEL_NOT_FOUND', 'Label not found.');
+    return label;
+  } catch (error) {
+    if (error?.code === '23505') throw new AppError(409, 'LABEL_ALREADY_EXISTS', 'A label with this name already exists in this scope.');
+    throw error;
+  }
+}
+
+async function deleteLabel(actor, labelId) {
+  if (actor?.role !== 'super_admin') {
+    throw new AppError(403, 'LABEL_DELETE_FORBIDDEN', 'Only super admin can delete labels.');
+  }
+  const existing = await assertLabelVisible(actor, labelId);
+  await query(`DELETE FROM lead_label_assignments WHERE label_id = $1`, [labelId]);
+  await query(`
+    UPDATE lead_labels
+       SET deleted_at = NOW(),
+           updated_at = NOW()
+     WHERE id = $1
+       AND deleted_at IS NULL
+  `, [labelId]);
+  return existing;
+}
+
 async function getLeadLabels(actor, leadId) {
   await assertLeadAccess(actor, leadId);
   const visibility = labelVisibilitySql(actor, 'll');
@@ -184,4 +227,14 @@ async function removeLabel(actor, leadId, labelId) {
   await query(`DELETE FROM lead_label_assignments WHERE lead_id = $1 AND label_id = $2`, [leadId, labelId]);
 }
 
-module.exports = { listLabels, createLabel, getLeadLabels, assignLabel, bulkApplyLabels, removeLabel, assertLabelVisible };
+module.exports = {
+  listLabels,
+  createLabel,
+  updateLabel,
+  deleteLabel,
+  getLeadLabels,
+  assignLabel,
+  bulkApplyLabels,
+  removeLabel,
+  assertLabelVisible,
+};

@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiDelete, apiGet, apiPost } from '@/lib/api';
+import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api';
 
 export interface LeadLabel {
   id: string;
@@ -33,6 +33,29 @@ export function useCreateLeadLabel() {
   return useMutation({
     mutationFn: (body: { name: string; color: string; visibility?: 'global' | 'custom' }) => apiPost<LeadLabel>('/lead-labels', body),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['labels'] }),
+  });
+}
+
+export function useUpdateLeadLabel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ labelId, ...body }: { labelId: string; name: string; color: string; visibility?: 'global' | 'custom' }) =>
+      apiPatch<LeadLabel>(`/lead-labels/${labelId}`, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['labels'] });
+      queryClient.invalidateQueries({ queryKey: ['lead-labels'] });
+    },
+  });
+}
+
+export function useDeleteLeadLabel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ labelId }: { labelId: string }) => apiDelete(`/lead-labels/${labelId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['labels'] });
+      queryClient.invalidateQueries({ queryKey: ['lead-labels'] });
+    },
   });
 }
 
