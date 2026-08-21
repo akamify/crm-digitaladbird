@@ -11,8 +11,6 @@ function isCustomerNoteApprovalStatus(value) {
 function isCustomerNoteUserRole(value) {
   return CUSTOMER_NOTE_USER_ROLES.includes(normalizeOption(value));
 }
-
-
 module.exports = {
   CUSTOMER_NOTE_APPROVAL_STATUSES,
   CUSTOMER_NOTE_USER_ROLES,
