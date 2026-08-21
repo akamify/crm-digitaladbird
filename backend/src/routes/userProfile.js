@@ -23,6 +23,11 @@ router.get('/admin/users/:userId/leads', asyncHandler(async (req, res) => {
   res.json({ success: true, data });
 }));
 
+router.post('/admin/users/:userId/take-back-pending-leads', requireRole('super_admin', 'admin'), asyncHandler(async (req, res) => {
+  const data = await userProfileService.takeBackPendingLeads(req.user, req.params.userId, req.body || {});
+  res.json({ success: true, data });
+}));
+
 router.get('/admin/users/:userId/requests', asyncHandler(async (req, res) => {
   const data = await userProfileService.getRequests(req.user, req.params.userId);
   res.json({ success: true, data });

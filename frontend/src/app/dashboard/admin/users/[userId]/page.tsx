@@ -34,6 +34,7 @@ import {
   useAdminUserProfile,
   useAdminUserRequests,
   useForceLogoutUser,
+  useTakeBackPendingLeads,
   useUpdateAdminUserProfile,
 } from '@/hooks/useUserProfile';
 
@@ -221,6 +222,16 @@ function UserProfileInner({ userId }: { userId: string }) {
               </button>
             )}
             {canEdit && !isReadOnlyProfile && <EditProfileButton profile={profile.data} userId={userId} />}
+            {canEdit && isMemberProfile && !isReadOnlyProfile && (
+              <TakeBackPendingLeadsButton
+                userId={userId}
+                pendingCount={Number(counts.pending_leads || 0)}
+                onSuccess={() => {
+                  profile.refetch();
+                  performance.refetch();
+                }}
+              />
+            )}
             {canEdit && isAdminProfile && !isReadOnlyProfile && (
               <button onClick={handleForceLogout} disabled={forceLogout.isPending} className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
                 {forceLogout.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldBan className="h-4 w-4" />}
@@ -1060,6 +1071,122 @@ function OverviewTab({ profile }: { profile: UserProfileResponse }) {
         </dl>
       </div>
     </div>
+  );
+}
+
+function TakeBackPendingLeadsButton({
+  userId,
+  pendingCount,
+  onSuccess,
+}: {
+  userId: string;
+  pendingCount: number;
+  onSuccess: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [quantity, setQuantity] = useState('');
+  const [reason, setReason] = useState('');
+  const takeBack = useTakeBackPendingLeads(userId);
+  const maxPending = Math.max(0, Number(pendingCount || 0));
+
+  function openModal() {
+    if (maxPending <= 0) return;
+    setQuantity(String(Math.min(maxPending, 10)));
+    setReason('');
+    setOpen(true);
+  }
+
+  function submit() {
+    const parsed = Number.parseInt(quantity, 10);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      toast.error('Enter a valid number of pending leads to take back.');
+      return;
+    }
+    if (parsed > maxPending) {
+      toast.error(`Only ${maxPending} pending lead(s) are available to take back.`);
+      return;
+    }
+
+    takeBack.mutate(
+      { quantity: parsed, reason: reason.trim() || undefined },
+      {
+        onSuccess: (result) => {
+          const affected = Number(result?.affected || 0);
+          const skipped = Number(result?.skipped || 0);
+          toast.success(
+            skipped > 0
+              ? `${affected} pending lead(s) moved back, ${skipped} skipped`
+              : `${affected} pending lead(s) moved back to unassigned`,
+          );
+          setOpen(false);
+          onSuccess();
+        },
+        onError: (error: unknown) => toast.error(apiErrorMessage(error, 'Could not take back pending leads')),
+      },
+    );
+  }
+
+  return (
+    <>
+      <button
+        onClick={openModal}
+        disabled={maxPending <= 0}
+        className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <ArrowRightLeft className="h-4 w-4" /> Take back pending leads
+      </button>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Take Back Pending Leads"
+        description="Move a chosen number of untouched pending leads back to the unassigned pool from this member profile."
+        size="sm"
+        footer={(
+          <>
+            <button onClick={() => setOpen(false)} className="btn-outline rounded-lg px-4 py-2 text-sm">Cancel</button>
+            <button
+              onClick={submit}
+              disabled={takeBack.isPending || maxPending <= 0}
+              className="btn-primary inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"
+            >
+              {takeBack.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              Move back
+            </button>
+          </>
+        )}
+      >
+        <div className="space-y-4">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            {maxPending} pending lead(s) are currently available for take-back. Only unworked leads will move back, and they will return to the unassigned pool.
+          </div>
+          <label className="space-y-1.5 text-sm">
+            <span className="font-medium text-slate-700">How many leads to take back?</span>
+            <input
+              type="number"
+              min={1}
+              max={Math.max(1, maxPending)}
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value.replace(/[^\d]/g, ''))}
+              className="input"
+              placeholder="Enter quantity"
+            />
+          </label>
+          <label className="space-y-1.5 text-sm">
+            <span className="font-medium text-slate-700">Reason (optional)</span>
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={3}
+              className="input min-h-[96px]"
+              placeholder="Example: Overloaded member, moving fresh pending leads back for redistribution."
+            />
+          </label>
+          <p className="text-xs text-slate-500">
+            Tip: after these leads return to unassigned, they can be redistributed using your normal admin distribution flow.
+          </p>
+        </div>
+      </Modal>
+    </>
   );
 }
 

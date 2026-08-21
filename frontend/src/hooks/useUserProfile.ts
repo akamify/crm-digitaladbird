@@ -198,6 +198,16 @@ export interface ActivityRow {
   created_at: string;
 }
 
+export interface TakeBackPendingLeadsResult {
+  requested: number;
+  affected: number;
+  available: number;
+  skipped: number;
+  remaining_pending: number;
+  lead_ids: string[];
+  reason?: string | null;
+}
+
 export function useAdminUserProfile(userId: string) {
   return useQuery({
     queryKey: ['admin', 'user-profile', userId],
@@ -265,6 +275,20 @@ export function useForceLogoutUser(userId: string) {
     mutationFn: () => apiPost<{ revoked_sessions: number }>(`/admin/users/${userId}/force-logout`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin', 'user-profile', userId] });
+    },
+  });
+}
+
+export function useTakeBackPendingLeads(userId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { quantity: number; reason?: string }) =>
+      apiPost<TakeBackPendingLeadsResult>(`/admin/users/${userId}/take-back-pending-leads`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'user-profile', userId] });
+      qc.invalidateQueries({ queryKey: ['admin', 'user-profile', userId, 'leads'] });
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['admin'] });
     },
   });
 }

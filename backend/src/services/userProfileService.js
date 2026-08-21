@@ -1,4 +1,4 @@
-const { query } = require('../config/database');
+const { query, withTransaction } = require('../config/database');
 const { AppError } = require('../utils/errors');
 const { workedLeadCondition, notWorkedLeadCondition } = require('../utils/leadWorkMetrics');
 const { assertCpIdNotEditable, normalizeRole } = require('./userIdentityService');
@@ -435,6 +435,101 @@ async function getUserLeads(actor, userId, opts = {}) {
   return { rows, total, page, pageSize };
 }
 
+async function takeBackPendingLeads(actor, userId, input = {}) {
+  if (!actor || !ADMIN_ROLES.has(actor.role)) {
+    throw new AppError(403, 'FORBIDDEN', 'Only admins can take back pending leads');
+  }
+
+  const user = await getSanitizedUser(userId);
+  const profileType = profileTypeFor(user);
+  if (profileType !== 'member') {
+    throw new AppError(400, 'INVALID_TARGET', 'Pending lead take-back is available only for member/partner profiles');
+  }
+
+  const requested = Number.parseInt(String(input.quantity || ''), 10);
+  if (!Number.isFinite(requested) || requested < 1) {
+    throw new AppError(400, 'INVALID_QUANTITY', 'Enter a valid take-back quantity');
+  }
+
+  const reason = String(input.reason || '').trim() || 'Taken back from member profile by admin';
+
+  const eligibleRows = await query(
+    `SELECT l.id
+       FROM leads l
+      WHERE l.assigned_to_user_id = $1
+        AND l.deleted_at IS NULL
+        AND ${notWorkedLeadCondition('l')}
+      ORDER BY l.assigned_at DESC NULLS LAST, l.created_at DESC NULLS LAST, l.id DESC
+      LIMIT $2`,
+    [userId, requested],
+  );
+
+  const eligibleLeadIds = eligibleRows.rows.map(row => row.id).filter(Boolean);
+
+  if (!eligibleLeadIds.length) {
+    const counts = await getBasicCounts(userId);
+    return {
+      requested,
+      affected: 0,
+      available: Number(counts.pending_leads || 0),
+      skipped: requested,
+      remaining_pending: Number(counts.pending_leads || 0),
+      lead_ids: [],
+      reason,
+    };
+  }
+
+  await withTransaction(async (client) => {
+    await client.query(
+      `UPDATE lead_assignments
+          SET unassigned_at = NOW()
+        WHERE lead_id = ANY($1::uuid[])
+          AND unassigned_at IS NULL`,
+      [eligibleLeadIds],
+    );
+
+    await client.query(
+      `UPDATE leads
+          SET assigned_to_user_id = NULL,
+              assigned_at = NULL,
+              locked_by_user_id = NULL,
+              locked_until = NULL,
+              updated_at = NOW()
+        WHERE id = ANY($1::uuid[])
+          AND deleted_at IS NULL`,
+      [eligibleLeadIds],
+    );
+
+    await client.query(
+      `INSERT INTO activity_logs (user_id, entity, entity_id, action, metadata, ip_address, created_at)
+       VALUES ($1, 'user', $2, 'take_back_pending_leads', $3::jsonb, NULL, NOW())`,
+      [
+        actor.id,
+        userId,
+        JSON.stringify({
+          target_user_id: userId,
+          target_user_name: user.full_name,
+          requested,
+          affected: eligibleLeadIds.length,
+          lead_ids: eligibleLeadIds.slice(0, 25),
+          reason,
+        }),
+      ],
+    ).catch(() => null);
+  });
+
+  const counts = await getBasicCounts(userId);
+  return {
+    requested,
+    affected: eligibleLeadIds.length,
+    available: Number(counts.pending_leads || 0) + eligibleLeadIds.length,
+    skipped: Math.max(0, requested - eligibleLeadIds.length),
+    remaining_pending: Number(counts.pending_leads || 0),
+    lead_ids: eligibleLeadIds,
+    reason,
+  };
+}
+
 async function getRequests(actor, userId) {
   await assertProfileAccess(actor, userId);
   const user = await getSanitizedUser(userId);
@@ -742,6 +837,7 @@ module.exports = {
   getProfile,
   getPerformance,
   getUserLeads,
+  takeBackPendingLeads,
   getRequests,
   getAssignmentHistory,
   getActivity,
