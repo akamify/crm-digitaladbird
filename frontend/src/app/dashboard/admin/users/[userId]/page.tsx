@@ -16,7 +16,7 @@ import { AdminUserGoogleSheets, MyGoogleSheetProfileCard } from '@/components/go
 import { EmptyState, Modal, Skeleton, StatusChip } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import { clsx, fmtDate, fmtPhone, fmtRelative, humanize, initials } from '@/lib/format';
-import { useActiveMembers, useBlockUser, useBulkReassignLeads, useUnblockUser } from '@/hooks/useAdmin';
+import { useActiveMembers, useBlockUser, useBulkLeadAction, useBulkReassignLeads, useUnblockUser } from '@/hooks/useAdmin';
 import { useCustomerNotes } from '@/hooks/useCustomerNotes';
 import { useDeleteUser, useSendPasswordResetLink, useUpdateLeadAvailability, useUsers } from '@/hooks/useUsers';
 import type { CustomerNote } from '@/types';
@@ -610,6 +610,7 @@ function AssignedLeadsTab({ userId, canReassign, pendingOnly = false }: { userId
   });
   const members = useActiveMembers();
   const reassign = useBulkReassignLeads();
+  const bulkLeadAction = useBulkLeadAction();
   const rows = leads.data?.rows || [];
   const total = leads.data?.total || 0;
   const totalPages = Math.max(1, Math.ceil(total / 20));
@@ -634,6 +635,26 @@ function AssignedLeadsTab({ userId, canReassign, pendingOnly = false }: { userId
     });
   }
 
+  function submitUnassign() {
+    if (selected.length === 0) return;
+    if (!window.confirm(`Move ${selected.length} selected lead(s) back to unassigned? Only unworked leads will be taken back.`)) return;
+    bulkLeadAction.mutate(
+      { action: 'unassign', lead_ids: selected },
+      {
+        onSuccess: (result: any) => {
+          const affected = Number(result?.affected || 0);
+          const skipped = Number(result?.skipped || 0);
+          toast.success(skipped > 0
+            ? `${affected} unworked lead(s) moved back, ${skipped} skipped`
+            : `${affected} unworked lead(s) moved back to unassigned`);
+          setSelected([]);
+          leads.refetch();
+        },
+        onError: (error: unknown) => toast.error(apiErrorMessage(error, 'Could not take back selected leads')),
+      },
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -650,9 +671,19 @@ function AssignedLeadsTab({ userId, canReassign, pendingOnly = false }: { userId
           <option value="not_interested">Not Interested</option>
         </select>
         {canReassign && selected.length > 0 && (
-          <button onClick={() => setModalOpen(true)} className="btn-primary inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
-            <ArrowRightLeft className="h-4 w-4" /> Reassign {selected.length}
-          </button>
+          <>
+            <button
+              onClick={submitUnassign}
+              disabled={bulkLeadAction.isPending}
+              className="btn-outline inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm disabled:opacity-60"
+            >
+              {bulkLeadAction.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Briefcase className="h-4 w-4" />}
+              {pendingOnly ? `Take Back ${selected.length}` : `Unassign Unworked ${selected.length}`}
+            </button>
+            <button onClick={() => setModalOpen(true)} className="btn-primary inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
+              <ArrowRightLeft className="h-4 w-4" /> Reassign {selected.length}
+            </button>
+          </>
         )}
       </div>
 

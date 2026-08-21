@@ -10,7 +10,7 @@ import { LeadActions } from '@/components/leads/LeadActions';
 import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
 import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
 import { EmptyState, Modal, Skeleton } from '@/components/ui/Modal';
-import { useActiveMembers, useBulkReassignLeads, useForceAssign, exportLeadsCsv } from '@/hooks/useAdmin';
+import { useActiveMembers, useBulkLeadAction, useBulkReassignLeads, useForceAssign, exportLeadsCsv } from '@/hooks/useAdmin';
 import { useBulkUpdateLeadCategory } from '@/hooks/useAdminEnterprise';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useLeadList, useMetaCampaigns } from '@/hooks/useLeads';
@@ -70,6 +70,7 @@ function LeadsInner() {
   const members = useActiveMembers();
   const forceAssign = useForceAssign();
   const bulkReassign = useBulkReassignLeads();
+  const bulkLeadAction = useBulkLeadAction();
   const bulkCategory = useBulkUpdateLeadCategory();
 
   const rows = useMemo(() => leads.data?.rows ?? [], [leads.data?.rows]);
@@ -157,6 +158,26 @@ function LeadsInner() {
           leads.refetch();
         },
         onError: (error: unknown) => toast.error(apiErrorMessage(error, `${assignMode === 'reassign' ? 'Reassign' : 'Assign'} failed`)),
+      },
+    );
+  }
+
+  function handleUnassignSelected() {
+    if (!selected.length) return;
+    if (!window.confirm(`Move ${selected.length} selected lead(s) back to the unassigned queue? Only unworked leads will be taken back.`)) return;
+    bulkLeadAction.mutate(
+      { action: 'unassign', lead_ids: selected },
+      {
+        onSuccess: (result: any) => {
+          const affected = Number(result?.affected || 0);
+          const skipped = Number(result?.skipped || 0);
+          toast.success(skipped > 0
+            ? `${affected} unworked lead(s) moved back, ${skipped} skipped`
+            : `${affected} unworked lead(s) moved back to unassigned`);
+          setSelected([]);
+          leads.refetch();
+        },
+        onError: (error: unknown) => toast.error(apiErrorMessage(error, 'Could not unassign selected leads')),
       },
     );
   }
@@ -277,6 +298,13 @@ function LeadsInner() {
           <span className="text-sm font-medium text-brand-800">{selected.length} selected</span>
           <button onClick={() => openAssign('assign')} className="btn-primary rounded-lg px-3 py-1.5 text-xs">Assign</button>
           <button onClick={() => openAssign('reassign')} className="btn-outline rounded-lg px-3 py-1.5 text-xs">Reassign</button>
+          <button
+            onClick={handleUnassignSelected}
+            disabled={bulkLeadAction.isPending}
+            className="btn-outline rounded-lg px-3 py-1.5 text-xs disabled:opacity-60"
+          >
+            {bulkLeadAction.isPending ? 'Unassigning...' : 'Unassign Unworked'}
+          </button>
           <select className="input h-8 w-auto text-xs" defaultValue="" onChange={event => { if (event.target.value) changeSelectedCategory(event.target.value as 'trader' | 'partner' | 'unknown'); event.target.value = ''; }} disabled={bulkCategory.isPending}>
             <option value="">Change category...</option>
             <option value="trader">Trader Lead</option>

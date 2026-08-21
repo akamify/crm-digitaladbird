@@ -1917,6 +1917,7 @@ router.post('/admin/reassign-member', authenticate, requireRole('super_admin'), 
 // --- 10. Bulk Lead Actions ---
 router.post('/admin/bulk-leads', authenticate, requireRole('super_admin'), asyncHandler(async (req, res, next) => {
   const { action, lead_ids, params: actionParams } = req.body;
+  let actionResultSummary = null;
   if (action === 'delete_all') {
     return leads.removeAll(req, res, next);
   }
@@ -1961,11 +1962,52 @@ router.post('/admin/bulk-leads', authenticate, requireRole('super_admin'), async
       break;
     }
     case 'unassign': {
-      const { rowCount } = await query(
-        `UPDATE leads SET assigned_to_user_id = NULL, assigned_at = NULL, updated_at = NOW()
-           WHERE id = ANY($1) AND deleted_at IS NULL`, [lead_ids]
-      );
-      affected = rowCount;
+      const result = await withTransaction(async (client) => {
+        const { rows: eligibleRows } = await client.query(
+          `SELECT l.id
+             FROM leads l
+            WHERE l.id = ANY($1::uuid[])
+              AND l.deleted_at IS NULL
+              AND l.assigned_to_user_id IS NOT NULL
+              AND ${notWorkedLeadCondition('l')}
+            FOR UPDATE`,
+          [lead_ids],
+        );
+        const eligibleLeadIds = eligibleRows.map(row => row.id);
+        if (!eligibleLeadIds.length) {
+          return {
+            affected: 0,
+            skipped: lead_ids.length,
+            requested: lead_ids.length,
+            eligibleLeadIds: [],
+          };
+        }
+        await client.query(
+          `UPDATE lead_assignments
+              SET unassigned_at = NOW()
+            WHERE lead_id = ANY($1::uuid[])
+              AND unassigned_at IS NULL`,
+          [eligibleLeadIds],
+        );
+        const { rowCount } = await client.query(
+          `UPDATE leads
+              SET assigned_to_user_id = NULL,
+                  assigned_at = NULL,
+                  locked_by_user_id = NULL,
+                  locked_until = NULL,
+                  updated_at = NOW()
+            WHERE id = ANY($1::uuid[])`,
+          [eligibleLeadIds],
+        );
+        return {
+          affected: rowCount,
+          skipped: Math.max(0, lead_ids.length - rowCount),
+          requested: lead_ids.length,
+          eligibleLeadIds,
+        };
+      });
+      affected = result.affected;
+      actionResultSummary = result;
       break;
     }
     default:
@@ -1975,7 +2017,7 @@ router.post('/admin/bulk-leads', authenticate, requireRole('super_admin'), async
   await query(
     `INSERT INTO audit_logs(user_id, entity, entity_id, action, metadata, ip_address)
        VALUES ($1, 'lead', $2, 'bulk_action', $3, $4)`,
-    [req.user.id, lead_ids[0], JSON.stringify({ action, count: affected, lead_ids: lead_ids.slice(0, 10) }), req.ip]
+    [req.user.id, lead_ids[0], JSON.stringify({ action, count: affected, lead_ids: lead_ids.slice(0, 10), result: actionResultSummary }), req.ip]
   );
 
   if (['update_stage', 'unassign'].includes(action)) {
@@ -1987,7 +2029,19 @@ router.post('/admin/bulk-leads', authenticate, requireRole('super_admin'), async
     })));
   }
 
-  res.json({ success: true, data: { action, affected } });
+  res.json({
+    success: true,
+    data: {
+      action,
+      affected,
+      ...(action === 'unassign' ? {
+        requested: actionResultSummary?.requested ?? lead_ids.length,
+        skipped: actionResultSummary?.skipped ?? Math.max(0, lead_ids.length - affected),
+        eligible_lead_ids: actionResultSummary?.eligibleLeadIds ?? [],
+        rule: 'only_unworked_assigned_leads_can_be_unassigned',
+      } : {}),
+    },
+  });
 }));
 
 // --- 11. Live Admin Stats (comprehensive real-time) ---
