@@ -6,7 +6,17 @@ const {
   isCustomerNoteApprovalStatus,
   isCustomerNoteUserRole,
 } = require('../constants/customerNoteOptions');
+const {
+  PERSONAL_MEETING_DEFAULT_SERVICES,
+  PERSONAL_MEETING_DEFAULT_PACKAGE_SERVICE_KEYS,
+  isCustomerNoteKind,
+  isPersonalMeetingMode,
+  isPersonalMeetingPricingType,
+  isPersonalMeetingOutcome,
+  isPersonalMeetingObjection,
+} = require('../constants/personalMeetingOptions');
 const { sendMeetingNotification } = require('./customerMeetingNotificationService');
+const { logActivity } = require('../utils/auditLog');
 
 function normalizeText(value, max = 1000) {
   const text = String(value || '').trim().replace(/\s+/g, ' ');
@@ -59,6 +69,66 @@ function normalizeUuidList(value) {
     unique.push(id);
   }
   return unique;
+}
+
+function normalizeBoolean(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  return ['true', '1', 'yes'].includes(String(value).trim().toLowerCase());
+}
+
+function normalizeMoney(value, fieldName = 'price') {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0 || number > 999999999.99) {
+    throw new AppError(400, 'INVALID_MEETING_PRICE', `Enter a valid ${fieldName}.`);
+  }
+  return Number(number.toFixed(2));
+}
+
+function normalizeStringList(value, normalizer, code, message) {
+  if (value === undefined) return undefined;
+  const source = Array.isArray(value) ? value : String(value || '').split(/[\n,;]+/g);
+  const unique = [];
+  const seen = new Set();
+  for (const entry of source) {
+    const normalized = String(entry || '').trim().toLowerCase();
+    if (!normalized || seen.has(normalized)) continue;
+    if (!normalizer(normalized)) throw new AppError(400, code, message);
+    seen.add(normalized);
+    unique.push(normalized);
+  }
+  return unique;
+}
+
+function normalizePersonalMeetingServices(value, pricingType) {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new AppError(400, 'INVALID_MEETING_SERVICES', 'Services must be a list.');
+  const defaults = new Map(PERSONAL_MEETING_DEFAULT_SERVICES.map((service) => [service.key, service.name]));
+  const seen = new Set();
+  const services = [];
+  for (const raw of value) {
+    const serviceKey = normalizeText(raw?.service_key || raw?.serviceKey || raw?.key, 80)?.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+    const customName = normalizeText(raw?.service_name || raw?.serviceName || raw?.name, 190);
+    const isCustom = normalizeBoolean(raw?.is_custom ?? raw?.isCustom, Boolean(customName && !defaults.has(serviceKey)));
+    const key = serviceKey || (isCustom ? `custom_${customName?.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')}` : null);
+    const name = isCustom ? customName : (defaults.get(key) || customName);
+    if (!key || !name || (!isCustom && !defaults.has(key))) {
+      throw new AppError(400, 'INVALID_MEETING_SERVICE', 'Select a valid service or enter a custom service name.');
+    }
+    if (seen.has(key)) continue;
+    seen.add(key);
+    services.push({
+      service_key: key,
+      service_name: name,
+      is_custom: isCustom,
+      client_interested: normalizeBoolean(raw?.client_interested ?? raw?.clientInterested),
+      quoted_price: pricingType === 'individual_services' ? normalizeMoney(raw?.quoted_price ?? raw?.quotedPrice, 'quoted price') : null,
+      pricing_note: pricingType === 'individual_services' ? normalizeText(raw?.pricing_note || raw?.pricingNote, 500) : null,
+      is_package_item: pricingType === 'package',
+    });
+  }
+  return services;
 }
 
 function normalizeEmailList(value) {
@@ -209,7 +279,24 @@ function pushParam(params, value) {
 }
 
 function normalizeNotePayload(body = {}) {
+  const noteKind = normalizeText(body.note_kind || body.noteKind, 32) || 'general';
+  if (!isCustomerNoteKind(noteKind)) {
+    throw new AppError(400, 'INVALID_NOTE_KIND', 'Invalid note type.');
+  }
+  const pricingType = normalizeText(body.pricing_type || body.pricingType, 32) || null;
+  if (pricingType && !isPersonalMeetingPricingType(pricingType)) {
+    throw new AppError(400, 'INVALID_MEETING_PRICING_TYPE', 'Invalid pricing type.');
+  }
+  const meetingMode = normalizeText(body.meeting_mode || body.meetingMode, 32) || null;
+  if (meetingMode && !isPersonalMeetingMode(meetingMode)) {
+    throw new AppError(400, 'INVALID_MEETING_MODE', 'Invalid meeting mode.');
+  }
+  const meetingOutcome = normalizeText(body.meeting_outcome || body.meetingOutcome, 64) || null;
+  if (meetingOutcome && !isPersonalMeetingOutcome(meetingOutcome)) {
+    throw new AppError(400, 'INVALID_MEETING_OUTCOME', 'Invalid meeting outcome.');
+  }
   return {
+    noteKind,
     leadId: normalizeUuid(body.lead_id || body.leadId),
     customerPhone: normalizePhone(body.customer_phone || body.customerPhone),
     customerName: normalizeText(body.customer_name || body.customerName, 190),
@@ -220,6 +307,27 @@ function normalizeNotePayload(body = {}) {
     clientBudget: normalizeText(body.client_budget || body.clientBudget, 190),
     meetingName: normalizeText(body.meeting_name || body.meetingName, 190),
     meetingAt: normalizeDateTime(body.meeting_at || body.meetingAt, 'INVALID_MEETING_AT', 'Enter a valid meeting date and time.'),
+    meetingEndAt: normalizeDateTime(body.meeting_end_at || body.meetingEndAt, 'INVALID_MEETING_END_AT', 'Enter a valid meeting end time.'),
+    meetingOwnerUserId: normalizeUuid(body.meeting_owner_user_id || body.meetingOwnerUserId),
+    meetingOwnerCustomName: normalizeText(body.meeting_owner_custom_name || body.meetingOwnerCustomName, 190),
+    meetingOwnerCustomDesignation: normalizeText(body.meeting_owner_custom_designation || body.meetingOwnerCustomDesignation, 190),
+    meetingMode,
+    meetingModeCustom: normalizeText(body.meeting_mode_custom || body.meetingModeCustom, 100),
+    meetingLink: normalizeText(body.meeting_link || body.meetingLink, 1000),
+    pricingType,
+    personalMeetingServices: normalizePersonalMeetingServices(body.personal_meeting_services || body.personalMeetingServices || body.services, pricingType || 'individual_services'),
+    packageName: normalizeText(body.package_name || body.packageName, 190),
+    packagePrice: normalizeMoney(body.package_price ?? body.packagePrice, 'package price'),
+    packageDuration: normalizeText(body.package_duration || body.packageDuration, 100),
+    packagePricingNotes: normalizeLongText(body.package_pricing_notes || body.packagePricingNotes, 2000),
+    clientRequirements: normalizeLongText(body.client_requirements || body.clientRequirements, 4000),
+    clientObjections: normalizeStringList(body.client_objections || body.clientObjections, isPersonalMeetingObjection, 'INVALID_MEETING_OBJECTION', 'Invalid client objection.'),
+    objectionNotes: normalizeLongText(body.objection_notes || body.objectionNotes, 2000),
+    meetingOutcome,
+    nextMeetingAt: normalizeDateTime(body.next_meeting_at || body.nextMeetingAt, 'INVALID_NEXT_MEETING_AT', 'Enter a valid next meeting date and time.'),
+    followupRequired: body.followup_required === undefined && body.followupRequired === undefined ? undefined : normalizeBoolean(body.followup_required ?? body.followupRequired),
+    followupAt: normalizeDateTime(body.followup_at || body.followupAt, 'INVALID_MEETING_FOLLOWUP_AT', 'Enter a valid follow-up date and time.'),
+    followupNote: normalizeLongText(body.followup_note || body.followupNote, 2000),
     meetingNotificationEmails: normalizeEmailList(body.meeting_notification_emails || body.meetingNotificationEmails),
     meetingCounselorUserIds: normalizeUuidList(body.meeting_counselor_user_ids || body.meetingCounselorUserIds),
     counselorUserId: normalizeUuid(body.counselor_user_id || body.counselorUserId),
@@ -309,7 +417,44 @@ function hasMeetingSchedulingIntent(payload = {}) {
     || payload.meetingCounselorUserIds !== undefined;
 }
 
+function isPersonalMeeting(payloadOrNote) {
+  return (payloadOrNote?.noteKind || payloadOrNote?.note_kind) === 'personal_meeting';
+}
+
+async function validatePersonalMeetingPayload(payload, { lead, actor, existing = null } = {}) {
+  if (!isPersonalMeeting(payload)) return null;
+  if (!lead) throw new AppError(400, 'PERSONAL_MEETING_LEAD_REQUIRED', 'Link a personal meeting to a lead.');
+  if (!payload.meetingAt) throw new AppError(400, 'PERSONAL_MEETING_START_REQUIRED', 'Enter the meeting date and start time.');
+  if (payload.meetingEndAt && new Date(payload.meetingEndAt) < new Date(payload.meetingAt)) {
+    throw new AppError(400, 'INVALID_MEETING_TIME_RANGE', 'Meeting end time cannot be before start time.');
+  }
+  const ownerUserId = payload.meetingOwnerUserId === undefined ? existing?.meeting_owner_user_id : payload.meetingOwnerUserId;
+  const ownerCustomName = payload.meetingOwnerCustomName === undefined ? existing?.meeting_owner_custom_name : payload.meetingOwnerCustomName;
+  if (Boolean(ownerUserId) === Boolean(ownerCustomName)) {
+    throw new AppError(400, 'MEETING_OWNER_REQUIRED', 'Select a meeting owner or enter another person.');
+  }
+  if (ownerUserId) await requireAssignableUser(ownerUserId, null, 'INVALID_MEETING_OWNER', 'Select an active meeting owner.');
+  if ((payload.meetingMode || existing?.meeting_mode) === 'other' && !(payload.meetingModeCustom || existing?.meeting_mode_custom)) {
+    throw new AppError(400, 'MEETING_MODE_CUSTOM_REQUIRED', 'Enter the other meeting mode.');
+  }
+  const pricingType = payload.pricingType || existing?.pricing_type || 'individual_services';
+  const services = payload.personalMeetingServices === undefined ? (existing?.personal_meeting_services || []) : payload.personalMeetingServices;
+  if (pricingType === 'package' && !services.length) {
+    throw new AppError(400, 'PACKAGE_SERVICES_REQUIRED', 'Select at least one service for the package.');
+  }
+  const followupRequired = payload.followupRequired === undefined ? Boolean(existing?.followup_required) : payload.followupRequired;
+  const followupAt = payload.followupAt === undefined ? existing?.followup_at : payload.followupAt;
+  if (followupRequired && !followupAt) {
+    throw new AppError(400, 'MEETING_FOLLOWUP_REQUIRED', 'Enter the follow-up date and time.');
+  }
+  if ((payload.meetingOutcome || existing?.meeting_outcome) === 'next_personal_meeting_required' && !(payload.nextMeetingAt || existing?.next_meeting_at)) {
+    throw new AppError(400, 'NEXT_MEETING_REQUIRED', 'Enter the next personal meeting time.');
+  }
+  return { pricingType, services };
+}
+
 function assertMeetingSchedulePermission(actor, payload = {}, existing = null) {
+  if (isPersonalMeeting(payload) || isPersonalMeeting(existing)) return;
   const touchesMeetingFields = hasMeetingSchedulingIntent(payload)
     || Boolean(existing && hasMeetingSchedule(existing));
   if (touchesMeetingFields && !isRmActor(actor)) {
@@ -319,23 +464,52 @@ function assertMeetingSchedulePermission(actor, payload = {}, existing = null) {
 
 async function mapNoteRow(row, actor) {
   if (!row) return null;
+  const personalMeeting = row.note_kind === 'personal_meeting';
+  const customerName = personalMeeting && row.lead_name ? row.lead_name : row.customer_name;
+  const customerPhone = personalMeeting && row.lead_phone ? row.lead_phone : row.customer_phone;
   const userIds = [row.created_by_user_id, row.updated_by_user_id, row.approved_by_user_id, row.rejected_by_user_id].filter(Boolean);
   const actorIds = getVisibleUserIds(actor) || [];
   const approvalStatus = effectiveApprovalStatus(row.approval_status);
   return {
     id: row.id,
+    note_kind: row.note_kind || 'general',
     lead_id: row.lead_id,
     lead_name: row.lead_name || null,
     lead_phone: row.lead_phone || null,
-    customer_phone: row.customer_phone,
-    customer_name: row.customer_name,
+    lead_email: row.lead_email || null,
+    customer_phone: customerPhone,
+    customer_name: customerName,
     customer_second_name: row.customer_second_name,
     business_name: row.business_name,
     about_client: row.about_client,
     client_services_want: row.client_services_want,
     client_budget: row.client_budget,
     meeting_name: row.meeting_name,
+    meeting_number: row.meeting_number === null || row.meeting_number === undefined ? null : Number(row.meeting_number),
     meeting_at: row.meeting_at,
+    meeting_end_at: row.meeting_end_at || null,
+    duration_minutes: row.duration_minutes === null || row.duration_minutes === undefined ? null : Number(row.duration_minutes),
+    meeting_owner_user_id: row.meeting_owner_user_id || null,
+    meeting_owner_name: row.meeting_owner_name || null,
+    meeting_owner_custom_name: row.meeting_owner_custom_name || null,
+    meeting_owner_custom_designation: row.meeting_owner_custom_designation || null,
+    meeting_mode: row.meeting_mode || null,
+    meeting_mode_custom: row.meeting_mode_custom || null,
+    meeting_link: row.meeting_link || null,
+    pricing_type: row.pricing_type || null,
+    personal_meeting_services: Array.isArray(row.personal_meeting_services) ? row.personal_meeting_services : [],
+    package_name: row.package_name || null,
+    package_price: row.package_price === null || row.package_price === undefined ? null : Number(row.package_price),
+    package_duration: row.package_duration || null,
+    package_pricing_notes: row.package_pricing_notes || null,
+    client_requirements: row.client_requirements || null,
+    client_objections: Array.isArray(row.client_objections) ? row.client_objections : [],
+    objection_notes: row.objection_notes || null,
+    meeting_outcome: row.meeting_outcome || null,
+    next_meeting_at: row.next_meeting_at || null,
+    followup_required: Boolean(row.followup_required),
+    followup_at: row.followup_at || null,
+    followup_note: row.followup_note || null,
     meeting_notification_emails: Array.isArray(row.meeting_notification_emails) ? row.meeting_notification_emails : [],
     meeting_counselor_user_ids: Array.isArray(row.meeting_counselor_user_ids) ? row.meeting_counselor_user_ids : [],
     meeting_counselor_names: Array.isArray(row.meeting_counselor_names) ? row.meeting_counselor_names : [],
@@ -429,7 +603,9 @@ async function getNoteRowById(noteId, actor, options = {}) {
     `SELECT n.*,
             l.full_name AS lead_name,
             l.phone AS lead_phone,
+            l.email AS lead_email,
             counselor.full_name AS counselor_name,
+            meeting_owner.full_name AS meeting_owner_name,
             ARRAY(
               SELECT u.full_name
                 FROM users u
@@ -484,6 +660,7 @@ async function getNoteRowById(noteId, actor, options = {}) {
        FROM customer_notes n
        LEFT JOIN leads l ON l.id = n.lead_id
        LEFT JOIN users counselor ON counselor.id = n.counselor_user_id
+       LEFT JOIN users meeting_owner ON meeting_owner.id = n.meeting_owner_user_id
        LEFT JOIN users rm ON rm.id = n.rm_user_id
        LEFT JOIN users creator ON creator.id = n.created_by_user_id
        LEFT JOIN users updater ON updater.id = n.updated_by_user_id
@@ -642,8 +819,10 @@ async function createNote(actor, body) {
   const { counselorUser, rmUser, meetingCounselorUsers } = await validateNoteParticipants(actor, payload, lead);
   await validateCreatePermission(actor, { ...payload, meetingCounselorUsers }, lead, counselorUser, rmUser);
 
-  const customerPhone = payload.customerPhone || normalizePhone(lead?.phone);
-  const customerName = payload.customerName || normalizeText(lead?.full_name, 190);
+  // Lead-linked personal meetings always display and persist the current lead identity.
+  // Request body identity fields are not authoritative for this structured record.
+  const customerPhone = isPersonalMeeting(payload) ? normalizePhone(lead?.phone) : (payload.customerPhone || normalizePhone(lead?.phone));
+  const customerName = isPersonalMeeting(payload) ? normalizeText(lead?.full_name, 190) : (payload.customerName || normalizeText(lead?.full_name, 190));
   if (!customerPhone) {
     throw new AppError(400, 'CUSTOMER_PHONE_REQUIRED', 'Enter customer phone before saving.');
   }
@@ -653,16 +832,35 @@ async function createNote(actor, body) {
   if (!payload.initialEntryText) {
     throw new AppError(400, 'NOTE_ENTRY_REQUIRED', 'Write notes before saving.');
   }
-  if (hasMeetingSchedulingIntent(payload) && !meetingCounselorUsers.length) {
+  const personalMeeting = await validatePersonalMeetingPayload(payload, { lead, actor });
+  if (!isPersonalMeeting(payload) && hasMeetingSchedulingIntent(payload) && !meetingCounselorUsers.length) {
     throw new AppError(400, 'MEETING_COUNSELOR_REQUIRED', 'Select at least one counselor/member for the meeting.');
   }
 
   const approvalState = deriveApprovalState(actor);
 
   const note = await withTransaction(async (client) => {
+    let meetingNumber = null;
+    let durationMinutes = null;
+    if (isPersonalMeeting(payload)) {
+      // Locking the lead row serializes the next-number calculation for this lead.
+      await client.query('SELECT id FROM leads WHERE id = $1 FOR UPDATE', [lead.id]);
+      const { rows: [numberRow] } = await client.query(
+        `SELECT COALESCE(MAX(meeting_number), 0) + 1 AS next_number
+          FROM customer_notes
+          WHERE lead_id = $1
+            AND note_kind = 'personal_meeting'`,
+        [lead.id],
+      );
+      meetingNumber = Number(numberRow?.next_number || 1);
+      if (payload.meetingEndAt) {
+        durationMinutes = Math.max(0, Math.round((new Date(payload.meetingEndAt).getTime() - new Date(payload.meetingAt).getTime()) / 60000));
+      }
+    }
     const { rows: [created] } = await client.query(
       `INSERT INTO customer_notes (
          lead_id,
+         note_kind,
          customer_phone,
          customer_name,
          customer_second_name,
@@ -672,6 +870,29 @@ async function createNote(actor, body) {
        client_budget,
        meeting_name,
        meeting_at,
+       meeting_number,
+       meeting_end_at,
+       duration_minutes,
+       meeting_owner_user_id,
+       meeting_owner_custom_name,
+       meeting_owner_custom_designation,
+       meeting_mode,
+       meeting_mode_custom,
+       meeting_link,
+       pricing_type,
+       personal_meeting_services,
+       package_name,
+       package_price,
+       package_duration,
+       package_pricing_notes,
+       client_requirements,
+       client_objections,
+       objection_notes,
+       meeting_outcome,
+       next_meeting_at,
+       followup_required,
+       followup_at,
+       followup_note,
        meeting_notification_emails,
        meeting_counselor_user_ids,
         counselor_user_id,
@@ -687,12 +908,15 @@ async function createNote(actor, body) {
          rejection_note
        )
        VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-         $11, $12, $13, $14, $15, $15, $16, $17, $18, $19, $20, $21, $22
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+         $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28,
+         $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41,
+         $42, $43, $44, $45, $46, $47
        )
        RETURNING id`,
       [
         lead?.id || null,
+        payload.noteKind,
         customerPhone,
         customerName,
         payload.customerSecondName,
@@ -700,8 +924,31 @@ async function createNote(actor, body) {
         payload.aboutClient,
         payload.clientServicesWant,
         payload.clientBudget,
-        payload.meetingName,
+        isPersonalMeeting(payload) ? `Personal Meeting #${meetingNumber}` : payload.meetingName,
         payload.meetingAt,
+        meetingNumber,
+        payload.meetingEndAt,
+        durationMinutes,
+        payload.meetingOwnerUserId,
+        payload.meetingOwnerCustomName,
+        payload.meetingOwnerCustomDesignation,
+        payload.meetingMode,
+        payload.meetingModeCustom,
+        payload.meetingLink,
+        personalMeeting?.pricingType || null,
+        JSON.stringify(personalMeeting?.services || []),
+        payload.packageName,
+        payload.packagePrice,
+        payload.packageDuration,
+        payload.packagePricingNotes,
+        payload.clientRequirements,
+        payload.clientObjections || [],
+        payload.objectionNotes,
+        payload.meetingOutcome,
+        payload.nextMeetingAt,
+        payload.followupRequired || false,
+        payload.followupAt,
+        payload.followupNote,
         payload.meetingNotificationEmails || [],
         meetingCounselorUsers.map((entry) => entry.id),
         counselorUser?.id || null,
@@ -732,7 +979,19 @@ async function createNote(actor, body) {
   });
 
   const detail = await getNoteDetail(actor, note.id, { includePendingForAdmin: true });
-  await notifyMeetingScheduled(detail);
+  if (isPersonalMeeting(payload)) {
+    void logActivity({ user: actor, ip: null, headers: {} }, {
+      entity: 'personal_meeting',
+      entity_id: detail.id,
+      action: 'created',
+      metadata: {
+        lead_id: detail.lead_id,
+        meeting_number: detail.meeting_number,
+        outcome: detail.meeting_outcome,
+      },
+    });
+  }
+  if (!isPersonalMeeting(payload)) await notifyMeetingScheduled(detail);
   return detail;
 }
 
@@ -742,6 +1001,10 @@ async function listNotes(actor, rawQuery = {}) {
 
   const q = normalizeText(rawQuery.q, 160);
   const approvalStatus = normalizeText(rawQuery.approval_status || rawQuery.approvalStatus, 64);
+  const noteKind = normalizeText(rawQuery.note_kind || rawQuery.noteKind, 32);
+  const meetingOutcome = normalizeText(rawQuery.meeting_outcome || rawQuery.meetingOutcome, 64);
+  const meetingOwnerUserId = normalizeUuid(rawQuery.meeting_owner_user_id || rawQuery.meetingOwnerUserId);
+  const meetingState = normalizeText(rawQuery.meeting_state || rawQuery.meetingState, 32);
   const leadId = normalizeUuid(rawQuery.lead_id || rawQuery.leadId);
   const rmUserId = normalizeUuid(rawQuery.rm_user_id || rawQuery.rmUserId);
   const counselorUserId = normalizeUuid(rawQuery.counselor_user_id || rawQuery.counselorUserId);
@@ -769,6 +1032,29 @@ async function listNotes(actor, rawQuery = {}) {
     }
     where.push(`n.approval_status = $${pushParam(params, approvalStatus)}`);
   }
+  if (noteKind) {
+    if (!isCustomerNoteKind(noteKind)) throw new AppError(400, 'INVALID_NOTE_KIND', 'Invalid note type filter.');
+    where.push(`n.note_kind = $${pushParam(params, noteKind)}`);
+  } else {
+    // Personal meetings have their own workspace and must not clutter the existing Notes view.
+    where.push(`COALESCE(n.note_kind, 'general') <> 'personal_meeting'`);
+  }
+  if (meetingOutcome) {
+    if (!isPersonalMeetingOutcome(meetingOutcome)) throw new AppError(400, 'INVALID_MEETING_OUTCOME', 'Invalid meeting outcome filter.');
+    where.push(`n.meeting_outcome = $${pushParam(params, meetingOutcome)}`);
+  }
+  if (meetingOwnerUserId) where.push(`n.meeting_owner_user_id = $${pushParam(params, meetingOwnerUserId)}::uuid`);
+  if (meetingState) {
+    if (meetingState === 'today') {
+      where.push(`n.meeting_at >= date_trunc('day', NOW()) AND n.meeting_at < date_trunc('day', NOW()) + INTERVAL '1 day'`);
+    } else if (meetingState === 'upcoming') {
+      where.push(`n.meeting_at >= NOW()`);
+    } else if (meetingState === 'completed') {
+      where.push(`n.meeting_at < NOW() AND (n.meeting_end_at IS NULL OR n.meeting_end_at <= NOW())`);
+    } else if (meetingState !== 'all') {
+      throw new AppError(400, 'INVALID_MEETING_STATE', 'Invalid meeting state filter.');
+    }
+  }
   if (leadId) where.push(`n.lead_id = $${pushParam(params, leadId)}::uuid`);
   if (rmUserId) where.push(`n.rm_user_id = $${pushParam(params, rmUserId)}::uuid`);
   if (createdByUserId) where.push(`n.created_by_user_id = $${pushParam(params, createdByUserId)}::uuid`);
@@ -791,7 +1077,9 @@ async function listNotes(actor, rawQuery = {}) {
     `SELECT n.*,
             l.full_name AS lead_name,
             l.phone AS lead_phone,
+            l.email AS lead_email,
             counselor.full_name AS counselor_name,
+            meeting_owner.full_name AS meeting_owner_name,
             ARRAY(
               SELECT u.full_name
                 FROM users u
@@ -847,6 +1135,7 @@ async function listNotes(actor, rawQuery = {}) {
        FROM customer_notes n
        LEFT JOIN leads l ON l.id = n.lead_id
        LEFT JOIN users counselor ON counselor.id = n.counselor_user_id
+       LEFT JOIN users meeting_owner ON meeting_owner.id = n.meeting_owner_user_id
        LEFT JOIN users rm ON rm.id = n.rm_user_id
        LEFT JOIN users creator ON creator.id = n.created_by_user_id
        LEFT JOIN users updater ON updater.id = n.updated_by_user_id
@@ -872,6 +1161,7 @@ async function listUpcomingMeetings(actor, rawQuery = {}) {
   const params = [];
   const where = [
     `n.deleted_at IS NULL`,
+    `COALESCE(n.note_kind, 'general') = 'meeting_schedule'`,
     `n.meeting_at IS NOT NULL`,
     `n.meeting_name IS NOT NULL`,
     `n.meeting_completed_at IS NULL`,
@@ -908,7 +1198,9 @@ async function listUpcomingMeetings(actor, rawQuery = {}) {
     `SELECT n.*,
             l.full_name AS lead_name,
             l.phone AS lead_phone,
+            l.email AS lead_email,
             counselor.full_name AS counselor_name,
+            meeting_owner.full_name AS meeting_owner_name,
             ARRAY(
               SELECT u.full_name
                 FROM users u
@@ -963,6 +1255,7 @@ async function listUpcomingMeetings(actor, rawQuery = {}) {
        FROM customer_notes n
        LEFT JOIN leads l ON l.id = n.lead_id
        LEFT JOIN users counselor ON counselor.id = n.counselor_user_id
+       LEFT JOIN users meeting_owner ON meeting_owner.id = n.meeting_owner_user_id
        LEFT JOIN users rm ON rm.id = n.rm_user_id
        LEFT JOIN users creator ON creator.id = n.created_by_user_id
        LEFT JOIN users updater ON updater.id = n.updated_by_user_id
@@ -999,10 +1292,75 @@ async function assertCanMutate(actor, note, action = 'edit') {
   throw new AppError(403, 'NOTE_EDIT_FORBIDDEN', 'You do not have permission to change this note.');
 }
 
+async function updatePersonalMeeting(actor, noteId, body, existing) {
+  const ownerFields = ['meeting_owner_user_id', 'meetingOwnerUserId', 'meeting_owner_custom_name', 'meetingOwnerCustomName', 'meeting_owner_custom_designation', 'meetingOwnerCustomDesignation'];
+  const attemptsOwnerChange = ownerFields.some((field) => Object.prototype.hasOwnProperty.call(body || {}, field));
+  if (!isAdminActor(actor) && attemptsOwnerChange) {
+    throw new AppError(403, 'PERSONAL_MEETING_OWNER_EDIT_FORBIDDEN', 'Only admins can change the meeting owner after it is recorded.');
+  }
+  const payload = normalizeNotePayload({ ...body, note_kind: 'personal_meeting' });
+  const hasField = (snake, camel) => Object.prototype.hasOwnProperty.call(body || {}, snake) || Object.prototype.hasOwnProperty.call(body || {}, camel);
+  const lead = existing.lead_id ? await getLeadForScope(existing.lead_id) : null;
+  const values = {
+    ...existing,
+    ...payload,
+    meetingAt: payload.meetingAt || existing.meeting_at,
+    meetingEndAt: payload.meetingEndAt || existing.meeting_end_at,
+    meetingOwnerUserId: hasField('meeting_owner_user_id', 'meetingOwnerUserId') ? payload.meetingOwnerUserId : existing.meeting_owner_user_id,
+    meetingOwnerCustomName: hasField('meeting_owner_custom_name', 'meetingOwnerCustomName') ? payload.meetingOwnerCustomName : existing.meeting_owner_custom_name,
+    meetingOwnerCustomDesignation: hasField('meeting_owner_custom_designation', 'meetingOwnerCustomDesignation') ? payload.meetingOwnerCustomDesignation : existing.meeting_owner_custom_designation,
+    meetingMode: payload.meetingMode || existing.meeting_mode,
+    meetingModeCustom: payload.meetingModeCustom || existing.meeting_mode_custom,
+    pricingType: payload.pricingType || existing.pricing_type || 'individual_services',
+    personalMeetingServices: payload.personalMeetingServices === undefined ? existing.personal_meeting_services : payload.personalMeetingServices,
+    meetingOutcome: payload.meetingOutcome || existing.meeting_outcome,
+    followupRequired: payload.followupRequired === undefined ? existing.followup_required : payload.followupRequired,
+    followupAt: payload.followupAt || existing.followup_at,
+    nextMeetingAt: payload.nextMeetingAt || existing.next_meeting_at,
+  };
+  const personalMeeting = await validatePersonalMeetingPayload(values, { lead, actor, existing });
+  const durationMinutes = values.meetingEndAt
+    ? Math.max(0, Math.round((new Date(values.meetingEndAt).getTime() - new Date(values.meetingAt).getTime()) / 60000))
+    : null;
+  await query(
+    `UPDATE customer_notes
+        SET meeting_at = $2, meeting_end_at = $3, duration_minutes = $4,
+            meeting_owner_user_id = $5, meeting_owner_custom_name = $6,
+            meeting_owner_custom_designation = $7, meeting_mode = $8,
+            meeting_mode_custom = $9, meeting_link = $10, pricing_type = $11,
+            personal_meeting_services = $12, package_name = $13, package_price = $14,
+            package_duration = $15, package_pricing_notes = $16, client_requirements = $17,
+            client_objections = $18, objection_notes = $19, meeting_outcome = $20,
+            next_meeting_at = $21, followup_required = $22, followup_at = $23,
+            followup_note = $24, updated_by_user_id = $25, updated_at = NOW()
+      WHERE id = $1`,
+    [
+      noteId, values.meetingAt, values.meetingEndAt, durationMinutes,
+      values.meetingOwnerUserId, values.meetingOwnerCustomName, values.meetingOwnerCustomDesignation,
+      values.meetingMode, values.meetingModeCustom, payload.meetingLink || existing.meeting_link,
+      personalMeeting.pricingType, JSON.stringify(personalMeeting.services || []),
+      payload.packageName || existing.package_name, payload.packagePrice ?? existing.package_price,
+      payload.packageDuration || existing.package_duration, payload.packagePricingNotes || existing.package_pricing_notes,
+      payload.clientRequirements || existing.client_requirements,
+      payload.clientObjections === undefined ? (existing.client_objections || []) : payload.clientObjections,
+      payload.objectionNotes || existing.objection_notes, values.meetingOutcome,
+      values.nextMeetingAt, Boolean(values.followupRequired), values.followupAt,
+      payload.followupNote || existing.followup_note, actor.id,
+    ],
+  );
+  const detail = await getNoteDetail(actor, noteId, { includePendingForAdmin: true });
+  void logActivity({ user: actor, ip: null, headers: {} }, {
+    entity: 'personal_meeting', entity_id: noteId, action: 'updated',
+    metadata: { lead_id: detail.lead_id, meeting_number: detail.meeting_number, outcome: detail.meeting_outcome },
+  });
+  return detail;
+}
+
 async function updateNote(actor, noteId, body) {
   const existing = await getNoteRowById(noteId, actor, { includePendingForAdmin: true });
   if (!existing) throw new AppError(404, 'NOTE_NOT_FOUND', 'Note not found.');
   await assertCanMutate(actor, existing);
+  if (isPersonalMeeting(existing)) return updatePersonalMeeting(actor, noteId, body, existing);
 
   const payload = normalizeNotePayload(body);
   assertMeetingSchedulePermission(actor, payload, existing);
@@ -1396,6 +1754,7 @@ async function lookupLeads(actor, rawQuery = {}) {
 
 async function lookupUsers(actor, rawQuery = {}) {
   const roleFilter = normalizeText(rawQuery.role, 32);
+  const meetingOwnerLookup = normalizeBoolean(rawQuery.meeting_owner || rawQuery.meetingOwner);
   const q = normalizeText(rawQuery.q, 120);
   const rmUserId = normalizeUuid(rawQuery.rm_user_id || rawQuery.rmUserId || rawQuery.report_to_id || rawQuery.reportToId);
   if (roleFilter && !isCustomerNoteUserRole(roleFilter)) {
@@ -1414,6 +1773,8 @@ async function lookupUsers(actor, rawQuery = {}) {
     } else {
       where.push(`u.role::text = $${pushParam(params, roleFilter)}`);
     }
+  } else if (meetingOwnerLookup) {
+    where.push(`u.role::text IN ('super_admin', 'admin', 'rm', 'member', 'partner')`);
   } else {
     where.push(`u.role::text IN ('rm', 'member', 'partner')`);
   }
@@ -1427,7 +1788,9 @@ async function lookupUsers(actor, rawQuery = {}) {
     )`);
   }
 
-  if (isRmActor(actor)) {
+  if (meetingOwnerLookup) {
+    // Meeting owners are selected from active CRM users; lead access is still enforced on save.
+  } else if (isRmActor(actor)) {
     if (roleFilter === 'rm') {
       where.push(`u.id = $${pushParam(params, actor.id)}::uuid`);
     } else {
@@ -1483,4 +1846,7 @@ module.exports = {
   rejectNote,
   lookupLeads,
   lookupUsers,
+  __private: {
+    normalizePersonalMeetingServices,
+  },
 };

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { AlertTriangle, ChevronLeft, ChevronRight, Eye, Inbox, Lock, Mail, MessageCircle, MessageSquarePlus, MoreVertical, Phone, Plus, ScrollText, Tag, Trash2 } from 'lucide-react';
+import { AlertTriangle, CalendarDays, ChevronLeft, ChevronRight, Eye, Inbox, Lock, Mail, MessageCircle, MessageSquarePlus, MoreVertical, Phone, Plus, ScrollText, Tag, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
@@ -108,6 +108,7 @@ function LeadRowActionsMenu({
   onCall,
   onChat,
   onCreateNotes,
+  onAddPersonalMeeting,
   onAddRemark,
   onDelete,
 }: {
@@ -116,6 +117,7 @@ function LeadRowActionsMenu({
   onCall: () => void;
   onChat: () => void;
   onCreateNotes: () => void;
+  onAddPersonalMeeting: () => void;
   onAddRemark: () => void;
   onDelete?: () => void;
 }) {
@@ -181,6 +183,14 @@ function LeadRowActionsMenu({
           >
             <Phone className="h-4 w-4" />
             <span>Call now</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => runAndClose(onAddPersonalMeeting)}
+            className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-blue-50 hover:text-blue-700"
+          >
+            <CalendarDays className="h-4 w-4" />
+            <span>Add Personal Meeting</span>
           </button>
           <button
             type="button"
@@ -424,6 +434,12 @@ function LeadsInner() {
             className="btn-outline inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"
           >
             <ScrollText className="h-4 w-4" /> Latest Notes
+          </Link>
+          <Link
+            href="/personal-meetings"
+            className="btn-outline inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"
+          >
+            <CalendarDays className="h-4 w-4" /> Personal Meeting
           </Link>
           {canAddManualLead && (
             <button
@@ -809,6 +825,7 @@ function LeadsInner() {
                             }}
                             onChat={() => openCommunication(lead, 'chat')}
                             onCreateNotes={() => router.push(`/notes?leadId=${encodeURIComponent(lead.id)}&compose=1`)}
+                            onAddPersonalMeeting={() => router.push(`/personal-meetings?leadId=${encodeURIComponent(lead.id)}&create=1`)}
                             onAddRemark={() => setRemarkLeadId(lead.id)}
                             onDelete={canDeleteLead ? () => setDeleteLeadItem(lead) : undefined}
                           />

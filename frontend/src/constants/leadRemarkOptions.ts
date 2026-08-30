@@ -36,8 +36,8 @@ export const LEAD_REMARK_GROUPS: LeadRemarkGroup[] = [
     label: 'Call Issues',
     tone: 'amber',
     options: [
-      { value: 'recall', label: 'Recall' },
       { value: 'cnr', label: 'CNR (Call Not Received)' },
+      { value: 'recall', label: 'Recall' },
       { value: 'so', label: 'SO (Switch Off)' },
       { value: 'cw', label: 'CW (Call Waiting)' },
       { value: 'nn', label: 'NN (No Network)' },

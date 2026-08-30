@@ -302,6 +302,7 @@ CREATE INDEX IF NOT EXISTS idx_remarks_note_type ON lead_remarks(note_type);
 CREATE TABLE IF NOT EXISTS customer_notes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   lead_id UUID REFERENCES leads(id) ON DELETE SET NULL,
+  note_kind TEXT NOT NULL DEFAULT 'general' CHECK (note_kind IN ('general', 'meeting_schedule', 'personal_meeting')),
   customer_phone TEXT NOT NULL,
   customer_name TEXT NOT NULL,
   customer_second_name TEXT NULL,
@@ -310,7 +311,30 @@ CREATE TABLE IF NOT EXISTS customer_notes (
   client_services_want TEXT NULL,
   client_budget TEXT NULL,
   meeting_name TEXT NULL,
+  meeting_number INTEGER NULL,
   meeting_at TIMESTAMPTZ NULL,
+  meeting_owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  meeting_owner_custom_name TEXT NULL,
+  meeting_owner_custom_designation TEXT NULL,
+  meeting_mode TEXT NULL CHECK (meeting_mode IS NULL OR meeting_mode IN ('zoom', 'google_meet', 'phone_call', 'in_person', 'other')),
+  meeting_mode_custom TEXT NULL,
+  meeting_link TEXT NULL,
+  meeting_end_at TIMESTAMPTZ NULL,
+  duration_minutes INTEGER NULL,
+  pricing_type TEXT NULL CHECK (pricing_type IS NULL OR pricing_type IN ('individual_services', 'package')),
+  personal_meeting_services JSONB NOT NULL DEFAULT '[]'::jsonb,
+  package_name TEXT NULL,
+  package_price NUMERIC(12,2) NULL,
+  package_duration TEXT NULL,
+  package_pricing_notes TEXT NULL,
+  client_requirements TEXT NULL,
+  client_objections TEXT[] NOT NULL DEFAULT '{}',
+  objection_notes TEXT NULL,
+  meeting_outcome TEXT NULL,
+  next_meeting_at TIMESTAMPTZ NULL,
+  followup_required BOOLEAN NOT NULL DEFAULT FALSE,
+  followup_at TIMESTAMPTZ NULL,
+  followup_note TEXT NULL,
   meeting_notification_emails TEXT[] NOT NULL DEFAULT '{}',
   meeting_invite_sent_at TIMESTAMPTZ NULL,
   meeting_reminder_sent_at TIMESTAMPTZ NULL,
@@ -339,6 +363,11 @@ CREATE INDEX IF NOT EXISTS idx_customer_notes_rm_user_id ON customer_notes(rm_us
 CREATE INDEX IF NOT EXISTS idx_customer_notes_counselor_user_id ON customer_notes(counselor_user_id);
 CREATE INDEX IF NOT EXISTS idx_customer_notes_meeting_at ON customer_notes(meeting_at);
 CREATE INDEX IF NOT EXISTS idx_customer_notes_meeting_upcoming ON customer_notes(meeting_at);
+CREATE INDEX IF NOT EXISTS idx_customer_notes_note_kind ON customer_notes(note_kind);
+CREATE INDEX IF NOT EXISTS idx_customer_notes_meeting_owner_user_id ON customer_notes(meeting_owner_user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_notes_personal_meeting_number
+  ON customer_notes(lead_id, meeting_number)
+  WHERE note_kind = 'personal_meeting' AND meeting_number IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS customer_note_entries (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -548,3 +577,51 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_external ON chat_messages(provider,
 CREATE INDEX IF NOT EXISTS idx_chat_notif_user_unread ON chat_notifications(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_wasp_logs_external_message ON wasp_webhook_logs(external_message_id);
 CREATE INDEX IF NOT EXISTS idx_wasp_logs_customer_phone ON wasp_webhook_logs(customer_phone);
+
+CREATE TABLE IF NOT EXISTS lead_call_attempt_sequences (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  status VARCHAR(32) NOT NULL DEFAULT 'active',
+  opened_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  initial_trigger_reason VARCHAR(64) NOT NULL,
+  closed_reason VARCHAR(128),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_lead_call_attempt_sequences_one_active
+  ON lead_call_attempt_sequences(lead_id)
+  WHERE status = 'active';
+
+CREATE INDEX IF NOT EXISTS idx_lead_call_attempt_sequences_lead_updated
+  ON lead_call_attempt_sequences(lead_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS lead_call_attempts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  sequence_id UUID NOT NULL REFERENCES lead_call_attempt_sequences(id) ON DELETE CASCADE,
+  lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  attempt_number INTEGER NOT NULL,
+  trigger_reason VARCHAR(64) NOT NULL,
+  outcome VARCHAR(64),
+  status VARCHAR(24) NOT NULL DEFAULT 'scheduled',
+  scheduled_at TIMESTAMPTZ NOT NULL,
+  attempted_at TIMESTAMPTZ,
+  responsible_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  completed_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  delay_minutes INTEGER,
+  is_final_attempt BOOLEAN NOT NULL DEFAULT FALSE,
+  remark_id UUID REFERENCES lead_remarks(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT lead_call_attempts_sequence_attempt_unique UNIQUE (sequence_id, attempt_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lead_call_attempts_lead_status_scheduled
+  ON lead_call_attempts(lead_id, status, scheduled_at);
+
+CREATE INDEX IF NOT EXISTS idx_lead_call_attempts_responsible_status_scheduled
+  ON lead_call_attempts(responsible_user_id, status, scheduled_at);
+
+CREATE INDEX IF NOT EXISTS idx_lead_call_attempts_sequence_attempt
+  ON lead_call_attempts(sequence_id, attempt_number);

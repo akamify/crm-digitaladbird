@@ -1,7 +1,7 @@
 'use client';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api';
-import type { CustomerNote, CustomerNoteFilters, PageResult, UpcomingMeetingSummary, User } from '@/types';
+import type { CustomerNote, CustomerNoteFilters, PageResult, PersonalMeetingService, UpcomingMeetingSummary, User } from '@/types';
 
 function toQueryString(filters: CustomerNoteFilters): string {
   const params = new URLSearchParams();
@@ -19,6 +19,7 @@ function invalidateNotes(qc: ReturnType<typeof useQueryClient>, noteId?: string 
 }
 
 export interface CustomerNoteInput {
+  note_kind?: 'general' | 'meeting_schedule' | 'personal_meeting';
   lead_id?: string | null;
   customer_phone?: string | null;
   customer_name?: string | null;
@@ -29,6 +30,27 @@ export interface CustomerNoteInput {
   client_budget?: string | null;
   meeting_name?: string | null;
   meeting_at?: string | null;
+  meeting_end_at?: string | null;
+  meeting_owner_user_id?: string | null;
+  meeting_owner_custom_name?: string | null;
+  meeting_owner_custom_designation?: string | null;
+  meeting_mode?: 'zoom' | 'google_meet' | 'phone_call' | 'in_person' | 'other' | null;
+  meeting_mode_custom?: string | null;
+  meeting_link?: string | null;
+  pricing_type?: 'individual_services' | 'package' | null;
+  personal_meeting_services?: PersonalMeetingService[];
+  package_name?: string | null;
+  package_price?: number | null;
+  package_duration?: string | null;
+  package_pricing_notes?: string | null;
+  client_requirements?: string | null;
+  client_objections?: string[];
+  objection_notes?: string | null;
+  meeting_outcome?: string | null;
+  next_meeting_at?: string | null;
+  followup_required?: boolean;
+  followup_at?: string | null;
+  followup_note?: string | null;
   meeting_notification_emails?: string[] | string | null;
   meeting_counselor_user_ids?: string[] | null;
   counselor_user_id?: string | null;
@@ -152,6 +174,36 @@ export function useCustomerNoteUserLookup(role?: 'rm' | 'member' | 'partner' | '
     queryKey: ['customer-notes', 'user-lookup', role || 'all', search || '', rmUserId || ''],
     queryFn: () => apiGet<User[]>(`/notes/lookups/users${qs ? `?${qs}` : ''}`),
     staleTime: 30_000,
+  });
+}
+
+export function usePersonalMeetingOwnerLookup(search = '') {
+  const params = new URLSearchParams({ meeting_owner: 'true' });
+  if (search.trim()) params.set('q', search.trim());
+  return useQuery({
+    queryKey: ['customer-notes', 'meeting-owner-lookup', search],
+    queryFn: () => apiGet<User[]>(`/notes/lookups/users?${params.toString()}`),
+    staleTime: 30_000,
+  });
+}
+
+export function useLeadPersonalMeetings(leadId: string | null | undefined, pageSize = 20) {
+  return useQuery({
+    queryKey: ['personal-meetings', 'lead', leadId, pageSize],
+    queryFn: () => apiGet<PageResult<CustomerNote>>(`/leads/${leadId}/personal-meetings?page_size=${pageSize}`),
+    enabled: !!leadId,
+    staleTime: 15_000,
+  });
+}
+
+export function useCreatePersonalMeeting() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ leadId, ...body }: CustomerNoteInput & { leadId: string }) => apiPost<CustomerNote>(`/leads/${leadId}/personal-meetings`, body),
+    onSuccess: (data) => {
+      invalidateNotes(qc, data?.id || null);
+      qc.invalidateQueries({ queryKey: ['personal-meetings'] });
+    },
   });
 }
 

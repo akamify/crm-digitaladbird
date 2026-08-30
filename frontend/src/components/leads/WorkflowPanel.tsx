@@ -14,6 +14,8 @@ import {
 } from '@/hooks/useWorkflow';
 import { fmtDate, humanize, clsx } from '@/lib/format';
 import { COMPLETED_REMARK_STATUS_VALUES, LEAD_REMARK_GROUPS } from '@/constants/leadRemarkOptions';
+import type { CallAttemptSequenceSummary, CallAttemptStateSummary, CallAttemptSummary, NextScheduledCallSummary } from '@/types';
+import { CallAttemptTracker } from './CallAttemptTracker';
 
 /* ── Remark display labels + colors ─────────────────────────────────── */
 
@@ -22,6 +24,9 @@ const REMARK_DISPLAY: Record<string, { label: string; bg: string; text: string; 
   recall:                   { label: 'Recall',                  bg: 'bg-blue-50',    text: 'text-blue-700',    ring: 'ring-blue-400' },
   respond_hi:               { label: 'Respond (HI)',            bg: 'bg-indigo-50',  text: 'text-indigo-700',  ring: 'ring-indigo-400' },
   cnr:                      { label: 'CNR (Call Not Received)',  bg: 'bg-red-50',     text: 'text-red-700',     ring: 'ring-red-400' },
+  busy:                     { label: 'Busy',                    bg: 'bg-yellow-50',  text: 'text-yellow-700',  ring: 'ring-yellow-400' },
+  call_cut_busy:            { label: 'Call Cut / Busy',         bg: 'bg-orange-50',  text: 'text-orange-700',  ring: 'ring-orange-400' },
+  rnr:                      { label: 'RNR (Ringing No Response)', bg: 'bg-amber-50', text: 'text-amber-700', ring: 'ring-amber-400' },
   so:                       { label: 'SO (Switch Off)',          bg: 'bg-gray-50',    text: 'text-gray-700',    ring: 'ring-gray-400' },
   cw:                       { label: 'CW (Call Waiting)',        bg: 'bg-amber-50',   text: 'text-amber-700',   ring: 'ring-amber-400' },
   nn:                       { label: 'NN (No Network)',          bg: 'bg-orange-50',  text: 'text-orange-700',  ring: 'ring-orange-400' },
@@ -210,6 +215,10 @@ export function WorkflowPanel({ leadId, isAdmin }: Props) {
             current={wfData.workflow_step_1_statuses?.length ? wfData.workflow_step_1_statuses : wfData.workflow?.remark_status ? [wfData.workflow.remark_status] : []}
             options={wfData.remark_options}
             completed={!!wfData.workflow_remark_completed}
+            callAttemptSequence={wfData.call_attempt_sequence}
+            callAttempts={wfData.call_attempts}
+            callAttemptState={wfData.call_attempt_state}
+            nextScheduledCall={wfData.next_scheduled_call}
           />
         </StepCard>
 
@@ -370,8 +379,15 @@ function StepCard({ step, config, unlocked, completed, isOpen, onToggle, savedVa
 
 /* ── Step 1: Remark System ───────────────────────────────────────── */
 
-function Step1Remark({ leadId, current, options, completed }: {
-  leadId: string; current: string[]; options: string[]; completed: boolean;
+function Step1Remark({ leadId, current, options, completed, callAttemptSequence, callAttempts, callAttemptState, nextScheduledCall }: {
+  leadId: string;
+  current: string[];
+  options: string[];
+  completed: boolean;
+  callAttemptSequence?: CallAttemptSequenceSummary | null;
+  callAttempts?: CallAttemptSummary[];
+  callAttemptState?: CallAttemptStateSummary | null;
+  nextScheduledCall?: NextScheduledCallSummary | null;
 }) {
   const save = useSaveRemark();
   const [selected, setSelected] = useState<string[]>(current || []);
@@ -379,6 +395,8 @@ function Step1Remark({ leadId, current, options, completed }: {
     ...group,
     options: group.options.filter(option => options.includes(option.value)),
   })).filter(group => group.options.length > 0);
+  const retryableSelected = selected.find(value => availableGroups.some(group => group.key === 'issues' && group.options.some(option => option.value === value)));
+  const trackerAnchorStatus = callAttemptState?.anchor_status || retryableSelected || null;
 
   useEffect(() => {
     setSelected(current || []);
@@ -399,11 +417,20 @@ function Step1Remark({ leadId, current, options, completed }: {
     const previousSelection = selected;
     setSelected(nextSelection);
 
-    save.mutate({ leadId, remark_status: nextSelection[0], remark_statuses: nextSelection }, {
+    save.mutate({
+      leadId,
+      remark_status: nextSelection[0],
+      remark_statuses: nextSelection,
+      attempt_trigger_status: value,
+      attempt_mode: 'remark_click',
+    }, {
       onSuccess: () => toast.success('Remark updated'),
-      onError: (e: any) => {
+      onError: (e: unknown) => {
         setSelected(previousSelection);
-        toast.error(e?.response?.data?.error?.message || 'Failed to save Step 1');
+        const message = typeof e === 'object' && e && 'response' in e
+          ? (e as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message
+          : null;
+        toast.error(message || 'Failed to save Step 1');
       },
     });
   }
@@ -428,25 +455,46 @@ function Step1Remark({ leadId, current, options, completed }: {
                 const isSelected = selected.includes(option.value);
                 const isCompletingOption = COMPLETED_REMARK_STATUS_VALUES.has(option.value);
                 return (
-                  <button
-                    key={option.value}
-                    disabled={save.isPending}
-                    onClick={() => toggle(option.value)}
-                    className={clsx(
-                      'relative rounded-xl border-2 px-3 py-2.5 text-left text-xs font-semibold transition-all duration-200',
-                      isSelected
-                        ? `${display.bg} ${display.text} border-current ring-2 ${display.ring} shadow-md scale-[1.02]`
-                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:shadow-sm hover:scale-[1.01]'
-                    )}
-                  >
-                    {save.isPending && <Loader2 className="absolute top-1 right-1 h-3 w-3 animate-spin text-slate-400" />}
-                    {isSelected && <CheckCircle2 className="absolute top-1 right-1 h-3.5 w-3.5 text-green-500" />}
-                    {option.label}
-                    {isCompletingOption && !isSelected && <span className="mt-1 block text-[9px] font-medium uppercase tracking-wide text-emerald-600">Completes step</span>}
-                  </button>
+                  <div key={option.value} className={clsx(group.key === 'issues' && trackerAnchorStatus === option.value && 'contents')}>
+                    <button
+                      disabled={save.isPending}
+                      onClick={() => toggle(option.value)}
+                      className={clsx(
+                        'relative rounded-xl border-2 px-3 py-2.5 text-left text-xs font-semibold transition-all duration-200',
+                        isSelected
+                          ? `${display.bg} ${display.text} border-current ring-2 ${display.ring} shadow-md scale-[1.02]`
+                          : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:shadow-sm hover:scale-[1.01]'
+                      )}
+                    >
+                      {save.isPending && <Loader2 className="absolute top-1 right-1 h-3 w-3 animate-spin text-slate-400" />}
+                      {isSelected && <CheckCircle2 className="absolute top-1 right-1 h-3.5 w-3.5 text-green-500" />}
+                      {option.label}
+                      {isCompletingOption && !isSelected && <span className="mt-1 block text-[9px] font-medium uppercase tracking-wide text-emerald-600">Completes step</span>}
+                    </button>
+                    {group.key === 'issues' && trackerAnchorStatus === option.value ? (
+                      <div className="col-span-2 sm:col-span-3">
+                        <CallAttemptTracker
+                          leadId={leadId}
+                          sequence={callAttemptSequence}
+                          attempts={callAttempts}
+                          callAttemptState={callAttemptState}
+                          nextScheduledCall={nextScheduledCall}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
                 );
               })}
             </div>
+            {group.key === 'issues' && trackerAnchorStatus && !group.options.some(option => option.value === trackerAnchorStatus) ? (
+              <CallAttemptTracker
+                leadId={leadId}
+                sequence={callAttemptSequence}
+                attempts={callAttempts}
+                callAttemptState={callAttemptState}
+                nextScheduledCall={nextScheduledCall}
+              />
+            ) : null}
           </div>
         ))}
       </div>

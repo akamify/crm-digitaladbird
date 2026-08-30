@@ -1,3 +1,4 @@
+
 const CUSTOMER_NOTE_APPROVAL_STATUSES = ['pending_rm_approval', 'approved', 'rejected'];
 const CUSTOMER_NOTE_USER_ROLES = ['rm', 'member', 'partner'];
 
@@ -17,3 +18,4 @@ module.exports = {
   isCustomerNoteApprovalStatus,
   isCustomerNoteUserRole,
 };
+

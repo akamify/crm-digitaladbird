@@ -1,6 +1,7 @@
 'use client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiGet, apiPost, apiPatch } from '@/lib/api';
+import type { CallAttemptStateSummary, CallAttemptSummary, CallAttemptSequenceSummary, NextScheduledCallSummary } from '@/types';
 
 function invalidateWorkflowRelatedQueries(qc: ReturnType<typeof useQueryClient>, leadId: string) {
   qc.invalidateQueries({ queryKey: ['workflow', leadId] });
@@ -84,6 +85,10 @@ export interface WorkflowResponse {
   workflow_current_step?: number;
   workflow_unlocked_step?: number;
   workflow_is_step_1_completed?: boolean;
+  call_attempt_sequence?: CallAttemptSequenceSummary | null;
+  call_attempts?: CallAttemptSummary[];
+  next_scheduled_call?: NextScheduledCallSummary | null;
+  call_attempt_state?: CallAttemptStateSummary | null;
 }
 
 export interface WorkflowHistoryEntry {
@@ -132,14 +137,44 @@ export function useLeadWorkflow(leadId: string | null | undefined) {
     queryFn: () => apiGet<WorkflowResponse>(`/leads/${leadId}/workflow`),
     enabled: !!leadId,
     staleTime: 15_000,
+    refetchInterval: (query) => query.state.data?.call_attempt_state?.has_active_sequence ? 30_000 : false,
   });
 }
 
 export function useSaveRemark() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ leadId, remark_status, remark_statuses }: { leadId: string; remark_status?: string; remark_statuses?: string[] }) =>
-      apiPost<WorkflowState>(`/leads/${leadId}/workflow/remark`, { remark_status, remark_statuses }),
+    mutationFn: ({ leadId, remark_status, remark_statuses, attempt_trigger_status, attempt_mode }: {
+      leadId: string;
+      remark_status?: string;
+      remark_statuses?: string[];
+      attempt_trigger_status?: string;
+      attempt_mode?: string;
+    }) =>
+      apiPost<WorkflowState>(`/leads/${leadId}/workflow/remark`, {
+        remark_status,
+        remark_statuses,
+        attempt_trigger_status,
+        attempt_mode,
+      }),
+    onSuccess: (_d, { leadId }) => {
+      invalidateWorkflowRelatedQueries(qc, leadId);
+    },
+  });
+}
+
+export function useCompleteCallAttempt() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ leadId, attemptId, outcome, next_followup_at }: {
+      leadId: string;
+      attemptId: string;
+      outcome: string;
+      next_followup_at?: string | null;
+    }) => apiPost(`/leads/${leadId}/call-attempts/${attemptId}/complete`, {
+      outcome,
+      next_followup_at: next_followup_at || undefined,
+    }),
     onSuccess: (_d, { leadId }) => {
       invalidateWorkflowRelatedQueries(qc, leadId);
     },

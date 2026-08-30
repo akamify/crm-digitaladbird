@@ -50,6 +50,7 @@ const NAV: NavItem[] = [
   { href: '/notifications', label: 'Notifications', Icon: Bell, roles: ['super_admin', 'admin', 'rm', 'member', 'partner'] },
   // { href: '/my-google-sheet', label: 'My Google Sheet', Icon: FileSpreadsheet, roles: ['rm', 'member', 'partner'] },
   { href: '/reports', label: 'Reports', Icon: BarChart3, roles: ['super_admin', 'rm'] },
+  { href: '/counselor-report', label: 'Counselor Report', Icon: BarChart3, roles: ['super_admin'] },
   { href: '/lead-requests', label: 'Lead Requests', Icon: HandMetal, roles: ['super_admin', 'admin', 'rm', 'member', 'partner'] },
   { href: '/leaderboard', label: 'Leaderboard', Icon: Trophy, roles: ['super_admin', 'admin', 'rm', 'member', 'partner'] },
   { href: '/users', label: 'Team', Icon: Users, roles: ['super_admin', 'rm'] },

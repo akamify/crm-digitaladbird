@@ -3,7 +3,7 @@ const { AppError } = require('../utils/errors');
 
 const WORKFLOW_REMARK_OPTIONS = [
   'communication_completed', 'respond_hi', 'interested', 'converted',
-  'recall', 'cnr', 'so', 'cw', 'nn', 'nc', 'ni', 'in', 'cb', 'rnr', 'busy',
+  'cnr', 'recall', 'so', 'cw', 'nn', 'nc', 'ni', 'in', 'cb', 'rnr', 'busy',
   'call_cut_busy',
   'session_730_attend', 'yes_after_730_session',
   'not_interested', 'callback_requested', 'follow_up', 'custom_remark',

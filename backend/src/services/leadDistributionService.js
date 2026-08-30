@@ -19,6 +19,7 @@ const { validateLeadAssignee } = require('./leadAssigneeValidator');
 const { notifyLeadAssigned } = require('./notificationService');
 const { getAssignmentSettings, isInsideAssignmentWindow } = require('./leadAssignmentEngine');
 const { workedLeadCondition, notWorkedLeadCondition } = require('../utils/leadWorkMetrics');
+const { reassignLeadActiveAttempts } = require('./leadCallAttemptService');
 
 const FALLBACK_RULE_NAME = '__default__';
 
@@ -282,6 +283,7 @@ async function reassignLead(leadId, toUserId, byUserId, reason = 'reassign') {
          VALUES ($1, $2, $3, $4)`,
       [leadId, toUserId, byUserId, reason]
     );
+    await reassignLeadActiveAttempts({ client, leadId, toUserId });
     if (prev.assigned_to_user_id !== toUserId) {
       await notifyLeadAssigned({
         leadId,

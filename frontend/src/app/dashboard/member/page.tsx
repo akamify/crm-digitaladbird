@@ -192,7 +192,7 @@ function MemberDashboardInner() {
             <KpiCard label="My leads"       value={Number(k?.total_leads ?? 0).toLocaleString()} delta={`${k?.today_leads ?? 0} assigned today`} accent="pink"  icon={<PhoneCall className="h-5 w-5" />} />
             <KpiCard label="Pending calls"  value={Number(k?.pending ?? 0).toLocaleString()} delta="Not yet called"                            accent="amber" icon={<Clock className="h-5 w-5" />} />
             <KpiCard label="Converted"      value={Number(k?.converted ?? 0).toLocaleString()} delta="Closed deals"                           accent="green" icon={<CheckCircle2 className="h-5 w-5" />} />
-            <KpiCard label="Total follow-ups" value={Number(k?.followups ?? 0).toLocaleString()} delta="All scheduled follow-ups"              accent="slate" icon={<Activity className="h-5 w-5" />} />
+            <KpiCard label="Total follow-ups" value={Number(k?.followups ?? 0).toLocaleString()} delta="Leads with follow-up activity"         accent="slate" icon={<Activity className="h-5 w-5" />} />
           </>
         )}
       </div>

@@ -106,12 +106,20 @@ function ActivityInner() {
   const [entity, setEntity] = useState('');
   const [action, setAction] = useState('');
   const [search, setSearch] = useState('');
+  const [monitoringOnly, setMonitoringOnly] = useState(false);
   const logs = useActivityLogs({ page, page_size: 10, entity: entity || undefined, action: action || undefined });
 
   const totalPages = Math.ceil((logs.data?.total ?? 0) / 10);
 
   const filtered = logs.data?.rows.filter(l =>
-    !search || l.user_name?.toLowerCase().includes(search.toLowerCase()) || l.action?.toLowerCase().includes(search.toLowerCase()) || l.entity?.toLowerCase().includes(search.toLowerCase())
+    (!monitoringOnly || l.entity === 'lead_call_attempt' || String((l.metadata || {})?.monitoring_scope || '').includes('call_attempt'))
+    && (
+      !search
+      || l.user_name?.toLowerCase().includes(search.toLowerCase())
+      || l.action?.toLowerCase().includes(search.toLowerCase())
+      || l.entity?.toLowerCase().includes(search.toLowerCase())
+      || JSON.stringify(l.metadata || {}).toLowerCase().includes(search.toLowerCase())
+    )
   ) ?? [];
 
   return (
@@ -128,13 +136,29 @@ function ActivityInner() {
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-          <input className="input pl-10" placeholder="Search user, action, entity..." value={search} onChange={e => setSearch(e.target.value)} />
+          <input className="input pl-10" placeholder="Search user, action, entity, details..." value={search} onChange={e => setSearch(e.target.value)} />
         </div>
+        <button
+          type="button"
+          onClick={() => {
+            setMonitoringOnly(value => !value);
+            setPage(1);
+          }}
+          className={clsx(
+            'rounded-lg border px-3 py-2 text-sm font-medium transition',
+            monitoringOnly
+              ? 'border-amber-300 bg-amber-50 text-amber-800'
+              : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+          )}
+        >
+          Call Attempt Monitoring
+        </button>
         <select className="input w-36" value={entity} onChange={e => { setEntity(e.target.value); setPage(1); }}>
           <option value="">All Entities</option>
           <option value="session">Session</option>
           <option value="user">User</option>
           <option value="lead">Lead</option>
+          <option value="lead_call_attempt">Lead Call Attempt</option>
           <option value="lead_request">Lead Request</option>
           <option value="lead_ingestion">Lead Ingest</option>
           <option value="meta_page">Meta Page</option>
@@ -143,7 +167,7 @@ function ActivityInner() {
           <option value="sheets">Sheets</option>
           <option value="distribution">Distribution</option>
         </select>
-        <select className="input w-40" value={action} onChange={e => { setAction(e.target.value); setPage(1); }}>
+        <select className="input w-64" value={action} onChange={e => { setAction(e.target.value); setPage(1); }}>
           <option value="">All Actions</option>
           <option value="login">Login</option>
           <option value="login_failed">Login Failed</option>
@@ -159,6 +183,11 @@ function ActivityInner() {
           <option value="block">Block</option>
           <option value="unblock">Unblock</option>
           <option value="delete">Delete</option>
+          <option value="CALL_ATTEMPT_LOCKED">CALL_ATTEMPT_LOCKED</option>
+          <option value="CALL_ATTEMPT_DUPLICATE_COMPLETION">CALL_ATTEMPT_DUPLICATE_COMPLETION</option>
+          <option value="CALL_ATTEMPT_SEQUENCE_CREATE_FAILED">CALL_ATTEMPT_SEQUENCE_CREATE_FAILED</option>
+          <option value="CALL_ATTEMPT_NEXT_SCHEDULE_FAILED">CALL_ATTEMPT_NEXT_SCHEDULE_FAILED</option>
+          <option value="CALL_ATTEMPT_FINAL_COLD_TRANSITION_FAILED">CALL_ATTEMPT_FINAL_COLD_TRANSITION_FAILED</option>
         </select>
       </div>
 
@@ -188,7 +217,9 @@ function ActivityInner() {
                   <td className="py-3 pr-3 font-medium text-slate-900 whitespace-nowrap">{log.user_name || '—'}</td>
                   <td className="py-3 pr-3"><span className="chip-slate">{humanize(log.user_role || '')}</span></td>
                   <td className="py-3 pr-3 whitespace-nowrap"><span className={clsx('chip',
-                    /login_failed/.test(log.action) ? 'chip-red'
+                    /^CALL_ATTEMPT_.*FAILED$/.test(log.action) ? 'chip-red'
+                    : /^CALL_ATTEMPT_/.test(log.action) ? 'chip-amber'
+                    : /login_failed/.test(log.action) ? 'chip-red'
                     : /(created|approved|login)/.test(log.action) ? 'chip-green'
                     : /(delete|reject|logout|block|paused)/.test(log.action) ? 'chip-red'
                     : /(reassign|update|partial|resumed)/.test(log.action) ? 'chip-amber'

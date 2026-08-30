@@ -7,6 +7,8 @@ function normalizeRole(role) {
   return role === 'partner' ? 'member' : role;
 }
 
+const TODAY_IST = `(NOW() AT TIME ZONE 'Asia/Kolkata')::date`;
+
 function normalizePhone(value) {
   const raw = String(value || '').trim();
   if (!raw) return null;
@@ -74,7 +76,7 @@ async function memberStats(userId) {
         COUNT(*) FILTER (WHERE ${workedLeadCondition('l')})::int AS contacted_leads,
         COUNT(*) FILTER (WHERE ${notWorkedLeadCondition('l')})::int AS pending_not_called_leads,
         COUNT(*) FILTER (WHERE call_status = 'converted' OR stage::text = 'won')::int AS converted_leads,
-        COUNT(*) FILTER (WHERE next_followup_at::date = CURRENT_DATE)::int AS followups_today,
+        COUNT(*) FILTER (WHERE (next_followup_at AT TIME ZONE 'Asia/Kolkata')::date = ${TODAY_IST})::int AS followups_today,
         COUNT(*) FILTER (WHERE next_followup_at IS NOT NULL AND next_followup_at <= NOW())::int AS followups_due
        FROM leads l
       WHERE assigned_to_user_id = $1
@@ -131,7 +133,7 @@ async function clientStats(userId) {
        COUNT(l.id) FILTER (WHERE ${workedLeadCondition('l')})::int AS contacted_leads,
        COUNT(l.id) FILTER (WHERE ${notWorkedLeadCondition('l')})::int AS pending_not_called_leads,
        COUNT(l.id) FILTER (WHERE call_status = 'converted' OR stage::text = 'won')::int AS converted_leads,
-       COUNT(l.id) FILTER (WHERE next_followup_at::date = CURRENT_DATE)::int AS followups_today,
+       COUNT(l.id) FILTER (WHERE (next_followup_at AT TIME ZONE 'Asia/Kolkata')::date = ${TODAY_IST})::int AS followups_today,
        COUNT(l.id) FILTER (WHERE next_followup_at IS NOT NULL AND next_followup_at <= NOW())::int AS followups_due,
        (SELECT COUNT(*)::int FROM meta_campaigns WHERE client_id = $1) AS total_campaigns,
        (SELECT COUNT(*)::int FROM meta_campaigns WHERE client_id = $1 AND effective_status = 'ACTIVE') AS active_campaigns,

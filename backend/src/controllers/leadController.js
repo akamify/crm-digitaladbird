@@ -17,7 +17,13 @@ const { createLeadInteraction } = require('../services/leadInteractionService');
 const { validateLeadAssignee } = require('../services/leadAssigneeValidator');
 const { assertCreateReady } = require('../services/createReadinessService');
 const { applyLeadDisplayName } = require('../services/leadNameService');
+const {
+  getLeadCallAttemptView,
+  cancelLeadActiveAttemptSequences,
+  shouldCancelAttemptSequencesForCallStatuses,
+} = require('../services/leadCallAttemptService');
 const { workedLeadCondition, notWorkedLeadCondition } = require('../utils/leadWorkMetrics');
+const { leadHasFollowupActivityCondition } = require('../utils/followupMetrics');
 
 function humanizeValue(value) {
   return String(value || '')
@@ -677,29 +683,18 @@ exports.list = asyncHandler(async (req, res) => {
     }
   }
 
-  const hasWorkflowOrRemark = `(
-    EXISTS (SELECT 1 FROM lead_remarks lr_follow WHERE lr_follow.lead_id = l.id)
-    OR EXISTS (SELECT 1 FROM lead_workflow wf_follow WHERE wf_follow.lead_id = l.id)
-  )`;
-
   if (req.query.followup === 'today' && req.query.followup_strict === 'true') {
     where.push(`(l.next_followup_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date`);
   } else if (req.query.followup === 'today') {
-    where.push(`(
-      (l.next_followup_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
-      OR ${hasWorkflowOrRemark}
-    )`);
+    where.push(`(l.next_followup_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date`);
   } else if (req.query.followup === 'overdue') {
     where.push(`l.next_followup_at < NOW()`);
   } else if (req.query.followup === 'week') {
-    where.push(`(
-      l.next_followup_at BETWEEN NOW() AND NOW() + INTERVAL '7 days'
-      OR ${hasWorkflowOrRemark}
-    )`);
+    where.push(`l.next_followup_at BETWEEN NOW() AND NOW() + INTERVAL '7 days'`);
   } else if (req.query.followup === 'upcoming') {
     where.push(`l.next_followup_at > NOW()`);
   } else if (req.query.followup === 'no_followup') {
-    where.push(`l.next_followup_at IS NULL`);
+    where.push(`NOT ${leadHasFollowupActivityCondition('l')}`);
   }
 
   const allowedSort = new Set(['created_at', 'assigned_at', 'next_followup_at', 'updated_at']);
@@ -934,6 +929,7 @@ exports.getOne = asyncHandler(async (req, res) => {
   } catch (_) {
     labels = [];
   }
+  const callAttemptView = await getLeadCallAttemptView({ leadId: req.params.id, now: new Date() });
 
   const lead = applyLeadDisplayName({ ...rows[0] });
   const latestRmUpdate = lead.latest_rm_update_id
@@ -953,7 +949,18 @@ exports.getOne = asyncHandler(async (req, res) => {
       }
     : null;
 
-  res.json({ success: true, data: { ...lead, latest_rm_update: latestRmUpdate, remarks: remarks.rows, history: history.rows, labels } });
+  res.json({
+    success: true,
+    data: {
+      ...lead,
+      latest_rm_update: latestRmUpdate,
+      next_scheduled_call: callAttemptView.next_scheduled_call,
+      call_attempt_state: callAttemptView.call_attempt_state,
+      remarks: remarks.rows,
+      history: history.rows,
+      labels,
+    },
+  });
 });
 
 exports.listSessions = asyncHandler(async (req, res) => {
@@ -1264,6 +1271,15 @@ exports.addRemark = asyncHandler(async (req, res) => {
       priority,
       customerInterest: customer_interest,
     });
+    const statusValues = call_statuses || remark_statuses || (call_status ? [call_status] : []);
+    if (shouldCancelAttemptSequencesForCallStatuses(statusValues)) {
+      await cancelLeadActiveAttemptSequences({
+        client,
+        leadId: req.params.id,
+        reason: `manual_${String((Array.isArray(statusValues) ? statusValues[0] : call_status) || 'status').trim().toLowerCase()}`,
+        userId: req.user.id,
+      });
+    }
     return interaction.remark;
   });
 
@@ -1340,6 +1356,15 @@ exports.bulkAddRemarks = asyncHandler(async (req, res) => {
         priority,
         customerInterest: customer_interest,
       });
+      const statusValues = call_statuses || remark_statuses || (call_status ? [call_status] : []);
+      if (shouldCancelAttemptSequencesForCallStatuses(statusValues)) {
+        await cancelLeadActiveAttemptSequences({
+          client,
+          leadId,
+          reason: `bulk_${String((Array.isArray(statusValues) ? statusValues[0] : call_status) || 'status').trim().toLowerCase()}`,
+          userId: req.user.id,
+        });
+      }
       updated++;
     }
 

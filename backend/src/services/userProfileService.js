@@ -1,6 +1,7 @@
 const { query, withTransaction } = require('../config/database');
 const { AppError } = require('../utils/errors');
 const { workedLeadCondition, notWorkedLeadCondition } = require('../utils/leadWorkMetrics');
+const { remarkHasFollowupActivityCondition } = require('../utils/followupMetrics');
 const { assertCpIdNotEditable, normalizeRole } = require('./userIdentityService');
 const { updateSingleLeadAvailability } = require('./userAvailabilityService');
 
@@ -266,7 +267,7 @@ async function getPerformance(actor, userId, opts = {}) {
            COUNT(l.id)::int AS assigned_count,
            COUNT(l.id) FILTER (WHERE ${workedLeadCondition('l')})::int AS worked_count,
            COUNT(l.id) FILTER (WHERE l.call_status = 'converted')::int AS converted_count,
-           COUNT(r.id)::int AS followups_done
+           COUNT(r.id) FILTER (WHERE ${remarkHasFollowupActivityCondition('r')})::int AS followups_done
       FROM days d
       LEFT JOIN leads l ON l.assigned_to_user_id = $1
         AND l.deleted_at IS NULL
@@ -343,7 +344,7 @@ async function getPerformance(actor, userId, opts = {}) {
         WHERE cl.user_id = u.id AND cl.created_at::date BETWEEN $2::date AND $3::date
       ) calls ON TRUE
       LEFT JOIN LATERAL (
-        SELECT COUNT(*) FILTER (WHERE lr.next_followup_at IS NOT NULL) AS followups_done
+        SELECT COUNT(*) FILTER (WHERE ${remarkHasFollowupActivityCondition('lr')}) AS followups_done
         FROM lead_remarks lr
         WHERE lr.user_id = u.id AND lr.created_at::date BETWEEN $2::date AND $3::date
       ) remarks ON TRUE

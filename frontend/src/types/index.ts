@@ -144,6 +144,72 @@ export interface LeadRemark {
   by_name?: string;
 }
 
+export interface CallAttemptSequenceSummary {
+  id: string;
+  lead_id: string;
+  status: 'active' | 'completed' | 'cancelled' | 'cold_closed';
+  opened_by_user_id?: string | null;
+  initial_trigger_reason: string;
+  closed_reason?: string | null;
+  business_timezone?: string;
+  max_attempts?: number;
+  has_active_sequence?: boolean;
+  created_at: string;
+  updated_at: string;
+  closed_at?: string | null;
+}
+
+export interface CallAttemptSummary {
+  id: string;
+  sequence_id: string;
+  lead_id: string;
+  attempt_number: number;
+  trigger_reason: string;
+  outcome?: string | null;
+  status: 'scheduled' | 'completed' | 'missed' | 'cancelled';
+  scheduled_at: string;
+  attempted_at?: string | null;
+  responsible_user_id?: string | null;
+  completed_by_user_id?: string | null;
+  delay_minutes?: number | null;
+  is_final_attempt?: boolean;
+  is_due?: boolean;
+  is_overdue?: boolean;
+  is_locked?: boolean;
+  can_complete?: boolean;
+  available_in_minutes?: number | null;
+  overdue_by_minutes?: number | null;
+  ui_state?: 'completed' | 'cancelled' | 'locked' | 'due' | 'overdue' | 'scheduled';
+  grace_minutes?: number;
+}
+
+export interface NextScheduledCallSummary {
+  attempt_id: string;
+  attempt_number: number;
+  scheduled_at: string;
+  trigger_reason: string;
+  is_final_attempt?: boolean;
+  is_due?: boolean;
+  is_overdue?: boolean;
+  available_in_minutes?: number | null;
+  overdue_by_minutes?: number | null;
+  status?: string | null;
+}
+
+export interface CallAttemptStateSummary {
+  has_active_sequence: boolean;
+  sequence_status: 'active' | 'completed' | 'cancelled' | 'cold_closed';
+  grace_minutes: number;
+  max_attempts: number;
+  anchor_status: string | null;
+  active_attempt_id?: string | null;
+  active_attempt_number?: number | null;
+  is_due?: boolean;
+  is_overdue?: boolean;
+  available_in_minutes?: number | null;
+  overdue_by_minutes?: number | null;
+}
+
 export interface LatestRmUpdateSummary {
   title?: string | null;
   note?: string | null;
@@ -184,6 +250,8 @@ export interface LeadSession {
 }
 
 export interface LeadDetail extends Lead {
+  next_scheduled_call?: NextScheduledCallSummary | null;
+  call_attempt_state?: CallAttemptStateSummary | null;
   remarks: LeadRemark[];
   history: LeadAssignment[];
 }
@@ -203,9 +271,11 @@ export interface CustomerNoteEntry {
 
 export interface CustomerNote {
   id: string;
+  note_kind?: 'general' | 'meeting_schedule' | 'personal_meeting';
   lead_id?: string | null;
   lead_name?: string | null;
   lead_phone?: string | null;
+  lead_email?: string | null;
   customer_phone: string;
   customer_name: string;
   customer_second_name?: string | null;
@@ -214,7 +284,31 @@ export interface CustomerNote {
   client_services_want?: string | null;
   client_budget?: string | null;
   meeting_name?: string | null;
+  meeting_number?: number | null;
   meeting_at?: string | null;
+  meeting_end_at?: string | null;
+  duration_minutes?: number | null;
+  meeting_owner_user_id?: string | null;
+  meeting_owner_name?: string | null;
+  meeting_owner_custom_name?: string | null;
+  meeting_owner_custom_designation?: string | null;
+  meeting_mode?: 'zoom' | 'google_meet' | 'phone_call' | 'in_person' | 'other' | null;
+  meeting_mode_custom?: string | null;
+  meeting_link?: string | null;
+  pricing_type?: 'individual_services' | 'package' | null;
+  personal_meeting_services?: PersonalMeetingService[] | null;
+  package_name?: string | null;
+  package_price?: number | null;
+  package_duration?: string | null;
+  package_pricing_notes?: string | null;
+  client_requirements?: string | null;
+  client_objections?: string[] | null;
+  objection_notes?: string | null;
+  meeting_outcome?: PersonalMeetingOutcome | null;
+  next_meeting_at?: string | null;
+  followup_required?: boolean;
+  followup_at?: string | null;
+  followup_note?: string | null;
   meeting_notification_emails?: string[] | null;
   meeting_counselor_user_ids?: string[] | null;
   meeting_counselor_names?: string[] | null;
@@ -256,6 +350,18 @@ export interface CustomerNote {
   };
 }
 
+export type PersonalMeetingOutcome = 'interested' | 'proposal_required' | 'follow_up_required' | 'decision_pending' | 'converted' | 'not_interested' | 'next_personal_meeting_required';
+
+export interface PersonalMeetingService {
+  service_key: string;
+  service_name: string;
+  is_custom?: boolean;
+  client_interested?: boolean;
+  quoted_price?: number | null;
+  pricing_note?: string | null;
+  is_package_item?: boolean;
+}
+
 export type UpcomingMeetingSummary = CustomerNote;
 
 export interface CustomerNoteFilters {
@@ -265,6 +371,10 @@ export interface CustomerNoteFilters {
   rm_user_id?: string;
   counselor_user_id?: string;
   created_by_user_id?: string;
+  note_kind?: 'general' | 'meeting_schedule' | 'personal_meeting' | '';
+  meeting_state?: 'today' | 'upcoming' | 'completed' | 'all' | '';
+  meeting_outcome?: PersonalMeetingOutcome | '';
+  meeting_owner_user_id?: string;
   from?: string;
   to?: string;
   page?: number;

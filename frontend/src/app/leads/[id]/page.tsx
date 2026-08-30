@@ -13,6 +13,7 @@ import {
   LeadSummaryCard,
   AssignmentCard,
   FollowUpCard,
+  PersonalMeetingsCard,
   LatestRmUpdateCard,
   TechnicalMetaDetails,
 } from '@/components/leads/LeadProfileSidebar';
@@ -24,6 +25,7 @@ import { WorkflowPanel } from '@/components/leads/WorkflowPanel';
 import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
 import { LeadSessionsCard } from '@/components/leads/LeadSessionsCard';
 import { LeadLabelsCard } from '@/components/leads/LeadLabelsCard';
+import { PersonalMeetingModal } from '@/components/leads/PersonalMeetingModal';
 import { useDeleteLead, useLead } from '@/hooks/useLeads';
 import { useLeadCommunication } from '@/hooks/useLeadCommunication';
 import { useAuth } from '@/lib/auth';
@@ -53,6 +55,7 @@ function LeadDetailInner() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [sessionCreateSignal, setSessionCreateSignal] = useState(0);
   const [labelCreateSignal, setLabelCreateSignal] = useState(0);
+  const [personalMeetingOpen, setPersonalMeetingOpen] = useState(false);
 
   if (!user) return <PageLoader />;
 
@@ -158,6 +161,16 @@ function LeadDetailInner() {
       >
         Call
       </Button>
+
+      {!readOnlyAccess && (
+        <Button
+          variant="outline"
+          leftIcon={<CalendarClock className="h-4 w-4" />}
+          onClick={() => setPersonalMeetingOpen(true)}
+        >
+          Personal Meeting
+        </Button>
+      )}
 
       {!readOnlyAccess && (
         <Button
@@ -268,6 +281,7 @@ function LeadDetailInner() {
             <LeadSummaryCard lead={lead} />
             <AssignmentCard lead={lead} />
             <FollowUpCard lead={lead} />
+            <PersonalMeetingsCard lead={lead} />
             {canSeeRmSummary && <LatestRmUpdateCard lead={lead} />}
             <LeadLabelsCard leadId={id} canManage={!readOnlyAccess} createSignal={labelCreateSignal} />
             <LeadSessionsCard
@@ -293,6 +307,7 @@ function LeadDetailInner() {
       {!readOnlyAccess && (
         <RemarkModal leadId={id} open={remarkOpen} onClose={() => setRemarkOpen(false)} />
       )}
+      {!readOnlyAccess && <PersonalMeetingModal lead={lead} open={personalMeetingOpen} onClose={() => setPersonalMeetingOpen(false)} />}
 
       {!readOnlyAccess && canAddRmUpdate && (
         <RemarkModal leadId={id} mode="rm_update" open={rmRemarkOpen} onClose={() => setRmRemarkOpen(false)} />

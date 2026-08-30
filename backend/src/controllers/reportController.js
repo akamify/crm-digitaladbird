@@ -2,6 +2,7 @@ const { query } = require('../config/database');
 const { asyncHandler } = require('../utils/errors');
 const { getVisibleUserIds } = require('../middleware/rbac');
 const { notWorkedLeadCondition } = require('../utils/leadWorkMetrics');
+const { leadHasFollowupActivityCondition } = require('../utils/followupMetrics');
 
 function buildScope(visible, offset = 0) {
   if (visible === null) return { sql: '', params: [] };
@@ -44,7 +45,7 @@ exports.summary = asyncHandler(async (req, res) => {
         COUNT(*)                                                              AS total_leads,
         COUNT(*) FILTER (WHERE ${notWorkedLeadCondition('l')})                AS pending,
         COUNT(*) FILTER (WHERE l.call_status = 'converted')                   AS converted,
-        COUNT(*) FILTER (WHERE l.call_status = 'follow_up' OR l.next_followup_at IS NOT NULL) AS followups,
+        COUNT(*) FILTER (WHERE ${leadHasFollowupActivityCondition('l')})      AS followups,
         COUNT(*) FILTER (WHERE l.stage = 'lost' OR l.call_status = 'not_interested') AS lost,
         COUNT(*) FILTER (WHERE ${TODAY_IST_CREATED})                          AS today_leads,
         COUNT(*) FILTER (WHERE ${TODAY_IST_ASSIGNED})                         AS today_assigned

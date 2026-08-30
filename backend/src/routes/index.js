@@ -3,6 +3,7 @@ const auth    = require('../controllers/authController');
 const users   = require('../controllers/userController');
 const leads   = require('../controllers/leadController');
 const reports = require('../controllers/reportController');
+const counselorReports = require('../controllers/counselorReportController');
 const meta    = require('../controllers/metaController');
 const customerNotes = require('../controllers/customerNoteController');
 const { authenticate, invalidateUser }    = require('../middleware/auth');
@@ -32,7 +33,14 @@ const {
 } = require('../services/leadWorkflowRemarkService');
 const { createLeadInteraction } = require('../services/leadInteractionService');
 const { assertLeadCommunicationAccess } = require('../services/leadCommunicationAccess');
+const {
+  getLeadCallAttemptView,
+  reconcileWorkflowRemarkWithCallAttempts,
+  completeScheduledAttempt,
+  cancelLeadActiveAttemptSequences,
+} = require('../services/leadCallAttemptService');
 const { workedLeadCondition, notWorkedLeadCondition } = require('../utils/leadWorkMetrics');
+const { remarkHasFollowupActivityCondition, leadHasFollowupActivityCondition } = require('../utils/followupMetrics');
 const { logActivity } = require('../utils/auditLog');
 
 // Loads a lead-request enriched with user + RM context and emits the
@@ -287,6 +295,7 @@ router.patch('/notes/:noteId/entries/:entryId', authenticate, requireRole('super
 router.delete('/notes/:noteId/entries/:entryId', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.removeEntry);
 router.post('/notes/:noteId/approve', authenticate, requireRole('super_admin', 'admin', 'rm'), customerNotes.approve);
 router.post('/notes/:noteId/reject', authenticate, requireRole('super_admin', 'admin', 'rm'), customerNotes.reject);
+router.get('/personal-meetings', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.listPersonalMeetings);
 
 // ---- Leads --------------------------------------------------------
 router.get  ('/leads',            authenticate, leads.list);
@@ -298,6 +307,10 @@ router.patch('/leads/:leadId/sessions/:sessionId', authenticate, leads.updateSes
 router.delete('/leads/:leadId/sessions/:sessionId', authenticate, leads.deleteSession);
 router.post ('/admin/leads/delete-all', authenticate, requireRole('super_admin'), leads.removeAll);
 router.delete('/leads/:id', authenticate, requireRole('super_admin'), leads.remove);
+router.get('/leads/:leadId/personal-meetings', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.listLeadPersonalMeetings);
+router.post('/leads/:leadId/personal-meetings', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.createPersonalMeeting);
+router.get('/leads/:leadId/personal-meetings/:meetingId', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.personalMeetingDetail);
+router.patch('/leads/:leadId/personal-meetings/:meetingId', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.updatePersonalMeeting);
 router.get  ('/leads/:id',        authenticate, leads.getOne);
 router.post ('/leads',            authenticate, requireRole('super_admin', 'rm'), leads.create);
 router.post ('/leads/:id/lock',   authenticate, leads.lock);
@@ -312,6 +325,13 @@ router.get('/reports/by-user', authenticate, requireRole('super_admin', 'rm'), r
 router.get('/reports/funnel',  authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), responseCache(30000), reports.funnel);
 router.get('/reports/sources', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), responseCache(30000), reports.sources);
 router.get('/reports/categories', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), responseCache(30000), reports.categories);
+
+// ---- Counselor accountability reporting (Super Admin only) -----------
+router.get('/counselor-report/summary', authenticate, requireRole('super_admin'), counselorReports.summary);
+router.get('/counselor-report/counselors', authenticate, requireRole('super_admin'), counselorReports.counselors);
+router.get('/counselor-report/rm-teams', authenticate, requireRole('super_admin'), counselorReports.teams);
+router.get('/counselor-report/filters', authenticate, requireRole('super_admin'), responseCache(60000), counselorReports.filters);
+router.get('/counselor-report/leads', authenticate, requireRole('super_admin'), counselorReports.leads);
 
 // ---- Admin: Distribution rules + Meta management ------------------
 router.get('/rules',  authenticate, requireRole('super_admin'), asyncHandler(async (_req, res) => {
@@ -2060,7 +2080,7 @@ router.get('/admin/live-stats', authenticate, requireRole('super_admin', 'admin'
       (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND (COALESCE(meta_created_time, created_at) AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS today_leads,
       (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND assigned_at::date = CURRENT_DATE) AS today_assigned,
       (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND call_status = 'converted' AND updated_at::date = CURRENT_DATE) AS today_conversions,
-      (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND next_followup_at::date = CURRENT_DATE) AS today_followups,
+      (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND (next_followup_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date) AS today_followups,
       (SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND next_followup_at < NOW() AND next_followup_at IS NOT NULL) AS overdue_followups,
       (SELECT COUNT(*) FROM lead_requests WHERE status = 'pending') AS pending_lead_requests,
       (SELECT COUNT(*) FROM distribution_approvals WHERE status = 'pending') AS pending_approvals,
@@ -3119,7 +3139,7 @@ router.get('/leaderboard', authenticate, asyncHandler(async (req, res) => {
           ${callDateFilter}
       ) calls ON true
       LEFT JOIN LATERAL (
-        SELECT COUNT(*) FILTER (WHERE lr.next_followup_at IS NOT NULL) AS followups_done,
+        SELECT COUNT(*) FILTER (WHERE ${remarkHasFollowupActivityCondition('lr')}) AS followups_done,
                MAX(lr.created_at) AS last_remark_at
         FROM lead_remarks lr
         WHERE lr.user_id = u.id
@@ -3297,7 +3317,7 @@ function buildScoreSQL(roleFilter, teamFilter) {
       LEFT JOIN LATERAL (
         SELECT
           COUNT(*) AS calls,
-          COUNT(*) FILTER (WHERE r.next_followup_at IS NOT NULL) AS followups,
+          COUNT(*) FILTER (WHERE ${remarkHasFollowupActivityCondition('r')}) AS followups,
           EXTRACT(EPOCH FROM AVG(r.created_at - l2.assigned_at)) / 3600 AS avg_resp
         FROM lead_remarks r
         JOIN leads l2 ON l2.id = r.lead_id
@@ -3373,7 +3393,7 @@ async function computeDailyRankings() {
       FROM leads l WHERE l.assigned_to_user_id = u.id AND l.deleted_at IS NULL
     ) ls ON true
     LEFT JOIN LATERAL (
-      SELECT COUNT(*) AS calls, COUNT(*) FILTER (WHERE r.next_followup_at IS NOT NULL) AS followups
+      SELECT COUNT(*) AS calls, COUNT(*) FILTER (WHERE ${remarkHasFollowupActivityCondition('r')}) AS followups
       FROM lead_remarks r WHERE r.user_id = u.id
     ) rm2 ON true
     WHERE u.deleted_at IS NULL AND u.status = 'active' AND u.team_name IS NOT NULL
@@ -5106,17 +5126,15 @@ router.get('/admin/meta/overview', authenticate, requireRole('super_admin'), res
 router.get('/admin/followups', authenticate, requireRole('super_admin'), asyncHandler(async (req, res) => {
   const type = req.query.type || 'all';
   let filter = '';
-  if (type === 'overdue') filter = `AND l.next_followup_at < NOW() AND l.next_followup_at::date < CURRENT_DATE`;
-  else if (type === 'today') filter = `AND (
-    l.next_followup_at::date = CURRENT_DATE
-    OR EXISTS (SELECT 1 FROM lead_remarks lr_follow WHERE lr_follow.lead_id = l.id)
-    OR EXISTS (SELECT 1 FROM lead_workflow wf_follow WHERE wf_follow.lead_id = l.id)
-  )`;
-  else if (type === 'upcoming') filter = `AND (
-    (l.next_followup_at::date > CURRENT_DATE AND l.next_followup_at::date <= CURRENT_DATE + INTERVAL '7 days')
-    OR EXISTS (SELECT 1 FROM lead_remarks lr_follow WHERE lr_follow.lead_id = l.id)
-    OR EXISTS (SELECT 1 FROM lead_workflow wf_follow WHERE wf_follow.lead_id = l.id)
-  )`;
+  const hasFollowup = leadHasFollowupActivityCondition('l');
+  if (type === 'overdue') {
+    filter = `AND l.next_followup_at < NOW() AND (l.next_followup_at AT TIME ZONE 'Asia/Kolkata')::date < (NOW() AT TIME ZONE 'Asia/Kolkata')::date`;
+  } else if (type === 'today') {
+    filter = `AND (l.next_followup_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date`;
+  } else if (type === 'upcoming') {
+    filter = `AND (l.next_followup_at AT TIME ZONE 'Asia/Kolkata')::date > (NOW() AT TIME ZONE 'Asia/Kolkata')::date
+      AND (l.next_followup_at AT TIME ZONE 'Asia/Kolkata')::date <= (NOW() AT TIME ZONE 'Asia/Kolkata')::date + INTERVAL '7 days'`;
+  }
 
   const { rows } = await query(`
     SELECT l.id, l.full_name, l.phone, l.source, l.campaign_name, l.stage, l.call_status,
@@ -5124,11 +5142,7 @@ router.get('/admin/followups', authenticate, requireRole('super_admin'), asyncHa
     FROM leads l
     LEFT JOIN users u ON u.id = l.assigned_to_user_id
     WHERE l.deleted_at IS NULL
-      AND (
-        l.next_followup_at IS NOT NULL
-        OR EXISTS (SELECT 1 FROM lead_remarks lr_follow WHERE lr_follow.lead_id = l.id)
-        OR EXISTS (SELECT 1 FROM lead_workflow wf_follow WHERE wf_follow.lead_id = l.id)
-      )
+      AND ${hasFollowup}
       AND COALESCE(l.stage, '') NOT IN ('won', 'lost') ${filter}
     ORDER BY l.next_followup_at ASC NULLS LAST, l.updated_at DESC LIMIT 100
   `);
@@ -5687,6 +5701,7 @@ router.get('/leads/:id/workflow', authenticate, asyncHandler(async (req, res) =>
     : !wf?.followup_completed ? 3
     : !wf?.conversion_completed ? 4
     : 5;
+  const callAttemptView = await getLeadCallAttemptView({ leadId, now: new Date() });
 
   res.json({
     success: true,
@@ -5706,6 +5721,10 @@ router.get('/leads/:id/workflow', authenticate, asyncHandler(async (req, res) =>
       workflow_current_step: currentStep,
       workflow_unlocked_step: currentStep,
       workflow_is_step_1_completed: step1Completed,
+      call_attempt_sequence: callAttemptView.call_attempt_sequence,
+      call_attempts: callAttemptView.call_attempts,
+      next_scheduled_call: callAttemptView.next_scheduled_call,
+      call_attempt_state: callAttemptView.call_attempt_state,
     },
   });
 }));
@@ -5715,19 +5734,35 @@ router.post('/leads/:id/workflow/remark', authenticate, asyncHandler(async (req,
   const leadId = req.params.id;
   const requestedStatuses = req.body?.remark_statuses || req.body?.workflow_step_1_statuses || req.body?.call_statuses || req.body?.remark_status;
   const remarkStatuses = normalizeWorkflowRemarkStatuses(requestedStatuses);
+  const attemptTriggerStatus = String(req.body?.attempt_trigger_status || req.body?.remark_status || '').trim().toLowerCase() || null;
   if (remarkStatuses.length === 0) throw new AppError(400, 'INVALID', 'At least one remark status is required');
 
-  const interaction = await withTransaction((client) => createLeadInteraction({
-    client,
-    user: req.user,
-    leadId,
-    note: req.body?.remark || req.body?.note || '',
-    status: remarkStatuses[0],
-    statuses: remarkStatuses,
-    source: 'workflow_step_1',
-    workflowStep: 1,
-    syncWorkflowStep1: true,
-  }));
+  const interaction = await withTransaction(async (client) => {
+    const saved = await createLeadInteraction({
+      client,
+      user: req.user,
+      leadId,
+      note: req.body?.remark || req.body?.note || '',
+      status: remarkStatuses[0],
+      statuses: remarkStatuses,
+      source: 'workflow_step_1',
+      workflowStep: 1,
+      syncWorkflowStep1: true,
+    });
+
+    await reconcileWorkflowRemarkWithCallAttempts({
+      client,
+      leadId,
+      user: req.user,
+      triggerStatus: attemptTriggerStatus,
+      remarkId: saved.remark?.id || null,
+      explicitFollowupAt: req.body?.next_followup_at || null,
+      auditContext: req,
+      now: new Date(),
+    });
+
+    return saved;
+  });
   const wf = interaction.workflow;
 
   {
@@ -5735,7 +5770,7 @@ router.post('/leads/:id/workflow/remark', authenticate, asyncHandler(async (req,
     await logActivity(req, {
       entity: 'lead', entity_id: leadId, action: 'remark_saved',
       new_value: remarkStatuses.join(','),
-      metadata: { step: 1, step_1_statuses: remarkStatuses },
+      metadata: { step: 1, step_1_statuses: remarkStatuses, attempt_trigger_status: attemptTriggerStatus },
     });
   }
 
@@ -5747,6 +5782,41 @@ router.post('/leads/:id/workflow/remark', authenticate, asyncHandler(async (req,
   }
 
   res.json({ success: true, data: wf });
+}));
+
+router.post('/leads/:id/call-attempts/:attemptId/complete', authenticate, asyncHandler(async (req, res) => {
+  const leadId = req.params.id;
+  const attemptId = req.params.attemptId;
+  const outcome = req.body?.outcome || req.body?.status;
+
+  await assertLeadCommunicationAccess(req.user, leadId);
+
+  const result = await withTransaction(async (client) => completeScheduledAttempt({
+    client,
+    leadId,
+    attemptId,
+    user: req.user,
+    outcome,
+    explicitFollowupAt: req.body?.next_followup_at || null,
+    auditContext: req,
+    now: new Date(),
+  }));
+
+  if (!result?.alreadyProcessed) {
+    await logActivity(req, {
+      entity: 'lead',
+      entity_id: leadId,
+      action: 'call_attempt_completed',
+      new_value: String(result?.outcome || outcome || ''),
+      metadata: {
+        attempt_id: attemptId,
+        call_attempt_outcome: result?.outcome || outcome || null,
+      },
+    });
+  }
+
+  const workflowView = await getLeadCallAttemptView({ leadId, now: new Date() });
+  res.json({ success: true, data: workflowView });
 }));
 
 // Step 2: Save lead level
@@ -5939,32 +6009,43 @@ router.post('/leads/:id/workflow/conversion', authenticate, asyncHandler(async (
     throw new AppError(400, 'STEP_LOCKED', 'Complete Step 3 (Follow-up Tracker) first');
   }
 
-  const { rows: [conv] } = await query(`
-    INSERT INTO lead_conversion (lead_id, user_id, followup_status, address, total_payment, part_payment, customer_type, services, transaction_id)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-    ON CONFLICT (lead_id) DO UPDATE SET
-      followup_status = $3, address = $4, total_payment = $5, part_payment = $6,
-      customer_type = $7, services = $8, transaction_id = $9,
-      submitted_at = NOW(), updated_at = NOW()
-    RETURNING *
-  `, [leadId, req.user.id, followup_status || null, address || null,
-      total_payment || null, part_payment || null,
-      customerType, services || null, transactionId || null]);
+  const conv = await withTransaction(async (client) => {
+    const { rows: [saved] } = await client.query(`
+      INSERT INTO lead_conversion (lead_id, user_id, followup_status, address, total_payment, part_payment, customer_type, services, transaction_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      ON CONFLICT (lead_id) DO UPDATE SET
+        followup_status = $3, address = $4, total_payment = $5, part_payment = $6,
+        customer_type = $7, services = $8, transaction_id = $9,
+        submitted_at = NOW(), updated_at = NOW()
+      RETURNING *
+    `, [leadId, req.user.id, followup_status || null, address || null,
+        total_payment || null, part_payment || null,
+        customerType, services || null, transactionId || null]);
 
-  await query(`
-    UPDATE lead_workflow SET conversion_completed = TRUE, conversion_completed_at = NOW(), updated_at = NOW()
-    WHERE lead_id = $1
-  `, [leadId]);
+    await client.query(`
+      UPDATE lead_workflow SET conversion_completed = TRUE, conversion_completed_at = NOW(), updated_at = NOW()
+      WHERE lead_id = $1
+    `, [leadId]);
 
-  await query(`
-    UPDATE leads SET stage = 'won', call_status = 'converted', updated_at = NOW()
-    WHERE id = $1
-  `, [leadId]);
+    await client.query(`
+      UPDATE leads SET stage = 'won', call_status = 'converted', updated_at = NOW()
+      WHERE id = $1
+    `, [leadId]);
 
-  await query(`
-    INSERT INTO lead_workflow_history (lead_id, user_id, step, action, new_value, metadata)
-    VALUES ($1, $2, 4, 'conversion_submitted', $3, $4)
-  `, [leadId, req.user.id, customerType, JSON.stringify({ total_payment, part_payment, services, transaction_id: transactionId || null })]);
+    await cancelLeadActiveAttemptSequences({
+      client,
+      leadId,
+      reason: 'lead_converted',
+      userId: req.user.id,
+    });
+
+    await client.query(`
+      INSERT INTO lead_workflow_history (lead_id, user_id, step, action, new_value, metadata)
+      VALUES ($1, $2, 4, 'conversion_submitted', $3, $4)
+    `, [leadId, req.user.id, customerType, JSON.stringify({ total_payment, part_payment, services, transaction_id: transactionId || null })]);
+
+    return saved;
+  });
 
   {
     const { logActivity } = require('../utils/auditLog');

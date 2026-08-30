@@ -1,14 +1,16 @@
 'use client';
 
 import { CalendarClock, ChevronDown, UserRound } from 'lucide-react';
+import Link from 'next/link';
 import type { LeadDetail } from '@/types';
+import { useLeadPersonalMeetings } from '@/hooks/useCustomerNotes';
 import { humanize } from '@/lib/format';
 import {
   getLeadRemarkCategoryLabel,
   getLeadRemarkCustomerInterestLabel,
   getLeadRemarkPriorityLabel,
 } from '@/constants/leadRemarkMeta';
-import { formatCompactDateTime, formatDateTimeTooltip, getLeadCategoryLabel, isMeaningfulValue } from './leadProfileUtils';
+import { formatCompactDateTime, formatDateTimeTooltip, formatRelativeTime, getLeadCategoryLabel, isMeaningfulValue } from './leadProfileUtils';
 
 function Row({ label, value, title }: { label: string; value: unknown; title?: string }) {
   if (!isMeaningfulValue(value)) return null;
@@ -65,7 +67,72 @@ export function AssignmentCard({ lead }: { lead: LeadDetail }) {
 }
 
 export function FollowUpCard({ lead }: { lead: LeadDetail }) {
-  return <section className="card-padded"><div className="flex items-center gap-2"><CalendarClock className="h-4 w-4 text-amber-600" /><h2 className="text-sm font-semibold text-slate-950">Follow-up</h2></div>{lead.next_followup_at ? <div className="mt-3"><div className="text-sm font-medium text-slate-900">{formatCompactDateTime(lead.next_followup_at)}</div><div className="mt-1 text-xs text-slate-500">Scheduled next action</div></div> : <p className="mt-3 text-sm text-slate-500">No follow-up scheduled.</p>}</section>;
+  const nextCall = lead.next_scheduled_call;
+  if (nextCall) {
+    return (
+      <section className="card-padded">
+        <div className="flex items-center gap-2">
+          <CalendarClock className={nextCall.is_overdue ? 'h-4 w-4 text-rose-600' : 'h-4 w-4 text-amber-600'} />
+          <h2 className="text-sm font-semibold text-slate-950">Follow-up</h2>
+        </div>
+        <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+          <div className={nextCall.is_overdue ? 'text-sm font-semibold text-rose-700' : 'text-sm font-semibold text-slate-900'}>
+            {nextCall.is_overdue ? 'Overdue call' : 'Next call'}
+          </div>
+          <div className="mt-1 text-sm font-medium text-slate-900" title={formatDateTimeTooltip(nextCall.scheduled_at)}>
+            {formatCompactDateTime(nextCall.scheduled_at)}
+          </div>
+          <div className="mt-1 text-xs text-slate-500">
+            {humanize(nextCall.trigger_reason)} Attempt {nextCall.attempt_number}
+          </div>
+          <div className={nextCall.is_overdue ? 'mt-2 text-xs font-medium text-rose-700' : 'mt-2 text-xs text-slate-500'}>
+            {nextCall.is_overdue ? `Due ${formatRelativeTime(nextCall.scheduled_at)}` : formatRelativeTime(nextCall.scheduled_at)}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="card-padded">
+      <div className="flex items-center gap-2">
+        <CalendarClock className="h-4 w-4 text-amber-600" />
+        <h2 className="text-sm font-semibold text-slate-950">Follow-up</h2>
+      </div>
+      {lead.next_followup_at ? (
+        <div className="mt-3">
+          <div className="text-sm font-medium text-slate-900">{formatCompactDateTime(lead.next_followup_at)}</div>
+          <div className="mt-1 text-xs text-slate-500">Scheduled next action</div>
+        </div>
+      ) : (
+        <p className="mt-3 text-sm text-slate-500">No follow-up scheduled.</p>
+      )}
+    </section>
+  );
+}
+
+export function PersonalMeetingsCard({ lead }: { lead: LeadDetail }) {
+  const meetings = useLeadPersonalMeetings(lead.id, 5);
+  const rows = meetings.data?.rows || [];
+  return (
+    <section className="card-padded">
+      <div className="flex items-center gap-2">
+        <CalendarClock className="h-4 w-4 text-blue-600" />
+        <h2 className="text-sm font-semibold text-slate-950">Personal Meetings</h2>
+        <Link href={`/personal-meetings?leadId=${encodeURIComponent(lead.id)}`} className="ml-auto text-xs font-medium text-blue-700 hover:underline">View all</Link>
+      </div>
+      {meetings.isLoading ? <p className="mt-3 text-sm text-slate-500">Loading meetings...</p> : !rows.length ? <p className="mt-3 text-sm text-slate-500">No personal meeting recorded.</p> : (
+        <div className="mt-3 space-y-2">
+          {rows.map((meeting) => (
+            <Link key={meeting.id} href={`/personal-meetings?meetingId=${encodeURIComponent(meeting.id)}&leadId=${encodeURIComponent(lead.id)}`} className="block rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 transition hover:border-blue-200 hover:bg-blue-50/50">
+              <div className="flex items-center justify-between gap-2"><span className="text-sm font-semibold text-slate-900">Personal Meeting #{meeting.meeting_number || '?'}</span>{meeting.meeting_outcome && <span className="chip-blue">{humanize(meeting.meeting_outcome)}</span>}</div>
+              <div className="mt-1 text-xs text-slate-500">{meeting.meeting_at ? formatCompactDateTime(meeting.meeting_at) : 'Time not recorded'} · {meeting.meeting_owner_name || meeting.meeting_owner_custom_name || 'Owner not set'}</div>
+            </Link>
+          ))}
+        </div>
+      )}
+    </section>
+  );
 }
 
 export function LatestRmUpdateCard({ lead }: { lead: LeadDetail }) {

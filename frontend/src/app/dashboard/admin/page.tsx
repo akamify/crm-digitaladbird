@@ -360,9 +360,9 @@ function AdminDashboardInner() {
 
       {/* KPIs — clickable drill-down. The "today" trio (Fresh / Partner / Trader)
           links straight to the Fresh Leads page scoped to each tab. */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-7">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-8">
         {summary.isLoading ? (
-          Array.from({ length: 7 }).map((_, i) => <Skeleton key={i} className="h-24" />)
+          Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-24" />)
         ) : (
           <>
             <Link href="/dashboard/admin/leads-manager">
@@ -391,6 +391,9 @@ function AdminDashboardInner() {
             </Link>
             <Link href="/dashboard/admin/leads-manager?pending=true">
               <KpiCard label="Pending" value={Number(k?.pending ?? 0).toLocaleString()} delta="Awaiting first call" accent="amber" icon={<Clock className="h-5 w-5" />} />
+            </Link>
+            <Link href="/leads?remark_status=follow_up">
+              <KpiCard label="Follow-ups" value={Number(k?.followups ?? 0).toLocaleString()} delta="Leads with follow-up activity" accent="slate" icon={<Activity className="h-5 w-5" />} />
             </Link>
             <Link href="/dashboard/admin/analytics">
               <KpiCard label="Conversions" value={conv.toLocaleString()} delta={`${convRate}% conv rate`} trend="up" accent="green" icon={<CheckCircle2 className="h-5 w-5" />} />
