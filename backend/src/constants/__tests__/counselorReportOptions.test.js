@@ -1,4 +1,6 @@
 const { classifyContactState, calculateQuality } = require('../counselorReportOptions');
+jest.mock('../../config/database', () => ({ query: jest.fn() }));
+const { _buildQuery } = require('../../services/counselorReportService');
 
 describe('counselor report classification', () => {
   test('successful workflow overrides a historical CNR current status', () => {
@@ -18,5 +20,12 @@ describe('counselor report classification', () => {
 
   test('conversion remains a stronger current state than an earlier received call', () => {
     expect(classifyContactState({ status: 'converted', hasReceivedAttempt: true })).toMatchObject({ state: 'converted' });
+  });
+
+  test('date-scoped aggregate query filters the ownership CTE alias, not lead_assignments alias', () => {
+    const { sql } = _buildQuery({ from: '2026-08-01', to: '2026-08-30' });
+    expect(sql).toContain('o.ownership_start >= $1::timestamptz');
+    expect(sql).toContain("o.ownership_start < ($2::date + INTERVAL '1 day')");
+    expect(sql).not.toContain('WHERE a.assigned_at >=');
   });
 });

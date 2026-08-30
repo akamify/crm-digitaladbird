@@ -61,8 +61,13 @@ function errorHandler(err, req, res, _next) {
     });
   }
 
-  // Postgres schema drift: deployed code is using a column/table not present in DB.
-  if (err.code === '42703' || err.code === '42P01') {
+  // Postgres schema drift: deployed code is using a required table/column not present in DB.
+  // 42P01 also covers programming mistakes such as an alias missing from FROM;
+  // those must remain ordinary internal errors rather than migration guidance.
+  const dbMessage = String(err.message || '').toLowerCase();
+  const missingSchemaObject = (err.code === '42P01' && dbMessage.includes('relation') && dbMessage.includes('does not exist'))
+    || (err.code === '42703' && dbMessage.includes('column') && dbMessage.includes('does not exist'));
+  if (missingSchemaObject) {
     logger.error({
       path: req.path,
       method: req.method,

@@ -34,7 +34,8 @@ function buildQuery(input = {}) {
   if (to) params.push(to);
   const toIndex = to ? params.length : null;
   const leadFilters = addLeadFilters(input, params, 'l');
-  const cohortDate = [fromIndex && `a.assigned_at >= $${fromIndex}::timestamptz`, toIndex && `a.assigned_at < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
+  // The cohort reads from the ownership CTE, not lead_assignments directly.
+  const cohortDate = [fromIndex && `o.ownership_start >= $${fromIndex}::timestamptz`, toIndex && `o.ownership_start < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
   const currentDate = [fromIndex && `l.assigned_at >= $${fromIndex}::timestamptz`, toIndex && `l.assigned_at < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
   const userFilters = [];
   if (input.counselor || input.counselor_id) { params.push(input.counselor || input.counselor_id); userFilters.push(`u.id = $${params.length}::uuid`); }
@@ -254,4 +255,4 @@ async function drilldown(input = {}) {
   return { rows, total: Number(count.total), page, page_size: pageSize };
 }
 
-module.exports = { getCounselorRows, summary, teams, filters, drilldown };
+module.exports = { getCounselorRows, summary, teams, filters, drilldown, _buildQuery: buildQuery };
