@@ -1,4 +1,5 @@
 const { query } = require('../config/database');
+const { GRACE_MINUTES: ATTEMPT_GRACE_MINUTES } = require('./leadCallAttemptService');
 const {
   RETRYABLE_CONTACT_ISSUES, TERMINAL_LEAD_QUALITY_ISSUES, CONTACTED_STATUSES,
   PROGRESSION_STATUSES, UNWORKED_SLA_HOURS, CALL_ISSUE_LABELS, sqlArray, calculateQuality,
@@ -37,6 +38,8 @@ function buildQuery(input = {}) {
   // The cohort reads from the ownership CTE, not lead_assignments directly.
   const cohortDate = [fromIndex && `o.ownership_start >= $${fromIndex}::timestamptz`, toIndex && `o.ownership_start < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
   const currentDate = [fromIndex && `l.assigned_at >= $${fromIndex}::timestamptz`, toIndex && `l.assigned_at < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
+  // Compliance is attributed by the time an attempt became due, not by its later completion time.
+  const attemptDate = [fromIndex && `ca.scheduled_at >= $${fromIndex}::timestamptz`, toIndex && `ca.scheduled_at < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
   const userFilters = [];
   if (input.counselor || input.counselor_id) { params.push(input.counselor || input.counselor_id); userFilters.push(`u.id = $${params.length}::uuid`); }
   if (input.rm || input.rm_id) { params.push(input.rm || input.rm_id); userFilters.push(`u.report_to_id = $${params.length}::uuid`); }
@@ -106,6 +109,17 @@ function buildQuery(input = {}) {
           AND COALESCE(ca.attempted_at, ca.scheduled_at, ca.created_at) >= a.ownership_start
           AND COALESCE(ca.attempted_at, ca.scheduled_at, ca.created_at) < a.ownership_end
         GROUP BY a.counselor_id
+      ), attempt_compliance_metrics AS (
+        SELECT o.counselor_id,
+          COUNT(*) FILTER (WHERE ca.status = 'completed' AND ca.scheduled_at <= NOW())::int AS attempt_completed_count,
+          COUNT(*) FILTER (WHERE (ca.status = 'missed' OR (ca.status = 'scheduled' AND ca.scheduled_at <= NOW() - make_interval(mins => ${ATTEMPT_GRACE_MINUTES}))) )::int AS attempt_missed_count,
+          COUNT(*) FILTER (WHERE ca.status = 'scheduled' AND ca.scheduled_at > NOW())::int AS attempt_upcoming_count
+        FROM ownership o
+        JOIN lead_call_attempts ca ON ca.lead_id = o.lead_id
+          AND ca.scheduled_at >= o.ownership_start AND ca.scheduled_at < o.ownership_end
+        JOIN leads l ON l.id = ca.lead_id
+        WHERE ${attemptDate} AND ${leadFilters} AND ca.status IN ('scheduled', 'completed', 'missed')
+        GROUP BY o.counselor_id
       ), portfolio_metrics AS (
         SELECT counselor_id,
           COUNT(*)::int AS current_assigned,
@@ -133,11 +147,15 @@ function buildQuery(input = {}) {
         COALESCE(pm.delayed_unworked, 0) AS delayed_unworked, COALESCE(pm.critical_unworked, 0) AS critical_unworked,
         COALESCE(am.completed_attempts, 0) AS completed_attempts, COALESCE(am.on_time_attempts, 0) AS on_time_attempts,
         COALESCE(am.overdue_attempts, 0) AS overdue_attempts, COALESCE(am.average_delay_minutes, 0) AS average_delay_minutes,
+        COALESCE(acm.attempt_completed_count, 0) AS attempt_completed_count,
+        COALESCE(acm.attempt_missed_count, 0) AS attempt_missed_count,
+        COALESCE(acm.attempt_upcoming_count, 0) AS attempt_upcoming_count,
         COALESCE(em.personal_meetings, 0) AS personal_meetings
       FROM users u LEFT JOIN users rm ON rm.id = u.report_to_id
       LEFT JOIN execution_metrics em ON em.counselor_id = u.id
       LEFT JOIN portfolio_metrics pm ON pm.counselor_id = u.id
       LEFT JOIN attempt_metrics am ON am.counselor_id = u.id
+      LEFT JOIN attempt_compliance_metrics acm ON acm.counselor_id = u.id
       WHERE u.deleted_at IS NULL AND u.role::text IN ('member', 'partner') AND COALESCE(u.status::text, 'active') = 'active' ${userFilters.length ? `AND ${userFilters.join(' AND ')}` : ''}
       ORDER BY u.full_name`
   };
@@ -155,8 +173,11 @@ async function getCounselorRows(input = {}) {
       denominator: Number(denominator || 0),
       value: denominator ? Number((numerator / denominator * 100).toFixed(1)) : 0,
     });
+    const attemptDueCount = numeric.attempt_completed_count + numeric.attempt_missed_count;
     return {
-      ...numeric, quality, call_issues: issueBreakdowns.get(numeric.id) || { unresolved_total: 0, retryable_total: 0, terminal_quality_total: 0, buckets: {} },
+      ...numeric, quality, call_issues: issueBreakdowns.get(numeric.id) || { unresolved_total: 0, retryable_total: 0, terminal_quality_total: 0, buckets: {}, retryable_buckets: {}, terminal_quality_buckets: {} },
+      attempt_due_count: attemptDueCount,
+      attempt_compliance_pct: attemptDueCount ? Number((numeric.attempt_completed_count / attemptDueCount * 100).toFixed(1)) : null,
       raw_contact_rate: rate(numeric.attributed_contacted, numeric.total_received),
       actionable_contact_rate: rate(numeric.attributed_contacted, numeric.contactable_received),
       work_coverage_rate: rate(numeric.worked, numeric.execution_eligible),
@@ -185,11 +206,17 @@ async function getIssueBreakdowns(input = {}) {
   const output = new Map();
   for (const row of rows) {
     if (![...RETRYABLE_CONTACT_ISSUES, ...TERMINAL_LEAD_QUALITY_ISSUES].includes(row.issue_type)) continue;
-    const item = output.get(row.counselor_id) || { unresolved_total: 0, retryable_total: 0, terminal_quality_total: 0, buckets: {} };
+    const item = output.get(row.counselor_id) || { unresolved_total: 0, retryable_total: 0, terminal_quality_total: 0, buckets: {}, retryable_buckets: {}, terminal_quality_buckets: {} };
     const bucket = row.issue_type === 'in' ? 'invalid_number' : row.issue_type;
     item.buckets[bucket] = Number(row.count);
     item.unresolved_total += Number(row.count);
-    if (RETRYABLE_CONTACT_ISSUES.includes(row.issue_type)) item.retryable_total += Number(row.count); else item.terminal_quality_total += Number(row.count);
+    if (RETRYABLE_CONTACT_ISSUES.includes(row.issue_type)) {
+      item.retryable_total += Number(row.count);
+      item.retryable_buckets[bucket] = Number(row.count);
+    } else {
+      item.terminal_quality_total += Number(row.count);
+      item.terminal_quality_buckets[bucket] = Number(row.count);
+    }
     output.set(row.counselor_id, item);
   }
   return output;
@@ -211,10 +238,13 @@ async function teams(input) {
     const key = row.report_to_id || 'unassigned';
     const item = groups.get(key) || { rm_id: row.report_to_id, rm_name: row.rm_name || 'No RM assigned', team_name: row.team_name || 'Unassigned', members: 0 };
     item.members += 1;
-    for (const metric of ['total_received', 'current_assigned', 'worked', 'unworked', 'attributed_contacted', 'contactable_received', 'execution_eligible', 'progressed', 'converted', 'unresolved_call_issues', 'terminal_lead_quality_issues', 'actionable_pending', 'personal_meetings', 'completed_attempts', 'on_time_attempts', 'overdue_attempts']) item[metric] = (item[metric] || 0) + Number(row[metric] || 0);
+    for (const metric of ['total_received', 'current_assigned', 'worked', 'unworked', 'attributed_contacted', 'contactable_received', 'execution_eligible', 'progressed', 'converted', 'unresolved_call_issues', 'terminal_lead_quality_issues', 'actionable_pending', 'personal_meetings', 'completed_attempts', 'on_time_attempts', 'overdue_attempts', 'attempt_completed_count', 'attempt_missed_count', 'attempt_upcoming_count']) item[metric] = (item[metric] || 0) + Number(row[metric] || 0);
     groups.set(key, item);
   }
-  return [...groups.values()].map(item => ({ ...item, quality: calculateQuality(item), aggregation_label: 'Current Team Aggregation' }));
+  return [...groups.values()].map(item => {
+    const attempt_due_count = item.attempt_completed_count + item.attempt_missed_count;
+    return { ...item, attempt_due_count, attempt_compliance_pct: attempt_due_count ? Number((item.attempt_completed_count / attempt_due_count * 100).toFixed(1)) : null, quality: calculateQuality(item), aggregation_label: 'Current Team Aggregation' };
+  });
 }
 
 async function filters() {
@@ -225,6 +255,7 @@ async function filters() {
 async function drilldown(input = {}) {
   const counselorId = String(input.counselor_id || '').trim();
   if (!counselorId) return { rows: [], total: 0 };
+  if (String(input.metric || '').trim() === 'attempt_compliance') return drilldownAttemptCompliance(input, counselorId);
   const page = Math.max(1, Number(input.page || 1));
   const pageSize = Math.min(100, Math.max(1, Number(input.page_size || 25)));
   const params = [counselorId];
@@ -292,7 +323,84 @@ async function drilldown(input = {}) {
     (SELECT MAX(created_at) FROM lead_remarks lr WHERE lr.lead_id = l.id) AS last_action_at,
     (SELECT MIN(scheduled_at) FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'scheduled') AS next_attempt_at
     FROM candidates c JOIN leads l ON l.id = c.lead_id ORDER BY c.lead_id, c.assigned_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
+  if (metric === 'call_issue' || metric === 'unresolved_call_issue') {
+    const leadIds = rows.map(row => row.id);
+    if (leadIds.length) {
+      // One active sequence per lead is enforced by migration 069; this remains a single batch query per drawer page.
+      const { rows: attemptRows } = await query(`
+        SELECT ca.lead_id, ca.attempt_number, ca.status, ca.scheduled_at, ca.attempted_at, ca.outcome,
+          ca.responsible_user_id, ca.completed_by_user_id,
+          CASE
+            WHEN ca.status = 'completed' THEN 'completed'
+            WHEN ca.status = 'cancelled' THEN 'not_required'
+            WHEN ca.status = 'missed' OR (ca.status = 'scheduled' AND ca.scheduled_at <= NOW() - make_interval(mins => ${ATTEMPT_GRACE_MINUTES})) THEN 'missed'
+            WHEN ca.status = 'scheduled' AND ca.scheduled_at > NOW() THEN 'upcoming'
+            ELSE 'not_required'
+          END AS attempt_state
+        FROM lead_call_attempts ca
+        JOIN lead_call_attempt_sequences seq ON seq.id = ca.sequence_id AND seq.status = 'active'
+        WHERE ca.lead_id = ANY($1::uuid[])
+        ORDER BY ca.lead_id, ca.attempt_number ASC, ca.created_at ASC
+      `, [leadIds]);
+      const attemptsByLead = new Map();
+      for (const attempt of attemptRows) {
+        const list = attemptsByLead.get(attempt.lead_id) || [];
+        list.push({
+          ...attempt,
+          attributed_to_counselor: (attempt.completed_by_user_id || attempt.responsible_user_id) === counselorId,
+        });
+        attemptsByLead.set(attempt.lead_id, list);
+      }
+      for (const row of rows) row.attempts = attemptsByLead.get(row.id) || [];
+    }
+  }
   return { rows, total: Number(count.total), page, page_size: pageSize };
+}
+
+async function drilldownAttemptCompliance(input, counselorId) {
+  const page = Math.max(1, Number(input.page || 1));
+  const pageSize = Math.min(100, Math.max(1, Number(input.page_size || 25)));
+  const params = [counselorId];
+  const { from, to } = dateBounds(input);
+  if (from) params.push(from);
+  const fromIndex = from ? params.length : null;
+  if (to) params.push(to);
+  const toIndex = to ? params.length : null;
+  const scope = addLeadFilters(input, params, 'l');
+  const dates = [fromIndex && `ca.scheduled_at >= $${fromIndex}::timestamptz`, toIndex && `ca.scheduled_at < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
+  const status = String(input.attempt_status || 'all_due').trim();
+  const number = Number(input.attempt_number || 0);
+  const statusClause = {
+    all_due: `(ca.status = 'completed' AND ca.scheduled_at <= NOW()) OR ca.status = 'missed' OR (ca.status = 'scheduled' AND ca.scheduled_at <= NOW() - make_interval(mins => ${ATTEMPT_GRACE_MINUTES}))`,
+    completed: `ca.status = 'completed' AND ca.scheduled_at <= NOW()`,
+    missed: `ca.status = 'missed' OR (ca.status = 'scheduled' AND ca.scheduled_at <= NOW() - make_interval(mins => ${ATTEMPT_GRACE_MINUTES}))`,
+    upcoming: `ca.status = 'scheduled' AND ca.scheduled_at > NOW()`,
+  }[status] || 'FALSE';
+  const attemptNumberClause = number > 0 ? `AND ca.attempt_number = ${Math.floor(number)}` : '';
+  const cte = `WITH ownership AS (
+    SELECT a.lead_id, COALESCE(a.assigned_to_user_id, a.user_id) AS counselor_id, a.assigned_at AS ownership_start,
+      COALESCE(a.unassigned_at, LEAD(a.assigned_at) OVER (PARTITION BY a.lead_id ORDER BY a.assigned_at, a.id), 'infinity'::timestamptz) AS ownership_end
+    FROM lead_assignments a WHERE COALESCE(a.assigned_to_user_id, a.user_id) IS NOT NULL
+  ), attempts AS (
+    SELECT ca.id, ca.lead_id, ca.attempt_number, ca.trigger_reason, ca.outcome, ca.status, ca.scheduled_at, ca.attempted_at, ca.delay_minutes,
+      l.full_name, l.phone, l.call_status::text AS call_status
+    FROM ownership o JOIN lead_call_attempts ca ON ca.lead_id = o.lead_id AND ca.scheduled_at >= o.ownership_start AND ca.scheduled_at < o.ownership_end
+    JOIN leads l ON l.id = ca.lead_id
+    WHERE o.counselor_id = $1::uuid AND ${scope} AND ${dates} AND ca.status IN ('scheduled', 'completed', 'missed')
+  )`;
+  const { rows: totalsRows } = await query(`${cte} SELECT
+    COUNT(*) FILTER (WHERE (status = 'completed' AND scheduled_at <= NOW()) OR status = 'missed' OR (status = 'scheduled' AND scheduled_at <= NOW() - make_interval(mins => ${ATTEMPT_GRACE_MINUTES})))::int AS due_count,
+    COUNT(*) FILTER (WHERE status = 'completed' AND scheduled_at <= NOW())::int AS completed_count,
+    COUNT(*) FILTER (WHERE status = 'missed' OR (status = 'scheduled' AND scheduled_at <= NOW() - make_interval(mins => ${ATTEMPT_GRACE_MINUTES})))::int AS missed_count,
+    COUNT(*) FILTER (WHERE status = 'scheduled' AND scheduled_at > NOW())::int AS upcoming_count,
+    COALESCE(jsonb_object_agg(attempt_number, count), '{}'::jsonb) AS attempt_numbers
+    FROM (SELECT attempt_number, status, scheduled_at, COUNT(*)::int AS count FROM attempts GROUP BY attempt_number, status, scheduled_at) grouped`, params);
+  const totals = totalsRows[0] || {};
+  const { rows: [count] } = await query(`${cte} SELECT COUNT(*)::int AS total FROM attempts ca WHERE ${statusClause} ${attemptNumberClause}`, params);
+  params.push(pageSize, (page - 1) * pageSize);
+  const { rows } = await query(`${cte} SELECT *, CASE WHEN status = 'completed' THEN 'Completed' WHEN status = 'missed' OR (status = 'scheduled' AND scheduled_at <= NOW() - make_interval(mins => ${ATTEMPT_GRACE_MINUTES})) THEN 'Missed' ELSE 'Upcoming' END AS attempt_state
+    FROM attempts ca WHERE ${statusClause} ${attemptNumberClause} ORDER BY scheduled_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
+  return { rows, total: Number(count.total), page, page_size: pageSize, totals: { due_count: Number(totals.due_count || 0), completed_count: Number(totals.completed_count || 0), missed_count: Number(totals.missed_count || 0), upcoming_count: Number(totals.upcoming_count || 0) } };
 }
 
 module.exports = { getCounselorRows, summary, teams, filters, drilldown, _buildQuery: buildQuery };

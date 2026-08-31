@@ -1,7 +1,7 @@
 const { classifyContactState, calculateQuality } = require('../counselorReportOptions');
 jest.mock('../../config/database', () => ({ query: jest.fn() }));
 const db = require('../../config/database');
-const { _buildQuery, drilldown } = require('../../services/counselorReportService');
+const { _buildQuery, drilldown, getCounselorRows } = require('../../services/counselorReportService');
 
 describe('counselor report classification', () => {
   test('successful workflow overrides a historical CNR current status', () => {
@@ -55,5 +55,19 @@ describe('counselor report classification', () => {
     const countSql = db.query.mock.calls[0][0];
     expect(countSql).toContain("cc.current_status IN ('in', 'invalid_number')");
     expect(countSql).toContain("cc.contact_state IN ('retryable_contact_issue', 'terminal_lead_quality_issue')");
+  });
+
+  test('issue bucket payload separates retryable current issues from terminal lead quality issues', async () => {
+    db.query.mockReset();
+    db.query.mockResolvedValueOnce({ rows: [{ id: '00000000-0000-0000-0000-000000000001', full_name: 'Counselor', total_received: 0, current_assigned: 0, worked: 0, unworked: 0, attributed_contacted: 0, contactable_received: 0, execution_eligible: 0, progressed: 0, current_contacted: 0, converted: 0, unresolved_call_issues: 2, terminal_lead_quality_issues: 2, actionable_pending: 0, upcoming_calls: 0, new_unworked: 0, needs_action_unworked: 0, delayed_unworked: 0, critical_unworked: 0, completed_attempts: 0, on_time_attempts: 0, overdue_attempts: 0, average_delay_minutes: 0, personal_meetings: 0 }] })
+      .mockResolvedValueOnce({ rows: [
+        { counselor_id: '00000000-0000-0000-0000-000000000001', issue_type: 'cnr', count: 2 },
+        { counselor_id: '00000000-0000-0000-0000-000000000001', issue_type: 'in', count: 1 },
+        { counselor_id: '00000000-0000-0000-0000-000000000001', issue_type: 'ni', count: 1 },
+      ] });
+    const [row] = await getCounselorRows();
+    expect(row.call_issues.retryable_buckets).toEqual({ cnr: 2 });
+    expect(row.call_issues.terminal_quality_buckets).toEqual({ invalid_number: 1, ni: 1 });
+    expect(Object.values(row.call_issues.retryable_buckets).reduce((sum, count) => sum + count, 0)).toBe(row.unresolved_call_issues);
   });
 });

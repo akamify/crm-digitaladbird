@@ -13,9 +13,10 @@ export interface CounselorReportRow {
   unresolved_call_issues: number; terminal_lead_quality_issues: number; actionable_pending: number;
   upcoming_calls: number; converted: number; personal_meetings: number; overdue_attempts: number;
   completed_attempts: number; on_time_attempts: number; average_delay_minutes: number;
+  attempt_due_count: number; attempt_completed_count: number; attempt_missed_count: number; attempt_upcoming_count: number; attempt_compliance_pct: number | null;
   new_unworked: number; needs_action_unworked: number; delayed_unworked: number; critical_unworked: number;
   raw_contact_rate: ReportRate; actionable_contact_rate: ReportRate; work_coverage_rate: ReportRate; followup_discipline_rate: ReportRate; progression_rate: ReportRate; call_issue_rate: ReportRate; quality: Quality;
-  call_issues?: { unresolved_total: number; retryable_total: number; terminal_quality_total: number; buckets: Record<string, number>; };
+  call_issues?: { unresolved_total: number; retryable_total: number; terminal_quality_total: number; buckets: Record<string, number>; retryable_buckets?: Record<string, number>; terminal_quality_buckets?: Record<string, number>; };
 }
 export interface ReportSummary { total_counselors: number; total_received: number; current_assigned: number; worked: number; unworked: number; actionable_pending: number; current_contacted: number; unresolved_call_issues: number; terminal_lead_quality_issues: number; converted: number; personal_meetings: number; overdue_attempts: number; }
 export interface TeamRow extends Omit<CounselorReportRow, 'id' | 'full_name' | 'rm_name' | 'team_name'> { rm_id?: string | null; rm_name: string; team_name: string; members: number; aggregation_label: string; }
@@ -28,6 +29,7 @@ export interface CounselorReportLead {
   campaign_label?: string | null; assigned_at?: string | null; call_status?: string | null;
   effective_status?: string | null; last_action_at?: string | null; next_followup_at?: string | null; next_attempt_at?: string | null;
   metric_reason?: string | null; aging_state?: string | null;
+  attempts?: Array<{ attempt_number: number; attempt_state: 'completed' | 'missed' | 'upcoming' | 'not_required'; scheduled_at?: string | null; attempted_at?: string | null; outcome?: string | null; attributed_to_counselor?: boolean }>;
 }
 export interface CounselorReportDrilldown { rows: CounselorReportLead[]; total: number; page: number; page_size: number; }
 
@@ -48,12 +50,14 @@ export function useCounselorReport(filters: CounselorReportFilters) {
   };
 }
 
-export function useCounselorReportDrilldown(filters: CounselorReportFilters, request?: { counselorId: string; metric?: string; issueType?: string; page?: number }) {
+export function useCounselorReportDrilldown(filters: CounselorReportFilters, request?: { counselorId: string; metric?: string; issueType?: string; attemptStatus?: string; attemptNumber?: number; page?: number }) {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
   if (request?.counselorId) params.set('counselor_id', request.counselorId);
   if (request?.metric) params.set('metric', request.metric);
   if (request?.issueType) params.set('call_issue_type', request.issueType);
+  if (request?.attemptStatus) params.set('attempt_status', request.attemptStatus);
+  if (request?.attemptNumber) params.set('attempt_number', String(request.attemptNumber));
   if (request?.page) params.set('page', String(request.page));
   params.set('page_size', '25');
   return useQuery({
