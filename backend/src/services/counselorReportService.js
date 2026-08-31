@@ -229,29 +229,69 @@ async function drilldown(input = {}) {
   const pageSize = Math.min(100, Math.max(1, Number(input.page_size || 25)));
   const params = [counselorId];
   const { from, to } = dateBounds(input);
-  const dates = [];
-  if (from) { params.push(from); dates.push(`l.assigned_at >= $${params.length}::timestamptz`); }
-  if (to) { params.push(to); dates.push(`l.assigned_at < ($${params.length}::date + INTERVAL '1 day')`); }
+  if (from) params.push(from);
+  const fromIndex = from ? params.length : null;
+  if (to) params.push(to);
+  const toIndex = to ? params.length : null;
   const scope = addLeadFilters(input, params, 'l');
   const metric = String(input.metric || '').trim();
-  const effective = `CASE WHEN EXISTS (SELECT 1 FROM lead_workflow wf WHERE wf.lead_id = l.id AND COALESCE(wf.remark_status::text, '') = ANY(${CONTACTED_SQL})) OR EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'completed' AND ca.outcome = 'call_received') THEN 'communication_completed' ELSE l.call_status::text END`;
+  const cohortDate = [fromIndex && `o.ownership_start >= $${fromIndex}::timestamptz`, toIndex && `o.ownership_start < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
+  const currentDate = [fromIndex && `l.assigned_at >= $${fromIndex}::timestamptz`, toIndex && `l.assigned_at < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
+  const userFilters = [];
+  if (input.rm || input.rm_id) { params.push(input.rm || input.rm_id); userFilters.push(`u.report_to_id = $${params.length}::uuid`); }
+  if (input.team) { params.push(input.team); userFilters.push(`u.team_name = $${params.length}`); }
+  const userScope = userFilters.length ? `AND ${userFilters.join(' AND ')}` : '';
   const requestedIssue = String(input.call_issue_type || input.issue_type || '').trim().toLowerCase();
-  const metricClause = {
-    call_issue: `${effective} = ANY(${RETRYABLE_SQL})`,
-    unresolved_call_issue: `${effective} = ANY(${RETRYABLE_SQL})`,
-    terminal_quality: `${effective} = ANY(${TERMINAL_SQL})`,
-    overdue: `EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'scheduled' AND ca.scheduled_at <= NOW())`,
-    pending: `(${effective} = ANY(${RETRYABLE_SQL}) OR l.next_followup_at <= NOW() OR EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'scheduled' AND ca.scheduled_at <= NOW()))`,
-  }[metric] || 'TRUE';
   const normalizedIssue = requestedIssue === 'invalid_number' ? 'in' : requestedIssue;
-  const issueClause = !normalizedIssue ? 'TRUE' : ([...RETRYABLE_CONTACT_ISSUES, ...TERMINAL_LEAD_QUALITY_ISSUES].includes(normalizedIssue) ? `${effective} = '${normalizedIssue}'` : 'FALSE');
-  const where = [`l.assigned_to_user_id = $1::uuid`, scope, ...dates, metricClause, issueClause].join(' AND ');
-  const { rows: [count] } = await query(`SELECT COUNT(*)::int AS total FROM leads l WHERE ${where}`, params);
+  const validIssue = [...RETRYABLE_CONTACT_ISSUES, ...TERMINAL_LEAD_QUALITY_ISSUES].includes(normalizedIssue);
+  const attributedMetric = {
+    worked: `a.worked`,
+    unworked: `NOT a.worked AND a.ownership_start <= NOW() - make_interval(hours => ${UNWORKED_SLA_HOURS.needs_action})`,
+    personal_meeting_leads: `a.personal_meeting`,
+  }[metric];
+  const currentMetric = {
+    contacted: `cc.contact_state IN ('contacted', 'converted')`,
+    converted: `cc.contact_state = 'converted'`,
+    call_issue: `cc.contact_state = 'retryable_contact_issue'`,
+    unresolved_call_issue: `cc.contact_state = 'retryable_contact_issue'`,
+    terminal_quality: `cc.contact_state = 'terminal_lead_quality_issue'`,
+    overdue: `cc.due_attempt`,
+    pending: `((cc.contact_state = 'unworked' AND cc.assigned_at <= NOW() - make_interval(hours => ${UNWORKED_SLA_HOURS.needs_action})) OR cc.contact_state = 'retryable_contact_issue' OR cc.due_attempt OR cc.next_followup_at <= NOW() OR cc.due_meeting)`,
+  }[metric];
+  const currentMetricClause = normalizedIssue ? `cc.contact_state IN ('retryable_contact_issue', 'terminal_lead_quality_issue')` : currentMetric;
+  const issueStatusClause = requestedIssue === 'invalid_number' ? `cc.current_status IN ('in', 'invalid_number')` : `cc.current_status = '${normalizedIssue}'`;
+  const issueClause = normalizedIssue ? (validIssue ? `${issueStatusClause} AND cc.contact_state IN ('retryable_contact_issue', 'terminal_lead_quality_issue')` : 'FALSE') : 'TRUE';
+  const candidateSql = attributedMetric
+    ? `SELECT a.lead_id, a.ownership_start AS assigned_at, CASE WHEN '${metric}' = 'worked' THEN 'Qualifying counselor action' WHEN '${metric}' = 'unworked' THEN 'No qualifying action' ELSE 'Personal Meeting recorded' END AS metric_reason, CASE WHEN '${metric}' = 'unworked' THEN CASE WHEN a.ownership_start <= NOW() - make_interval(hours => ${UNWORKED_SLA_HOURS.critical}) THEN 'Critical' WHEN a.ownership_start <= NOW() - make_interval(hours => ${UNWORKED_SLA_HOURS.delayed}) THEN 'Delayed' ELSE 'Needs Action' END END AS aging_state FROM attributed a JOIN users u ON u.id = a.counselor_id WHERE a.counselor_id = $1::uuid AND ${attributedMetric} ${userScope}`
+    : `SELECT cc.lead_id, cc.assigned_at, CASE WHEN '${metric}' = 'contacted' THEN 'Successfully contacted' WHEN '${metric}' = 'converted' THEN 'Converted' WHEN '${metric}' = 'overdue' THEN 'Call attempt overdue' WHEN '${metric}' = 'pending' THEN 'Action required' ELSE COALESCE(cc.current_status, 'Call issue') END AS metric_reason, NULL::text AS aging_state FROM current_classified cc JOIN users u ON u.id = cc.counselor_id WHERE cc.counselor_id = $1::uuid AND ${currentMetricClause || 'FALSE'} AND ${issueClause} ${userScope}`;
+  const cte = `WITH ownership AS (
+      SELECT a.lead_id, COALESCE(a.assigned_to_user_id, a.user_id) AS counselor_id, a.assigned_at AS ownership_start,
+        COALESCE(a.unassigned_at, LEAD(a.assigned_at) OVER (PARTITION BY a.lead_id ORDER BY a.assigned_at, a.id), 'infinity'::timestamptz) AS ownership_end
+      FROM lead_assignments a WHERE COALESCE(a.assigned_to_user_id, a.user_id) IS NOT NULL
+    ), cohort AS (
+      SELECT DISTINCT ON (o.counselor_id, o.lead_id) o.lead_id, o.counselor_id, o.ownership_start, o.ownership_end
+      FROM ownership o JOIN leads l ON l.id = o.lead_id WHERE ${cohortDate} AND ${scope}
+      ORDER BY o.counselor_id, o.lead_id, o.ownership_start DESC
+    ), attributed AS (
+      SELECT c.*, EXISTS (SELECT 1 FROM lead_remarks r WHERE r.lead_id = c.lead_id AND r.user_id = c.counselor_id AND r.created_at >= c.ownership_start AND r.created_at < c.ownership_end) OR EXISTS (SELECT 1 FROM lead_workflow_history h WHERE h.lead_id = c.lead_id AND h.user_id = c.counselor_id AND h.created_at >= c.ownership_start AND h.created_at < c.ownership_end) OR EXISTS (SELECT 1 FROM lead_call_logs cl WHERE cl.lead_id = c.lead_id AND cl.user_id = c.counselor_id AND cl.created_at >= c.ownership_start AND cl.created_at < c.ownership_end) OR EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = c.lead_id AND COALESCE(ca.completed_by_user_id, ca.responsible_user_id) = c.counselor_id AND COALESCE(ca.attempted_at, ca.created_at) >= c.ownership_start AND COALESCE(ca.attempted_at, ca.created_at) < c.ownership_end) OR EXISTS (SELECT 1 FROM customer_notes pm WHERE pm.lead_id = c.lead_id AND pm.note_kind = 'personal_meeting' AND pm.deleted_at IS NULL AND pm.counselor_user_id = c.counselor_id AND pm.created_at >= c.ownership_start AND pm.created_at < c.ownership_end) AS worked,
+        EXISTS (SELECT 1 FROM customer_notes pm WHERE pm.lead_id = c.lead_id AND pm.note_kind = 'personal_meeting' AND pm.deleted_at IS NULL AND pm.counselor_user_id = c.counselor_id AND pm.created_at >= c.ownership_start AND pm.created_at < c.ownership_end) AS personal_meeting
+      FROM cohort c
+    ), current_portfolio AS (
+      SELECT l.id AS lead_id, l.assigned_to_user_id AS counselor_id, l.call_status::text AS current_status, l.assigned_at, l.next_followup_at,
+        EXISTS (SELECT 1 FROM lead_workflow wf WHERE wf.lead_id = l.id AND COALESCE(wf.remark_status::text, '') = ANY(${CONTACTED_SQL})) OR EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'completed' AND ca.outcome = 'call_received') AS has_contact,
+        EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'scheduled' AND ca.scheduled_at <= NOW()) AS due_attempt,
+        EXISTS (SELECT 1 FROM customer_notes pm WHERE pm.lead_id = l.id AND pm.note_kind = 'personal_meeting' AND pm.deleted_at IS NULL AND pm.next_meeting_at <= NOW()) AS due_meeting
+      FROM leads l WHERE ${scope} AND ${currentDate} AND l.assigned_to_user_id IS NOT NULL
+    ), current_classified AS (
+      SELECT cp.*, CASE WHEN cp.current_status = 'converted' THEN 'converted' WHEN cp.has_contact THEN 'contacted' WHEN cp.current_status = ANY(${TERMINAL_SQL}) THEN 'terminal_lead_quality_issue' WHEN cp.current_status = ANY(${RETRYABLE_SQL}) THEN 'retryable_contact_issue' WHEN cp.current_status = 'not_called' THEN 'unworked' ELSE 'other' END AS contact_state FROM current_portfolio cp
+    ), candidates AS (${candidateSql})`;
+  const { rows: [count] } = await query(`${cte} SELECT COUNT(DISTINCT lead_id)::int AS total FROM candidates`, params);
   params.push(pageSize, (page - 1) * pageSize);
-  const { rows } = await query(`SELECT l.id, l.full_name, l.phone, l.source, l.campaign_name, l.campaign_label, l.assigned_at, l.call_status::text AS call_status, l.next_followup_at, ${effective} AS effective_status,
+  const { rows } = await query(`${cte} SELECT DISTINCT ON (c.lead_id) l.id, l.full_name, l.phone, l.source, l.campaign_name, l.campaign_label, c.assigned_at, l.call_status::text AS call_status, l.next_followup_at, c.metric_reason, c.aging_state,
+    CASE WHEN l.call_status::text = 'converted' THEN 'converted' WHEN EXISTS (SELECT 1 FROM lead_workflow wf WHERE wf.lead_id = l.id AND COALESCE(wf.remark_status::text, '') = ANY(${CONTACTED_SQL})) OR EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'completed' AND ca.outcome = 'call_received') THEN 'communication_completed' ELSE l.call_status::text END AS effective_status,
     (SELECT MAX(created_at) FROM lead_remarks lr WHERE lr.lead_id = l.id) AS last_action_at,
     (SELECT MIN(scheduled_at) FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'scheduled') AS next_attempt_at
-    FROM leads l WHERE ${where} ORDER BY l.assigned_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
+    FROM candidates c JOIN leads l ON l.id = c.lead_id ORDER BY c.lead_id, c.assigned_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
   return { rows, total: Number(count.total), page, page_size: pageSize };
 }
 

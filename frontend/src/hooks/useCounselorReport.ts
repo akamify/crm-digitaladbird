@@ -27,6 +27,7 @@ export interface CounselorReportLead {
   id: string; full_name: string; phone?: string | null; source?: string | null; campaign_name?: string | null;
   campaign_label?: string | null; assigned_at?: string | null; call_status?: string | null;
   effective_status?: string | null; last_action_at?: string | null; next_followup_at?: string | null; next_attempt_at?: string | null;
+  metric_reason?: string | null; aging_state?: string | null;
 }
 export interface CounselorReportDrilldown { rows: CounselorReportLead[]; total: number; page: number; page_size: number; }
 
