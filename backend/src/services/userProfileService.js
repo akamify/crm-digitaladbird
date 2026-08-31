@@ -2,6 +2,8 @@ const { query, withTransaction } = require('../config/database');
 const { AppError } = require('../utils/errors');
 const { workedLeadCondition, notWorkedLeadCondition } = require('../utils/leadWorkMetrics');
 const { remarkHasFollowupActivityCondition } = require('../utils/followupMetrics');
+const { RETRYABLE_CONTACT_ISSUES, CALL_ISSUE_LABELS } = require('../constants/counselorReportOptions');
+const { GRACE_MINUTES: ATTEMPT_GRACE_MINUTES } = require('./leadCallAttemptService');
 const { assertCpIdNotEditable, normalizeRole } = require('./userIdentityService');
 const { updateSingleLeadAvailability } = require('./userAvailabilityService');
 
@@ -182,6 +184,42 @@ function tabsFor(type) {
   if (type === 'rm') return ['overview', 'team_members', 'team_leads', 'requests', 'team_performance', 'activity', 'settings'];
   if (type === 'deleted') return ['overview', 'activity', 'email_history'];
   return ['leads', 'pending_leads', 'notes', 'requests', 'assignment_history', 'notifications', 'activity', 'settings'];
+}
+
+const BUSINESS_TIMEZONE = process.env.CRM_BUSINESS_TIMEZONE || 'Asia/Kolkata';
+
+function businessDateToday() {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: BUSINESS_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function selectedDateOrToday(value) {
+  const candidate = String(value || '').trim();
+  if (!candidate) return businessDateToday();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(candidate)) throw new AppError(400, 'INVALID_DATE', 'selected_date must be YYYY-MM-DD');
+  const parsed = new Date(`${candidate}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== candidate) {
+    throw new AppError(400, 'INVALID_DATE', 'selected_date must be YYYY-MM-DD');
+  }
+  const today = businessDateToday();
+  if (candidate > today) throw new AppError(400, 'INVALID_DATE', 'selected_date cannot be in the future');
+  return candidate;
+}
+
+function localDateSql(column) {
+  return `(${column} AT TIME ZONE '${BUSINESS_TIMEZONE}')::date`;
+}
+
+function attemptStateSql(alias = 'ca') {
+  return `CASE
+    WHEN ${alias}.attempt_number = 1 AND ${alias}.status = 'completed' THEN 'initial_issue'
+    WHEN ${alias}.status = 'completed' THEN 'completed'
+    WHEN ${alias}.status = 'cancelled' THEN 'not_required'
+    WHEN ${alias}.status = 'missed' OR (${alias}.status = 'scheduled' AND ${alias}.scheduled_at <= NOW() - make_interval(mins => ${ATTEMPT_GRACE_MINUTES})) THEN 'missed'
+    WHEN ${alias}.status = 'scheduled' AND ${alias}.scheduled_at > NOW() THEN 'upcoming'
+    ELSE 'not_required'
+  END`;
 }
 
 function actionsFor(actor, user, type) {
@@ -399,15 +437,41 @@ async function getUserLeads(actor, userId, opts = {}) {
   const page = Math.max(1, Number.parseInt(opts.page || '1', 10));
   const pageSize = Math.min(100, Math.max(1, Number.parseInt(opts.page_size || '25', 10)));
   const offset = (page - 1) * pageSize;
-  const where = [
-    profileType === 'rm'
-      ? 'l.assigned_to_user_id IN (SELECT id FROM users WHERE report_to_id = $1)'
-      : 'l.assigned_to_user_id = $1',
-    'l.deleted_at IS NULL',
-  ];
+  const where = ['l.deleted_at IS NULL'];
   const params = [userId];
 
-  if (opts.call_status) { params.push(opts.call_status); where.push(`l.call_status = $${params.length}`); }
+  // Daily monitoring is intentionally additive. The existing Leads/Pending Leads
+  // callers keep their current-assignment semantics unless they opt into it.
+  const monitoringDate = opts.monitoring === 'true' ? selectedDateOrToday(opts.selected_date) : null;
+  if (monitoringDate && profileType === 'member') {
+    params.push(monitoringDate);
+    const dayParam = `$${params.length}::date`;
+    const assignedOnDate = `EXISTS (SELECT 1 FROM lead_assignments la WHERE la.lead_id = l.id AND la.user_id = $1 AND ${localDateSql('la.assigned_at')} = ${dayParam})`;
+    if (opts.monitoring_scope === 'assigned') {
+      // This drill-down deliberately includes leads reassigned later so it exactly matches Daily Assigned.
+      where.push(assignedOnDate);
+    } else {
+      where.push('l.assigned_to_user_id = $1');
+      where.push(`(
+        ${assignedOnDate}
+        OR EXISTS (SELECT 1 FROM lead_remarks r WHERE r.lead_id = l.id AND r.user_id = $1 AND ${localDateSql('r.created_at')} = ${dayParam})
+        OR EXISTS (SELECT 1 FROM lead_workflow_history h WHERE h.lead_id = l.id AND h.user_id = $1 AND ${localDateSql('h.created_at')} = ${dayParam})
+        OR EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND COALESCE(ca.completed_by_user_id, ca.responsible_user_id) = $1 AND (${localDateSql('ca.scheduled_at')} = ${dayParam} OR ${localDateSql('ca.attempted_at')} = ${dayParam}))
+        OR EXISTS (SELECT 1 FROM customer_notes pm WHERE pm.lead_id = l.id AND pm.note_kind = 'personal_meeting' AND pm.deleted_at IS NULL AND pm.counselor_user_id = $1 AND ${localDateSql('pm.created_at')} = ${dayParam})
+      )`);
+    }
+  } else {
+    where.push(profileType === 'rm'
+      ? 'l.assigned_to_user_id IN (SELECT id FROM users WHERE report_to_id = $1)'
+      : 'l.assigned_to_user_id = $1');
+  }
+
+  const requestedIssue = String(opts.call_issue || '').trim().toLowerCase();
+  if (requestedIssue === 'call_issues') {
+    where.push(`l.call_status::text = ANY(ARRAY[${RETRYABLE_CONTACT_ISSUES.map(status => `'${status}'`).join(', ')}]::text[])`);
+  } else if (requestedIssue && RETRYABLE_CONTACT_ISSUES.includes(requestedIssue)) {
+    where.push(`l.call_status::text = '${requestedIssue}'`);
+  } else if (opts.call_status) { params.push(opts.call_status); where.push(`l.call_status = $${params.length}`); }
   if (opts.status) { params.push(opts.status); where.push(`l.stage = $${params.length}`); }
   if (opts.source) { params.push(opts.source); where.push(`l.source = $${params.length}`); }
   if (opts.pending === 'true') where.push(`${notWorkedLeadCondition('l')}`);
@@ -420,20 +484,113 @@ async function getUserLeads(actor, userId, opts = {}) {
 
   const whereSql = where.join(' AND ');
   const { rows: [{ total }] } = await query(`SELECT COUNT(*)::int AS total FROM leads l WHERE ${whereSql}`, params);
+
+  let callIssueFilters = null;
+  if (monitoringDate && profileType === 'member') {
+    const baseWhereSql = where.filter(clause => !clause.includes('l.call_status::text =')).join(' AND ');
+    const { rows: [{ all_count }] } = await query(`SELECT COUNT(DISTINCT l.id)::int AS all_count FROM leads l WHERE ${baseWhereSql}`, params);
+    const { rows: issueRows } = await query(`
+      SELECT l.call_status::text AS status, COUNT(DISTINCT l.id)::int AS count
+        FROM leads l
+       WHERE ${baseWhereSql}
+         AND l.call_status::text = ANY(ARRAY[${RETRYABLE_CONTACT_ISSUES.map(status => `'${status}'`).join(', ')}]::text[])
+       GROUP BY l.call_status
+    `, params);
+    const counts = new Map(issueRows.map(row => [row.status, Number(row.count || 0)]));
+    const allCount = Number(all_count || 0);
+    const issueCount = [...counts.values()].reduce((sum, count) => sum + count, 0);
+    callIssueFilters = [
+      { key: 'all', label: 'All', count: allCount },
+      { key: 'call_issues', label: 'Call Issues', count: issueCount },
+      ...RETRYABLE_CONTACT_ISSUES.map(key => ({ key, label: CALL_ISSUE_LABELS[key] || key, count: counts.get(key) || 0 })),
+    ];
+  }
+
   params.push(pageSize, offset);
   const { rows } = await query(`
     SELECT l.id, l.full_name, l.phone, l.email, l.source, l.category, l.category_source, l.meta_form_id,
            mf.form_name, l.campaign_name, l.campaign_label, l.assigned_at,
            l.call_status, l.stage, l.is_pending, l.next_followup_at,
            l.created_at,
+           COALESCE(next_attempt.next_scheduled_at, l.next_followup_at) AS next_action_at,
            GREATEST(l.updated_at, COALESCE((SELECT MAX(created_at) FROM lead_remarks r WHERE r.lead_id = l.id), l.updated_at)) AS last_activity_at
       FROM leads l
       LEFT JOIN meta_forms mf ON mf.form_id = l.meta_form_id
+      LEFT JOIN LATERAL (
+        SELECT MIN(ca.scheduled_at) AS next_scheduled_at
+          FROM lead_call_attempts ca
+          JOIN lead_call_attempt_sequences seq ON seq.id = ca.sequence_id AND seq.status = 'active'
+         WHERE ca.lead_id = l.id AND ca.status = 'scheduled'
+      ) next_attempt ON TRUE
      WHERE ${whereSql}
      ORDER BY l.${opts.sort === 'created_at' ? 'created_at' : 'assigned_at'} DESC NULLS LAST
      LIMIT $${params.length - 1} OFFSET $${params.length}
   `, params);
-  return { rows, total, page, pageSize };
+
+  if (monitoringDate && rows.length) {
+    const leadIds = rows.map(row => row.id);
+    const { rows: attempts } = await query(`
+      SELECT ca.lead_id, ca.attempt_number, ca.status, ca.outcome, ca.scheduled_at, ca.attempted_at,
+             ca.delay_minutes, ca.is_final_attempt, ca.completed_by_user_id, ca.responsible_user_id,
+             completed_by.full_name AS completed_by_name, responsible.full_name AS responsible_name,
+             ${attemptStateSql('ca')} AS attempt_state
+        FROM lead_call_attempts ca
+        JOIN lead_call_attempt_sequences seq ON seq.id = ca.sequence_id AND seq.status = 'active'
+        LEFT JOIN users completed_by ON completed_by.id = ca.completed_by_user_id
+        LEFT JOIN users responsible ON responsible.id = ca.responsible_user_id
+       WHERE ca.lead_id = ANY($1::uuid[])
+       ORDER BY ca.lead_id, ca.attempt_number
+    `, [leadIds]);
+    const byLead = new Map();
+    attempts.forEach(attempt => {
+      const current = byLead.get(attempt.lead_id) || [];
+      current.push(attempt);
+      byLead.set(attempt.lead_id, current);
+    });
+    rows.forEach(row => {
+      row.attempts = byLead.get(row.id) || [];
+      row.attempt_tracking = row.attempts.length ? 'tracked' : 'none';
+    });
+  }
+  return { rows, total, page, pageSize, call_issue_filters: callIssueFilters, selected_date: monitoringDate };
+}
+
+async function getDailyLeadMonitoringSummary(actor, userId, opts = {}) {
+  await assertProfileAccess(actor, userId);
+  const user = await getSanitizedUser(userId);
+  if (profileTypeFor(user) !== 'member') {
+    return { selected_date: selectedDateOrToday(opts.selected_date), assigned: 0, worked: 0, pending: 0, call_issues: 0, attempts_completed: 0, attempts_missed: 0, personal_meeting_leads: 0, converted: 0 };
+  }
+  const selectedDate = selectedDateOrToday(opts.selected_date);
+  const params = [userId, selectedDate];
+  const date = '$2::date';
+  const assignmentToday = `EXISTS (SELECT 1 FROM lead_assignments la WHERE la.lead_id = l.id AND la.user_id = $1 AND ${localDateSql('la.assigned_at')} = ${date})`;
+  const actionToday = `(
+    EXISTS (SELECT 1 FROM lead_remarks r WHERE r.lead_id = l.id AND r.user_id = $1 AND ${localDateSql('r.created_at')} = ${date})
+    OR EXISTS (SELECT 1 FROM lead_workflow_history h WHERE h.lead_id = l.id AND h.user_id = $1 AND ${localDateSql('h.created_at')} = ${date})
+    OR EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND COALESCE(ca.completed_by_user_id, ca.responsible_user_id) = $1 AND ca.status = 'completed' AND ${localDateSql('COALESCE(ca.attempted_at, ca.created_at)')} = ${date})
+    OR EXISTS (SELECT 1 FROM customer_notes pm WHERE pm.lead_id = l.id AND pm.note_kind = 'personal_meeting' AND pm.deleted_at IS NULL AND pm.counselor_user_id = $1 AND ${localDateSql('pm.created_at')} = ${date})
+  )`;
+  const dailyScope = `(${assignmentToday} OR ${actionToday} OR EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.responsible_user_id = $1 AND ${localDateSql('ca.scheduled_at')} = ${date}))`;
+  const retryableSql = `ARRAY[${RETRYABLE_CONTACT_ISSUES.map(status => `'${status}'`).join(', ')}]::text[]`;
+  const { rows: [summary] } = await query(`
+    SELECT
+      COUNT(DISTINCT l.id) FILTER (WHERE ${assignmentToday})::int AS assigned,
+      COUNT(DISTINCT l.id) FILTER (WHERE ${actionToday})::int AS worked,
+      COUNT(DISTINCT l.id) FILTER (WHERE l.assigned_to_user_id = $1 AND ${dailyScope} AND (
+        (${assignmentToday} AND NOT ${actionToday})
+        OR EXISTS (SELECT 1 FROM lead_remarks r WHERE r.lead_id = l.id AND r.user_id = $1 AND r.next_followup_at IS NOT NULL AND ${localDateSql('r.next_followup_at')} = ${date})
+        OR EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.responsible_user_id = $1 AND ca.attempt_number > 1 AND ca.status IN ('scheduled', 'missed') AND ${localDateSql('ca.scheduled_at')} = ${date})
+      ))::int AS pending,
+      COUNT(DISTINCT l.id) FILTER (WHERE l.assigned_to_user_id = $1 AND ${dailyScope} AND l.call_status::text = ANY(${retryableSql}))::int AS call_issues,
+      (SELECT COUNT(*)::int FROM lead_call_attempts ca WHERE ca.completed_by_user_id = $1 AND ca.attempt_number > 1 AND ca.status = 'completed' AND ${localDateSql('COALESCE(ca.attempted_at, ca.created_at)')} = ${date}) AS attempts_completed,
+      (SELECT COUNT(*)::int FROM lead_call_attempts ca WHERE ca.responsible_user_id = $1 AND ca.attempt_number > 1 AND (${attemptStateSql('ca')} = 'missed') AND ${localDateSql('ca.scheduled_at')} = ${date}) AS attempts_missed,
+      COUNT(DISTINCT l.id) FILTER (WHERE EXISTS (SELECT 1 FROM customer_notes pm WHERE pm.lead_id = l.id AND pm.note_kind = 'personal_meeting' AND pm.deleted_at IS NULL AND pm.counselor_user_id = $1 AND ${localDateSql('pm.created_at')} = ${date}))::int AS personal_meeting_leads,
+      COUNT(DISTINCT l.id) FILTER (WHERE EXISTS (SELECT 1 FROM lead_remarks r WHERE r.lead_id = l.id AND r.user_id = $1 AND r.call_status::text = 'converted' AND ${localDateSql('r.created_at')} = ${date}) OR EXISTS (SELECT 1 FROM lead_workflow_history h WHERE h.lead_id = l.id AND h.user_id = $1 AND h.new_value::text = 'converted' AND ${localDateSql('h.created_at')} = ${date}))::int AS converted
+    FROM leads l
+    WHERE l.deleted_at IS NULL
+  `, params);
+  return { selected_date: selectedDate, ...summary };
 }
 
 async function takeBackPendingLeads(actor, userId, input = {}) {
@@ -838,6 +995,7 @@ module.exports = {
   getProfile,
   getPerformance,
   getUserLeads,
+  getDailyLeadMonitoringSummary,
   takeBackPendingLeads,
   getRequests,
   getAssignmentHistory,

@@ -154,6 +154,38 @@ export interface ProfileLead {
   next_followup_at?: string | null;
   created_at?: string | null;
   last_activity_at?: string | null;
+  next_action_at?: string | null;
+  attempt_tracking?: 'tracked' | 'none';
+  attempts?: Array<{
+    attempt_number: number;
+    status: 'scheduled' | 'completed' | 'missed' | 'cancelled';
+    outcome?: string | null;
+    scheduled_at?: string | null;
+    attempted_at?: string | null;
+    delay_minutes?: number | null;
+    is_final_attempt?: boolean;
+    attempt_state?: 'initial_issue' | 'completed' | 'missed' | 'upcoming' | 'not_required';
+    completed_by_name?: string | null;
+    responsible_name?: string | null;
+  }>;
+}
+
+export interface ProfileLeadIssueFilter {
+  key: string;
+  label: string;
+  count: number;
+}
+
+export interface DailyLeadMonitoringSummary {
+  selected_date: string;
+  assigned: number;
+  worked: number;
+  pending: number;
+  call_issues: number;
+  attempts_completed: number;
+  attempts_missed: number;
+  personal_meeting_leads: number;
+  converted: number;
 }
 
 export interface ProfileRequest {
@@ -228,8 +260,17 @@ export function useAdminUserPerformance(userId: string, range: string, enabled =
 export function useAdminUserLeads(userId: string, params: Record<string, unknown>) {
   return useQuery({
     queryKey: ['admin', 'user-profile', userId, 'leads', params],
-    queryFn: () => apiGet<{ rows: ProfileLead[]; total: number; page: number; pageSize: number }>(`/admin/users/${userId}/leads`, params),
+    queryFn: () => apiGet<{ rows: ProfileLead[]; total: number; page: number; pageSize: number; selected_date?: string | null; call_issue_filters?: ProfileLeadIssueFilter[] | null }>(`/admin/users/${userId}/leads`, params),
     enabled: Boolean(userId),
+  });
+}
+
+export function useAdminUserLeadDailySummary(userId: string, selectedDate: string, enabled = true) {
+  return useQuery({
+    queryKey: ['admin', 'user-profile', userId, 'leads', 'daily-summary', selectedDate],
+    queryFn: () => apiGet<DailyLeadMonitoringSummary>(`/admin/users/${userId}/leads/daily-summary`, { selected_date: selectedDate }),
+    enabled: Boolean(userId) && enabled,
+    staleTime: 15_000,
   });
 }
 

@@ -36,7 +36,8 @@ function buildQuery(input = {}) {
   const toIndex = to ? params.length : null;
   const leadFilters = addLeadFilters(input, params, 'l');
   // The cohort reads from the ownership CTE, not lead_assignments directly.
-  const cohortDate = [fromIndex && `o.ownership_start >= $${fromIndex}::timestamptz`, toIndex && `o.ownership_start < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
+  const ownershipDate = alias => [fromIndex && `${alias}.ownership_start >= $${fromIndex}::timestamptz`, toIndex && `${alias}.ownership_start < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
+  const cohortDate = ownershipDate('o');
   const currentDate = [fromIndex && `l.assigned_at >= $${fromIndex}::timestamptz`, toIndex && `l.assigned_at < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
   // Compliance is attributed by the time an attempt became due, not by its later completion time.
   const attemptDate = [fromIndex && `ca.scheduled_at >= $${fromIndex}::timestamptz`, toIndex && `ca.scheduled_at < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
@@ -74,6 +75,18 @@ function buildQuery(input = {}) {
           EXISTS (SELECT 1 FROM lead_remarks r WHERE r.lead_id = c.lead_id AND r.user_id = c.counselor_id AND r.created_at >= c.ownership_start AND r.created_at < c.ownership_end AND r.call_status::text = ANY(${TERMINAL_SQL})) AS terminal_quality_attributed,
           EXISTS (SELECT 1 FROM customer_notes pm WHERE pm.lead_id = c.lead_id AND pm.note_kind = 'personal_meeting' AND pm.deleted_at IS NULL AND pm.counselor_user_id = c.counselor_id AND pm.created_at >= c.ownership_start AND pm.created_at < c.ownership_end) AS personal_meeting
         FROM cohort c
+      ), reassigned_out_metrics AS (
+        SELECT ro.counselor_id, COUNT(DISTINCT ro.lead_id)::int AS reassigned_out
+          FROM ownership ro
+          JOIN leads l ON l.id = ro.lead_id
+         WHERE ${ownershipDate('ro')} AND ${leadFilters}
+           AND EXISTS (
+             SELECT 1 FROM ownership next_owner
+              WHERE next_owner.lead_id = ro.lead_id
+                AND next_owner.counselor_id <> ro.counselor_id
+                AND next_owner.ownership_start >= ro.ownership_end
+           )
+         GROUP BY ro.counselor_id
       ), current_portfolio AS (
         SELECT l.id AS lead_id, l.assigned_to_user_id AS counselor_id, l.call_status::text AS current_status,
                l.assigned_at, l.next_followup_at,
@@ -118,7 +131,7 @@ function buildQuery(input = {}) {
         JOIN lead_call_attempts ca ON ca.lead_id = o.lead_id
           AND ca.scheduled_at >= o.ownership_start AND ca.scheduled_at < o.ownership_end
         JOIN leads l ON l.id = ca.lead_id
-        WHERE ${attemptDate} AND ${leadFilters} AND ca.status IN ('scheduled', 'completed', 'missed')
+        WHERE ${attemptDate} AND ${leadFilters} AND ca.attempt_number > 1 AND ca.status IN ('scheduled', 'completed', 'missed')
         GROUP BY o.counselor_id
       ), portfolio_metrics AS (
         SELECT counselor_id,
@@ -137,6 +150,7 @@ function buildQuery(input = {}) {
       )
       SELECT u.id, u.full_name, u.team_name, u.report_to_id, rm.full_name AS rm_name,
         COALESCE(em.total_received, 0) AS total_received, COALESCE(pm.current_assigned, 0) AS current_assigned,
+        COALESCE(rom.reassigned_out, 0) AS reassigned_out,
         COALESCE(em.worked, 0) AS worked, COALESCE(em.aged_unworked, 0) AS unworked,
         COALESCE(em.attributed_contacted, 0) AS attributed_contacted, COALESCE(em.contactable_received, 0) AS contactable_received,
         COALESCE(em.execution_eligible, 0) AS execution_eligible, COALESCE(em.progressed, 0) AS progressed,
@@ -153,6 +167,7 @@ function buildQuery(input = {}) {
         COALESCE(em.personal_meetings, 0) AS personal_meetings
       FROM users u LEFT JOIN users rm ON rm.id = u.report_to_id
       LEFT JOIN execution_metrics em ON em.counselor_id = u.id
+      LEFT JOIN reassigned_out_metrics rom ON rom.counselor_id = u.id
       LEFT JOIN portfolio_metrics pm ON pm.counselor_id = u.id
       LEFT JOIN attempt_metrics am ON am.counselor_id = u.id
       LEFT JOIN attempt_compliance_metrics acm ON acm.counselor_id = u.id
@@ -225,9 +240,9 @@ async function getIssueBreakdowns(input = {}) {
 async function summary(input) {
   const rows = await getCounselorRows(input);
   const totals = rows.reduce((result, row) => {
-    for (const key of ['total_received', 'current_assigned', 'worked', 'unworked', 'actionable_pending', 'current_contacted', 'unresolved_call_issues', 'terminal_lead_quality_issues', 'converted', 'personal_meetings', 'overdue_attempts']) result[key] += Number(row[key] || 0);
+    for (const key of ['total_received', 'current_assigned', 'reassigned_out', 'worked', 'unworked', 'actionable_pending', 'current_contacted', 'unresolved_call_issues', 'terminal_lead_quality_issues', 'converted', 'personal_meetings', 'overdue_attempts']) result[key] += Number(row[key] || 0);
     return result;
-  }, { total_received: 0, current_assigned: 0, worked: 0, unworked: 0, actionable_pending: 0, current_contacted: 0, unresolved_call_issues: 0, terminal_lead_quality_issues: 0, converted: 0, personal_meetings: 0, overdue_attempts: 0 });
+  }, { total_received: 0, current_assigned: 0, reassigned_out: 0, worked: 0, unworked: 0, actionable_pending: 0, current_contacted: 0, unresolved_call_issues: 0, terminal_lead_quality_issues: 0, converted: 0, personal_meetings: 0, overdue_attempts: 0 });
   return { total_counselors: rows.length, ...totals };
 }
 
@@ -267,6 +282,7 @@ async function drilldown(input = {}) {
   const scope = addLeadFilters(input, params, 'l');
   const metric = String(input.metric || '').trim();
   const cohortDate = [fromIndex && `o.ownership_start >= $${fromIndex}::timestamptz`, toIndex && `o.ownership_start < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
+  const reassignedDate = [fromIndex && `ro.ownership_start >= $${fromIndex}::timestamptz`, toIndex && `ro.ownership_start < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
   const currentDate = [fromIndex && `l.assigned_at >= $${fromIndex}::timestamptz`, toIndex && `l.assigned_at < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
   const userFilters = [];
   if (input.rm || input.rm_id) { params.push(input.rm || input.rm_id); userFilters.push(`u.report_to_id = $${params.length}::uuid`); }
@@ -292,9 +308,11 @@ async function drilldown(input = {}) {
   const currentMetricClause = normalizedIssue ? `cc.contact_state IN ('retryable_contact_issue', 'terminal_lead_quality_issue')` : currentMetric;
   const issueStatusClause = requestedIssue === 'invalid_number' ? `cc.current_status IN ('in', 'invalid_number')` : `cc.current_status = '${normalizedIssue}'`;
   const issueClause = normalizedIssue ? (validIssue ? `${issueStatusClause} AND cc.contact_state IN ('retryable_contact_issue', 'terminal_lead_quality_issue')` : 'FALSE') : 'TRUE';
-  const candidateSql = attributedMetric
-    ? `SELECT a.lead_id, a.ownership_start AS assigned_at, CASE WHEN '${metric}' = 'worked' THEN 'Qualifying counselor action' WHEN '${metric}' = 'unworked' THEN 'No qualifying action' ELSE 'Personal Meeting recorded' END AS metric_reason, CASE WHEN '${metric}' = 'unworked' THEN CASE WHEN a.ownership_start <= NOW() - make_interval(hours => ${UNWORKED_SLA_HOURS.critical}) THEN 'Critical' WHEN a.ownership_start <= NOW() - make_interval(hours => ${UNWORKED_SLA_HOURS.delayed}) THEN 'Delayed' ELSE 'Needs Action' END END AS aging_state FROM attributed a JOIN users u ON u.id = a.counselor_id WHERE a.counselor_id = $1::uuid AND ${attributedMetric} ${userScope}`
-    : `SELECT cc.lead_id, cc.assigned_at, CASE WHEN '${metric}' = 'contacted' THEN 'Successfully contacted' WHEN '${metric}' = 'converted' THEN 'Converted' WHEN '${metric}' = 'overdue' THEN 'Call attempt overdue' WHEN '${metric}' = 'pending' THEN 'Action required' ELSE COALESCE(cc.current_status, 'Call issue') END AS metric_reason, NULL::text AS aging_state FROM current_classified cc JOIN users u ON u.id = cc.counselor_id WHERE cc.counselor_id = $1::uuid AND ${currentMetricClause || 'FALSE'} AND ${issueClause} ${userScope}`;
+  const candidateSql = metric === 'reassigned_out'
+    ? `SELECT ro.lead_id, ro.assigned_at, 'Reassigned to another counselor' AS metric_reason, NULL::text AS aging_state, ro.reassigned_at, ro.reassigned_to_user_id FROM reassigned_out ro JOIN users u ON u.id = $1::uuid WHERE TRUE ${userScope}`
+    : attributedMetric
+      ? `SELECT a.lead_id, a.ownership_start AS assigned_at, CASE WHEN '${metric}' = 'worked' THEN 'Qualifying counselor action' WHEN '${metric}' = 'unworked' THEN 'No qualifying action' ELSE 'Personal Meeting recorded' END AS metric_reason, CASE WHEN '${metric}' = 'unworked' THEN CASE WHEN a.ownership_start <= NOW() - make_interval(hours => ${UNWORKED_SLA_HOURS.critical}) THEN 'Critical' WHEN a.ownership_start <= NOW() - make_interval(hours => ${UNWORKED_SLA_HOURS.delayed}) THEN 'Delayed' ELSE 'Needs Action' END END AS aging_state, NULL::timestamptz AS reassigned_at, NULL::uuid AS reassigned_to_user_id FROM attributed a JOIN users u ON u.id = a.counselor_id WHERE a.counselor_id = $1::uuid AND ${attributedMetric} ${userScope}`
+      : `SELECT cc.lead_id, cc.assigned_at, CASE WHEN '${metric}' = 'contacted' THEN 'Successfully contacted' WHEN '${metric}' = 'converted' THEN 'Converted' WHEN '${metric}' = 'overdue' THEN 'Call attempt overdue' WHEN '${metric}' = 'pending' THEN 'Action required' ELSE COALESCE(cc.current_status, 'Call issue') END AS metric_reason, NULL::text AS aging_state, NULL::timestamptz AS reassigned_at, NULL::uuid AS reassigned_to_user_id FROM current_classified cc JOIN users u ON u.id = cc.counselor_id WHERE cc.counselor_id = $1::uuid AND ${currentMetricClause || 'FALSE'} AND ${issueClause} ${userScope}`;
   const cte = `WITH ownership AS (
       SELECT a.lead_id, COALESCE(a.assigned_to_user_id, a.user_id) AS counselor_id, a.assigned_at AS ownership_start,
         COALESCE(a.unassigned_at, LEAD(a.assigned_at) OVER (PARTITION BY a.lead_id ORDER BY a.assigned_at, a.id), 'infinity'::timestamptz) AS ownership_end
@@ -315,14 +333,32 @@ async function drilldown(input = {}) {
       FROM leads l WHERE ${scope} AND ${currentDate} AND l.assigned_to_user_id IS NOT NULL
     ), current_classified AS (
       SELECT cp.*, CASE WHEN cp.current_status = 'converted' THEN 'converted' WHEN cp.has_contact THEN 'contacted' WHEN cp.current_status = ANY(${TERMINAL_SQL}) THEN 'terminal_lead_quality_issue' WHEN cp.current_status = ANY(${RETRYABLE_SQL}) THEN 'retryable_contact_issue' WHEN cp.current_status = 'not_called' THEN 'unworked' ELSE 'other' END AS contact_state FROM current_portfolio cp
+    ), reassigned_out AS (
+      SELECT DISTINCT ON (ro.lead_id)
+        ro.lead_id, ro.ownership_start AS assigned_at,
+        next_owner.ownership_start AS reassigned_at,
+        next_owner.counselor_id AS reassigned_to_user_id
+      FROM ownership ro
+      JOIN leads l ON l.id = ro.lead_id
+      JOIN LATERAL (
+        SELECT next_assignment.ownership_start, next_assignment.counselor_id
+        FROM ownership next_assignment
+        WHERE next_assignment.lead_id = ro.lead_id
+          AND next_assignment.counselor_id <> ro.counselor_id
+          AND next_assignment.ownership_start >= ro.ownership_end
+        ORDER BY next_assignment.ownership_start ASC
+        LIMIT 1
+      ) next_owner ON TRUE
+      WHERE ro.counselor_id = $1::uuid AND ${reassignedDate} AND ${scope}
+      ORDER BY ro.lead_id, ro.ownership_start DESC
     ), candidates AS (${candidateSql})`;
   const { rows: [count] } = await query(`${cte} SELECT COUNT(DISTINCT lead_id)::int AS total FROM candidates`, params);
   params.push(pageSize, (page - 1) * pageSize);
-  const { rows } = await query(`${cte} SELECT DISTINCT ON (c.lead_id) l.id, l.full_name, l.phone, l.source, l.campaign_name, l.campaign_label, c.assigned_at, l.call_status::text AS call_status, l.next_followup_at, c.metric_reason, c.aging_state,
+  const { rows } = await query(`${cte} SELECT DISTINCT ON (c.lead_id) l.id, l.full_name, l.phone, l.source, l.campaign_name, l.campaign_label, c.assigned_at, c.reassigned_at, reassigned_to.full_name AS reassigned_to_name, l.call_status::text AS call_status, l.next_followup_at, c.metric_reason, c.aging_state,
     CASE WHEN l.call_status::text = 'converted' THEN 'converted' WHEN EXISTS (SELECT 1 FROM lead_workflow wf WHERE wf.lead_id = l.id AND COALESCE(wf.remark_status::text, '') = ANY(${CONTACTED_SQL})) OR EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'completed' AND ca.outcome = 'call_received') THEN 'communication_completed' ELSE l.call_status::text END AS effective_status,
     (SELECT MAX(created_at) FROM lead_remarks lr WHERE lr.lead_id = l.id) AS last_action_at,
     (SELECT MIN(scheduled_at) FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'scheduled') AS next_attempt_at
-    FROM candidates c JOIN leads l ON l.id = c.lead_id ORDER BY c.lead_id, c.assigned_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
+    FROM candidates c JOIN leads l ON l.id = c.lead_id LEFT JOIN users reassigned_to ON reassigned_to.id = c.reassigned_to_user_id ORDER BY c.lead_id, c.assigned_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
   if (metric === 'call_issue' || metric === 'unresolved_call_issue') {
     const leadIds = rows.map(row => row.id);
     if (leadIds.length) {
@@ -351,7 +387,11 @@ async function drilldown(input = {}) {
         });
         attemptsByLead.set(attempt.lead_id, list);
       }
-      for (const row of rows) row.attempts = attemptsByLead.get(row.id) || [];
+      for (const row of rows) {
+        const attempts = attemptsByLead.get(row.id) || [];
+        row.attempts = attempts;
+        row.attempt_tracking = attempts.length > 0 ? 'tracked' : 'none';
+      }
     }
   }
   return { rows, total: Number(count.total), page, page_size: pageSize };
@@ -386,7 +426,7 @@ async function drilldownAttemptCompliance(input, counselorId) {
       l.full_name, l.phone, l.call_status::text AS call_status
     FROM ownership o JOIN lead_call_attempts ca ON ca.lead_id = o.lead_id AND ca.scheduled_at >= o.ownership_start AND ca.scheduled_at < o.ownership_end
     JOIN leads l ON l.id = ca.lead_id
-    WHERE o.counselor_id = $1::uuid AND ${scope} AND ${dates} AND ca.status IN ('scheduled', 'completed', 'missed')
+    WHERE o.counselor_id = $1::uuid AND ${scope} AND ${dates} AND ca.attempt_number > 1 AND ca.status IN ('scheduled', 'completed', 'missed')
   )`;
   const { rows: totalsRows } = await query(`${cte} SELECT
     COUNT(*) FILTER (WHERE (status = 'completed' AND scheduled_at <= NOW()) OR status = 'missed' OR (status = 'scheduled' AND scheduled_at <= NOW() - make_interval(mins => ${ATTEMPT_GRACE_MINUTES})))::int AS due_count,

@@ -1,9 +1,9 @@
 'use client';
-import { ReactNode, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
-  ArrowLeft, ArrowRightLeft, Briefcase, CalendarClock, CheckCircle2, Clock,
+  ArrowLeft, ArrowRightLeft, Briefcase, CalendarClock, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock,
   Edit3, History, KeyRound, Loader2, Mail, Phone, Search, Shield, ShieldBan, ShieldCheck, Trash2, UserRound, Users,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -29,6 +29,7 @@ import {
   UserProfileResponse,
   useAdminUserActivity,
   useAdminUserAssignmentHistory,
+  useAdminUserLeadDailySummary,
   useAdminUserLeads,
   useAdminUserPerformance,
   useAdminUserProfile,
@@ -96,6 +97,7 @@ function UserProfileInner({ userId }: { userId: string }) {
   const { user: currentUser } = useAuth();
   const [range, setRange] = useState('30d');
   const [tab, setTab] = useState<TabKey>('overview');
+  const [leadWorkspaceReset, setLeadWorkspaceReset] = useState(0);
   const profile = useAdminUserProfile(userId);
   const performance = useAdminUserPerformance(userId, range, profile.data?.profileType === 'member');
   const canEdit = currentUser?.role === 'super_admin' || currentUser?.role === 'admin';
@@ -283,7 +285,16 @@ function UserProfileInner({ userId }: { userId: string }) {
           <MetricCard label="Worked leads" value={counts.worked_leads ?? 0} icon={<CheckCircle2 className="h-5 w-5" />} tone="blue" />
           <MetricCard label="Converted" value={counts.converted_leads ?? 0} suffix={`${Number(perf?.summary?.conversion_rate || 0).toFixed(1)}%`} icon={<Shield className="h-5 w-5" />} tone="green" />
           <MetricCard label="Follow-ups due" value={counts.followups_due ?? 0} icon={<CalendarClock className="h-5 w-5" />} tone="red" />
-          <MetricCard label="Assigned today" value={counts.assigned_today ?? 0} icon={<Briefcase className="h-5 w-5" />} />
+          <MetricCard
+            label="Assigned today"
+            value={counts.assigned_today ?? 0}
+            icon={<Briefcase className="h-5 w-5" />}
+            onClick={() => {
+              setTab('leads');
+              setLeadWorkspaceReset(value => value + 1);
+              window.setTimeout(() => document.getElementById('profile-leads-workspace')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+            }}
+          />
           <MetricCard label="This week" value={counts.assigned_this_week ?? 0} icon={<Briefcase className="h-5 w-5" />} />
           <MetricCard label="Reassigned in/out" value={`${counts.reassigned_in_count ?? 0}/${counts.reassigned_out_count ?? 0}`} icon={<ArrowRightLeft className="h-5 w-5" />} />
         </section>
@@ -383,7 +394,7 @@ function UserProfileInner({ userId }: { userId: string }) {
         </div>
       </section>}
 
-      <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <section id="profile-leads-workspace" className="rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-wrap gap-2 border-b border-slate-100 px-4 pt-4">
           {availableTabs.map(key => (
             <button
@@ -407,7 +418,7 @@ function UserProfileInner({ userId }: { userId: string }) {
           {activeTab === 'team_leads' && <AssignedLeadsTab userId={userId} canReassign={false} />}
           {activeTab === 'team_performance' && <RmTeamPerformanceTab metrics={metrics} />}
           {activeTab === 'settings' && <SettingsTab profile={profile.data} />}
-          {activeTab === 'leads' && <AssignedLeadsTab userId={userId} canReassign={canEdit && isMemberProfile} />}
+          {activeTab === 'leads' && <AssignedLeadsTab userId={userId} canReassign={canEdit && isMemberProfile} monitoring resetKey={leadWorkspaceReset} />}
           {activeTab === 'pending_leads' && <AssignedLeadsTab userId={userId} canReassign={false} pendingOnly />}
           {activeTab === 'notes' && <UserNotesTab userId={userId} />}
           {activeTab === 'requests' && <RequestsTab userId={userId} />}
@@ -604,10 +615,38 @@ function EditProfileButton({ profile, userId }: { profile: UserProfileResponse; 
   );
 }
 
-function AssignedLeadsTab({ userId, canReassign, pendingOnly = false }: { userId: string; canReassign: boolean; pendingOnly?: boolean }) {
+function businessToday() {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function shiftDate(date: string, offset: number) {
+  const value = new Date(`${date}T12:00:00`);
+  value.setDate(value.getDate() + offset);
+  return value.toISOString().slice(0, 10);
+}
+
+function displayDay(date: string) {
+  return new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(`${date}T12:00:00`));
+}
+
+function attemptLabel(status?: string | null) {
+  if (status === 'initial_issue') return 'Initial issue';
+  if (status === 'completed') return 'Completed';
+  if (status === 'missed') return 'Missed';
+  if (status === 'scheduled') return 'Upcoming';
+  if (status === 'cancelled') return 'Not required';
+  return '-';
+}
+
+function AssignedLeadsTab({ userId, canReassign, pendingOnly = false, monitoring = false, resetKey = 0 }: { userId: string; canReassign: boolean; pendingOnly?: boolean; monitoring?: boolean; resetKey?: number }) {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [callStatus, setCallStatus] = useState('');
+  const [selectedDate, setSelectedDate] = useState(businessToday);
+  const [issueFilter, setIssueFilter] = useState('all');
+  const [monitoringScope, setMonitoringScope] = useState<'daily' | 'assigned'>('daily');
   const [selected, setSelected] = useState<string[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [targetUser, setTargetUser] = useState('');
@@ -617,8 +656,13 @@ function AssignedLeadsTab({ userId, canReassign, pendingOnly = false }: { userId
     page_size: 20,
     search: search || undefined,
     call_status: callStatus || undefined,
+    monitoring: monitoring ? 'true' : undefined,
+    selected_date: monitoring ? selectedDate : undefined,
+    call_issue: monitoring && issueFilter !== 'all' ? issueFilter : undefined,
+    monitoring_scope: monitoring && monitoringScope === 'assigned' ? 'assigned' : undefined,
     pending: pendingOnly ? 'true' : undefined,
   });
+  const dailySummary = useAdminUserLeadDailySummary(userId, selectedDate, monitoring);
   const members = useActiveMembers();
   const reassign = useBulkReassignLeads();
   const bulkLeadAction = useBulkLeadAction();
@@ -626,6 +670,22 @@ function AssignedLeadsTab({ userId, canReassign, pendingOnly = false }: { userId
   const total = leads.data?.total || 0;
   const totalPages = Math.max(1, Math.ceil(total / 20));
   const assignableUsers = (members.data || []).filter(m => m.role === 'member');
+  const today = businessToday();
+
+  useEffect(() => {
+    if (!monitoring || resetKey === 0) return;
+    setSelectedDate(businessToday());
+    setIssueFilter('all');
+    setMonitoringScope('daily');
+    setPage(1);
+  }, [monitoring, resetKey]);
+
+  function setDay(nextDate: string) {
+    if (nextDate > businessToday()) return;
+    setSelectedDate(nextDate);
+    setMonitoringScope('daily');
+    setPage(1);
+  }
 
   function toggle(id: string) {
     setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -668,19 +728,45 @@ function AssignedLeadsTab({ userId, canReassign, pendingOnly = false }: { userId
 
   return (
     <div className="space-y-4">
+      {monitoring && (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2.5">
+            <div className="flex items-center gap-1">
+              <button type="button" onClick={() => setDay(shiftDate(selectedDate, -1))} className="rounded-lg p-2 text-slate-600 hover:bg-white" aria-label="Previous day"><ChevronLeft className="h-4 w-4" /></button>
+              <div className="min-w-36 text-center text-sm font-semibold text-slate-800">{displayDay(selectedDate)}</div>
+              <button type="button" disabled={selectedDate >= today} onClick={() => setDay(shiftDate(selectedDate, 1))} className="rounded-lg p-2 text-slate-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-35" aria-label="Next day"><ChevronRight className="h-4 w-4" /></button>
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => setDay(today)} className="btn-outline rounded-lg px-3 py-1.5 text-xs">Today</button>
+              <label className="relative inline-flex cursor-pointer items-center rounded-lg border border-slate-200 bg-white p-1.5 text-slate-600"><CalendarDays className="h-4 w-4" /><input type="date" value={selectedDate} max={today} onChange={event => { if (event.target.value) setDay(event.target.value); }} className="absolute inset-0 cursor-pointer opacity-0" aria-label="Choose date" /></label>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-8">
+            {[
+              ['Assigned', dailySummary.data?.assigned, 'assigned'], ['Worked', dailySummary.data?.worked], ['Action due / unworked', dailySummary.data?.pending], ['Current call issues', dailySummary.data?.call_issues], ['Attempts done', dailySummary.data?.attempts_completed], ['Attempts missed', dailySummary.data?.attempts_missed], ['Meetings', dailySummary.data?.personal_meeting_leads], ['Converted', dailySummary.data?.converted],
+            ].map(([label, value, scope]) => <button type="button" key={String(label)} onClick={scope === 'assigned' ? () => { setMonitoringScope('assigned'); setIssueFilter('all'); setPage(1); } : undefined} className={clsx('rounded-lg border border-slate-200 bg-white px-3 py-2 text-left', scope === 'assigned' && 'cursor-pointer transition hover:border-brand-200 hover:bg-brand-50/30')}><div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</div><div className="mt-1 text-lg font-semibold text-slate-900">{dailySummary.isLoading || dailySummary.isError ? '-' : Number(value || 0).toLocaleString()}</div></button>)}
+          </div>
+          <div className="text-xs text-slate-500">{monitoringScope === 'assigned' ? 'Showing leads assigned on this date, including leads reassigned later.' : 'Showing current portfolio leads relevant to this date. Current call issues are not historical snapshots; action due / unworked is reconstructed from dated obligations.'}</div>
+          {dailySummary.isLoading && <div className="text-xs text-slate-500">Loading daily summary...</div>}
+          {dailySummary.isError && <div className="flex items-center justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800"><span>Daily summary could not be loaded.</span><button type="button" onClick={() => dailySummary.refetch()} className="btn-outline rounded-md px-2 py-1 text-xs">Retry</button></div>}
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {(leads.data?.call_issue_filters || []).filter(filter => filter.key === 'all' || filter.key === 'call_issues' || filter.count > 0 || filter.key === issueFilter).map(filter => <button type="button" key={filter.key} onClick={() => { setIssueFilter(filter.key); setPage(1); }} className={clsx('shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors', issueFilter === filter.key ? 'border-brand-200 bg-brand-50 text-brand-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50')}>{filter.label} ({Number(filter.count || 0)})</button>)}
+          </div>
+        </>
+      )}
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative min-w-[220px] flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input className="input pl-10" placeholder={pendingOnly ? 'Search pending leads...' : 'Search assigned leads...'} value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
         </div>
-        <select className="input w-44" value={callStatus} onChange={e => { setCallStatus(e.target.value); setPage(1); }}>
+        {!monitoring && <select className="input w-44" value={callStatus} onChange={e => { setCallStatus(e.target.value); setPage(1); }}>
           <option value="">All call statuses</option>
           <option value="not_called">Not Called</option>
           <option value="interested">Interested</option>
           <option value="follow_up">Follow-up</option>
           <option value="converted">Converted</option>
           <option value="not_interested">Not Interested</option>
-        </select>
+        </select>}
         {canReassign && selected.length > 0 && (
           <>
             <button
@@ -704,23 +790,27 @@ function AssignedLeadsTab({ userId, canReassign, pendingOnly = false }: { userId
         </div>
       )}
 
-      {leads.isLoading ? <Skeleton className="h-64" /> : rows.length === 0 ? (
+      {leads.isLoading ? <Skeleton className="h-64" /> : leads.isError ? (
+        <EmptyState title="Leads could not be loaded" description="The filters have not been applied because the request failed." icon={<Briefcase className="h-6 w-6" />} action={<button type="button" onClick={() => leads.refetch()} className="btn-outline rounded-lg px-3 py-2 text-sm">Retry</button>} />
+      ) : rows.length === 0 ? (
         <EmptyState
           title={pendingOnly ? 'No pending leads' : 'No assigned leads'}
           description={pendingOnly ? 'This user has no pending-work leads for the current filters.' : 'No leads match the current filters.'}
           icon={<Briefcase className="h-6 w-6" />}
         />
       ) : (
-        <div className="overflow-hidden rounded-xl border border-slate-200">
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="min-w-[940px] divide-y divide-slate-200 text-sm">
             <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
               <tr>
                 {canReassign && <th className="w-10 px-3 py-3" />}
                 <th className="px-3 py-3">Lead</th>
                 <th className="px-3 py-3">Source</th>
                 <th className="px-3 py-3">Status</th>
+                {monitoring && <th className="px-3 py-3">Attempts</th>}
                 <th className="px-3 py-3">Assigned</th>
                 <th className="px-3 py-3">Last activity</th>
+                {monitoring && <th className="px-3 py-3">Next action</th>}
                 <th className="px-3 py-3 text-right">Action</th>
               </tr>
             </thead>
@@ -738,8 +828,21 @@ function AssignedLeadsTab({ userId, canReassign, pendingOnly = false }: { userId
                   </td>
                   <td className="px-3 py-3 text-slate-600">{lead.form_name || lead.source || '-'}</td>
                   <td className="px-3 py-3"><StatusChip status={lead.call_status} /></td>
+                  {monitoring && <td className="px-3 py-3">
+                    {lead.attempt_tracking !== 'tracked' ? <span className="text-slate-400">Legacy / -</span> : (
+                      <div className="flex min-w-40 flex-wrap gap-1">
+                        {[1, 2, 3].map(number => {
+                          const attempt = lead.attempts?.find(item => item.attempt_number === number);
+                          const state = attempt?.attempt_state;
+                          const owner = attempt?.completed_by_name || attempt?.responsible_name;
+                          return <span key={number} title={attempt ? `${attemptLabel(state)}${attempt.outcome ? `: ${humanize(attempt.outcome)}` : ''}${owner ? ` by ${owner}` : ''}` : 'No attempt'} className={clsx('rounded-md px-1.5 py-1 text-[10px] font-semibold', state === 'completed' ? 'bg-emerald-50 text-emerald-700' : state === 'missed' ? 'bg-rose-50 text-rose-700' : state === 'upcoming' ? 'bg-amber-50 text-amber-700' : state === 'initial_issue' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-500')}>A{number} {attemptLabel(state)}{owner ? ` - ${owner}` : ''}</span>;
+                        })}
+                      </div>
+                    )}
+                  </td>}
                   <td className="px-3 py-3 text-slate-600">{fmtDate(lead.assigned_at)}</td>
                   <td className="px-3 py-3 text-slate-600">{fmtRelative(lead.last_activity_at)}</td>
+                  {monitoring && <td className="px-3 py-3 text-slate-600">{lead.next_action_at ? fmtDate(lead.next_action_at) : '-'}</td>}
                   <td className="px-3 py-3 text-right">
                     <Link href={`/leads/${lead.id}`} className="text-sm font-medium text-brand-600 hover:text-brand-700">Open</Link>
                   </td>
@@ -1291,7 +1394,7 @@ function SettingsTab({ profile }: { profile: UserProfileResponse }) {
   );
 }
 
-function MetricCard({ label, value, suffix, icon, tone = 'slate' }: { label: string; value: number | string; suffix?: string; icon: ReactNode; tone?: 'slate' | 'blue' | 'green' | 'amber' | 'red' }) {
+function MetricCard({ label, value, suffix, icon, tone = 'slate', onClick }: { label: string; value: number | string; suffix?: string; icon: ReactNode; tone?: 'slate' | 'blue' | 'green' | 'amber' | 'red'; onClick?: () => void }) {
   const toneClass = {
     slate: 'bg-slate-100 text-slate-700',
     blue: 'bg-blue-50 text-blue-700',
@@ -1300,7 +1403,7 @@ function MetricCard({ label, value, suffix, icon, tone = 'slate' }: { label: str
     red: 'bg-red-50 text-red-700',
   }[tone];
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div onClick={onClick} role={onClick ? 'button' : undefined} tabIndex={onClick ? 0 : undefined} onKeyDown={onClick ? event => { if (event.key === 'Enter' || event.key === ' ') onClick(); } : undefined} className={clsx('rounded-2xl border border-slate-200 bg-white p-4 shadow-sm', onClick && 'cursor-pointer transition hover:border-brand-200 hover:bg-brand-50/30')}>
       <div className="flex items-center justify-between">
         <div className={clsx('rounded-xl p-2', toneClass)}>{icon}</div>
         {suffix && <span className="text-xs font-medium text-slate-500">{suffix}</span>}

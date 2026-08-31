@@ -8,7 +8,7 @@ export interface Quality { score: number; label: string; components: Record<stri
 export interface ReportRate { value: number; numerator: number; denominator: number; }
 export interface CounselorReportRow {
   id: string; full_name: string; rm_name?: string | null; team_name?: string | null;
-  total_received: number; current_assigned: number; worked: number; unworked: number;
+  total_received: number; reassigned_out: number; current_assigned: number; worked: number; unworked: number;
   current_contacted: number; attributed_contacted: number; contactable_received: number;
   unresolved_call_issues: number; terminal_lead_quality_issues: number; actionable_pending: number;
   upcoming_calls: number; converted: number; personal_meetings: number; overdue_attempts: number;
@@ -26,9 +26,10 @@ export interface CounselorReportFilterOptions {
 }
 export interface CounselorReportLead {
   id: string; full_name: string; phone?: string | null; source?: string | null; campaign_name?: string | null;
-  campaign_label?: string | null; assigned_at?: string | null; call_status?: string | null;
+  campaign_label?: string | null; assigned_at?: string | null; reassigned_at?: string | null; reassigned_to_name?: string | null; call_status?: string | null;
   effective_status?: string | null; last_action_at?: string | null; next_followup_at?: string | null; next_attempt_at?: string | null;
   metric_reason?: string | null; aging_state?: string | null;
+  attempt_tracking?: 'tracked' | 'none';
   attempts?: Array<{ attempt_number: number; attempt_state: 'completed' | 'missed' | 'upcoming' | 'not_required'; scheduled_at?: string | null; attempted_at?: string | null; outcome?: string | null; attributed_to_counselor?: boolean }>;
 }
 export interface CounselorReportDrilldown { rows: CounselorReportLead[]; total: number; page: number; page_size: number; }
