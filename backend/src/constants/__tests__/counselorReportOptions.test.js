@@ -82,6 +82,21 @@ describe('counselor report classification', () => {
     expect(db.query.mock.calls[0][0]).toContain("ca.attempt_number > 1 AND ca.status IN ('scheduled', 'completed', 'missed')");
   });
 
+  test('attempt drawers expose business retry numbering without changing raw attempt numbers', async () => {
+    db.query.mockReset();
+    db.query.mockResolvedValueOnce({ rows: [{ total: 1 }] }).mockResolvedValueOnce({ rows: [{ id: 'lead-1' }] }).mockResolvedValueOnce({ rows: [] });
+    await drilldown({ counselor_id: '00000000-0000-0000-0000-000000000001', metric: 'call_issue' });
+    expect(db.query.mock.calls[2][0]).toContain('GREATEST(ca.attempt_number - 1, 0) AS retry_number');
+
+    db.query.mockReset();
+    db.query.mockResolvedValueOnce({ rows: [{ due_count: 0, completed_count: 0, missed_count: 0, upcoming_count: 0 }] })
+      .mockResolvedValueOnce({ rows: [{ total: 0 }] })
+      .mockResolvedValueOnce({ rows: [] });
+    await drilldown({ counselor_id: '00000000-0000-0000-0000-000000000001', metric: 'attempt_compliance' });
+    expect(db.query.mock.calls[0][0]).toContain('ca.attempt_number - 1 AS retry_number');
+    expect(db.query.mock.calls[0][0]).toContain('ca.trigger_reason AS issue_at_retry');
+  });
+
   test('issue drill-down uses the current effective issue state and preserves invalid number compatibility', async () => {
     db.query.mockReset();
     db.query.mockResolvedValueOnce({ rows: [{ total: 0 }] }).mockResolvedValueOnce({ rows: [] });

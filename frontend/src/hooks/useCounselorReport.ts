@@ -30,7 +30,7 @@ export interface CounselorReportLead {
   effective_status?: string | null; last_action_at?: string | null; next_followup_at?: string | null; next_attempt_at?: string | null;
   metric_reason?: string | null; aging_state?: string | null;
   attempt_tracking?: 'tracked' | 'none';
-  attempts?: Array<{ attempt_number: number; attempt_state: 'completed' | 'missed' | 'upcoming' | 'not_required'; scheduled_at?: string | null; attempted_at?: string | null; outcome?: string | null; attributed_to_counselor?: boolean }>;
+  attempts?: Array<{ attempt_number: number; retry_number?: number; attempt_state: 'initial_issue' | 'completed' | 'missed' | 'upcoming' | 'not_required'; scheduled_at?: string | null; attempted_at?: string | null; outcome?: string | null; attributed_to_counselor?: boolean }>;
 }
 export interface CounselorReportDrilldown { rows: CounselorReportLead[]; total: number; page: number; page_size: number; }
 

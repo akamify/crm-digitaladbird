@@ -364,9 +364,10 @@ async function drilldown(input = {}) {
     if (leadIds.length) {
       // One active sequence per lead is enforced by migration 069; this remains a single batch query per drawer page.
       const { rows: attemptRows } = await query(`
-        SELECT ca.lead_id, ca.attempt_number, ca.status, ca.scheduled_at, ca.attempted_at, ca.outcome,
+        SELECT ca.lead_id, ca.attempt_number, GREATEST(ca.attempt_number - 1, 0) AS retry_number, ca.status, ca.scheduled_at, ca.attempted_at, ca.outcome,
           ca.responsible_user_id, ca.completed_by_user_id,
           CASE
+            WHEN ca.attempt_number = 1 AND ca.status = 'completed' THEN 'initial_issue'
             WHEN ca.status = 'completed' THEN 'completed'
             WHEN ca.status = 'cancelled' THEN 'not_required'
             WHEN ca.status = 'missed' OR (ca.status = 'scheduled' AND ca.scheduled_at <= NOW() - make_interval(mins => ${ATTEMPT_GRACE_MINUTES})) THEN 'missed'
@@ -422,7 +423,7 @@ async function drilldownAttemptCompliance(input, counselorId) {
       COALESCE(a.unassigned_at, LEAD(a.assigned_at) OVER (PARTITION BY a.lead_id ORDER BY a.assigned_at, a.id), 'infinity'::timestamptz) AS ownership_end
     FROM lead_assignments a WHERE COALESCE(a.assigned_to_user_id, a.user_id) IS NOT NULL
   ), attempts AS (
-    SELECT ca.id, ca.lead_id, ca.attempt_number, ca.trigger_reason, ca.outcome, ca.status, ca.scheduled_at, ca.attempted_at, ca.delay_minutes,
+    SELECT ca.id, ca.lead_id, ca.attempt_number, ca.attempt_number - 1 AS retry_number, ca.trigger_reason AS issue_at_retry, ca.trigger_reason, ca.outcome, ca.status, ca.scheduled_at, ca.attempted_at, ca.delay_minutes,
       l.full_name, l.phone, l.call_status::text AS call_status
     FROM ownership o JOIN lead_call_attempts ca ON ca.lead_id = o.lead_id AND ca.scheduled_at >= o.ownership_start AND ca.scheduled_at < o.ownership_end
     JOIN leads l ON l.id = ca.lead_id
