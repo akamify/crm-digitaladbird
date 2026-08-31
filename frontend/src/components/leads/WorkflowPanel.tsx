@@ -395,6 +395,8 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
     ...group,
     options: group.options.filter(option => options.includes(option.value)),
   })).filter(group => group.options.length > 0);
+  const retryableIssueValues = new Set(availableGroups.find(group => group.key === 'issues')?.options.map(option => option.value) || []);
+  const hasActiveCallSequence = !!callAttemptSequence?.has_active_sequence;
   const retryableSelected = selected.find(value => availableGroups.some(group => group.key === 'issues' && group.options.some(option => option.value === value)));
   const trackerAnchorStatus = callAttemptState?.anchor_status || retryableSelected || null;
 
@@ -452,7 +454,9 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {group.options.map(option => {
                 const display = REMARK_DISPLAY[option.value] || { label: option.label, bg: 'bg-slate-50', text: 'text-slate-700', ring: 'ring-slate-400' };
-                const isSelected = selected.includes(option.value);
+                // An active sequence owns the live call issue. Saved Step 1 issue tags stay in history,
+                // but must not look like the latest retry outcome.
+                const isSelected = selected.includes(option.value) && !(hasActiveCallSequence && group.key === 'issues');
                 const isCompletingOption = COMPLETED_REMARK_STATUS_VALUES.has(option.value);
                 return (
                   <div key={option.value} className={clsx(group.key === 'issues' && trackerAnchorStatus === option.value && 'contents')}>
@@ -499,8 +503,11 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
         ))}
       </div>
       {selected.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {selected.map(value => <span key={value} className="chip-blue">{REMARK_DISPLAY[value]?.label || humanize(value)}</span>)}
+        <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+          <p className="mb-1.5 text-[11px] font-medium text-slate-500">{hasActiveCallSequence ? 'Saved Step 1 remarks. The active Call Attempts sequence is the live call status.' : 'Saved Step 1 remarks.'}</p>
+          <div className="flex flex-wrap gap-2">
+            {selected.filter(value => !(hasActiveCallSequence && retryableIssueValues.has(value))).map(value => <span key={value} className="chip-blue">{REMARK_DISPLAY[value]?.label || humanize(value)}</span>)}
+          </div>
         </div>
       )}
       <div className="mt-4 flex items-center justify-end">

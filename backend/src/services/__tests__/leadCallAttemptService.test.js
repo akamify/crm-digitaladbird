@@ -8,6 +8,10 @@ jest.mock('../leadInteractionService', () => ({
   createLeadInteraction: jest.fn(),
 }));
 
+jest.mock('../leadWorkflowRemarkService', () => ({
+  saveWorkflowRemark: jest.fn().mockResolvedValue({}),
+}));
+
 jest.mock('../../utils/auditLog', () => ({
   logActivity: jest.fn().mockResolvedValue(undefined),
 }));
@@ -22,6 +26,7 @@ jest.mock('../../utils/logger', () => ({
 const { AppError } = require('../../utils/errors');
 const { logActivity } = require('../../utils/auditLog');
 const { createLeadInteraction } = require('../leadInteractionService');
+const { saveWorkflowRemark } = require('../leadWorkflowRemarkService');
 const {
   calculateNextCallTime,
   deriveAttemptState,
@@ -359,5 +364,57 @@ describe('leadCallAttemptService', () => {
       syncWorkflowStep1: true,
     }));
     expect(client.query.mock.calls.some(([sql]) => sql.includes("SET status = 'cancelled'"))).toBe(true);
+  });
+
+  test('a retry outcome replaces stale retryable Step 1 selections without removing other statuses', async () => {
+    const client = {
+      query: jest.fn((sql) => {
+        if (sql.includes('SELECT id, assigned_to_user_id, category')) {
+          return response([{ id: 'lead-1', assigned_to_user_id: 'user-1', category: 'partner' }]);
+        }
+        if (sql.includes('FROM lead_call_attempt_sequences')) {
+          return response([{ id: 'seq-1', lead_id: 'lead-1', status: 'active', initial_trigger_reason: 'so' }]);
+        }
+        if (sql.includes('FROM lead_call_attempts') && sql.includes('WHERE id = $1')) {
+          return response([{
+            id: 'attempt-2', sequence_id: 'seq-1', lead_id: 'lead-1', attempt_number: 2,
+            status: 'scheduled', scheduled_at: '2026-08-30T11:30:00.000Z', is_final_attempt: false,
+          }]);
+        }
+        if (sql.includes('UPDATE lead_call_attempts')) {
+          return response([{
+            id: 'attempt-2', sequence_id: 'seq-1', lead_id: 'lead-1', attempt_number: 2,
+            status: 'completed', scheduled_at: '2026-08-30T11:30:00.000Z', attempted_at: '2026-08-30T11:35:00.000Z',
+          }]);
+        }
+        if (sql.includes('INSERT INTO lead_call_attempts')) {
+          return response([{
+            id: 'attempt-3', sequence_id: 'seq-1', lead_id: 'lead-1', attempt_number: 3,
+            status: 'scheduled', scheduled_at: '2026-08-31T05:30:00.000Z',
+          }]);
+        }
+        if (sql.includes('SELECT remark_status, step_1_statuses')) {
+          return response([{ remark_status: 'recall', step_1_statuses: ['recall', 'custom_remark'] }]);
+        }
+        return response([]);
+      }),
+    };
+
+    await completeScheduledAttempt({
+      client,
+      leadId: 'lead-1',
+      attemptId: 'attempt-2',
+      user: { id: 'user-1', role: 'member', full_name: 'Faizan' },
+      outcome: 'cnr',
+      now: new Date('2026-08-30T11:35:00.000Z'),
+    });
+
+    expect(saveWorkflowRemark).toHaveBeenCalledWith(expect.objectContaining({
+      leadId: 'lead-1',
+      userId: 'user-1',
+      remarkStatus: 'cnr',
+      remarkStatuses: ['custom_remark', 'cnr'],
+      source: 'call_attempt_outcome',
+    }));
   });
 });

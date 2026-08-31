@@ -3,6 +3,7 @@ const { AppError } = require('../utils/errors');
 const logger = require('../utils/logger');
 const { logActivity } = require('../utils/auditLog');
 const { createLeadInteraction } = require('./leadInteractionService');
+const { saveWorkflowRemark } = require('./leadWorkflowRemarkService');
 
 const BUSINESS_TIMEZONE = process.env.PROCESS_TZ || 'Asia/Kolkata';
 const BUSINESS_HOURS = { startHour: 9, startMinute: 0, endHour: 19, endMinute: 0 };
@@ -272,6 +273,31 @@ function getRetryPolicy(issueType) {
 function toLeadCallStatusValue(outcome) {
   if (outcome === 'cb') return 'busy';
   return outcome;
+}
+
+async function syncCurrentWorkflowCallIssue(client, { leadId, userId, outcome }) {
+  const { rows: [workflow] } = await run(client, `
+    SELECT remark_status, step_1_statuses
+      FROM lead_workflow
+     WHERE lead_id = $1
+     FOR UPDATE
+  `, [leadId]);
+  const existing = Array.isArray(workflow?.step_1_statuses) && workflow.step_1_statuses.length
+    ? workflow.step_1_statuses
+    : workflow?.remark_status ? [workflow.remark_status] : [];
+  const statuses = [...new Set([
+    ...existing.filter(status => !RETRYABLE_WORKFLOW_STATUSES.has(String(status || '').toLowerCase())),
+    outcome,
+  ])];
+
+  await saveWorkflowRemark({
+    client,
+    leadId,
+    userId,
+    remarkStatus: outcome,
+    remarkStatuses: statuses,
+    source: 'call_attempt_outcome',
+  });
 }
 
 function calculateNextCallTime({
@@ -770,6 +796,13 @@ async function startAttemptSequenceFromRemark({
       now,
     });
 
+    // Keep the live Step 1 issue in sync with the sequence without touching remark history.
+    await syncCurrentWorkflowCallIssue(client, {
+      leadId,
+      userId: user?.id || null,
+      outcome: normalizedTriggerReason,
+    });
+
     return sequence;
   } catch (error) {
     if (!error.callAttemptMonitoringLogged) {
@@ -964,6 +997,11 @@ async function completeScheduledAttempt({
         attemptNumber: completedAttempt.attempt_number,
         auditContext,
       });
+      await syncCurrentWorkflowCallIssue(client, {
+        leadId,
+        userId: user.id,
+        outcome: normalizedOutcome,
+      });
       return { attempt: completedAttempt, sequence, closed: true, outcome: normalizedOutcome };
     }
 
@@ -976,6 +1014,11 @@ async function completeScheduledAttempt({
       userId: user.id,
       auditContext,
       now: attemptedAt,
+    });
+    await syncCurrentWorkflowCallIssue(client, {
+      leadId,
+      userId: user.id,
+      outcome: normalizedOutcome,
     });
     return { attempt: completedAttempt, sequence, nextAttempt, outcome: normalizedOutcome };
   }

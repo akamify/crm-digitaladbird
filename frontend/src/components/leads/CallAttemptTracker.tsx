@@ -78,8 +78,15 @@ function deriveState(attempt: CallAttemptSummary | null | undefined, nowMs: numb
 }
 
 function getSlotLabel(position: number, isFinalAttempt: boolean) {
+  if (position === 1) return 'Initial issue';
   if (isFinalAttempt || position === 4) return 'Final recovery';
-  return `Attempt ${position}`;
+  return `Retry ${position - 1}`;
+}
+
+function getBusinessAttemptLabel(attempt: CallAttemptSummary) {
+  if (attempt.attempt_number === 1) return 'Initial issue';
+  if (attempt.is_final_attempt || attempt.attempt_number === 4) return 'Final recovery';
+  return `Retry ${attempt.attempt_number - 1}`;
 }
 
 function getSlotClasses(uiState: string) {
@@ -167,7 +174,11 @@ export function CallAttemptTracker({ leadId, sequence, attempts, callAttemptStat
         </div>
         {sequence.has_active_sequence && callAttemptState?.active_attempt_number ? (
           <span className="rounded-full bg-brand-50 px-2.5 py-1 text-[10px] font-semibold text-brand-700">
-            Attempt {callAttemptState.active_attempt_number} of {maxAttempts}
+            {callAttemptState.active_attempt_number === 1
+              ? 'Initial issue'
+              : callAttemptState.active_attempt_number === maxAttempts
+                ? 'Final recovery'
+                : `Retry ${callAttemptState.active_attempt_number - 1} of ${maxAttempts - 1}`}
           </span>
         ) : null}
       </div>
@@ -192,9 +203,6 @@ export function CallAttemptTracker({ leadId, sequence, attempts, callAttemptStat
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs font-semibold text-slate-900">{label}</p>
-                    {attempt?.attempt_number ? (
-                      <span className="text-[10px] font-medium text-slate-500">#{attempt.attempt_number}</span>
-                    ) : null}
                   </div>
                   <p className="mt-1 text-xs font-medium text-slate-700">
                     {outcomeLabel || (attempt ? (OUTCOME_LABELS[attempt.trigger_reason] || humanize(attempt.trigger_reason)) : 'Waiting')}
@@ -240,8 +248,8 @@ export function CallAttemptTracker({ leadId, sequence, attempts, callAttemptStat
             <div>
               <p className="text-sm font-semibold text-slate-900">
                 {activeAttemptState.uiState === 'overdue'
-                  ? `Attempt ${activeAttempt.attempt_number} overdue`
-                  : `Attempt ${activeAttempt.attempt_number} due now`}
+                  ? `${getBusinessAttemptLabel(activeAttempt)} overdue`
+                  : `${getBusinessAttemptLabel(activeAttempt)} due now`}
               </p>
               <p className="mt-1 text-xs text-slate-600">
                 {activeAttemptState.uiState === 'overdue' && activeAttemptState.overdueByMinutes != null
@@ -250,7 +258,7 @@ export function CallAttemptTracker({ leadId, sequence, attempts, callAttemptStat
               </p>
             </div>
             <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-600">
-              {activeAttempt.is_final_attempt ? 'Final recovery call' : `Attempt ${activeAttempt.attempt_number}`}
+              {activeAttempt.is_final_attempt ? 'Final recovery call' : getBusinessAttemptLabel(activeAttempt)}
             </span>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
