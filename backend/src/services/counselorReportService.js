@@ -41,6 +41,9 @@ function buildQuery(input = {}) {
   const currentDate = [fromIndex && `l.assigned_at >= $${fromIndex}::timestamptz`, toIndex && `l.assigned_at < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
   // Compliance is attributed by the time an attempt became due, not by its later completion time.
   const attemptDate = [fromIndex && `ca.scheduled_at >= $${fromIndex}::timestamptz`, toIndex && `ca.scheduled_at < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
+  // A current unresolved issue with a retry in the selected period must remain visible,
+  // even when the original lead assignment predates that period.
+  const currentPortfolioDate = `(${currentDate} OR EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ${attemptDate}))`;
   const userFilters = [];
   if (input.counselor || input.counselor_id) { params.push(input.counselor || input.counselor_id); userFilters.push(`u.id = $${params.length}::uuid`); }
   if (input.rm || input.rm_id) { params.push(input.rm || input.rm_id); userFilters.push(`u.report_to_id = $${params.length}::uuid`); }
@@ -95,7 +98,7 @@ function buildQuery(input = {}) {
                EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'scheduled' AND ca.scheduled_at <= NOW()) AS due_attempt,
                EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'scheduled' AND ca.scheduled_at > NOW()) AS upcoming_attempt,
                EXISTS (SELECT 1 FROM customer_notes pm WHERE pm.lead_id = l.id AND pm.note_kind = 'personal_meeting' AND pm.deleted_at IS NULL AND pm.next_meeting_at <= NOW()) AS due_meeting
-          FROM leads l WHERE ${leadFilters} AND ${currentDate} AND l.assigned_to_user_id IS NOT NULL
+          FROM leads l WHERE ${leadFilters} AND ${currentPortfolioDate} AND l.assigned_to_user_id IS NOT NULL
       ), current_classified AS (
         SELECT cp.*, CASE WHEN cp.current_status = 'converted' THEN 'converted' WHEN cp.has_contact THEN 'contacted' WHEN cp.current_status = ANY(${TERMINAL_SQL}) THEN 'terminal_lead_quality_issue' WHEN cp.current_status = ANY(${RETRYABLE_SQL}) THEN 'retryable_contact_issue' WHEN cp.current_status = 'not_called' THEN 'unworked' ELSE 'other' END AS contact_state
           FROM current_portfolio cp
@@ -212,12 +215,14 @@ async function getIssueBreakdowns(input = {}) {
   const toIndex = to ? params.length : null;
   const scope = addLeadFilters(input, params, 'l');
   const dates = [fromIndex && `l.assigned_at >= $${fromIndex}::timestamptz`, toIndex && `l.assigned_at < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
+  const attemptDates = [fromIndex && `ca.scheduled_at >= $${fromIndex}::timestamptz`, toIndex && `ca.scheduled_at < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
+  const currentPortfolioDate = `(${dates} OR EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ${attemptDates}))`;
   const userFilters = [];
   if (input.counselor || input.counselor_id) { params.push(input.counselor || input.counselor_id); userFilters.push(`l.assigned_to_user_id = $${params.length}::uuid`); }
   if (input.rm || input.rm_id) { params.push(input.rm || input.rm_id); userFilters.push(`u.report_to_id = $${params.length}::uuid`); }
   if (input.team) { params.push(input.team); userFilters.push(`u.team_name = $${params.length}`); }
   const effective = `CASE WHEN l.call_status::text = 'converted' THEN 'converted' WHEN EXISTS (SELECT 1 FROM lead_workflow wf WHERE wf.lead_id = l.id AND COALESCE(wf.remark_status::text, '') = ANY(${CONTACTED_SQL})) OR EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'completed' AND ca.outcome = 'call_received') THEN 'communication_completed' ELSE l.call_status::text END`;
-  const { rows } = await query(`SELECT l.assigned_to_user_id AS counselor_id, ${effective} AS issue_type, COUNT(DISTINCT l.id)::int AS count FROM leads l JOIN users u ON u.id = l.assigned_to_user_id WHERE ${scope} AND ${dates} AND l.assigned_to_user_id IS NOT NULL ${userFilters.length ? `AND ${userFilters.join(' AND ')}` : ''} GROUP BY l.assigned_to_user_id, ${effective}`, params);
+  const { rows } = await query(`SELECT l.assigned_to_user_id AS counselor_id, ${effective} AS issue_type, COUNT(DISTINCT l.id)::int AS count FROM leads l JOIN users u ON u.id = l.assigned_to_user_id WHERE ${scope} AND ${currentPortfolioDate} AND l.assigned_to_user_id IS NOT NULL ${userFilters.length ? `AND ${userFilters.join(' AND ')}` : ''} GROUP BY l.assigned_to_user_id, ${effective}`, params);
   const output = new Map();
   for (const row of rows) {
     if (![...RETRYABLE_CONTACT_ISSUES, ...TERMINAL_LEAD_QUALITY_ISSUES].includes(row.issue_type)) continue;
@@ -284,6 +289,8 @@ async function drilldown(input = {}) {
   const cohortDate = [fromIndex && `o.ownership_start >= $${fromIndex}::timestamptz`, toIndex && `o.ownership_start < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
   const reassignedDate = [fromIndex && `ro.ownership_start >= $${fromIndex}::timestamptz`, toIndex && `ro.ownership_start < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
   const currentDate = [fromIndex && `l.assigned_at >= $${fromIndex}::timestamptz`, toIndex && `l.assigned_at < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
+  const attemptDate = [fromIndex && `ca.scheduled_at >= $${fromIndex}::timestamptz`, toIndex && `ca.scheduled_at < ($${toIndex}::date + INTERVAL '1 day')`].filter(Boolean).join(' AND ') || 'TRUE';
+  const currentPortfolioDate = `(${currentDate} OR EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ${attemptDate}))`;
   const userFilters = [];
   if (input.rm || input.rm_id) { params.push(input.rm || input.rm_id); userFilters.push(`u.report_to_id = $${params.length}::uuid`); }
   if (input.team) { params.push(input.team); userFilters.push(`u.team_name = $${params.length}`); }
@@ -330,7 +337,7 @@ async function drilldown(input = {}) {
         EXISTS (SELECT 1 FROM lead_workflow wf WHERE wf.lead_id = l.id AND COALESCE(wf.remark_status::text, '') = ANY(${CONTACTED_SQL})) OR EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'completed' AND ca.outcome = 'call_received') AS has_contact,
         EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'scheduled' AND ca.scheduled_at <= NOW()) AS due_attempt,
         EXISTS (SELECT 1 FROM customer_notes pm WHERE pm.lead_id = l.id AND pm.note_kind = 'personal_meeting' AND pm.deleted_at IS NULL AND pm.next_meeting_at <= NOW()) AS due_meeting
-      FROM leads l WHERE ${scope} AND ${currentDate} AND l.assigned_to_user_id IS NOT NULL
+      FROM leads l WHERE ${scope} AND ${currentPortfolioDate} AND l.assigned_to_user_id IS NOT NULL
     ), current_classified AS (
       SELECT cp.*, CASE WHEN cp.current_status = 'converted' THEN 'converted' WHEN cp.has_contact THEN 'contacted' WHEN cp.current_status = ANY(${TERMINAL_SQL}) THEN 'terminal_lead_quality_issue' WHEN cp.current_status = ANY(${RETRYABLE_SQL}) THEN 'retryable_contact_issue' WHEN cp.current_status = 'not_called' THEN 'unworked' ELSE 'other' END AS contact_state FROM current_portfolio cp
     ), reassigned_out AS (

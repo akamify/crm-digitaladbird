@@ -44,6 +44,11 @@ describe('counselor report classification', () => {
     expect(sql).toContain("ca.attempt_number > 1 AND ca.status IN ('scheduled', 'completed', 'missed')");
   });
 
+  test('current call issues include a current lead with a retry scheduled in the selected range', () => {
+    const { sql } = _buildQuery({ from: '2026-08-01', to: '2026-08-30' });
+    expect(sql).toContain("OR EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.scheduled_at >= $1::timestamptz");
+  });
+
   test.each([
     ['worked', 'a.worked'],
     ['unworked', 'NOT a.worked'],
