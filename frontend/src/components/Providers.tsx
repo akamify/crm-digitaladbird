@@ -8,10 +8,7 @@ export function Providers({ children }: { children: ReactNode }) {
   const [client] = useState(() => makeQueryClient());
 
   useEffect(() => {
-    console.info('[CRM Frontend] build loaded', {
-      build_version: process.env.NEXT_PUBLIC_CRM_BUILD_VERSION || 'frontend-ver-1',
-      loaded_at: new Date().toISOString(),
-    });
+    console.log('[CRM FRONTEND] UPDATED CODE DEPLOYED - ver-1');
   }, []);
 
   return (
