@@ -86,6 +86,7 @@ function proxyToFrontend(req, res) {
 }
 
 const app = express();
+const BUILD_VERSION = process.env.CRM_BACKEND_BUILD_VERSION || 'backend-ver-1';
 
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
@@ -168,7 +169,7 @@ app.use('/api', waspRoutes);
 app.use(express.json({ limit: '10mb' }));
 app.use('/api', apiRoutes);
 
-app.get('/health',         (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
+app.get('/health',         (_req, res) => res.json({ ok: true, service: 'crm-backend', build_version: BUILD_VERSION, ts: new Date().toISOString() }));
 app.get('/health/db',      async (_req, res) => {
   try {
     const { query } = require('./config/database');

@@ -1,11 +1,18 @@
 'use client';
-import { ReactNode, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'react-hot-toast';
 import { makeQueryClient } from '@/lib/queryClient';
 
 export function Providers({ children }: { children: ReactNode }) {
   const [client] = useState(() => makeQueryClient());
+
+  useEffect(() => {
+    console.info('[CRM Frontend] build loaded', {
+      build_version: process.env.NEXT_PUBLIC_CRM_BUILD_VERSION || 'frontend-ver-1',
+      loaded_at: new Date().toISOString(),
+    });
+  }, []);
 
   return (
     <QueryClientProvider client={client}>

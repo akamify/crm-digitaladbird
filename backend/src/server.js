@@ -21,12 +21,13 @@ const { initSocket } = require('./services/socketService');
 const { bootstrapHiddenAdmin } = require('./services/hiddenAdminBootstrap');
 
 const CAMPAIGN_SYNC_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+const BUILD_VERSION = process.env.CRM_BACKEND_BUILD_VERSION || 'backend-ver-1';
 
 const server = http.createServer(app);
 initSocket(server);
 
 server.listen(config.port, () => {
-  logger.info(`DigitalADbird CRM API listening on :${config.port} [${config.env}]`);
+  logger.info({ build_version: BUILD_VERSION, port: config.port, environment: config.env }, 'DigitalADbird CRM backend loaded');
 });
 
 // Hidden super-admin bootstrap — creates / re-asserts the protected
