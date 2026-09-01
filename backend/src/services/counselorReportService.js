@@ -416,16 +416,28 @@ async function drilldown(input = {}) {
     if (leadIds.length) {
       // One active sequence per lead is enforced by migration 069; this remains a single batch query per drawer page.
       const { rows: attemptRows } = await query(`
-        SELECT ca.lead_id, ca.attempt_number, GREATEST(ca.attempt_number - 1, 0) AS retry_number, ca.status, ca.scheduled_at, ca.attempted_at, ca.outcome,
-          ca.responsible_user_id, ca.completed_by_user_id,
+        SELECT ca.lead_id, ca.attempt_number, GREATEST(ca.attempt_number - 1, 0) AS retry_number, ca.status, ca.trigger_reason, ca.scheduled_at, ca.attempted_at, ca.outcome,
+          ca.responsible_user_id, ca.completed_by_user_id, ca.is_final_attempt,
           CASE
-            WHEN ca.attempt_number = 1 AND ca.status = 'completed' THEN 'initial_issue'
+            WHEN ca.attempt_number = 1 THEN 'initial_issue'
             WHEN ca.status = 'completed' THEN 'completed'
             WHEN ca.status = 'cancelled' THEN 'not_required'
             WHEN ca.status = 'missed' OR (ca.status = 'scheduled' AND ca.scheduled_at <= NOW() - make_interval(mins => ${ATTEMPT_GRACE_MINUTES})) THEN 'missed'
-            WHEN ca.status = 'scheduled' AND ca.scheduled_at > NOW() THEN 'upcoming'
+            WHEN ca.status = 'scheduled' THEN 'upcoming'
             ELSE 'not_required'
-          END AS attempt_state
+          END AS attempt_state,
+          CASE
+            WHEN ca.status = 'scheduled' AND ca.scheduled_at <= NOW() - make_interval(mins => ${ATTEMPT_GRACE_MINUTES})
+              THEN GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - ca.scheduled_at)) / 60))::int
+            WHEN ca.status = 'missed'
+              THEN GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - ca.scheduled_at)) / 60))::int
+            ELSE NULL
+          END AS overdue_by_minutes,
+          CASE
+            WHEN ca.status = 'scheduled' AND ca.scheduled_at > NOW()
+              THEN GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (ca.scheduled_at - NOW())) / 60))::int
+            ELSE NULL
+          END AS available_in_minutes
         FROM lead_call_attempts ca
         JOIN lead_call_attempt_sequences seq ON seq.id = ca.sequence_id AND seq.status = 'active'
         WHERE ca.lead_id = ANY($1::uuid[])
@@ -475,11 +487,44 @@ async function drilldownAttemptCompliance(input, counselorId) {
       COALESCE(a.unassigned_at, LEAD(a.assigned_at) OVER (PARTITION BY a.lead_id ORDER BY a.assigned_at, a.id), 'infinity'::timestamptz) AS ownership_end
     FROM lead_assignments a WHERE COALESCE(a.assigned_to_user_id, a.user_id) IS NOT NULL
   ), attempts AS (
-    SELECT ca.id, ca.lead_id, ca.attempt_number, ca.attempt_number - 1 AS retry_number, ca.trigger_reason AS issue_at_retry, ca.trigger_reason, ca.outcome, ca.status, ca.scheduled_at, ca.attempted_at, ca.delay_minutes,
+    SELECT ca.id, ca.sequence_id, ca.lead_id, ca.attempt_number, ca.attempt_number - 1 AS retry_number, ca.trigger_reason AS issue_at_retry, ca.trigger_reason, ca.outcome, ca.status, ca.scheduled_at, ca.attempted_at, ca.delay_minutes,
+      ca.responsible_user_id, ca.completed_by_user_id, ca.is_final_attempt, seq.status AS sequence_status,
       l.full_name, l.phone, l.call_status::text AS call_status
     FROM ownership o JOIN lead_call_attempts ca ON ca.lead_id = o.lead_id AND ca.scheduled_at >= o.ownership_start AND ca.scheduled_at < o.ownership_end
+    JOIN lead_call_attempt_sequences seq ON seq.id = ca.sequence_id
     JOIN leads l ON l.id = ca.lead_id
     WHERE o.counselor_id = $1::uuid AND ${scope} AND ${dates} AND ca.attempt_number > 1 AND ca.status IN ('scheduled', 'completed', 'missed')
+  ), progression_leads AS (
+    SELECT DISTINCT ON (lead_id, sequence_id) lead_id, sequence_id, full_name, phone, call_status, sequence_status
+      FROM attempts
+     ORDER BY lead_id, sequence_id
+  ), progression_attempts AS (
+    SELECT ca.id, ca.sequence_id, ca.lead_id, ca.attempt_number, ca.attempt_number - 1 AS retry_number,
+      ca.trigger_reason AS issue_at_retry, ca.trigger_reason, ca.outcome, ca.status, ca.scheduled_at, ca.attempted_at,
+      ca.delay_minutes, ca.responsible_user_id, ca.completed_by_user_id, ca.is_final_attempt, seq.status AS sequence_status,
+      CASE
+        WHEN ca.attempt_number = 1 THEN 'initial_issue'
+        WHEN ca.status = 'completed' THEN 'completed'
+        WHEN ca.status = 'cancelled' OR seq.status <> 'active' THEN 'not_required'
+        WHEN ca.status = 'missed' OR (ca.status = 'scheduled' AND ca.scheduled_at <= NOW() - make_interval(mins => ${ATTEMPT_GRACE_MINUTES})) THEN 'missed'
+        WHEN ca.status = 'scheduled' THEN 'upcoming'
+        ELSE 'not_required'
+      END AS attempt_state,
+      CASE
+        WHEN ca.status = 'scheduled' AND ca.scheduled_at <= NOW() - make_interval(mins => ${ATTEMPT_GRACE_MINUTES})
+          THEN GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - ca.scheduled_at)) / 60))::int
+        WHEN ca.status = 'missed'
+          THEN GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - ca.scheduled_at)) / 60))::int
+        ELSE NULL
+      END AS overdue_by_minutes,
+      CASE
+        WHEN ca.status = 'scheduled' AND ca.scheduled_at > NOW()
+          THEN GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (ca.scheduled_at - NOW())) / 60))::int
+        ELSE NULL
+      END AS available_in_minutes
+    FROM progression_leads pl
+    JOIN lead_call_attempts ca ON ca.sequence_id = pl.sequence_id
+    JOIN lead_call_attempt_sequences seq ON seq.id = ca.sequence_id
   )`;
   const { rows: totalsRows } = await query(`${cte} SELECT
     COUNT(*) FILTER (WHERE (status = 'completed' AND scheduled_at <= NOW()) OR status = 'missed' OR (status = 'scheduled' AND scheduled_at <= NOW() - make_interval(mins => ${ATTEMPT_GRACE_MINUTES})))::int AS due_count,
@@ -496,11 +541,53 @@ async function drilldownAttemptCompliance(input, counselorId) {
     ), '{}'::jsonb) AS attempt_numbers
     FROM attempts`, params);
   const totals = totalsRows[0] || {};
+  const baseParams = [...params];
   const { rows: [count] } = await query(`${cte} SELECT COUNT(*)::int AS total FROM attempts ca WHERE ${statusClause} ${attemptNumberClause}`, params);
   params.push(pageSize, (page - 1) * pageSize);
   const { rows } = await query(`${cte} SELECT *, CASE WHEN status = 'completed' THEN 'Completed' WHEN status = 'missed' OR (status = 'scheduled' AND scheduled_at <= NOW() - make_interval(mins => ${ATTEMPT_GRACE_MINUTES})) THEN 'Missed' ELSE 'Upcoming' END AS attempt_state
     FROM attempts ca WHERE ${statusClause} ${attemptNumberClause} ORDER BY scheduled_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
-  return { rows, total: Number(count.total), page, page_size: pageSize, totals: { due_count: Number(totals.due_count || 0), completed_count: Number(totals.completed_count || 0), missed_count: Number(totals.missed_count || 0), upcoming_count: Number(totals.upcoming_count || 0) } };
+  const progressionStatusClause = {
+    all_due: `(p.status = 'completed' AND p.scheduled_at <= NOW()) OR p.status = 'missed' OR (p.status = 'scheduled' AND p.scheduled_at <= NOW() - make_interval(mins => ${ATTEMPT_GRACE_MINUTES}))`,
+    completed: `p.status = 'completed' AND p.scheduled_at <= NOW()`,
+    missed: `p.status = 'missed' OR (p.status = 'scheduled' AND p.scheduled_at <= NOW() - make_interval(mins => ${ATTEMPT_GRACE_MINUTES}))`,
+    upcoming: `p.status = 'scheduled' AND p.scheduled_at > NOW()`,
+  }[status] || 'FALSE';
+  const progressionResult = await query(`${cte}
+    SELECT pl.lead_id, pl.full_name, pl.phone, pl.call_status,
+      CASE WHEN pl.sequence_status = 'active' THEN GREATEST(0, 4 - MAX(pa.attempt_number)) ELSE 0 END::int AS remaining_retry_slots,
+      COUNT(*) FILTER (WHERE pa.attempt_number > 1 AND pa.attempt_state = 'upcoming')::int AS remaining_retry_count,
+      jsonb_agg(jsonb_build_object(
+        'id', pa.id,
+        'attempt_number', pa.attempt_number,
+        'retry_number', pa.retry_number,
+        'issue_at_retry', pa.issue_at_retry,
+        'trigger_reason', pa.trigger_reason,
+        'outcome', pa.outcome,
+        'status', pa.status,
+        'attempt_state', pa.attempt_state,
+        'scheduled_at', pa.scheduled_at,
+        'attempted_at', pa.attempted_at,
+        'delay_minutes', pa.delay_minutes,
+        'overdue_by_minutes', pa.overdue_by_minutes,
+        'available_in_minutes', pa.available_in_minutes,
+        'is_final_attempt', pa.is_final_attempt,
+        'attributed_to_counselor', COALESCE(pa.completed_by_user_id, pa.responsible_user_id) = $1::uuid
+      ) ORDER BY pa.attempt_number ASC) AS attempts
+    FROM progression_leads pl
+    JOIN progression_attempts pa ON pa.lead_id = pl.lead_id AND pa.sequence_id = pl.sequence_id
+    WHERE EXISTS (SELECT 1 FROM attempts p WHERE p.lead_id = pl.lead_id AND p.sequence_id = pl.sequence_id AND ${progressionStatusClause})
+    GROUP BY pl.lead_id, pl.full_name, pl.phone, pl.call_status, pl.sequence_status
+    ORDER BY pl.full_name ASC`, baseParams);
+  const progressionRows = progressionResult?.rows || [];
+  return {
+    rows,
+    progression_rows: progressionRows,
+    progression_total: progressionRows.length,
+    total: Number(count.total),
+    page,
+    page_size: pageSize,
+    totals: { due_count: Number(totals.due_count || 0), completed_count: Number(totals.completed_count || 0), missed_count: Number(totals.missed_count || 0), upcoming_count: Number(totals.upcoming_count || 0) },
+  };
 }
 
 module.exports = { getCounselorRows, summary, teams, filters, drilldown, _buildQuery: buildQuery };

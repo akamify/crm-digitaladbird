@@ -128,6 +128,21 @@ describe('counselor report classification', () => {
     expect(db.query.mock.calls[0][0]).toContain('ca.trigger_reason AS issue_at_retry');
   });
 
+  test('attempt compliance exposes full progression separately from due retry totals', async () => {
+    db.query.mockReset();
+    db.query
+      .mockResolvedValueOnce({ rows: [{ due_count: 1, completed_count: 0, missed_count: 1, upcoming_count: 1 }] })
+      .mockResolvedValueOnce({ rows: [{ total: 1 }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'retry-1' }] })
+      .mockResolvedValueOnce({ rows: [{ lead_id: 'lead-1', remaining_retry_slots: 2, remaining_retry_count: 1, attempts: [] }] });
+    const result = await drilldown({ counselor_id: '00000000-0000-0000-0000-000000000001', metric: 'attempt_compliance' });
+    expect(result.total).toBe(1);
+    expect(result.progression_total).toBe(1);
+    expect(result.progression_rows[0].remaining_retry_slots).toBe(2);
+    expect(db.query.mock.calls[3][0]).toContain('progression_attempts AS');
+    expect(db.query.mock.calls[3][0]).toContain('overdue_by_minutes');
+  });
+
   test('issue drill-down uses the current effective issue state and preserves invalid number compatibility', async () => {
     db.query.mockReset();
     db.query.mockResolvedValueOnce({ rows: [{ total: 0 }] }).mockResolvedValueOnce({ rows: [] });

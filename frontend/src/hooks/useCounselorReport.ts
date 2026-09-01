@@ -30,9 +30,20 @@ export interface CounselorReportLead {
   effective_status?: string | null; last_action_at?: string | null; next_followup_at?: string | null; next_attempt_at?: string | null;
   metric_reason?: string | null; aging_state?: string | null;
   attempt_tracking?: 'tracked' | 'none';
-  attempts?: Array<{ attempt_number: number; retry_number?: number; attempt_state: 'initial_issue' | 'completed' | 'missed' | 'upcoming' | 'not_required'; scheduled_at?: string | null; attempted_at?: string | null; outcome?: string | null; attributed_to_counselor?: boolean }>;
+  attempts?: Array<CounselorReportAttempt>;
 }
-export interface CounselorReportDrilldown { rows: CounselorReportLead[]; total: number; page: number; page_size: number; }
+export interface CounselorReportAttempt {
+  id?: string; attempt_number: number; retry_number?: number; attempt_state: 'initial_issue' | 'completed' | 'missed' | 'upcoming' | 'not_required';
+  scheduled_at?: string | null; attempted_at?: string | null; outcome?: string | null; trigger_reason?: string | null; issue_at_retry?: string | null;
+  delay_minutes?: number | null; overdue_by_minutes?: number | null; available_in_minutes?: number | null; is_final_attempt?: boolean; attributed_to_counselor?: boolean;
+}
+export interface CounselorReportProgression {
+  lead_id: string; full_name: string; phone?: string | null; call_status?: string | null; remaining_retry_slots: number; remaining_retry_count: number; attempts: CounselorReportAttempt[];
+}
+export interface CounselorReportDrilldown {
+  rows: CounselorReportLead[]; progression_rows?: CounselorReportProgression[]; progression_total?: number; total: number; page: number; page_size: number;
+  totals?: { due_count: number; completed_count: number; missed_count: number; upcoming_count: number };
+}
 
 function queryString(filters: CounselorReportFilters) {
   const params = new URLSearchParams();
