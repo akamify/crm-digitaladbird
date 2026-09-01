@@ -87,6 +87,18 @@ describe('counselor report classification', () => {
     expect(db.query.mock.calls[0][0]).toContain("ca.attempt_number > 1 AND ca.status IN ('scheduled', 'completed', 'missed')");
   });
 
+  test('attempt compliance totals count attempt rows, not grouped schedule buckets', async () => {
+    db.query.mockReset();
+    db.query.mockResolvedValueOnce({ rows: [{ due_count: 0, completed_count: 0, missed_count: 0, upcoming_count: 0, attempt_numbers: {} }] })
+      .mockResolvedValueOnce({ rows: [{ total: 0 }] })
+      .mockResolvedValueOnce({ rows: [] });
+    await drilldown({ counselor_id: '00000000-0000-0000-0000-000000000001', metric: 'attempt_compliance' });
+    const totalsSql = db.query.mock.calls[0][0];
+    expect(totalsSql).toContain('FROM attempts');
+    expect(totalsSql).toContain('GROUP BY attempt_number');
+    expect(totalsSql).not.toContain('GROUP BY attempt_number, status, scheduled_at) grouped');
+  });
+
   test('attempt drawers expose business retry numbering without changing raw attempt numbers', async () => {
     db.query.mockReset();
     db.query.mockResolvedValueOnce({ rows: [{ total: 1 }] }).mockResolvedValueOnce({ rows: [{ id: 'lead-1' }] }).mockResolvedValueOnce({ rows: [] });
@@ -109,6 +121,15 @@ describe('counselor report classification', () => {
     const countSql = db.query.mock.calls[0][0];
     expect(countSql).toContain("cc.current_status IN ('in', 'invalid_number')");
     expect(countSql).toContain("cc.contact_state IN ('retryable_contact_issue', 'terminal_lead_quality_issue')");
+  });
+
+  test('call issue drill-down uses the active sequence issue as the current unresolved state', async () => {
+    db.query.mockReset();
+    db.query.mockResolvedValueOnce({ rows: [{ total: 0 }] }).mockResolvedValueOnce({ rows: [] });
+    await drilldown({ counselor_id: '00000000-0000-0000-0000-000000000001', metric: 'call_issue' });
+    const countSql = db.query.mock.calls[0][0];
+    expect(countSql).toContain("seq.status = 'active'");
+    expect(countSql).toContain('cp.active_sequence_issue = ANY');
   });
 
   test('call issue leads without persisted attempts are explicitly returned as untracked', async () => {

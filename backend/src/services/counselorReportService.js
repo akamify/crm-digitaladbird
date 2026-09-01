@@ -11,6 +11,25 @@ const TERMINAL_SQL = sqlArray(TERMINAL_LEAD_QUALITY_ISSUES);
 const CONTACTED_SQL = sqlArray(CONTACTED_STATUSES);
 const PROGRESSION_SQL = sqlArray(PROGRESSION_STATUSES);
 
+function activeSequenceIssueSql(leadAlias = 'l') {
+  return `(SELECT COALESCE(
+      (SELECT ca.outcome::text
+         FROM lead_call_attempts ca
+        WHERE ca.sequence_id = seq.id
+          AND ca.status = 'completed'
+          AND ca.attempt_number > 1
+          AND ca.outcome::text = ANY(${RETRYABLE_SQL})
+        ORDER BY ca.attempt_number DESC, ca.attempted_at DESC NULLS LAST, ca.created_at DESC
+        LIMIT 1),
+      seq.initial_trigger_reason::text
+    )
+      FROM lead_call_attempt_sequences seq
+     WHERE seq.lead_id = ${leadAlias}.id
+       AND seq.status = 'active'
+     ORDER BY seq.updated_at DESC, seq.created_at DESC
+     LIMIT 1)`;
+}
+
 function dateBounds(input = {}) {
   const from = String(input.from || '').trim() || null;
   const to = String(input.to || '').trim() || null;
@@ -91,7 +110,9 @@ function buildQuery(input = {}) {
            )
          GROUP BY ro.counselor_id
       ), current_portfolio AS (
-        SELECT l.id AS lead_id, l.assigned_to_user_id AS counselor_id, l.call_status::text AS current_status,
+        SELECT l.id AS lead_id, l.assigned_to_user_id AS counselor_id,
+               ${activeSequenceIssueSql('l')} AS active_sequence_issue,
+               COALESCE(${activeSequenceIssueSql('l')}, l.call_status::text) AS current_status,
                l.assigned_at, l.next_followup_at,
                EXISTS (SELECT 1 FROM lead_workflow wf WHERE wf.lead_id = l.id AND COALESCE(wf.remark_status::text, '') = ANY(${CONTACTED_SQL})) OR
                EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'completed' AND ca.outcome = 'call_received') AS has_contact,
@@ -100,7 +121,7 @@ function buildQuery(input = {}) {
                EXISTS (SELECT 1 FROM customer_notes pm WHERE pm.lead_id = l.id AND pm.note_kind = 'personal_meeting' AND pm.deleted_at IS NULL AND pm.next_meeting_at <= NOW()) AS due_meeting
           FROM leads l WHERE ${leadFilters} AND ${currentPortfolioDate} AND l.assigned_to_user_id IS NOT NULL
       ), current_classified AS (
-        SELECT cp.*, CASE WHEN cp.current_status = 'converted' THEN 'converted' WHEN cp.has_contact THEN 'contacted' WHEN cp.current_status = ANY(${TERMINAL_SQL}) THEN 'terminal_lead_quality_issue' WHEN cp.current_status = ANY(${RETRYABLE_SQL}) THEN 'retryable_contact_issue' WHEN cp.current_status = 'not_called' THEN 'unworked' ELSE 'other' END AS contact_state
+        SELECT cp.*, CASE WHEN cp.active_sequence_issue = ANY(${RETRYABLE_SQL}) THEN 'retryable_contact_issue' WHEN cp.current_status = 'converted' THEN 'converted' WHEN cp.has_contact THEN 'contacted' WHEN cp.current_status = ANY(${TERMINAL_SQL}) THEN 'terminal_lead_quality_issue' WHEN cp.current_status = ANY(${RETRYABLE_SQL}) THEN 'retryable_contact_issue' WHEN cp.current_status = 'not_called' THEN 'unworked' ELSE 'other' END AS contact_state
           FROM current_portfolio cp
       ), execution_metrics AS (
         SELECT counselor_id,
@@ -221,7 +242,8 @@ async function getIssueBreakdowns(input = {}) {
   if (input.counselor || input.counselor_id) { params.push(input.counselor || input.counselor_id); userFilters.push(`l.assigned_to_user_id = $${params.length}::uuid`); }
   if (input.rm || input.rm_id) { params.push(input.rm || input.rm_id); userFilters.push(`u.report_to_id = $${params.length}::uuid`); }
   if (input.team) { params.push(input.team); userFilters.push(`u.team_name = $${params.length}`); }
-  const effective = `CASE WHEN l.call_status::text = 'converted' THEN 'converted' WHEN EXISTS (SELECT 1 FROM lead_workflow wf WHERE wf.lead_id = l.id AND COALESCE(wf.remark_status::text, '') = ANY(${CONTACTED_SQL})) OR EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'completed' AND ca.outcome = 'call_received') THEN 'communication_completed' ELSE l.call_status::text END`;
+  const activeIssue = activeSequenceIssueSql('l');
+  const effective = `CASE WHEN l.call_status::text = 'converted' THEN 'converted' WHEN ${activeIssue} = ANY(${RETRYABLE_SQL}) THEN ${activeIssue} WHEN EXISTS (SELECT 1 FROM lead_workflow wf WHERE wf.lead_id = l.id AND COALESCE(wf.remark_status::text, '') = ANY(${CONTACTED_SQL})) OR EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'completed' AND ca.outcome = 'call_received') THEN 'communication_completed' ELSE l.call_status::text END`;
   const { rows } = await query(`SELECT l.assigned_to_user_id AS counselor_id, ${effective} AS issue_type, COUNT(DISTINCT l.id)::int AS count FROM leads l JOIN users u ON u.id = l.assigned_to_user_id WHERE ${scope} AND ${currentPortfolioDate} AND l.assigned_to_user_id IS NOT NULL ${userFilters.length ? `AND ${userFilters.join(' AND ')}` : ''} GROUP BY l.assigned_to_user_id, ${effective}`, params);
   const output = new Map();
   for (const row of rows) {
@@ -333,13 +355,13 @@ async function drilldown(input = {}) {
         EXISTS (SELECT 1 FROM customer_notes pm WHERE pm.lead_id = c.lead_id AND pm.note_kind = 'personal_meeting' AND pm.deleted_at IS NULL AND pm.counselor_user_id = c.counselor_id AND pm.created_at >= c.ownership_start AND pm.created_at < c.ownership_end) AS personal_meeting
       FROM cohort c
     ), current_portfolio AS (
-      SELECT l.id AS lead_id, l.assigned_to_user_id AS counselor_id, l.call_status::text AS current_status, l.assigned_at, l.next_followup_at,
+      SELECT l.id AS lead_id, l.assigned_to_user_id AS counselor_id, ${activeSequenceIssueSql('l')} AS active_sequence_issue, COALESCE(${activeSequenceIssueSql('l')}, l.call_status::text) AS current_status, l.assigned_at, l.next_followup_at,
         EXISTS (SELECT 1 FROM lead_workflow wf WHERE wf.lead_id = l.id AND COALESCE(wf.remark_status::text, '') = ANY(${CONTACTED_SQL})) OR EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'completed' AND ca.outcome = 'call_received') AS has_contact,
         EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'scheduled' AND ca.scheduled_at <= NOW()) AS due_attempt,
         EXISTS (SELECT 1 FROM customer_notes pm WHERE pm.lead_id = l.id AND pm.note_kind = 'personal_meeting' AND pm.deleted_at IS NULL AND pm.next_meeting_at <= NOW()) AS due_meeting
       FROM leads l WHERE ${scope} AND ${currentPortfolioDate} AND l.assigned_to_user_id IS NOT NULL
     ), current_classified AS (
-      SELECT cp.*, CASE WHEN cp.current_status = 'converted' THEN 'converted' WHEN cp.has_contact THEN 'contacted' WHEN cp.current_status = ANY(${TERMINAL_SQL}) THEN 'terminal_lead_quality_issue' WHEN cp.current_status = ANY(${RETRYABLE_SQL}) THEN 'retryable_contact_issue' WHEN cp.current_status = 'not_called' THEN 'unworked' ELSE 'other' END AS contact_state FROM current_portfolio cp
+      SELECT cp.*, CASE WHEN cp.active_sequence_issue = ANY(${RETRYABLE_SQL}) THEN 'retryable_contact_issue' WHEN cp.current_status = 'converted' THEN 'converted' WHEN cp.has_contact THEN 'contacted' WHEN cp.current_status = ANY(${TERMINAL_SQL}) THEN 'terminal_lead_quality_issue' WHEN cp.current_status = ANY(${RETRYABLE_SQL}) THEN 'retryable_contact_issue' WHEN cp.current_status = 'not_called' THEN 'unworked' ELSE 'other' END AS contact_state FROM current_portfolio cp
     ), reassigned_out AS (
       SELECT DISTINCT ON (ro.lead_id)
         ro.lead_id, ro.ownership_start AS assigned_at,
@@ -441,8 +463,15 @@ async function drilldownAttemptCompliance(input, counselorId) {
     COUNT(*) FILTER (WHERE status = 'completed' AND scheduled_at <= NOW())::int AS completed_count,
     COUNT(*) FILTER (WHERE status = 'missed' OR (status = 'scheduled' AND scheduled_at <= NOW() - make_interval(mins => ${ATTEMPT_GRACE_MINUTES})))::int AS missed_count,
     COUNT(*) FILTER (WHERE status = 'scheduled' AND scheduled_at > NOW())::int AS upcoming_count,
-    COALESCE(jsonb_object_agg(attempt_number, count), '{}'::jsonb) AS attempt_numbers
-    FROM (SELECT attempt_number, status, scheduled_at, COUNT(*)::int AS count FROM attempts GROUP BY attempt_number, status, scheduled_at) grouped`, params);
+    COALESCE((
+      SELECT jsonb_object_agg(number_counts.attempt_number, number_counts.count)
+      FROM (
+        SELECT attempt_number, COUNT(*)::int AS count
+        FROM attempts
+        GROUP BY attempt_number
+      ) number_counts
+    ), '{}'::jsonb) AS attempt_numbers
+    FROM attempts`, params);
   const totals = totalsRows[0] || {};
   const { rows: [count] } = await query(`${cte} SELECT COUNT(*)::int AS total FROM attempts ca WHERE ${statusClause} ${attemptNumberClause}`, params);
   params.push(pageSize, (page - 1) * pageSize);
