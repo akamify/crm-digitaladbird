@@ -30,6 +30,20 @@ describe('counselor report classification', () => {
     expect(sql).not.toContain('WHERE a.assigned_at >=');
   });
 
+  test('pre-filters ownership history through a shared eligible-leads CTE', () => {
+    const { sql } = _buildQuery({ from: '2026-08-01', to: '2026-08-30', source: 'meta' });
+    expect(sql).toContain('eligible_leads AS MATERIALIZED');
+    expect(sql).toContain('JOIN eligible_leads el ON el.id = a.lead_id');
+    expect(sql).toContain('FROM eligible_leads el');
+    expect(sql).toContain('JOIN eligible_leads el ON el.id = ca.lead_id');
+  });
+
+  test('keeps complete ownership history so post-period transfers still close intervals', () => {
+    const { sql } = _buildQuery({ from: '2026-08-01', to: '2026-08-30' });
+    expect(sql).toContain('ownership AS MATERIALIZED');
+    expect(sql).not.toContain('a.assigned_at < ($2::date + INTERVAL');
+  });
+
   test('reassigned-out is distinct and derived from a later ownership transfer', () => {
     const { sql } = _buildQuery({ from: '2026-08-01', to: '2026-08-30' });
     expect(sql).toContain('reassigned_out_metrics AS');

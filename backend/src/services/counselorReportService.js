@@ -71,19 +71,24 @@ function buildQuery(input = {}) {
   return {
     params,
     sql: `
-      WITH ownership AS (
+      WITH eligible_leads AS MATERIALIZED (
+        SELECT l.id
+          FROM leads l
+         WHERE ${leadFilters}
+      ), ownership AS MATERIALIZED (
         SELECT a.lead_id, COALESCE(a.assigned_to_user_id, a.user_id) AS counselor_id,
                a.assigned_at AS ownership_start,
                COALESCE(a.unassigned_at, LEAD(a.assigned_at) OVER (PARTITION BY a.lead_id ORDER BY a.assigned_at, a.id), 'infinity'::timestamptz) AS ownership_end
           FROM lead_assignments a
-         WHERE COALESCE(a.assigned_to_user_id, a.user_id) IS NOT NULL
-      ), cohort AS (
+          JOIN eligible_leads el ON el.id = a.lead_id
+          WHERE COALESCE(a.assigned_to_user_id, a.user_id) IS NOT NULL
+      ), cohort AS MATERIALIZED (
         SELECT DISTINCT ON (o.counselor_id, o.lead_id)
                o.lead_id, o.counselor_id, o.ownership_start, o.ownership_end
-          FROM ownership o JOIN leads l ON l.id = o.lead_id
-         WHERE ${cohortDate} AND ${leadFilters}
+          FROM ownership o
+         WHERE ${cohortDate}
          ORDER BY o.counselor_id, o.lead_id, o.ownership_start DESC
-      ), attributed AS (
+      ), attributed AS MATERIALIZED (
         SELECT c.*,
           EXISTS (SELECT 1 FROM lead_remarks r WHERE r.lead_id = c.lead_id AND r.user_id = c.counselor_id AND r.created_at >= c.ownership_start AND r.created_at < c.ownership_end) OR
           EXISTS (SELECT 1 FROM lead_workflow_history h WHERE h.lead_id = c.lead_id AND h.user_id = c.counselor_id AND h.created_at >= c.ownership_start AND h.created_at < c.ownership_end) OR
@@ -100,8 +105,7 @@ function buildQuery(input = {}) {
       ), reassigned_out_metrics AS (
         SELECT ro.counselor_id, COUNT(DISTINCT ro.lead_id)::int AS reassigned_out
           FROM ownership ro
-          JOIN leads l ON l.id = ro.lead_id
-         WHERE ${ownershipDate('ro')} AND ${leadFilters}
+         WHERE ${ownershipDate('ro')}
            AND EXISTS (
              SELECT 1 FROM ownership next_owner
               WHERE next_owner.lead_id = ro.lead_id
@@ -111,15 +115,20 @@ function buildQuery(input = {}) {
          GROUP BY ro.counselor_id
       ), current_portfolio AS (
         SELECT l.id AS lead_id, l.assigned_to_user_id AS counselor_id,
-               ${activeSequenceIssueSql('l')} AS active_sequence_issue,
-               COALESCE(${activeSequenceIssueSql('l')}, l.call_status::text) AS current_status,
+               active_seq.active_sequence_issue,
+               COALESCE(active_seq.active_sequence_issue, l.call_status::text) AS current_status,
                l.assigned_at, l.next_followup_at,
                EXISTS (SELECT 1 FROM lead_workflow wf WHERE wf.lead_id = l.id AND COALESCE(wf.remark_status::text, '') = ANY(${CONTACTED_SQL})) OR
                EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'completed' AND ca.outcome = 'call_received') AS has_contact,
                EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'scheduled' AND ca.scheduled_at <= NOW()) AS due_attempt,
                EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'scheduled' AND ca.scheduled_at > NOW()) AS upcoming_attempt,
                EXISTS (SELECT 1 FROM customer_notes pm WHERE pm.lead_id = l.id AND pm.note_kind = 'personal_meeting' AND pm.deleted_at IS NULL AND pm.next_meeting_at <= NOW()) AS due_meeting
-          FROM leads l WHERE ${leadFilters} AND ${currentPortfolioDate} AND l.assigned_to_user_id IS NOT NULL
+          FROM eligible_leads el
+          JOIN leads l ON l.id = el.id
+          LEFT JOIN LATERAL (
+            SELECT ${activeSequenceIssueSql('l')} AS active_sequence_issue
+          ) active_seq ON TRUE
+         WHERE ${currentPortfolioDate} AND l.assigned_to_user_id IS NOT NULL
       ), current_classified AS (
         SELECT cp.*, CASE WHEN cp.active_sequence_issue = ANY(${RETRYABLE_SQL}) THEN 'retryable_contact_issue' WHEN cp.current_status = 'converted' THEN 'converted' WHEN cp.has_contact THEN 'contacted' WHEN cp.current_status = ANY(${TERMINAL_SQL}) THEN 'terminal_lead_quality_issue' WHEN cp.current_status = ANY(${RETRYABLE_SQL}) THEN 'retryable_contact_issue' WHEN cp.current_status = 'not_called' THEN 'unworked' ELSE 'other' END AS contact_state
           FROM current_portfolio cp
@@ -154,8 +163,8 @@ function buildQuery(input = {}) {
         FROM ownership o
         JOIN lead_call_attempts ca ON ca.lead_id = o.lead_id
           AND ca.scheduled_at >= o.ownership_start AND ca.scheduled_at < o.ownership_end
-        JOIN leads l ON l.id = ca.lead_id
-        WHERE ${attemptDate} AND ${leadFilters} AND ca.attempt_number > 1 AND ca.status IN ('scheduled', 'completed', 'missed')
+        JOIN eligible_leads el ON el.id = ca.lead_id
+        WHERE ${attemptDate} AND ca.attempt_number > 1 AND ca.status IN ('scheduled', 'completed', 'missed')
         GROUP BY o.counselor_id
       ), portfolio_metrics AS (
         SELECT counselor_id,
@@ -242,9 +251,23 @@ async function getIssueBreakdowns(input = {}) {
   if (input.counselor || input.counselor_id) { params.push(input.counselor || input.counselor_id); userFilters.push(`l.assigned_to_user_id = $${params.length}::uuid`); }
   if (input.rm || input.rm_id) { params.push(input.rm || input.rm_id); userFilters.push(`u.report_to_id = $${params.length}::uuid`); }
   if (input.team) { params.push(input.team); userFilters.push(`u.team_name = $${params.length}`); }
-  const activeIssue = activeSequenceIssueSql('l');
+  const activeIssue = 'active_seq.active_sequence_issue';
   const effective = `CASE WHEN l.call_status::text = 'converted' THEN 'converted' WHEN ${activeIssue} = ANY(${RETRYABLE_SQL}) THEN ${activeIssue} WHEN EXISTS (SELECT 1 FROM lead_workflow wf WHERE wf.lead_id = l.id AND COALESCE(wf.remark_status::text, '') = ANY(${CONTACTED_SQL})) OR EXISTS (SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id = l.id AND ca.status = 'completed' AND ca.outcome = 'call_received') THEN 'communication_completed' ELSE l.call_status::text END`;
-  const { rows } = await query(`SELECT l.assigned_to_user_id AS counselor_id, ${effective} AS issue_type, COUNT(DISTINCT l.id)::int AS count FROM leads l JOIN users u ON u.id = l.assigned_to_user_id WHERE ${scope} AND ${currentPortfolioDate} AND l.assigned_to_user_id IS NOT NULL ${userFilters.length ? `AND ${userFilters.join(' AND ')}` : ''} GROUP BY l.assigned_to_user_id, ${effective}`, params);
+  const { rows } = await query(`
+    WITH eligible_leads AS MATERIALIZED (
+      SELECT l.id
+        FROM leads l
+       WHERE ${scope}
+    )
+    SELECT l.assigned_to_user_id AS counselor_id, ${effective} AS issue_type, COUNT(DISTINCT l.id)::int AS count
+      FROM eligible_leads el
+      JOIN leads l ON l.id = el.id
+      JOIN users u ON u.id = l.assigned_to_user_id
+      LEFT JOIN LATERAL (
+        SELECT ${activeSequenceIssueSql('l')} AS active_sequence_issue
+      ) active_seq ON TRUE
+     WHERE ${currentPortfolioDate} AND l.assigned_to_user_id IS NOT NULL ${userFilters.length ? `AND ${userFilters.join(' AND ')}` : ''}
+     GROUP BY l.assigned_to_user_id, ${effective}`, params);
   const output = new Map();
   for (const row of rows) {
     if (![...RETRYABLE_CONTACT_ISSUES, ...TERMINAL_LEAD_QUALITY_ISSUES].includes(row.issue_type)) continue;
