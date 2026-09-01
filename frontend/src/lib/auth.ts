@@ -28,8 +28,10 @@ interface AuthState {
   logout: () => Promise<void>;
 }
 
+
 let _initP: Promise<void> | null = null;
 let _expiryTimer: ReturnType<typeof setTimeout> | null = null;
+
 
 function scheduleSessionExpiry(onExpire: () => void) {
   if (typeof window === 'undefined') return;
@@ -43,6 +45,7 @@ function scheduleSessionExpiry(onExpire: () => void) {
   }
   _expiryTimer = setTimeout(onExpire, Math.min(delay, 2_147_483_647));
 }
+
 
 function toUser(me: any): AuthUser {
   return {
