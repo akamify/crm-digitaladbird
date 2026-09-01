@@ -40,13 +40,15 @@ function queryString(filters: CounselorReportFilters) {
   return params.toString();
 }
 
-export function useCounselorReport(filters: CounselorReportFilters) {
+function withQuery(path: string, qs: string) { return qs ? `${path}?${qs}` : path; }
+
+export function useCounselorReport(filters: CounselorReportFilters, includeTeams = false) {
   const qs = queryString(filters);
   const options = { staleTime: 15_000, refetchInterval: 60_000, retry: 1 };
   return {
-    summary: useQuery({ queryKey: ['counselor-report', 'summary', qs], queryFn: () => apiGet<ReportSummary>(`/counselor-report/summary?${qs}`), ...options }),
-    counselors: useQuery({ queryKey: ['counselor-report', 'counselors', qs], queryFn: () => apiGet<CounselorReportRow[]>(`/counselor-report/counselors?${qs}`), ...options }),
-    teams: useQuery({ queryKey: ['counselor-report', 'teams', qs], queryFn: () => apiGet<TeamRow[]>(`/counselor-report/rm-teams?${qs}`), ...options }),
+    summary: useQuery({ queryKey: ['counselor-report', 'summary', qs], queryFn: () => apiGet<ReportSummary>(withQuery('/counselor-report/summary', qs)), ...options }),
+    counselors: useQuery({ queryKey: ['counselor-report', 'counselors', qs], queryFn: () => apiGet<CounselorReportRow[]>(withQuery('/counselor-report/counselors', qs)), ...options }),
+    teams: useQuery({ queryKey: ['counselor-report', 'teams', qs], queryFn: () => apiGet<TeamRow[]>(withQuery('/counselor-report/rm-teams', qs)), enabled: includeTeams, ...options }),
     filterOptions: useQuery({ queryKey: ['counselor-report', 'filters'], queryFn: () => apiGet<CounselorReportFilterOptions>('/counselor-report/filters'), staleTime: 60_000, retry: 1 }),
   };
 }

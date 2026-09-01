@@ -16,7 +16,7 @@ export default function CounselorReportPage() {
   const [filters, setFilters] = useState<CounselorReportFilters>({});
   const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
   const [drilldown, setDrilldown] = useState<DrilldownRequest | null>(null);
-  const { summary, counselors, teams, filterOptions } = useCounselorReport(filters);
+  const { summary, counselors, teams, filterOptions } = useCounselorReport(filters, tab === 'teams');
   const active = tab === 'counselors' ? counselors : teams;
   const users = filterOptions.data?.users || [];
   const rms = users.filter(user => user.role === 'rm');
