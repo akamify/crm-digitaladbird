@@ -91,8 +91,10 @@ const BUILD_VERSION = process.env.CRM_BACKEND_BUILD_VERSION || 'backend-ver-1';
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 
+
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(compression());
+
 
 const allowedOrigins = new Set(config.cors.origins);
 const corsOptions = {
