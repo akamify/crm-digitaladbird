@@ -3,11 +3,13 @@
 import { useEffect } from 'react';
 import { MessageSquare, RefreshCw } from 'lucide-react';
 
+
 export default function ChatError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   useEffect(() => {
     console.error('[Chat Error]', error);
   }, [error]);
 
+  
   return (
     <div className="flex h-screen items-center justify-center bg-slate-50 p-4">
       <div className="w-full max-w-md rounded-2xl bg-white p-8 text-center shadow-xl">
