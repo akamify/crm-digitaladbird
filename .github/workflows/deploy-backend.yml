@@ -8,6 +8,7 @@ on:
       - "backend/**"
       - "ecosystem.config.js"
       - "deploy*.sh"
+      - "scripts/vps-sync-from-local.sh"
       - "update-vps.sh"
       - ".github/workflows/deploy-backend.yml"
   workflow_dispatch:
@@ -30,4 +31,5 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.VPS_PORT }}
           script: |
-            bash /root/crm-digitaladbird/backend/deploy.sh
+            cd /root/crm-digitaladbird
+            bash scripts/vps-sync-from-local.sh
