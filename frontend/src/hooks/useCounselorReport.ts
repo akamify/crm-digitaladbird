@@ -42,15 +42,20 @@ function queryString(filters: CounselorReportFilters) {
 
 function withQuery(path: string, qs: string) { return qs ? `${path}?${qs}` : path; }
 
+function summarizeCounselorRows(rows: CounselorReportRow[]): ReportSummary {
+  const metrics = ['total_received', 'current_assigned', 'worked', 'unworked', 'actionable_pending', 'current_contacted', 'unresolved_call_issues', 'terminal_lead_quality_issues', 'converted', 'personal_meetings', 'overdue_attempts'] as const;
+  const summary = { total_counselors: rows.length, total_received: 0, current_assigned: 0, worked: 0, unworked: 0, actionable_pending: 0, current_contacted: 0, unresolved_call_issues: 0, terminal_lead_quality_issues: 0, converted: 0, personal_meetings: 0, overdue_attempts: 0 };
+  rows.forEach(row => metrics.forEach(metric => { summary[metric] += Number(row[metric] || 0); }));
+  return summary;
+}
+
 export function useCounselorReport(filters: CounselorReportFilters, includeTeams = false) {
   const qs = queryString(filters);
   const options = { staleTime: 15_000, refetchInterval: 60_000, retry: 1 };
-  return {
-    summary: useQuery({ queryKey: ['counselor-report', 'summary', qs], queryFn: () => apiGet<ReportSummary>(withQuery('/counselor-report/summary', qs)), ...options }),
-    counselors: useQuery({ queryKey: ['counselor-report', 'counselors', qs], queryFn: () => apiGet<CounselorReportRow[]>(withQuery('/counselor-report/counselors', qs)), ...options }),
-    teams: useQuery({ queryKey: ['counselor-report', 'teams', qs], queryFn: () => apiGet<TeamRow[]>(withQuery('/counselor-report/rm-teams', qs)), enabled: includeTeams, ...options }),
-    filterOptions: useQuery({ queryKey: ['counselor-report', 'filters'], queryFn: () => apiGet<CounselorReportFilterOptions>('/counselor-report/filters'), staleTime: 60_000, retry: 1 }),
-  };
+  const counselors = useQuery({ queryKey: ['counselor-report', 'counselors', qs], queryFn: () => apiGet<CounselorReportRow[]>(withQuery('/counselor-report/counselors', qs)), ...options });
+  const teams = useQuery({ queryKey: ['counselor-report', 'teams', qs], queryFn: () => apiGet<TeamRow[]>(withQuery('/counselor-report/rm-teams', qs)), enabled: includeTeams, ...options });
+  const filterOptions = useQuery({ queryKey: ['counselor-report', 'filters'], queryFn: () => apiGet<CounselorReportFilterOptions>('/counselor-report/filters'), staleTime: 60_000, retry: 1 });
+  return { summary: { data: counselors.data ? summarizeCounselorRows(counselors.data) : undefined, isLoading: counselors.isLoading, isError: counselors.isError, refetch: counselors.refetch }, counselors, teams, filterOptions };
 }
 
 export function useCounselorReportDrilldown(filters: CounselorReportFilters, request?: { counselorId: string; metric?: string; issueType?: string; attemptStatus?: string; attemptNumber?: number; page?: number }) {
