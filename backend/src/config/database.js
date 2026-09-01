@@ -18,11 +18,13 @@ let _withTransaction;
 let _closePool;
 
 function createPgPool() {
+  const SESSION_TZ = process.env.PROCESS_TZ || 'Asia/Kolkata';
   const p = new Pool({
     connectionString: config.db.url,
     ssl: config.db.ssl ? { rejectUnauthorized: false } : false,
     max: config.db.poolMax,
     statement_timeout: config.db.statementTimeoutMs,
+    options: `-c timezone=${SESSION_TZ}`,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 30000,
     allowExitOnIdle: false,
@@ -33,12 +35,6 @@ function createPgPool() {
   // of TIMESTAMPTZ) return India time regardless of the cluster's default tz.
   // Runs once per new physical connection — the pool reuses connections so
   // there's no per-query overhead. PROCESS_TZ env can override (default IST).
-  const SESSION_TZ = process.env.PROCESS_TZ || 'Asia/Kolkata';
-  p.on('connect', async (client) => {
-    try { await client.query(`SET TIME ZONE '${SESSION_TZ}'`); }
-    catch (err) { logger.warn({ err: err.message }, '[pg] failed to set session timezone'); }
-  });
-
   p.on('error', (err) => {
     logger.error({ err }, 'Unexpected error on idle pg client');
   });
