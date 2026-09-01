@@ -86,7 +86,6 @@ function proxyToFrontend(req, res) {
 }
 
 const app = express();
-console.log('[CRM BACKEND] app.js UPDATED CODE LOADED - ver-1');
 
 app.disable('x-powered-by');
 app.set('trust proxy', 1);

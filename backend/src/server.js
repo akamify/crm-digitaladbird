@@ -26,7 +26,6 @@ const server = http.createServer(app);
 initSocket(server);
 
 server.listen(config.port, () => {
-  console.log('[CRM BACKEND] UPDATED CODE DEPLOYED - ver-1');
   logger.info(`DigitalADbird CRM API listening on :${config.port} [${config.env}]`);
 });
 
