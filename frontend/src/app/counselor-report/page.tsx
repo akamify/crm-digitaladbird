@@ -1,6 +1,6 @@
 'use client';
 
-const REPORT_DATA_START = '2026-08-13';
+const REPORT_DATA_START = '2026-08-16';
 const currentDateInput = () => { const date = new Date(); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; };
 const defaultReportFilters = () => ({ from: REPORT_DATA_START, to: currentDateInput() });
 
