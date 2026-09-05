@@ -7,6 +7,7 @@
  * inconsistency.
  
 
+
  * This file is requested whenever an old SW tries to update itself. Replacing
  * it with an empty SW that immediately unregisters itself and deletes every
  * Cache Storage entry cleans up stale state on every page load.
