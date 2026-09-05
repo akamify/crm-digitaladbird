@@ -10,7 +10,6 @@ const logger = require('../utils/logger');
 
 const VALID_ROLES = ['super_admin', 'rm', 'member', 'client'];
 
-
 function normalizePhone(input) {
   if (!input) return null;
   let p = String(input).trim().replace(/[\s-()]/g, '');
