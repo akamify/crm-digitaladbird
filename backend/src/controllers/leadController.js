@@ -33,6 +33,11 @@ const {
   buildLeadDailyMetricConditions,
   leadDailySummarySelectSql,
 } = require('../utils/leadDailyMetrics');
+const {
+  normalizeLeadAllTimeMetric,
+  buildLeadAllTimeMetricConditions,
+  leadAllTimeSummarySelectSql,
+} = require('../utils/leadAllTimeMetrics');
 
 function humanizeValue(value) {
   return String(value || '')
@@ -398,6 +403,7 @@ async function assertLeadWriteAccess(client, leadId, user) {
  *   created_preset    today|yesterday|day_before (IST created_at date)
  *   selected_date     Super Admin daily view date (YYYY-MM-DD, IST)
  *   daily_metric      received|worked|pending|personal_meeting|session_9pm|call_issues
+ *   all_time_metric   all|worked|pending|personal_meeting|session_9pm|call_issues
  *   pending           true => only unworked leads
  *   followup          today|overdue|week
  *   page, page_size
@@ -709,8 +715,10 @@ exports.list = asyncHandler(async (req, res) => {
   }
 
   let dailySummaryQuery = null;
+  let allTimeSummaryQuery = null;
   let selectedDailyDate = null;
   let selectedDailyMetric = null;
+  let selectedAllTimeMetric = null;
   if (req.user.role === 'super_admin' && req.query.selected_date) {
     selectedDailyDate = normalizeLeadDailyDate(req.query.selected_date);
     selectedDailyMetric = normalizeLeadDailyMetric(req.query.daily_metric);
@@ -722,6 +730,14 @@ exports.list = asyncHandler(async (req, res) => {
       params: [...params],
     };
     where.push(dailyConditions[selectedDailyMetric]);
+  } else if (req.user.role === 'super_admin' && req.query.all_time_metric !== undefined) {
+    selectedAllTimeMetric = normalizeLeadAllTimeMetric(req.query.all_time_metric);
+    const allTimeConditions = buildLeadAllTimeMetricConditions('l');
+    allTimeSummaryQuery = {
+      sql: `SELECT ${leadAllTimeSummarySelectSql(allTimeConditions)} FROM leads l WHERE ${where.join(' AND ')}`,
+      params: [...params],
+    };
+    where.push(allTimeConditions[selectedAllTimeMetric]);
   }
 
   const allowedSort = new Set(['created_at', 'assigned_at', 'next_followup_at', 'updated_at']);
@@ -734,15 +750,20 @@ exports.list = asyncHandler(async (req, res) => {
 
   const whereSql = where.join(' AND ');
 
-  const [totalRes, dailySummaryRes] = await Promise.all([
+  const [totalRes, dailySummaryRes, allTimeSummaryRes] = await Promise.all([
     query(`SELECT COUNT(*) FROM leads l WHERE ${whereSql}`, params),
     dailySummaryQuery ? query(dailySummaryQuery.sql, dailySummaryQuery.params) : Promise.resolve(null),
+    allTimeSummaryQuery ? query(allTimeSummaryQuery.sql, allTimeSummaryQuery.params) : Promise.resolve(null),
   ]);
   const total = parseInt(totalRes.rows[0].count, 10);
   const dailySummary = dailySummaryRes ? {
     selected_date: selectedDailyDate,
     selected_metric: selectedDailyMetric,
     ...dailySummaryRes.rows[0],
+  } : null;
+  const allTimeSummary = allTimeSummaryRes ? {
+    selected_metric: selectedAllTimeMetric,
+    ...allTimeSummaryRes.rows[0],
   } : null;
 
   params.push(pageSize); const limitIdx = params.length;
@@ -872,6 +893,7 @@ exports.list = asyncHandler(async (req, res) => {
     page,
     pageSize,
     ...(dailySummary ? { daily_summary: dailySummary } : {}),
+    ...(allTimeSummary ? { all_time_summary: allTimeSummary } : {}),
   } });
 });
 

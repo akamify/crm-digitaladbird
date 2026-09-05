@@ -22,9 +22,8 @@ function activeSequenceIssueSql(leadAlias = 'l') {
      LIMIT 1)`;
 }
 
-function unresolvedRetryableCallIssueSql(leadAlias = 'l') {
-  const activeIssue = activeSequenceIssueSql(leadAlias);
-  const hasSuccessfulContact = `(
+function hasSuccessfulContactSql(leadAlias = 'l') {
+  return `(
     EXISTS (
       SELECT 1 FROM lead_workflow issue_wf
        WHERE issue_wf.lead_id = ${leadAlias}.id
@@ -37,6 +36,11 @@ function unresolvedRetryableCallIssueSql(leadAlias = 'l') {
          AND issue_received.outcome = 'call_received'
     )
   )`;
+}
+
+function unresolvedRetryableCallIssueSql(leadAlias = 'l') {
+  const activeIssue = activeSequenceIssueSql(leadAlias);
+  const hasSuccessfulContact = hasSuccessfulContactSql(leadAlias);
   return `(
     ${activeIssue} = ANY(${RETRYABLE_SQL})
     OR (
@@ -49,5 +53,6 @@ function unresolvedRetryableCallIssueSql(leadAlias = 'l') {
 
 module.exports = {
   activeSequenceIssueSql,
+  hasSuccessfulContactSql,
   unresolvedRetryableCallIssueSql,
 };

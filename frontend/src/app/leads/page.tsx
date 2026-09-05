@@ -21,7 +21,14 @@ import { clsx, fmtPhone, humanize, isDueToday, isOverdue, stageChip } from '@/li
 import { triggerPhoneCall } from '@/lib/phone';
 import { useAuth } from '@/lib/auth';
 import { LEAD_REMARK_GROUPS } from '@/constants/leadRemarkOptions';
-import type { CallStatus, Lead, LeadDailyMetric, LeadDailySummary, LeadFilters as LeadFilterType } from '@/types';
+import type {
+  CallStatus,
+  Lead,
+  LeadAllTimeMetric,
+  LeadDailyMetric,
+  LeadFilters as LeadFilterType,
+  LeadViewMode,
+} from '@/types';
 
 type CommunicationTab = 'chat' | 'calls';
 
@@ -32,6 +39,15 @@ const DAILY_METRIC_OPTIONS: Array<{ key: LeadDailyMetric; label: string; hint: s
   { key: 'personal_meeting', label: 'Meeting Attended', hint: 'Leads with a Personal Meeting recorded on the selected date.' },
   { key: 'session_9pm', label: '9:00 PM Session', hint: 'Leads marked 9:00 Session Attend on the selected date.' },
   { key: 'call_issues', label: 'Call Issues', hint: 'Date-relevant leads with a current unresolved retryable call issue.' },
+];
+
+const ALL_TIME_METRIC_OPTIONS: Array<{ key: LeadAllTimeMetric; label: string; hint: string }> = [
+  { key: 'all', label: 'All Leads', hint: 'All active leads matching the current filters.' },
+  { key: 'worked', label: 'Worked', hint: 'Leads with any saved call, remark, or workflow activity.' },
+  { key: 'pending', label: 'Pending', hint: 'Currently assigned leads with an overdue actionable obligation.' },
+  { key: 'personal_meeting', label: 'Meeting Attended', hint: 'Leads with a Personal Meeting recorded at any time.' },
+  { key: 'session_9pm', label: '9:00 PM Session', hint: 'Leads ever marked 9:00 Session Attend.' },
+  { key: 'call_issues', label: 'Call Issues', hint: 'Currently assigned leads with an unresolved retryable call issue.' },
 ];
 
 const SUPER_ADMIN_REMOVED_FILTERS = new Set([
@@ -79,6 +95,15 @@ function displayBusinessDate(date: string) {
 
 function leadDailyMetric(value: string | null): LeadDailyMetric {
   return DAILY_METRIC_OPTIONS.some(option => option.key === value) ? value as LeadDailyMetric : 'received';
+}
+
+function leadAllTimeMetric(value: string | null): LeadAllTimeMetric {
+  return ALL_TIME_METRIC_OPTIONS.some(option => option.key === value) ? value as LeadAllTimeMetric : 'all';
+}
+
+function leadViewMode(value: string | null, hasSelectedDate: boolean): LeadViewMode {
+  if (value === 'daily' || value === 'all_time') return value;
+  return hasSelectedDate ? 'daily' : 'all_time';
 }
 
 function leadDailyDate(value: string | null) {
@@ -298,66 +323,88 @@ function LeadRowActionsMenu({
   );
 }
 
-function DailyLeadFilterRow({
+function LeadMetricFilterRow({
+  viewMode,
   selectedDate,
   selectedMetric,
-  summary,
+  options,
   loading,
+  onViewChange,
   onDateChange,
   onMetricChange,
 }: {
+  viewMode: LeadViewMode;
   selectedDate: string;
-  selectedMetric: LeadDailyMetric;
-  summary?: LeadDailySummary;
+  selectedMetric: string;
+  options: Array<{ key: string; label: string; hint: string; value?: number }>;
   loading: boolean;
+  onViewChange: (mode: LeadViewMode) => void;
   onDateChange: (date: string) => void;
-  onMetricChange: (metric: LeadDailyMetric) => void;
+  onMetricChange: (metric: string) => void;
 }) {
   const today = businessToday();
-  const summaryMatchesDate = summary?.selected_date === selectedDate;
 
   return (
     <section className="overflow-hidden rounded-2xl border border-blue-200 bg-gradient-to-r from-blue-50 via-white to-amber-50 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-blue-100 px-4 py-3">
-        <div>
-          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-blue-700">Daily lead view</div>
-          <div className="mt-0.5 text-xs text-slate-500">Date and selected metric stay applied to the lead list.</div>
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-blue-100 bg-white/80 p-1">
+          {([
+            ['all_time', 'All Time Leads'],
+            ['daily', 'Daily Lead View'],
+          ] as Array<[LeadViewMode, string]>).map(([mode, label]) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => onViewChange(mode)}
+              className={clsx(
+                'rounded-lg px-3 py-2 text-xs font-semibold transition',
+                viewMode === mode ? 'bg-brand-600 text-white shadow-sm' : 'text-slate-600 hover:bg-blue-50',
+              )}
+            >
+              {label}
+            </button>
+          ))}
         </div>
-        <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
-          <button
-            type="button"
-            onClick={() => onDateChange(shiftBusinessDate(selectedDate, -1))}
-            className="rounded-lg p-2 text-slate-600 transition hover:bg-slate-100"
-            aria-label="Previous day"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-          <div className="min-w-36 px-2 text-center text-sm font-semibold text-slate-800">{displayBusinessDate(selectedDate)}</div>
-          <button
-            type="button"
-            disabled={selectedDate >= today}
-            onClick={() => onDateChange(shiftBusinessDate(selectedDate, 1))}
-            className="rounded-lg p-2 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35"
-            aria-label="Next day"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => onDateChange(today)}
-            className={clsx(
-              'ml-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition',
-              selectedDate === today ? 'bg-brand-600 text-white' : 'text-brand-700 hover:bg-brand-50',
-            )}
-          >
-            Today
-          </button>
-        </div>
+        {viewMode === 'daily' ? (
+          <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+            <button
+              type="button"
+              onClick={() => onDateChange(shiftBusinessDate(selectedDate, -1))}
+              className="rounded-lg p-2 text-slate-600 transition hover:bg-slate-100"
+              aria-label="Previous day"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <div className="min-w-36 px-2 text-center text-sm font-semibold text-slate-800">{displayBusinessDate(selectedDate)}</div>
+            <button
+              type="button"
+              disabled={selectedDate >= today}
+              onClick={() => onDateChange(shiftBusinessDate(selectedDate, 1))}
+              className="rounded-lg p-2 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35"
+              aria-label="Next day"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => onDateChange(today)}
+              className={clsx(
+                'ml-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition',
+                selectedDate === today ? 'bg-brand-600 text-white' : 'text-brand-700 hover:bg-brand-50',
+              )}
+            >
+              Today
+            </button>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-medium text-slate-500 shadow-sm">
+            Complete CRM history
+          </div>
+        )}
       </div>
       <div className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-3 xl:grid-cols-6">
-        {DAILY_METRIC_OPTIONS.map(option => {
+        {options.map(option => {
           const active = selectedMetric === option.key;
-          const value = summaryMatchesDate ? summary?.[option.key] : undefined;
           return (
             <button
               key={option.key}
@@ -372,7 +419,7 @@ function DailyLeadFilterRow({
               )}
             >
               <div className={clsx('text-[10px] font-semibold uppercase tracking-wide', active ? 'text-blue-100' : 'text-slate-500')}>{option.label}</div>
-              <div className="mt-1.5 text-xl font-bold tabular-nums">{loading || value === undefined ? '...' : Number(value).toLocaleString()}</div>
+              <div className="mt-1.5 text-xl font-bold tabular-nums">{loading || option.value === undefined ? '...' : Number(option.value).toLocaleString()}</div>
             </button>
           );
         })}
@@ -423,6 +470,8 @@ function LeadsInner() {
     to: sp.get('to') || '',
     selected_date: leadDailyDate(sp.get('selected_date')),
     daily_metric: leadDailyMetric(sp.get('daily_metric')),
+    lead_view: leadViewMode(sp.get('lead_view'), sp.has('selected_date')),
+    all_time_metric: leadAllTimeMetric(sp.get('all_time_metric')),
     page: Number(sp.get('page') || '1'),
     page_size: Number(sp.get('page_size') || '25'),
     sort: 'created_at',
@@ -461,18 +510,28 @@ function LeadsInner() {
       delete next.has_rm_update;
       delete next.updated_by_rm;
       delete next.session_attendance;
-      next.selected_date = next.selected_date || businessToday();
-      next.daily_metric = next.daily_metric || 'received';
+      if (next.lead_view === 'daily') {
+        next.selected_date = next.selected_date || businessToday();
+        next.daily_metric = next.daily_metric || 'received';
+        delete next.all_time_metric;
+      } else {
+        delete next.selected_date;
+        delete next.daily_metric;
+        next.all_time_metric = next.all_time_metric || 'all';
+      }
+      delete next.lead_view;
     } else {
       delete next.selected_date;
       delete next.daily_metric;
+      delete next.lead_view;
+      delete next.all_time_metric;
     }
     if (next.assignment === 'assigned') next.assigned_to = '__assigned';
     if (next.assignment === 'unassigned') next.assigned_to = '__unassigned';
     delete next.assignment;
     return next;
   }, [filters, debouncedSearch, isSuperAdminLeadsView]);
-  const { data, isLoading, isFetching } = useLeadList(effectiveFilters);
+  const { data, isLoading } = useLeadList(effectiveFilters);
   const bulkAddRemark = useBulkAddRemark();
   const deleteLead = useDeleteLead();
   const deleteAllLeads = useDeleteAllLeads();
@@ -490,24 +549,43 @@ function LeadsInner() {
   const selectablePageIds = rows.filter(lead => !lead.read_only_access).map(lead => lead.id);
   const allCurrentPageSelected = selectablePageIds.length > 0 && selectablePageIds.every(id => selectedIds.includes(id));
   const selectedDeleteScope = DELETE_ALL_SCOPE_OPTIONS.find(option => option.value === deleteAllScope) || DELETE_ALL_SCOPE_OPTIONS[0];
+  const selectedLeadView = filters.lead_view || 'all_time';
+  const selectedDailyDate = filters.selected_date || businessToday();
+  const dailySummary = data?.daily_summary?.selected_date === selectedDailyDate ? data.daily_summary : undefined;
+  const allTimeSummary = data?.all_time_summary;
 
   useEffect(() => {
     const params = new URLSearchParams();
     Object.entries(filters).forEach(([key, value]) => {
       if (isSuperAdminLeadsView && SUPER_ADMIN_REMOVED_FILTERS.has(key)) return;
-      if (!isSuperAdminLeadsView && (key === 'selected_date' || key === 'daily_metric')) return;
+      if (isSuperAdminLeadsView && selectedLeadView === 'all_time' && (key === 'selected_date' || key === 'daily_metric')) return;
+      if (isSuperAdminLeadsView && selectedLeadView === 'daily' && key === 'all_time_metric') return;
+      if (!isSuperAdminLeadsView && ['selected_date', 'daily_metric', 'lead_view', 'all_time_metric'].includes(key)) return;
       if (value !== undefined && value !== null && value !== '' && key !== 'sort' && key !== 'order') {
         params.set(key, String(value));
       }
     });
     router.replace(`/leads${params.toString() ? `?${params.toString()}` : ''}`);
-  }, [filters, isSuperAdminLeadsView, router]);
+  }, [filters, isSuperAdminLeadsView, router, selectedLeadView]);
+
+  function setLeadView(mode: LeadViewMode) {
+    setSelectedIds([]);
+    setFilters(current => current.lead_view === mode ? current : {
+      ...current,
+      lead_view: mode,
+      selected_date: current.selected_date || businessToday(),
+      daily_metric: current.daily_metric || 'received',
+      all_time_metric: current.all_time_metric || 'all',
+      page: 1,
+    });
+  }
 
   function setDailyDate(date: string) {
     if (date > businessToday()) return;
     setSelectedIds([]);
-    setFilters(current => ({
+    setFilters(current => current.lead_view === 'daily' && current.selected_date === date ? current : ({
       ...current,
+      lead_view: 'daily',
       selected_date: date,
       daily_metric: current.daily_metric || 'received',
       page: 1,
@@ -516,10 +594,21 @@ function LeadsInner() {
 
   function setDailyMetric(metric: LeadDailyMetric) {
     setSelectedIds([]);
-    setFilters(current => ({
+    setFilters(current => current.lead_view === 'daily' && current.daily_metric === metric ? current : ({
       ...current,
+      lead_view: 'daily',
       selected_date: current.selected_date || businessToday(),
       daily_metric: metric,
+      page: 1,
+    }));
+  }
+
+  function setAllTimeMetric(metric: LeadAllTimeMetric) {
+    setSelectedIds([]);
+    setFilters(current => current.lead_view === 'all_time' && current.all_time_metric === metric ? current : ({
+      ...current,
+      lead_view: 'all_time',
+      all_time_metric: metric,
       page: 1,
     }));
   }
@@ -768,13 +857,23 @@ function LeadsInner() {
       )}
 
       {isSuperAdminLeadsView && (
-        <DailyLeadFilterRow
-          selectedDate={filters.selected_date || businessToday()}
-          selectedMetric={filters.daily_metric || 'received'}
-          summary={data?.daily_summary}
-          loading={isLoading || isFetching}
+        <LeadMetricFilterRow
+          viewMode={selectedLeadView}
+          selectedDate={selectedDailyDate}
+          selectedMetric={selectedLeadView === 'daily' ? filters.daily_metric || 'received' : filters.all_time_metric || 'all'}
+          options={(selectedLeadView === 'daily' ? DAILY_METRIC_OPTIONS : ALL_TIME_METRIC_OPTIONS).map(option => ({
+            ...option,
+            value: selectedLeadView === 'daily'
+              ? dailySummary?.[option.key as LeadDailyMetric]
+              : allTimeSummary?.[option.key as LeadAllTimeMetric],
+          }))}
+          loading={isLoading}
+          onViewChange={setLeadView}
           onDateChange={setDailyDate}
-          onMetricChange={setDailyMetric}
+          onMetricChange={metric => {
+            if (selectedLeadView === 'daily') setDailyMetric(metric as LeadDailyMetric);
+            else setAllTimeMetric(metric as LeadAllTimeMetric);
+          }}
         />
       )}
 
@@ -815,7 +914,7 @@ function LeadsInner() {
         <div className="flex flex-col gap-2 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-sm">
             <span className="font-semibold text-slate-900">{total.toLocaleString()}</span>
-            <span className="ml-1 text-slate-500">leads {isFetching && '· loading...'}</span>
+            <span className="ml-1 text-slate-500">leads</span>
           </div>
           <div className="text-xs text-slate-500">Page {page} / {pages}</div>
         </div>

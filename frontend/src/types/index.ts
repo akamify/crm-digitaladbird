@@ -416,6 +416,8 @@ export interface LeadFilters {
   session_attendance?: 'has_session' | 'no_session' | '';
   selected_date?: string;
   daily_metric?: LeadDailyMetric | '';
+  lead_view?: LeadViewMode;
+  all_time_metric?: LeadAllTimeMetric | '';
   page?: number;
   page_size?: number;
   sort?: string;
@@ -423,11 +425,23 @@ export interface LeadFilters {
 }
 
 export type LeadDailyMetric = 'received' | 'worked' | 'pending' | 'personal_meeting' | 'session_9pm' | 'call_issues';
+export type LeadAllTimeMetric = 'all' | 'worked' | 'pending' | 'personal_meeting' | 'session_9pm' | 'call_issues';
+export type LeadViewMode = 'all_time' | 'daily';
 
 export interface LeadDailySummary {
   selected_date: string;
   selected_metric: LeadDailyMetric;
   received: number;
+  worked: number;
+  pending: number;
+  personal_meeting: number;
+  session_9pm: number;
+  call_issues: number;
+}
+
+export interface LeadAllTimeSummary {
+  selected_metric: LeadAllTimeMetric;
+  all: number;
   worked: number;
   pending: number;
   personal_meeting: number;
@@ -441,6 +455,7 @@ export interface PageResult<T> {
   page: number;
   pageSize: number;
   daily_summary?: LeadDailySummary;
+  all_time_summary?: LeadAllTimeSummary;
 }
 
 export interface SummaryKpi {
