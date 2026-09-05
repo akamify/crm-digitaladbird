@@ -4,31 +4,13 @@ const {
   RETRYABLE_CONTACT_ISSUES, TERMINAL_LEAD_QUALITY_ISSUES, CONTACTED_STATUSES,
   PROGRESSION_STATUSES, UNWORKED_SLA_HOURS, CALL_ISSUE_LABELS, sqlArray, calculateQuality,
 } = require('../constants/counselorReportOptions');
+const { activeSequenceIssueSql } = require('../utils/leadCallIssueMetrics');
 
 const IST = 'Asia/Kolkata';
 const RETRYABLE_SQL = sqlArray(RETRYABLE_CONTACT_ISSUES);
 const TERMINAL_SQL = sqlArray(TERMINAL_LEAD_QUALITY_ISSUES);
 const CONTACTED_SQL = sqlArray(CONTACTED_STATUSES);
 const PROGRESSION_SQL = sqlArray(PROGRESSION_STATUSES);
-
-function activeSequenceIssueSql(leadAlias = 'l') {
-  return `(SELECT COALESCE(
-      (SELECT ca.outcome::text
-         FROM lead_call_attempts ca
-        WHERE ca.sequence_id = seq.id
-          AND ca.status = 'completed'
-          AND ca.attempt_number > 1
-          AND ca.outcome::text = ANY(${RETRYABLE_SQL})
-        ORDER BY ca.attempt_number DESC, ca.attempted_at DESC NULLS LAST, ca.created_at DESC
-        LIMIT 1),
-      seq.initial_trigger_reason::text
-    )
-      FROM lead_call_attempt_sequences seq
-     WHERE seq.lead_id = ${leadAlias}.id
-       AND seq.status = 'active'
-     ORDER BY seq.updated_at DESC, seq.created_at DESC
-     LIMIT 1)`;
-}
 
 function dateBounds(input = {}) {
   const from = String(input.from || '').trim() || null;

@@ -23,6 +23,10 @@ import {
 } from '@/constants/leadRemarkMeta';
 import { clsx } from '@/lib/format';
 
+const CALL_ISSUE_VALUES = new Set(
+  LEAD_REMARK_GROUPS.find(group => group.key === 'issues')?.options.map(option => option.value) || [],
+);
+
 const STAGE_OPTS = [
   { value: '',          label: 'Keep stage as-is' },
   { value: 'new',       label: 'New' },
@@ -123,7 +127,15 @@ export function RemarkModal({ leadId, open, onClose, mode = 'default' }: Props) 
   }
 
   function toggleStatus(status: CallStatus) {
-    setStatuses(values => values.includes(status) ? values.filter(value => value !== status) : [...values, status]);
+    setStatuses(values => {
+      if (CALL_ISSUE_VALUES.has(status)) {
+        if (values.includes(status)) return values.filter(value => value !== status);
+        return [...values.filter(value => !CALL_ISSUE_VALUES.has(value)), status];
+      }
+      return values.includes(status)
+        ? values.filter(value => value !== status)
+        : [...values.filter(value => !CALL_ISSUE_VALUES.has(value)), status];
+    });
   }
 
   return (

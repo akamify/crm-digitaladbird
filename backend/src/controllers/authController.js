@@ -1,20 +1,3 @@
-/**
- * Auth flows:
- *
- *   DEMO MODE (no OTP):
- *   POST /auth/login        { identifier, password }  -> JWT directly
- *     identifier = email | phone | full_name
- *
- *   PRODUCTION (OTP, added later):
- *   POST /auth/request-otp  { email, password, role, full_name?, phone? }
- *   POST /auth/verify-otp   { email, code }
- *
- *   SHARED:
- *   POST /auth/refresh      { refreshToken }
- *   POST /auth/logout
- *   GET  /auth/me
- */
-
 
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
@@ -40,11 +23,7 @@ function generateEmpCode(role) {
   return `${prefix}${Date.now().toString().slice(-6)}`;
 }
 
-/**
- * DEMO MODE — Direct login: identifier (email | phone | name) + password → JWT
- * No OTP, no verification step. For production, use request-otp / verify-otp.
- */
-// Map frontend role labels to database role values
+
 const ROLE_MAP = { admin: 'super_admin', rm: 'rm', partner: 'member', member: 'member', super_admin: 'super_admin', client: 'client' };
 
 function identifierType(value) {

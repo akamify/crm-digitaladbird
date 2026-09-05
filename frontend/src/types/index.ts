@@ -414,10 +414,25 @@ export interface LeadFilters {
   has_rm_update?: 'true' | 'false' | '';
   updated_by_rm?: string;
   session_attendance?: 'has_session' | 'no_session' | '';
+  selected_date?: string;
+  daily_metric?: LeadDailyMetric | '';
   page?: number;
   page_size?: number;
   sort?: string;
   order?: 'asc' | 'desc';
+}
+
+export type LeadDailyMetric = 'received' | 'worked' | 'pending' | 'personal_meeting' | 'session_9pm' | 'call_issues';
+
+export interface LeadDailySummary {
+  selected_date: string;
+  selected_metric: LeadDailyMetric;
+  received: number;
+  worked: number;
+  pending: number;
+  personal_meeting: number;
+  session_9pm: number;
+  call_issues: number;
 }
 
 export interface PageResult<T> {
@@ -425,6 +440,7 @@ export interface PageResult<T> {
   total: number;
   page: number;
   pageSize: number;
+  daily_summary?: LeadDailySummary;
 }
 
 export interface SummaryKpi {

@@ -25,6 +25,11 @@ const RETRYABLE_WORKFLOW_STATUSES = new Set([
   'nc',
   'call_cut_busy',
 ]);
+const CALL_ISSUE_WORKFLOW_STATUSES = new Set([
+  ...RETRYABLE_WORKFLOW_STATUSES,
+  'ni',
+  'in',
+]);
 
 const ATTEMPT_OUTCOME_ALIASES = {
   cr: 'call_received',
@@ -181,6 +186,28 @@ function isRetryableWorkflowStatus(value) {
   return RETRYABLE_WORKFLOW_STATUSES.has(String(value || '').trim().toLowerCase());
 }
 
+function getSingleRetryableWorkflowStatus(statuses) {
+  const list = Array.isArray(statuses) ? statuses : statuses ? [statuses] : [];
+  const retryable = [...new Set(list
+    .map(status => String(status || '').trim().toLowerCase())
+    .filter(status => RETRYABLE_WORKFLOW_STATUSES.has(status)))];
+  if (retryable.length > 1) {
+    throw new AppError(400, 'MULTIPLE_CALL_ISSUES', 'Select one call issue at a time.');
+  }
+  return retryable[0] || null;
+}
+
+function getSingleCallIssueStatus(statuses) {
+  const list = Array.isArray(statuses) ? statuses : statuses ? [statuses] : [];
+  const issues = [...new Set(list
+    .map(status => String(status || '').trim().toLowerCase())
+    .filter(status => CALL_ISSUE_WORKFLOW_STATUSES.has(status)))];
+  if (issues.length > 1) {
+    throw new AppError(400, 'MULTIPLE_CALL_ISSUES', 'Select one call issue at a time.');
+  }
+  return issues[0] || null;
+}
+
 function shouldCancelAttemptSequencesForWorkflowStatuses(statuses) {
   const list = Array.isArray(statuses) ? statuses : statuses ? [statuses] : [];
   return list.some(status => SEQUENCE_CANCELLING_WORKFLOW_STATUSES.has(String(status || '').trim().toLowerCase()));
@@ -286,7 +313,7 @@ async function syncCurrentWorkflowCallIssue(client, { leadId, userId, outcome })
     ? workflow.step_1_statuses
     : workflow?.remark_status ? [workflow.remark_status] : [];
   const statuses = [...new Set([
-    ...existing.filter(status => !RETRYABLE_WORKFLOW_STATUSES.has(String(status || '').toLowerCase())),
+    ...existing.filter(status => !CALL_ISSUE_WORKFLOW_STATUSES.has(String(status || '').toLowerCase())),
     outcome,
   ])];
 
@@ -796,6 +823,17 @@ async function startAttemptSequenceFromRemark({
       now,
     });
 
+    await run(client, `
+      UPDATE leads
+         SET call_status = $2,
+             last_call_at = $3,
+             call_attempts = call_attempts + 1,
+             updated_at = NOW(),
+             locked_by_user_id = NULL,
+             locked_until = NULL
+       WHERE id = $1
+    `, [leadId, toLeadCallStatusValue(normalizedTriggerReason), now]);
+
     // Keep the live Step 1 issue in sync with the sequence without touching remark history.
     await syncCurrentWorkflowCallIssue(client, {
       leadId,
@@ -1211,6 +1249,8 @@ module.exports = {
   deriveAttemptState,
   normalizeAttemptOutcome,
   isRetryableWorkflowStatus,
+  getSingleRetryableWorkflowStatus,
+  getSingleCallIssueStatus,
   shouldCancelAttemptSequencesForWorkflowStatuses,
   shouldCancelAttemptSequencesForCallStatuses,
   startAttemptSequenceFromRemark,

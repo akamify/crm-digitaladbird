@@ -38,6 +38,8 @@ const {
   reconcileWorkflowRemarkWithCallAttempts,
   completeScheduledAttempt,
   cancelLeadActiveAttemptSequences,
+  getSingleRetryableWorkflowStatus,
+  getSingleCallIssueStatus,
 } = require('../services/leadCallAttemptService');
 const { workedLeadCondition, notWorkedLeadCondition } = require('../utils/leadWorkMetrics');
 const { remarkHasFollowupActivityCondition, leadHasFollowupActivityCondition } = require('../utils/followupMetrics');
@@ -5734,7 +5736,9 @@ router.post('/leads/:id/workflow/remark', authenticate, asyncHandler(async (req,
   const leadId = req.params.id;
   const requestedStatuses = req.body?.remark_statuses || req.body?.workflow_step_1_statuses || req.body?.call_statuses || req.body?.remark_status;
   const remarkStatuses = normalizeWorkflowRemarkStatuses(requestedStatuses);
+  getSingleCallIssueStatus(remarkStatuses);
   const attemptTriggerStatus = String(req.body?.attempt_trigger_status || req.body?.remark_status || '').trim().toLowerCase() || null;
+  const retryableTriggerStatus = getSingleRetryableWorkflowStatus(attemptTriggerStatus);
   if (remarkStatuses.length === 0) throw new AppError(400, 'INVALID', 'At least one remark status is required');
 
   const interaction = await withTransaction(async (client) => {
@@ -5748,6 +5752,7 @@ router.post('/leads/:id/workflow/remark', authenticate, asyncHandler(async (req,
       source: 'workflow_step_1',
       workflowStep: 1,
       syncWorkflowStep1: true,
+      updateLeadCallFields: !retryableTriggerStatus,
     });
 
     await reconcileWorkflowRemarkWithCallAttempts({

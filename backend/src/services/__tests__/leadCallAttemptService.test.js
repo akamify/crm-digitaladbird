@@ -31,6 +31,8 @@ const {
   calculateNextCallTime,
   deriveAttemptState,
   normalizeAttemptOutcome,
+  getSingleRetryableWorkflowStatus,
+  getSingleCallIssueStatus,
   completeScheduledAttempt,
   getColdLeadLevelForCategory,
   reconcileWorkflowRemarkWithCallAttempts,
@@ -122,6 +124,14 @@ describe('leadCallAttemptService', () => {
 
   test('normalizeAttemptOutcome accepts CR alias', () => {
     expect(normalizeAttemptOutcome('CR')).toBe('call_received');
+  });
+
+  test('call issue selection allows one retryable status only', () => {
+    expect(getSingleRetryableWorkflowStatus(['custom_remark', 'cnr'])).toBe('cnr');
+    expect(() => getSingleCallIssueStatus(['cnr', 'recall'])).toThrow(
+      expect.objectContaining({ code: 'MULTIPLE_CALL_ISSUES' }),
+    );
+    expect(getSingleRetryableWorkflowStatus(['in', 'ni'])).toBeNull();
   });
 
   test('getColdLeadLevelForCategory reuses existing cold status model', () => {
@@ -394,7 +404,7 @@ describe('leadCallAttemptService', () => {
           }]);
         }
         if (sql.includes('SELECT remark_status, step_1_statuses')) {
-          return response([{ remark_status: 'recall', step_1_statuses: ['recall', 'custom_remark'] }]);
+          return response([{ remark_status: 'in', step_1_statuses: ['in', 'custom_remark'] }]);
         }
         return response([]);
       }),

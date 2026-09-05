@@ -398,7 +398,9 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
   const retryableIssueValues = new Set(availableGroups.find(group => group.key === 'issues')?.options.map(option => option.value) || []);
   const hasActiveCallSequence = !!callAttemptSequence?.has_active_sequence;
   const retryableSelected = selected.find(value => availableGroups.some(group => group.key === 'issues' && group.options.some(option => option.value === value)));
-  const trackerAnchorStatus = callAttemptState?.anchor_status || retryableSelected || null;
+  const trackerAnchorStatus = hasActiveCallSequence
+    ? nextScheduledCall?.trigger_reason || callAttemptState?.anchor_status || retryableSelected || null
+    : retryableSelected || callAttemptState?.anchor_status || null;
 
   useEffect(() => {
     setSelected(current || []);
@@ -407,9 +409,15 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
   function toggle(value: string) {
     if (save.isPending) return;
 
+    const isCallIssue = retryableIssueValues.has(value);
+    if (isCallIssue && selected.includes(value)) {
+      toast.error('Choose another call issue or response; the current issue cannot be cleared.');
+      return;
+    }
+
     const nextSelection = selected.includes(value)
       ? selected.filter(item => item !== value)
-      : [...selected, value];
+      : [...selected.filter(item => !retryableIssueValues.has(item)), value];
 
     if (nextSelection.length === 0) {
       toast.error('At least one Step 1 status must stay selected.');
@@ -429,9 +437,12 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
       onSuccess: () => toast.success('Remark updated'),
       onError: (e: unknown) => {
         setSelected(previousSelection);
-        const message = typeof e === 'object' && e && 'response' in e
-          ? (e as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message
+        const responseData = typeof e === 'object' && e && 'response' in e
+          ? (e as { response?: { data?: { error?: { code?: string; message?: string } } } }).response?.data
           : null;
+        const message = responseData?.error?.code === 'CALL_ATTEMPT_LOCKED' && callAttemptState?.active_attempt_number
+          ? `Retry ${callAttemptState.active_attempt_number - 1} is scheduled for later. Complete it from Call Attempts when it is due.`
+          : responseData?.error?.message;
         toast.error(message || 'Failed to save Step 1');
       },
     });
@@ -443,6 +454,9 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
     <div>
       <p className="text-xs text-slate-500 mb-3">
         Clicking any option saves it instantly. Selecting any completed response unlocks Step 2.
+      </p>
+      <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        Select one Call Issue at a time. When a retry is due, record its outcome in Call Attempts; a new issue selection cannot change a locked scheduled retry.
       </p>
       {hasCompletingSelection && <p className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">A completed response is selected, so Step 2 unlocks automatically after this save.</p>}
       <div className="space-y-4">

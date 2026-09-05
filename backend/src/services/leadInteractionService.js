@@ -276,6 +276,7 @@ async function createLeadInteraction({
   workflowStep = null,
   syncWorkflowStep1 = false,
   releaseLock = true,
+  updateLeadCallFields = true,
   noteType = 'general',
   category = null,
   title = null,
@@ -341,12 +342,12 @@ async function createLeadInteraction({
 
   const updates = ['updated_at = NOW()'];
   const params = [leadId];
-  if (dbCallStatus) {
+  if (dbCallStatus && updateLeadCallFields) {
     params.push(dbCallStatus);
     updates.push(`call_status = $${params.length}`);
     updates.push('last_call_at = NOW()');
     updates.push('call_attempts = call_attempts + 1');
-  } else if (normalizedStatus) {
+  } else if (normalizedStatus && updateLeadCallFields) {
     updates.push('last_call_at = NOW()');
     updates.push('call_attempts = call_attempts + 1');
   }

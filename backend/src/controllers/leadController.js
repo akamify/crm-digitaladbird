@@ -21,9 +21,18 @@ const {
   getLeadCallAttemptView,
   cancelLeadActiveAttemptSequences,
   shouldCancelAttemptSequencesForCallStatuses,
+  getSingleRetryableWorkflowStatus,
+  getSingleCallIssueStatus,
+  reconcileWorkflowRemarkWithCallAttempts,
 } = require('../services/leadCallAttemptService');
 const { workedLeadCondition, notWorkedLeadCondition } = require('../utils/leadWorkMetrics');
 const { leadHasFollowupActivityCondition } = require('../utils/followupMetrics');
+const {
+  normalizeLeadDailyDate,
+  normalizeLeadDailyMetric,
+  buildLeadDailyMetricConditions,
+  leadDailySummarySelectSql,
+} = require('../utils/leadDailyMetrics');
 
 function humanizeValue(value) {
   return String(value || '')
@@ -387,6 +396,8 @@ async function assertLeadWriteAccess(client, leadId, user) {
  *   assigned_to       user id  (admin only — RM auto-scoped, members locked to self)
  *   from, to          ISO dates (filters created_at)
  *   created_preset    today|yesterday|day_before (IST created_at date)
+ *   selected_date     Super Admin daily view date (YYYY-MM-DD, IST)
+ *   daily_metric      received|worked|pending|personal_meeting|session_9pm|call_issues
  *   pending           true => only unworked leads
  *   followup          today|overdue|week
  *   page, page_size
@@ -697,6 +708,22 @@ exports.list = asyncHandler(async (req, res) => {
     where.push(`NOT ${leadHasFollowupActivityCondition('l')}`);
   }
 
+  let dailySummaryQuery = null;
+  let selectedDailyDate = null;
+  let selectedDailyMetric = null;
+  if (req.user.role === 'super_admin' && req.query.selected_date) {
+    selectedDailyDate = normalizeLeadDailyDate(req.query.selected_date);
+    selectedDailyMetric = normalizeLeadDailyMetric(req.query.daily_metric);
+    params.push(selectedDailyDate);
+    const dateParam = `$${params.length}::date`;
+    const dailyConditions = buildLeadDailyMetricConditions(dateParam, 'l');
+    dailySummaryQuery = {
+      sql: `SELECT ${leadDailySummarySelectSql(dailyConditions)} FROM leads l WHERE ${where.join(' AND ')}`,
+      params: [...params],
+    };
+    where.push(dailyConditions[selectedDailyMetric]);
+  }
+
   const allowedSort = new Set(['created_at', 'assigned_at', 'next_followup_at', 'updated_at']);
   const sortCol = allowedSort.has(req.query.sort) ? req.query.sort : 'created_at';
   const sortOrd = req.query.order === 'asc' ? 'ASC' : 'DESC';
@@ -707,8 +734,16 @@ exports.list = asyncHandler(async (req, res) => {
 
   const whereSql = where.join(' AND ');
 
-  const totalRes = await query(`SELECT COUNT(*) FROM leads l WHERE ${whereSql}`, params);
+  const [totalRes, dailySummaryRes] = await Promise.all([
+    query(`SELECT COUNT(*) FROM leads l WHERE ${whereSql}`, params),
+    dailySummaryQuery ? query(dailySummaryQuery.sql, dailySummaryQuery.params) : Promise.resolve(null),
+  ]);
   const total = parseInt(totalRes.rows[0].count, 10);
+  const dailySummary = dailySummaryRes ? {
+    selected_date: selectedDailyDate,
+    selected_metric: selectedDailyMetric,
+    ...dailySummaryRes.rows[0],
+  } : null;
 
   params.push(pageSize); const limitIdx = params.length;
   params.push(offset); const offsetIdx = params.length;
@@ -831,7 +866,13 @@ exports.list = asyncHandler(async (req, res) => {
   `;
   const { rows } = await query(sql, params);
 
-  res.json({ success: true, data: { rows: rows.map(row => applyLeadDisplayName({ ...row })), total, page, pageSize } });
+  res.json({ success: true, data: {
+    rows: rows.map(row => applyLeadDisplayName({ ...row })),
+    total,
+    page,
+    pageSize,
+    ...(dailySummary ? { daily_summary: dailySummary } : {}),
+  } });
 });
 
 exports.getOne = asyncHandler(async (req, res) => {
@@ -1252,6 +1293,9 @@ exports.addRemark = asyncHandler(async (req, res) => {
     priority,
     customer_interest,
   } = req.body;
+  const statusValues = call_statuses || remark_statuses || (call_status ? [call_status] : []);
+  const callIssueStatus = getSingleCallIssueStatus(statusValues);
+  const retryableStatus = getSingleRetryableWorkflowStatus(statusValues);
   const result = await withTransaction(async (client) => {
     const interaction = await createLeadInteraction({
       client,
@@ -1264,6 +1308,9 @@ exports.addRemark = asyncHandler(async (req, res) => {
       nextFollowupAt: next_followup_at,
       nextFollowup: next_followup,
       source: 'manual',
+      workflowStep: callIssueStatus ? 1 : null,
+      syncWorkflowStep1: Boolean(callIssueStatus),
+      updateLeadCallFields: !retryableStatus,
       releaseLock: release_lock,
       noteType: note_type,
       category,
@@ -1271,8 +1318,18 @@ exports.addRemark = asyncHandler(async (req, res) => {
       priority,
       customerInterest: customer_interest,
     });
-    const statusValues = call_statuses || remark_statuses || (call_status ? [call_status] : []);
-    if (shouldCancelAttemptSequencesForCallStatuses(statusValues)) {
+    if (retryableStatus) {
+      await reconcileWorkflowRemarkWithCallAttempts({
+        client,
+        leadId: req.params.id,
+        user: req.user,
+        triggerStatus: retryableStatus,
+        remarkId: interaction.remark?.id || null,
+        explicitFollowupAt: next_followup_at || null,
+        auditContext: req,
+        now: new Date(),
+      });
+    } else if (shouldCancelAttemptSequencesForCallStatuses(statusValues)) {
       await cancelLeadActiveAttemptSequences({
         client,
         leadId: req.params.id,
@@ -1312,6 +1369,10 @@ exports.bulkAddRemarks = asyncHandler(async (req, res) => {
   } = req.body;
   if (!Array.isArray(leadIds) || leadIds.length === 0) throw new AppError(400, 'LEAD_IDS_REQUIRED', 'Select at least one lead.');
 
+  const statusValues = call_statuses || remark_statuses || (call_status ? [call_status] : []);
+  const callIssueStatus = getSingleCallIssueStatus(statusValues);
+  const retryableStatus = getSingleRetryableWorkflowStatus(statusValues);
+
   const uniqueLeadIds = [...new Set(leadIds.map(String).filter(Boolean))].slice(0, 500);
   const visible = await getVisibleUserIds(req.user);
   const result = await withTransaction(async (client) => {
@@ -1339,7 +1400,7 @@ exports.bulkAddRemarks = asyncHandler(async (req, res) => {
         skippedReasons[leadId] = 'not_found_or_forbidden';
         continue;
       }
-      await createLeadInteraction({
+      const interaction = await createLeadInteraction({
         client,
         user: req.user,
         leadId,
@@ -1350,14 +1411,27 @@ exports.bulkAddRemarks = asyncHandler(async (req, res) => {
         nextFollowupAt: next_followup_at,
         nextFollowup: next_followup,
         source: 'bulk',
+        workflowStep: callIssueStatus ? 1 : null,
+        syncWorkflowStep1: Boolean(callIssueStatus),
+        updateLeadCallFields: !retryableStatus,
         noteType: note_type,
         category,
         title,
         priority,
         customerInterest: customer_interest,
       });
-      const statusValues = call_statuses || remark_statuses || (call_status ? [call_status] : []);
-      if (shouldCancelAttemptSequencesForCallStatuses(statusValues)) {
+      if (retryableStatus) {
+        await reconcileWorkflowRemarkWithCallAttempts({
+          client,
+          leadId,
+          user: req.user,
+          triggerStatus: retryableStatus,
+          remarkId: interaction.remark?.id || null,
+          explicitFollowupAt: next_followup_at || null,
+          auditContext: req,
+          now: new Date(),
+        });
+      } else if (shouldCancelAttemptSequencesForCallStatuses(statusValues)) {
         await cancelLeadActiveAttemptSequences({
           client,
           leadId,

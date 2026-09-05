@@ -17,6 +17,7 @@ import type { LeadFilters } from '@/types';
 interface Props {
   value: LeadFilters;
   onChange: (next: LeadFilters) => void;
+  simplifiedAdmin?: boolean;
 }
 
 const STAGE_OPTS = [
@@ -108,7 +109,7 @@ function optionLabel(options: { value: string; label: string }[], value?: string
   return options.find(option => option.value === value)?.label?.trim() || value || '';
 }
 
-export function LeadFilters({ value, onChange }: Props) {
+export function LeadFilters({ value, onChange, simplifiedAdmin = false }: Props) {
   const set = <K extends keyof LeadFilters>(k: K, v: LeadFilters[K]) =>
     onChange({ ...value, [k]: v, page: 1 });
 
@@ -119,7 +120,13 @@ export function LeadFilters({ value, onChange }: Props) {
     ...(campaignNames || []).map(n => ({ value: n, label: n })),
   ];
 
-  const hasFilters = !!(value.q || value.category || value.stage || value.call_status || value.followup || value.source || value.campaign || value.from || value.to || value.created_preset || value.pending || value.assignment || value.label_id || value.remark_status || value.note_type || value.note_category || value.priority || value.customer_interest || value.has_rm_update || value.updated_by_rm || value.session_attendance || value.workflow_status || value.latest_activity || value.no_remark);
+  const hasFilters = !!(
+    value.q || value.category || value.stage || value.call_status || value.followup || value.source || value.campaign
+    || value.pending || value.assignment || value.label_id || value.remark_status || value.customer_interest
+    || value.workflow_status || value.latest_activity
+    || (!simplifiedAdmin && (value.from || value.to || value.created_preset || value.note_type || value.note_category
+      || value.priority || value.has_rm_update || value.updated_by_rm || value.session_attendance || value.no_remark))
+  );
   const labelOpts = [{ value: '', label: 'All labels' }, ...(labels || []).map(label => ({ value: label.id, label: label.name }))];
   const activeChips = [
     value.category && { key: 'category', label: `Category: ${optionLabel(CATEGORY_OPTS, value.category)}` },
@@ -128,17 +135,17 @@ export function LeadFilters({ value, onChange }: Props) {
     value.remark_status && { key: 'remark_status', label: `Remark: ${optionLabel(REMARK_STATUS_OPTS, value.remark_status)}` },
     value.workflow_status && { key: 'workflow_status', label: `Workflow: ${optionLabel(WORKFLOW_OPTS, value.workflow_status)}` },
     value.followup && { key: 'followup', label: `Follow-up: ${optionLabel(FOLLOWUP_OPTS, value.followup)}` },
-    value.session_attendance && { key: 'session_attendance', label: `Session: ${optionLabel(SESSION_OPTS, value.session_attendance)}` },
+    !simplifiedAdmin && value.session_attendance && { key: 'session_attendance', label: `Session: ${optionLabel(SESSION_OPTS, value.session_attendance)}` },
     value.assignment && { key: 'assignment', label: `Assignment: ${optionLabel(ASSIGNMENT_OPTS, value.assignment)}` },
     value.source && { key: 'source', label: `Source: ${optionLabel(SOURCE_OPTS, value.source)}` },
     value.label_id && { key: 'label_id', label: `Label: ${optionLabel(labelOpts, value.label_id)}` },
     value.latest_activity && { key: 'latest_activity', label: `Activity: ${optionLabel(LATEST_ACTIVITY_OPTS, value.latest_activity)}` },
-    value.no_remark === 'true' && { key: 'no_remark', label: 'No remark' },
-    value.note_type && { key: 'note_type', label: `Note Type: ${optionLabel([{ value: '', label: '' }, ...LEAD_REMARK_NOTE_TYPE_OPTIONS], value.note_type)}` },
-    value.note_category && { key: 'note_category', label: `Note Category: ${optionLabel([{ value: '', label: '' }, ...LEAD_REMARK_CATEGORY_OPTIONS], value.note_category)}` },
-    value.priority && { key: 'priority', label: `Priority: ${optionLabel([{ value: '', label: '' }, ...LEAD_REMARK_PRIORITY_OPTIONS], value.priority)}` },
+    !simplifiedAdmin && value.no_remark === 'true' && { key: 'no_remark', label: 'No remark' },
+    !simplifiedAdmin && value.note_type && { key: 'note_type', label: `Note Type: ${optionLabel([{ value: '', label: '' }, ...LEAD_REMARK_NOTE_TYPE_OPTIONS], value.note_type)}` },
+    !simplifiedAdmin && value.note_category && { key: 'note_category', label: `Note Category: ${optionLabel([{ value: '', label: '' }, ...LEAD_REMARK_CATEGORY_OPTIONS], value.note_category)}` },
+    !simplifiedAdmin && value.priority && { key: 'priority', label: `Priority: ${optionLabel([{ value: '', label: '' }, ...LEAD_REMARK_PRIORITY_OPTIONS], value.priority)}` },
     value.customer_interest && { key: 'customer_interest', label: `Interest: ${optionLabel([{ value: '', label: '' }, ...LEAD_REMARK_CUSTOMER_INTEREST_OPTIONS], value.customer_interest)}` },
-    value.has_rm_update && { key: 'has_rm_update', label: `RM Update: ${value.has_rm_update === 'true' ? 'Yes' : 'No'}` },
+    !simplifiedAdmin && value.has_rm_update && { key: 'has_rm_update', label: `RM Update: ${value.has_rm_update === 'true' ? 'Yes' : 'No'}` },
   ].filter(Boolean) as { key: keyof LeadFilters; label: string }[];
 
   return (
@@ -200,11 +207,11 @@ export function LeadFilters({ value, onChange }: Props) {
           options={REMARK_STATUS_OPTS}
           onChange={(e: ChangeEvent<HTMLSelectElement>) => set('remark_status', e.target.value as LeadFilters['remark_status'])}
         />
-        <Select
+        {!simplifiedAdmin && <Select
           value={value.session_attendance || ''}
           options={SESSION_OPTS}
           onChange={(e: ChangeEvent<HTMLSelectElement>) => set('session_attendance', e.target.value as LeadFilters['session_attendance'])}
-        />
+        />}
         <Select
           value={value.workflow_status || ''}
           options={WORKFLOW_OPTS}
@@ -215,50 +222,55 @@ export function LeadFilters({ value, onChange }: Props) {
           options={LATEST_ACTIVITY_OPTS}
           onChange={(e: ChangeEvent<HTMLSelectElement>) => set('latest_activity', e.target.value as LeadFilters['latest_activity'])}
         />
-        <Select
+        {!simplifiedAdmin && <Select
           value={value.no_remark || ''}
           options={[{ value: '', label: 'All remark state' }, { value: 'true', label: 'No remark yet' }]}
           onChange={(e: ChangeEvent<HTMLSelectElement>) => set('no_remark', e.target.value as LeadFilters['no_remark'])}
-        />
-        <Select
+        />}
+        {!simplifiedAdmin && <Select
           value={value.note_type || ''}
           options={[{ value: '', label: 'All note types' }, ...LEAD_REMARK_NOTE_TYPE_OPTIONS.map(option => ({ value: option.value, label: option.label }))]}
           onChange={(e: ChangeEvent<HTMLSelectElement>) => set('note_type', e.target.value as LeadFilters['note_type'])}
-        />
-        <Select
+        />}
+        {!simplifiedAdmin && <Select
           value={value.note_category || ''}
           options={[{ value: '', label: 'All note categories' }, ...LEAD_REMARK_CATEGORY_OPTIONS.map(option => ({ value: option.value, label: option.label }))]}
           onChange={(e: ChangeEvent<HTMLSelectElement>) => set('note_category', e.target.value as LeadFilters['note_category'])}
-        />
-        <Select
+        />}
+        {!simplifiedAdmin && <Select
           value={value.priority || ''}
           options={[{ value: '', label: 'All priorities' }, ...LEAD_REMARK_PRIORITY_OPTIONS.map(option => ({ value: option.value, label: option.label }))]}
           onChange={(e: ChangeEvent<HTMLSelectElement>) => set('priority', e.target.value as LeadFilters['priority'])}
-        />
+        />}
         <Select
           value={value.customer_interest || ''}
           options={[{ value: '', label: 'All customer interests' }, ...LEAD_REMARK_CUSTOMER_INTEREST_OPTIONS.map(option => ({ value: option.value, label: option.label }))]}
           onChange={(e: ChangeEvent<HTMLSelectElement>) => set('customer_interest', e.target.value as LeadFilters['customer_interest'])}
         />
-        <Select
+        {!simplifiedAdmin && <Select
           value={value.has_rm_update || ''}
           options={[{ value: '', label: 'RM update state' }, { value: 'true', label: 'Has RM update' }, { value: 'false', label: 'No RM update' }]}
           onChange={(e: ChangeEvent<HTMLSelectElement>) => set('has_rm_update', e.target.value as LeadFilters['has_rm_update'])}
-        />
-        <Input
+        />}
+        {!simplifiedAdmin && <Input
           type="date" label="From"
           value={value.from || ''}
           onChange={(e: ChangeEvent<HTMLInputElement>) => onChange({ ...value, from: e.target.value, created_preset: '', page: 1 })}
-        />
-        <Input
+        />}
+        {!simplifiedAdmin && <Input
           type="date" label="To"
           value={value.to || ''}
           onChange={(e: ChangeEvent<HTMLInputElement>) => onChange({ ...value, to: e.target.value, created_preset: '', page: 1 })}
-        />
+        />}
         <div className="flex items-end">
           {hasFilters && (
             <button
-              onClick={() => onChange({ page: 1, page_size: value.page_size })}
+              onClick={() => onChange({
+                page: 1,
+                page_size: value.page_size,
+                selected_date: value.selected_date,
+                daily_metric: value.daily_metric,
+              })}
               className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 px-3 text-xs text-slate-600 hover:bg-slate-50"
             >
               <X className="h-3.5 w-3.5" /> Clear filters

@@ -21,9 +21,72 @@ import { clsx, fmtPhone, humanize, isDueToday, isOverdue, stageChip } from '@/li
 import { triggerPhoneCall } from '@/lib/phone';
 import { useAuth } from '@/lib/auth';
 import { LEAD_REMARK_GROUPS } from '@/constants/leadRemarkOptions';
-import type { CallStatus, Lead, LeadFilters as LeadFilterType } from '@/types';
+import type { CallStatus, Lead, LeadDailyMetric, LeadDailySummary, LeadFilters as LeadFilterType } from '@/types';
 
 type CommunicationTab = 'chat' | 'calls';
+
+const DAILY_METRIC_OPTIONS: Array<{ key: LeadDailyMetric; label: string; hint: string }> = [
+  { key: 'received', label: 'Leads Received', hint: 'Leads created on the selected date.' },
+  { key: 'worked', label: 'Worked', hint: 'Leads with CRM activity on the selected date.' },
+  { key: 'pending', label: 'Pending', hint: 'Selected-date leads or obligations that still need action.' },
+  { key: 'personal_meeting', label: 'Meeting Attended', hint: 'Leads with a Personal Meeting recorded on the selected date.' },
+  { key: 'session_9pm', label: '9:00 PM Session', hint: 'Leads marked 9:00 Session Attend on the selected date.' },
+  { key: 'call_issues', label: 'Call Issues', hint: 'Date-relevant leads with a current unresolved retryable call issue.' },
+];
+
+const SUPER_ADMIN_REMOVED_FILTERS = new Set([
+  'from',
+  'to',
+  'created_preset',
+  'pending',
+  'unworked',
+  'assigned_today',
+  'no_remark',
+  'note_type',
+  'note_category',
+  'priority',
+  'has_rm_update',
+  'updated_by_rm',
+  'session_attendance',
+]);
+
+function businessToday() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function shiftBusinessDate(date: string, offset: number) {
+  const [year, month, day] = date.split('-').map(Number);
+  const value = new Date(Date.UTC(year, month - 1, day));
+  value.setUTCDate(value.getUTCDate() + offset);
+  return value.toISOString().slice(0, 10);
+}
+
+function displayBusinessDate(date: string) {
+  return new Intl.DateTimeFormat('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(new Date(`${date}T00:00:00.000Z`));
+}
+
+function leadDailyMetric(value: string | null): LeadDailyMetric {
+  return DAILY_METRIC_OPTIONS.some(option => option.key === value) ? value as LeadDailyMetric : 'received';
+}
+
+function leadDailyDate(value: string | null) {
+  const candidate = String(value || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(candidate) || candidate > businessToday()) return businessToday();
+  const parsed = new Date(`${candidate}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === candidate ? candidate : businessToday();
+}
 type DeleteAllLeadScope =
   | 'all'
   | 'unworked'
@@ -235,6 +298,89 @@ function LeadRowActionsMenu({
   );
 }
 
+function DailyLeadFilterRow({
+  selectedDate,
+  selectedMetric,
+  summary,
+  loading,
+  onDateChange,
+  onMetricChange,
+}: {
+  selectedDate: string;
+  selectedMetric: LeadDailyMetric;
+  summary?: LeadDailySummary;
+  loading: boolean;
+  onDateChange: (date: string) => void;
+  onMetricChange: (metric: LeadDailyMetric) => void;
+}) {
+  const today = businessToday();
+  const summaryMatchesDate = summary?.selected_date === selectedDate;
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-blue-200 bg-gradient-to-r from-blue-50 via-white to-amber-50 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-blue-100 px-4 py-3">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-blue-700">Daily lead view</div>
+          <div className="mt-0.5 text-xs text-slate-500">Date and selected metric stay applied to the lead list.</div>
+        </div>
+        <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+          <button
+            type="button"
+            onClick={() => onDateChange(shiftBusinessDate(selectedDate, -1))}
+            className="rounded-lg p-2 text-slate-600 transition hover:bg-slate-100"
+            aria-label="Previous day"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <div className="min-w-36 px-2 text-center text-sm font-semibold text-slate-800">{displayBusinessDate(selectedDate)}</div>
+          <button
+            type="button"
+            disabled={selectedDate >= today}
+            onClick={() => onDateChange(shiftBusinessDate(selectedDate, 1))}
+            className="rounded-lg p-2 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35"
+            aria-label="Next day"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => onDateChange(today)}
+            className={clsx(
+              'ml-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition',
+              selectedDate === today ? 'bg-brand-600 text-white' : 'text-brand-700 hover:bg-brand-50',
+            )}
+          >
+            Today
+          </button>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-3 xl:grid-cols-6">
+        {DAILY_METRIC_OPTIONS.map(option => {
+          const active = selectedMetric === option.key;
+          const value = summaryMatchesDate ? summary?.[option.key] : undefined;
+          return (
+            <button
+              key={option.key}
+              type="button"
+              title={option.hint}
+              onClick={() => onMetricChange(option.key)}
+              className={clsx(
+                'min-h-[78px] rounded-xl border px-3 py-2.5 text-left transition',
+                active
+                  ? 'border-brand-500 bg-brand-600 text-white shadow-md shadow-blue-200'
+                  : 'border-white bg-white/90 text-slate-800 shadow-sm hover:border-brand-200 hover:bg-white',
+              )}
+            >
+              <div className={clsx('text-[10px] font-semibold uppercase tracking-wide', active ? 'text-blue-100' : 'text-slate-500')}>{option.label}</div>
+              <div className="mt-1.5 text-xl font-bold tabular-nums">{loading || value === undefined ? '...' : Number(value).toLocaleString()}</div>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 export default function LeadsPage() {
   return (
     <AppShell title="Leads" subtitle="Browse, filter, and action your assigned leads">
@@ -247,6 +393,7 @@ function LeadsInner() {
   const router = useRouter();
   const sp = useSearchParams();
   const { user } = useAuth();
+  const isSuperAdminLeadsView = user?.role === 'super_admin';
   const initial = useMemo<LeadFilterType>(() => ({
     q: sp.get('q') || '',
     category: (sp.get('category') as LeadFilterType['category']) || '',
@@ -274,6 +421,8 @@ function LeadsInner() {
     source: sp.get('source') || '',
     from: sp.get('from') || '',
     to: sp.get('to') || '',
+    selected_date: leadDailyDate(sp.get('selected_date')),
+    daily_metric: leadDailyMetric(sp.get('daily_metric')),
     page: Number(sp.get('page') || '1'),
     page_size: Number(sp.get('page_size') || '25'),
     sort: 'created_at',
@@ -298,11 +447,31 @@ function LeadsInner() {
   const debouncedSearch = useDebouncedValue(filters.q || '');
   const effectiveFilters = useMemo(() => {
     const next: LeadFilterType = { ...filters, q: debouncedSearch || undefined };
+    if (isSuperAdminLeadsView) {
+      delete next.from;
+      delete next.to;
+      delete next.created_preset;
+      delete next.pending;
+      delete next.unworked;
+      delete next.assigned_today;
+      delete next.no_remark;
+      delete next.note_type;
+      delete next.note_category;
+      delete next.priority;
+      delete next.has_rm_update;
+      delete next.updated_by_rm;
+      delete next.session_attendance;
+      next.selected_date = next.selected_date || businessToday();
+      next.daily_metric = next.daily_metric || 'received';
+    } else {
+      delete next.selected_date;
+      delete next.daily_metric;
+    }
     if (next.assignment === 'assigned') next.assigned_to = '__assigned';
     if (next.assignment === 'unassigned') next.assigned_to = '__unassigned';
     delete next.assignment;
     return next;
-  }, [filters, debouncedSearch]);
+  }, [filters, debouncedSearch, isSuperAdminLeadsView]);
   const { data, isLoading, isFetching } = useLeadList(effectiveFilters);
   const bulkAddRemark = useBulkAddRemark();
   const deleteLead = useDeleteLead();
@@ -325,12 +494,35 @@ function LeadsInner() {
   useEffect(() => {
     const params = new URLSearchParams();
     Object.entries(filters).forEach(([key, value]) => {
+      if (isSuperAdminLeadsView && SUPER_ADMIN_REMOVED_FILTERS.has(key)) return;
+      if (!isSuperAdminLeadsView && (key === 'selected_date' || key === 'daily_metric')) return;
       if (value !== undefined && value !== null && value !== '' && key !== 'sort' && key !== 'order') {
         params.set(key, String(value));
       }
     });
     router.replace(`/leads${params.toString() ? `?${params.toString()}` : ''}`);
-  }, [filters, router]);
+  }, [filters, isSuperAdminLeadsView, router]);
+
+  function setDailyDate(date: string) {
+    if (date > businessToday()) return;
+    setSelectedIds([]);
+    setFilters(current => ({
+      ...current,
+      selected_date: date,
+      daily_metric: current.daily_metric || 'received',
+      page: 1,
+    }));
+  }
+
+  function setDailyMetric(metric: LeadDailyMetric) {
+    setSelectedIds([]);
+    setFilters(current => ({
+      ...current,
+      selected_date: current.selected_date || businessToday(),
+      daily_metric: metric,
+      page: 1,
+    }));
+  }
 
   function openCommunication(lead: Lead, tab: CommunicationTab) {
     if (tab === 'chat') {
@@ -453,7 +645,37 @@ function LeadsInner() {
         </div>
       )}
 
-      {isAdminLeadsView ? (
+      {isSuperAdminLeadsView ? (
+        <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
+          {[
+            { key: 'all', label: 'Leads', assignment: '' },
+            { key: 'unassigned', label: 'Unassigned Leads', assignment: 'unassigned' },
+            { key: 'assigned', label: 'Assigned Leads', assignment: 'assigned' },
+          ].map(tab => {
+            const active = (filters.assignment || '') === tab.assignment;
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => {
+                  setSelectedIds([]);
+                  setFilters(current => ({
+                    ...current,
+                    assignment: tab.assignment as LeadFilterType['assignment'],
+                    page: 1,
+                  }));
+                }}
+                className={clsx(
+                  'rounded-lg px-3 py-2 text-sm font-medium transition',
+                  active ? 'bg-brand-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50',
+                )}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+      ) : isAdminLeadsView ? (
         <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
           {[
             { key: 'all', label: 'Leads', assignment: '' },
@@ -545,23 +767,34 @@ function LeadsInner() {
         </div>
       )}
 
-      {filters.reassignment === 'to_others' && (
+      {isSuperAdminLeadsView && (
+        <DailyLeadFilterRow
+          selectedDate={filters.selected_date || businessToday()}
+          selectedMetric={filters.daily_metric || 'received'}
+          summary={data?.daily_summary}
+          loading={isLoading || isFetching}
+          onDateChange={setDailyDate}
+          onMetricChange={setDailyMetric}
+        />
+      )}
+
+      {!isSuperAdminLeadsView && filters.reassignment === 'to_others' && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           These leads were reassigned away from you or your team. You can open the profile for reference, but editing actions are disabled.
         </div>
       )}
-      {filters.unworked === 'true' && (
+      {!isSuperAdminLeadsView && filters.unworked === 'true' && (
         <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
           Unworked leads are leads with no call log or remark saved yet.
         </div>
       )}
-      {filters.pending === 'true' && (
+      {!isSuperAdminLeadsView && filters.pending === 'true' && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           Pending work shows leads that still need active work follow-up from you based on CRM workflow metrics.
         </div>
       )}
 
-      <LeadFilters value={filters} onChange={setFilters} />
+      <LeadFilters value={filters} onChange={setFilters} simplifiedAdmin={isSuperAdminLeadsView} />
 
       {selectedIds.length > 0 && (
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm">
