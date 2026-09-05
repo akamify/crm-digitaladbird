@@ -5,7 +5,7 @@
  * previous PWA-enabled build), it would intercept fetches and serve stale assets,
  * causing the "works in Chrome but blank in Edge" / "old build keeps loading"
  * inconsistency.
- *
+ 
  * This file is requested whenever an old SW tries to update itself. Replacing
  * it with an empty SW that immediately unregisters itself and deletes every
  * Cache Storage entry cleans up stale state on every page load.
