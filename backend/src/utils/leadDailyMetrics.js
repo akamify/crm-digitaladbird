@@ -1,7 +1,9 @@
 const { AppError } = require('./errors');
 const { unresolvedRetryableCallIssueSql } = require('./leadCallIssueMetrics');
+const { RETRYABLE_CONTACT_ISSUES, sqlArray } = require('../constants/counselorReportOptions');
 
 const IST = 'Asia/Kolkata';
+const RETRYABLE_SQL = sqlArray(RETRYABLE_CONTACT_ISSUES);
 const LEAD_DAILY_METRICS = new Set([
   'received',
   'worked',
@@ -52,32 +54,26 @@ function onBusinessDateSql(column, dateParam) {
 function buildLeadDailyMetricConditions(dateParam, leadAlias = 'l') {
   const lead = String(leadAlias || 'l').trim();
   const received = onBusinessDateSql(`${lead}.created_at`, dateParam);
-  const personalMeeting = `EXISTS (
+  const personalMeetingActivity = `EXISTS (
     SELECT 1 FROM customer_notes daily_pm
      WHERE daily_pm.lead_id = ${lead}.id
        AND daily_pm.note_kind = 'personal_meeting'
        AND daily_pm.deleted_at IS NULL
        AND ${onBusinessDateSql('daily_pm.created_at', dateParam)}
   )`;
-  const worked = `(
+  const workedActivity = `(
     EXISTS (SELECT 1 FROM lead_remarks daily_lr WHERE daily_lr.lead_id = ${lead}.id AND ${onBusinessDateSql('daily_lr.created_at', dateParam)})
     OR EXISTS (SELECT 1 FROM lead_workflow_history daily_wh WHERE daily_wh.lead_id = ${lead}.id AND ${onBusinessDateSql('daily_wh.created_at', dateParam)})
     OR EXISTS (SELECT 1 FROM lead_call_logs daily_cl WHERE daily_cl.lead_id = ${lead}.id AND ${onBusinessDateSql('daily_cl.created_at', dateParam)})
     OR EXISTS (SELECT 1 FROM lead_call_attempts daily_ca WHERE daily_ca.lead_id = ${lead}.id AND daily_ca.status = 'completed' AND ${onBusinessDateSql('COALESCE(daily_ca.attempted_at, daily_ca.created_at)', dateParam)})
-    OR ${personalMeeting}
+    OR ${personalMeetingActivity}
   )`;
-  const scheduledAttempt = `EXISTS (
-    SELECT 1 FROM lead_call_attempts daily_scheduled
-     WHERE daily_scheduled.lead_id = ${lead}.id
-       AND daily_scheduled.attempt_number > 1
-       AND ${onBusinessDateSql('daily_scheduled.scheduled_at', dateParam)}
-  )`;
-  const dailyScope = `(${received} OR ${worked} OR ${scheduledAttempt})`;
+  const worked = `(${received} AND ${workedActivity})`;
   const pending = `(
     ${lead}.assigned_to_user_id IS NOT NULL
-    AND ${dailyScope}
+    AND ${received}
     AND (
-      (${received} AND NOT ${worked})
+      NOT ${workedActivity}
       OR EXISTS (
         SELECT 1 FROM lead_remarks daily_followup
          WHERE daily_followup.lead_id = ${lead}.id
@@ -93,7 +89,7 @@ function buildLeadDailyMetricConditions(dateParam, leadAlias = 'l') {
       )
     )
   )`;
-  const session9pm = `(
+  const session9pmActivity = `(
     EXISTS (
       SELECT 1 FROM lead_remarks daily_session_remark
        WHERE daily_session_remark.lead_id = ${lead}.id
@@ -113,9 +109,45 @@ function buildLeadDailyMetricConditions(dateParam, leadAlias = 'l') {
          )
     )
   )`;
+  const personalMeeting = `(${received} AND ${personalMeetingActivity})`;
+  const session9pm = `(${received} AND ${session9pmActivity})`;
+  const retryableIssueActivity = `(
+    EXISTS (
+      SELECT 1 FROM lead_remarks daily_issue_remark
+       WHERE daily_issue_remark.lead_id = ${lead}.id
+         AND ${onBusinessDateSql('daily_issue_remark.created_at', dateParam)}
+         AND (
+           daily_issue_remark.call_status::text = ANY(${RETRYABLE_SQL})
+           OR COALESCE(daily_issue_remark.call_statuses, '[]'::jsonb) ?| ${RETRYABLE_SQL}
+         )
+    )
+    OR EXISTS (
+      SELECT 1 FROM lead_workflow_history daily_issue_history
+       WHERE daily_issue_history.lead_id = ${lead}.id
+         AND ${onBusinessDateSql('daily_issue_history.created_at', dateParam)}
+         AND (
+           daily_issue_history.new_value = ANY(${RETRYABLE_SQL})
+           OR (COALESCE(daily_issue_history.metadata, '{}'::jsonb)->'step_1_statuses') ?| ${RETRYABLE_SQL}
+         )
+    )
+    OR EXISTS (
+      SELECT 1 FROM lead_call_attempts daily_issue_attempt
+       WHERE daily_issue_attempt.lead_id = ${lead}.id
+         AND daily_issue_attempt.status = 'completed'
+         AND daily_issue_attempt.outcome::text = ANY(${RETRYABLE_SQL})
+         AND ${onBusinessDateSql('COALESCE(daily_issue_attempt.attempted_at, daily_issue_attempt.created_at)', dateParam)}
+    )
+    OR EXISTS (
+      SELECT 1 FROM lead_call_attempt_sequences daily_issue_sequence
+       WHERE daily_issue_sequence.lead_id = ${lead}.id
+         AND daily_issue_sequence.initial_trigger_reason::text = ANY(${RETRYABLE_SQL})
+         AND ${onBusinessDateSql('daily_issue_sequence.created_at', dateParam)}
+    )
+  )`;
   const callIssues = `(
     ${lead}.assigned_to_user_id IS NOT NULL
-    AND ${dailyScope}
+    AND ${received}
+    AND ${retryableIssueActivity}
     AND ${unresolvedRetryableCallIssueSql(lead)}
   )`;
 

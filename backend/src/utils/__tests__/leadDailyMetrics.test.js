@@ -30,9 +30,16 @@ describe('lead daily metrics', () => {
     expect(conditions.received).toContain("AT TIME ZONE 'Asia/Kolkata'");
     expect(conditions.received).toContain('l.created_at >=');
     expect(conditions.received).toContain('l.created_at <');
+    for (const metric of ['worked', 'pending', 'personal_meeting', 'session_9pm', 'call_issues']) {
+      expect(conditions[metric]).toContain('l.created_at >=');
+      expect(conditions[metric]).toContain('l.created_at <');
+    }
     expect(conditions.pending).toContain('daily_due.attempt_number > 1');
     expect(conditions.session_9pm).toContain("'session_730_attend'");
     expect(conditions.call_issues).toContain("seq.status = 'active'");
+    expect(conditions.call_issues).toContain('daily_issue_remark.created_at');
+    expect(conditions.call_issues).toContain('daily_issue_attempt.attempted_at');
+    expect(conditions.call_issues).toContain('daily_issue_sequence.created_at');
     expect(conditions.call_issues).toContain("issue_received.outcome = 'call_received'");
     expect(summarySql).toContain('AS received');
     expect(summarySql).toContain('AS call_issues');

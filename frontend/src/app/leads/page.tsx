@@ -34,11 +34,11 @@ type CommunicationTab = 'chat' | 'calls';
 
 const DAILY_METRIC_OPTIONS: Array<{ key: LeadDailyMetric; label: string; hint: string }> = [
   { key: 'received', label: 'Leads Received', hint: 'Leads created on the selected date.' },
-  { key: 'worked', label: 'Worked', hint: 'Leads with CRM activity on the selected date.' },
-  { key: 'pending', label: 'Pending', hint: 'Selected-date leads or obligations that still need action.' },
-  { key: 'personal_meeting', label: 'Meeting Attended', hint: 'Leads with a Personal Meeting recorded on the selected date.' },
-  { key: 'session_9pm', label: '9:00 PM Session', hint: 'Leads marked 9:00 Session Attend on the selected date.' },
-  { key: 'call_issues', label: 'Call Issues', hint: 'Date-relevant leads with a current unresolved retryable call issue.' },
+  { key: 'worked', label: 'Worked', hint: 'Selected-date received leads with CRM activity on that date.' },
+  { key: 'pending', label: 'Pending', hint: 'Selected-date received leads that still needed action on that date.' },
+  { key: 'personal_meeting', label: 'Meeting Attended', hint: 'Selected-date received leads with a Personal Meeting recorded that date.' },
+  { key: 'session_9pm', label: '9:00 PM Session', hint: 'Selected-date received leads marked 9:00 Session Attend that date.' },
+  { key: 'call_issues', label: 'Call Issues', hint: 'Selected-date received leads with a current unresolved retryable call issue.' },
 ];
 
 const ALL_TIME_METRIC_OPTIONS: Array<{ key: LeadAllTimeMetric; label: string; hint: string }> = [

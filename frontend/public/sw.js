@@ -1,13 +1,11 @@
 /**
  * Service-worker killer.
- *
+ 
+*
  * If any browser ever cached a real service worker for this origin (e.g. from a
  * previous PWA-enabled build), it would intercept fetches and serve stale assets,
  * causing the "works in Chrome but blank in Edge" / "old build keeps loading"
  * inconsistency.
- 
-
-
 
  * This file is requested whenever an old SW tries to update itself. Replacing
  * it with an empty SW that immediately unregisters itself and deletes every
