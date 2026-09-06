@@ -30,7 +30,7 @@ const { leadHasFollowupActivityCondition } = require('../utils/followupMetrics')
 const {
   normalizeLeadDailyDate,
   normalizeLeadDailyMetric,
-  buildLeadDailyMetricConditions,
+  buildLeadPeriodMetricConditions,
   leadDailySummarySelectSql,
 } = require('../utils/leadDailyMetrics');
 const {
@@ -401,7 +401,8 @@ async function assertLeadWriteAccess(client, leadId, user) {
  *   assigned_to       user id  (admin only — RM auto-scoped, members locked to self)
  *   from, to          ISO dates (filters created_at)
  *   created_preset    today|yesterday|day_before (IST created_at date)
- *   selected_date     Super Admin daily view date (YYYY-MM-DD, IST)
+ *   selected_date     Super Admin daily view date (YYYY-MM-DD, IST; backward compatible)
+ *   selected_from/to  Super Admin daily/range view inclusive dates (YYYY-MM-DD, IST)
  *   daily_metric      received|worked|pending|personal_meeting|session_9pm|call_issues
  *   all_time_metric   all|worked|pending|personal_meeting|session_9pm|call_issues
  *   pending           true => only unworked leads
@@ -717,14 +718,25 @@ exports.list = asyncHandler(async (req, res) => {
   let dailySummaryQuery = null;
   let allTimeSummaryQuery = null;
   let selectedDailyDate = null;
+  let selectedDailyFrom = null;
+  let selectedDailyTo = null;
   let selectedDailyMetric = null;
   let selectedAllTimeMetric = null;
-  if (req.user.role === 'super_admin' && req.query.selected_date) {
-    selectedDailyDate = normalizeLeadDailyDate(req.query.selected_date);
+  if (req.user.role === 'super_admin' && (req.query.selected_date || req.query.selected_from)) {
+    selectedDailyFrom = normalizeLeadDailyDate(req.query.selected_from || req.query.selected_date);
+    selectedDailyTo = normalizeLeadDailyDate(req.query.selected_to || selectedDailyFrom);
+    if (selectedDailyFrom > selectedDailyTo) {
+      throw new AppError(400, 'INVALID_DATE_RANGE', 'selected_from must be on or before selected_to');
+    }
+    const rangeDays = Math.floor((Date.parse(`${selectedDailyTo}T00:00:00Z`) - Date.parse(`${selectedDailyFrom}T00:00:00Z`)) / 86400000) + 1;
+    if (rangeDays > 366) throw new AppError(400, 'DATE_RANGE_TOO_LARGE', 'Date range cannot exceed 366 days');
+    selectedDailyDate = selectedDailyFrom === selectedDailyTo ? selectedDailyFrom : null;
     selectedDailyMetric = normalizeLeadDailyMetric(req.query.daily_metric);
-    params.push(selectedDailyDate);
-    const dateParam = `$${params.length}::date`;
-    const dailyConditions = buildLeadDailyMetricConditions(dateParam, 'l');
+    params.push(selectedDailyFrom);
+    const fromParam = `$${params.length}::date`;
+    params.push(selectedDailyTo);
+    const toParam = `$${params.length}::date`;
+    const dailyConditions = buildLeadPeriodMetricConditions(fromParam, toParam, 'l');
     dailySummaryQuery = {
       sql: `SELECT ${leadDailySummarySelectSql(dailyConditions)} FROM leads l WHERE ${where.join(' AND ')}`,
       params: [...params],
@@ -758,6 +770,8 @@ exports.list = asyncHandler(async (req, res) => {
   const total = parseInt(totalRes.rows[0].count, 10);
   const dailySummary = dailySummaryRes ? {
     selected_date: selectedDailyDate,
+    from: selectedDailyFrom,
+    to: selectedDailyTo,
     selected_metric: selectedDailyMetric,
     ...dailySummaryRes.rows[0],
   } : null;

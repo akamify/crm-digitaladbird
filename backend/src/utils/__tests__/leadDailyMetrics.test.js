@@ -2,6 +2,7 @@ const {
   normalizeLeadDailyDate,
   normalizeLeadDailyMetric,
   buildLeadDailyMetricConditions,
+  buildLeadPeriodMetricConditions,
   leadDailySummarySelectSql,
 } = require('../leadDailyMetrics');
 
@@ -34,7 +35,9 @@ describe('lead daily metrics', () => {
       expect(conditions[metric]).toContain('l.created_at >=');
       expect(conditions[metric]).toContain('l.created_at <');
     }
-    expect(conditions.pending).toContain('daily_due.attempt_number > 1');
+    expect(conditions.pending).toContain('AND NOT');
+    expect(conditions.pending).not.toContain('daily_due');
+    expect(conditions.pending).not.toContain('assigned_to_user_id');
     expect(conditions.session_9pm).toContain("'session_730_attend'");
     expect(conditions.call_issues).toContain("seq.status = 'active'");
     expect(conditions.call_issues).toContain('daily_issue_remark.created_at');
@@ -43,5 +46,14 @@ describe('lead daily metrics', () => {
     expect(conditions.call_issues).toContain("issue_received.outcome = 'call_received'");
     expect(summarySql).toContain('AS received');
     expect(summarySql).toContain('AS call_issues');
+  });
+
+  test('uses inclusive IST day boundaries for a custom period', () => {
+    const conditions = buildLeadPeriodMetricConditions('$1::date', '$2::date', 'l');
+
+    expect(conditions.received).toContain('l.created_at >= ($1::date::timestamp');
+    expect(conditions.received).toContain('(($2::date + 1)::date)');
+    expect(conditions.worked).toContain('daily_lr.created_at >= ($1::date::timestamp');
+    expect(conditions.worked).toContain('(($2::date + 1)::date)');
   });
 });

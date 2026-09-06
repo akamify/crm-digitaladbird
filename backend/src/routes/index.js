@@ -4,6 +4,7 @@ const users   = require('../controllers/userController');
 const leads   = require('../controllers/leadController');
 const reports = require('../controllers/reportController');
 const counselorReports = require('../controllers/counselorReportController');
+const leadDistributionAnalytics = require('../controllers/leadDistributionAnalyticsController');
 const meta    = require('../controllers/metaController');
 const customerNotes = require('../controllers/customerNoteController');
 const { authenticate, invalidateUser }    = require('../middleware/auth');
@@ -300,6 +301,9 @@ router.post('/notes/:noteId/reject', authenticate, requireRole('super_admin', 'a
 router.get('/personal-meetings', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.listPersonalMeetings);
 
 // ---- Leads --------------------------------------------------------
+router.get('/leads/distribution/rms', authenticate, requireRole('super_admin', 'admin', 'rm'), leadDistributionAnalytics.rms);
+router.get('/leads/distribution/rms/:rmId/counselors', authenticate, requireRole('super_admin', 'admin', 'rm'), leadDistributionAnalytics.counselors);
+router.get('/leads/distribution/rms/:rmId/counselors/:counselorId/leads', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), leadDistributionAnalytics.counselorLeads);
 router.get  ('/leads',            authenticate, leads.list);
 router.post ('/leads/manual',     authenticate, requireRole('super_admin', 'admin', 'rm'), leads.createManual);
 router.post ('/leads/bulk/remarks', authenticate, leads.bulkAddRemarks);

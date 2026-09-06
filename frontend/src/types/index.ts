@@ -415,6 +415,8 @@ export interface LeadFilters {
   updated_by_rm?: string;
   session_attendance?: 'has_session' | 'no_session' | '';
   selected_date?: string;
+  selected_from?: string;
+  selected_to?: string;
   daily_metric?: LeadDailyMetric | '';
   lead_view?: LeadViewMode;
   all_time_metric?: LeadAllTimeMetric | '';
@@ -429,7 +431,9 @@ export type LeadAllTimeMetric = 'all' | 'worked' | 'pending' | 'personal_meeting
 export type LeadViewMode = 'all_time' | 'daily';
 
 export interface LeadDailySummary {
-  selected_date: string;
+  selected_date: string | null;
+  from?: string;
+  to?: string;
   selected_metric: LeadDailyMetric;
   received: number;
   worked: number;
@@ -447,6 +451,102 @@ export interface LeadAllTimeSummary {
   personal_meeting: number;
   session_9pm: number;
   call_issues: number;
+}
+
+export interface LeadAnalyticsScope {
+  view: LeadViewMode;
+  from: string | null;
+  to: string | null;
+}
+
+export interface LeadDistributionSummary {
+  received: number;
+  worked: number;
+  pending: number;
+  personal_meeting: number;
+  session_9pm: number;
+  call_issues: number;
+}
+
+export interface LeadDistributionPerson extends LeadDistributionSummary {
+  id: string | null;
+  full_name: string;
+  team_name?: string | null;
+  counselor_count?: number;
+  distribution_share?: number;
+  work_rate?: number;
+  last_activity_at?: string | null;
+}
+
+export interface LeadDistributionRmResponse {
+  scope: LeadAnalyticsScope;
+  summary: LeadDistributionSummary;
+  rms: LeadDistributionPerson[];
+  unassigned: LeadDistributionPerson;
+}
+
+export interface LeadDistributionCounselorResponse {
+  scope: LeadAnalyticsScope;
+  rm: { id: string; full_name: string; team_name?: string | null; role: string; status: string };
+  summary: LeadDistributionSummary;
+  counselors: LeadDistributionPerson[];
+  unassigned: LeadDistributionPerson;
+}
+
+export interface LeadDistributionAttempt {
+  id: string;
+  attempt_number: number;
+  status: string;
+  trigger_reason?: string | null;
+  outcome?: string | null;
+  scheduled_at?: string | null;
+  attempted_at?: string | null;
+  is_final_attempt?: boolean;
+  attempt_state: 'initial_issue' | 'completed' | 'missed' | 'upcoming' | 'not_required';
+  overdue_by_minutes?: number | null;
+}
+
+export interface LeadDistributionRow {
+  id: string;
+  full_name?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  source?: string | null;
+  campaign_name?: string | null;
+  campaign_label?: string | null;
+  assigned_at?: string | null;
+  created_at: string;
+  stage?: string | null;
+  call_status?: string | null;
+  current_remark?: string | null;
+  latest_remark_status?: string | null;
+  latest_remark_at?: string | null;
+  next_followup_at?: string | null;
+  attempt_number?: number | null;
+  attempt_status?: string | null;
+  attempt_scheduled_at?: string | null;
+  attempted_at?: string | null;
+  attempt_outcome?: string | null;
+  attempt_reason?: string | null;
+  next_attempt_at?: string | null;
+  last_activity_at?: string | null;
+  has_call_issue?: boolean;
+  effective_call_issue?: string | null;
+  attempts?: LeadDistributionAttempt[];
+}
+
+export interface LeadDistributionLeadResponse {
+  scope: LeadAnalyticsScope;
+  rm: { id: string; full_name: string; team_name?: string | null; role: string; status: string };
+  counselor: { id: string; full_name: string; team_name?: string | null; role: string; status: string; report_to_id: string };
+  summary: LeadDistributionSummary;
+  call_issue_buckets: Record<string, number>;
+  call_issue_labels: Record<string, string>;
+  rows: LeadDistributionRow[];
+  total: number;
+  page: number;
+  page_size: number;
+  metric: LeadDailyMetric;
 }
 
 export interface PageResult<T> {

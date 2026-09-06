@@ -48,52 +48,38 @@ function normalizeLeadDailyMetric(value) {
 }
 
 function onBusinessDateSql(column, dateParam) {
-  return `(${column} >= (${dateParam}::timestamp AT TIME ZONE '${IST}') AND ${column} < (((${dateParam} + 1)::date)::timestamp AT TIME ZONE '${IST}'))`;
+  return onBusinessPeriodSql(column, dateParam, dateParam);
 }
 
-function buildLeadDailyMetricConditions(dateParam, leadAlias = 'l') {
+function onBusinessPeriodSql(column, fromParam, toParam) {
+  return `(${column} >= (${fromParam}::timestamp AT TIME ZONE '${IST}') AND ${column} < (((${toParam} + 1)::date)::timestamp AT TIME ZONE '${IST}'))`;
+}
+
+function buildLeadPeriodMetricConditions(fromParam, toParam, leadAlias = 'l') {
   const lead = String(leadAlias || 'l').trim();
-  const received = onBusinessDateSql(`${lead}.created_at`, dateParam);
+  const onPeriod = column => onBusinessPeriodSql(column, fromParam, toParam);
+  const received = onPeriod(`${lead}.created_at`);
   const personalMeetingActivity = `EXISTS (
     SELECT 1 FROM customer_notes daily_pm
      WHERE daily_pm.lead_id = ${lead}.id
        AND daily_pm.note_kind = 'personal_meeting'
        AND daily_pm.deleted_at IS NULL
-       AND ${onBusinessDateSql('daily_pm.created_at', dateParam)}
+       AND ${onPeriod('daily_pm.created_at')}
   )`;
   const workedActivity = `(
-    EXISTS (SELECT 1 FROM lead_remarks daily_lr WHERE daily_lr.lead_id = ${lead}.id AND ${onBusinessDateSql('daily_lr.created_at', dateParam)})
-    OR EXISTS (SELECT 1 FROM lead_workflow_history daily_wh WHERE daily_wh.lead_id = ${lead}.id AND ${onBusinessDateSql('daily_wh.created_at', dateParam)})
-    OR EXISTS (SELECT 1 FROM lead_call_logs daily_cl WHERE daily_cl.lead_id = ${lead}.id AND ${onBusinessDateSql('daily_cl.created_at', dateParam)})
-    OR EXISTS (SELECT 1 FROM lead_call_attempts daily_ca WHERE daily_ca.lead_id = ${lead}.id AND daily_ca.status = 'completed' AND ${onBusinessDateSql('COALESCE(daily_ca.attempted_at, daily_ca.created_at)', dateParam)})
+    EXISTS (SELECT 1 FROM lead_remarks daily_lr WHERE daily_lr.lead_id = ${lead}.id AND ${onPeriod('daily_lr.created_at')})
+    OR EXISTS (SELECT 1 FROM lead_workflow_history daily_wh WHERE daily_wh.lead_id = ${lead}.id AND ${onPeriod('daily_wh.created_at')})
+    OR EXISTS (SELECT 1 FROM lead_call_logs daily_cl WHERE daily_cl.lead_id = ${lead}.id AND ${onPeriod('daily_cl.created_at')})
+    OR EXISTS (SELECT 1 FROM lead_call_attempts daily_ca WHERE daily_ca.lead_id = ${lead}.id AND daily_ca.status = 'completed' AND ${onPeriod('COALESCE(daily_ca.attempted_at, daily_ca.created_at)')})
     OR ${personalMeetingActivity}
   )`;
   const worked = `(${received} AND ${workedActivity})`;
-  const pending = `(
-    ${lead}.assigned_to_user_id IS NOT NULL
-    AND ${received}
-    AND (
-      NOT ${workedActivity}
-      OR EXISTS (
-        SELECT 1 FROM lead_remarks daily_followup
-         WHERE daily_followup.lead_id = ${lead}.id
-           AND daily_followup.next_followup_at IS NOT NULL
-           AND ${onBusinessDateSql('daily_followup.next_followup_at', dateParam)}
-      )
-      OR EXISTS (
-        SELECT 1 FROM lead_call_attempts daily_due
-         WHERE daily_due.lead_id = ${lead}.id
-           AND daily_due.attempt_number > 1
-           AND daily_due.status IN ('scheduled', 'missed')
-           AND ${onBusinessDateSql('daily_due.scheduled_at', dateParam)}
-      )
-    )
-  )`;
+  const pending = `(${received} AND NOT ${workedActivity})`;
   const session9pmActivity = `(
     EXISTS (
       SELECT 1 FROM lead_remarks daily_session_remark
        WHERE daily_session_remark.lead_id = ${lead}.id
-         AND ${onBusinessDateSql('daily_session_remark.created_at', dateParam)}
+         AND ${onPeriod('daily_session_remark.created_at')}
          AND (
            daily_session_remark.call_status::text = 'session_730_attend'
            OR COALESCE(daily_session_remark.call_statuses, '[]'::jsonb) ? 'session_730_attend'
@@ -102,7 +88,7 @@ function buildLeadDailyMetricConditions(dateParam, leadAlias = 'l') {
     OR EXISTS (
       SELECT 1 FROM lead_workflow_history daily_session_history
        WHERE daily_session_history.lead_id = ${lead}.id
-         AND ${onBusinessDateSql('daily_session_history.created_at', dateParam)}
+         AND ${onPeriod('daily_session_history.created_at')}
          AND (
            daily_session_history.new_value = 'session_730_attend'
            OR (COALESCE(daily_session_history.metadata, '{}'::jsonb)->'step_1_statuses') ? 'session_730_attend'
@@ -115,7 +101,7 @@ function buildLeadDailyMetricConditions(dateParam, leadAlias = 'l') {
     EXISTS (
       SELECT 1 FROM lead_remarks daily_issue_remark
        WHERE daily_issue_remark.lead_id = ${lead}.id
-         AND ${onBusinessDateSql('daily_issue_remark.created_at', dateParam)}
+         AND ${onPeriod('daily_issue_remark.created_at')}
          AND (
            daily_issue_remark.call_status::text = ANY(${RETRYABLE_SQL})
            OR COALESCE(daily_issue_remark.call_statuses, '[]'::jsonb) ?| ${RETRYABLE_SQL}
@@ -124,7 +110,7 @@ function buildLeadDailyMetricConditions(dateParam, leadAlias = 'l') {
     OR EXISTS (
       SELECT 1 FROM lead_workflow_history daily_issue_history
        WHERE daily_issue_history.lead_id = ${lead}.id
-         AND ${onBusinessDateSql('daily_issue_history.created_at', dateParam)}
+         AND ${onPeriod('daily_issue_history.created_at')}
          AND (
            daily_issue_history.new_value = ANY(${RETRYABLE_SQL})
            OR (COALESCE(daily_issue_history.metadata, '{}'::jsonb)->'step_1_statuses') ?| ${RETRYABLE_SQL}
@@ -135,13 +121,13 @@ function buildLeadDailyMetricConditions(dateParam, leadAlias = 'l') {
        WHERE daily_issue_attempt.lead_id = ${lead}.id
          AND daily_issue_attempt.status = 'completed'
          AND daily_issue_attempt.outcome::text = ANY(${RETRYABLE_SQL})
-         AND ${onBusinessDateSql('COALESCE(daily_issue_attempt.attempted_at, daily_issue_attempt.created_at)', dateParam)}
+         AND ${onPeriod('COALESCE(daily_issue_attempt.attempted_at, daily_issue_attempt.created_at)')}
     )
     OR EXISTS (
       SELECT 1 FROM lead_call_attempt_sequences daily_issue_sequence
        WHERE daily_issue_sequence.lead_id = ${lead}.id
          AND daily_issue_sequence.initial_trigger_reason::text = ANY(${RETRYABLE_SQL})
-         AND ${onBusinessDateSql('daily_issue_sequence.created_at', dateParam)}
+         AND ${onPeriod('daily_issue_sequence.created_at')}
     )
   )`;
   const callIssues = `(
@@ -161,6 +147,10 @@ function buildLeadDailyMetricConditions(dateParam, leadAlias = 'l') {
   };
 }
 
+function buildLeadDailyMetricConditions(dateParam, leadAlias = 'l') {
+  return buildLeadPeriodMetricConditions(dateParam, dateParam, leadAlias);
+}
+
 function leadDailySummarySelectSql(conditions) {
   return Object.entries(conditions)
     .map(([key, condition]) => `COUNT(*) FILTER (WHERE ${condition})::int AS ${key}`)
@@ -172,6 +162,8 @@ module.exports = {
   businessDateToday,
   normalizeLeadDailyDate,
   normalizeLeadDailyMetric,
+  onBusinessPeriodSql,
+  buildLeadPeriodMetricConditions,
   buildLeadDailyMetricConditions,
   leadDailySummarySelectSql,
 };
