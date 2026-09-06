@@ -26,6 +26,7 @@ import {
   LifeBuoy,
   UserCircle,
   Tag,
+  ListChecks,
 } from 'lucide-react';
 import { useState } from 'react';
 import { LogoLockup } from '@/components/ui/BirdLogo';
@@ -45,6 +46,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', Icon: LayoutDashboard },
   { href: '/leads', label: 'Leads', Icon: Briefcase },
+  { href: '/action-queue', label: 'My Action Queue', Icon: ListChecks, roles: ['super_admin', 'admin', 'rm', 'member', 'partner'] },
   { href: '/notes', label: 'Latest Notes', Icon: ScrollText, roles: ['super_admin', 'admin', 'rm', 'member', 'partner'] },
   { href: '/chat', label: 'Messages', Icon: MessageSquare, roles: ['super_admin', 'admin', 'rm', 'member', 'partner'] },
   { href: '/notifications', label: 'Notifications', Icon: Bell, roles: ['super_admin', 'admin', 'rm', 'member', 'partner'] },

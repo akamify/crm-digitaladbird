@@ -38,6 +38,7 @@ const {
   buildLeadAllTimeMetricConditions,
   leadAllTimeSummarySelectSql,
 } = require('../utils/leadAllTimeMetrics');
+const { unresolvedRetryableCallIssueSql } = require('../utils/leadCallIssueMetrics');
 
 function humanizeValue(value) {
   return String(value || '')
@@ -535,6 +536,7 @@ exports.list = asyncHandler(async (req, res) => {
   if (req.query.from) { params.push(req.query.from); where.push(`l.created_at >= $${params.length}`); }
   if (req.query.to) { params.push(req.query.to); where.push(`l.created_at <= $${params.length}`); }
   if (req.query.pending === 'true') where.push(`${notWorkedLeadCondition('l')}`);
+  if (req.query.call_issues === 'true') where.push(unresolvedRetryableCallIssueSql('l'));
   if (req.query.unworked === 'true') {
     where.push(`NOT EXISTS (
       SELECT 1 FROM lead_remarks lr

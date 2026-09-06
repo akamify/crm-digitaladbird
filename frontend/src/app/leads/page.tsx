@@ -10,6 +10,7 @@ import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
 import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
 import { LeadFilters } from '@/components/leads/LeadFilters';
 import { LeadAnalyticsPeriodControl } from '@/components/leads/LeadAnalyticsPeriodControl';
+import { LeadSavedViews } from '@/components/leads/LeadSavedViews';
 import { RemarkModal } from '@/components/leads/RemarkModal';
 import { LeadLabelPickerModal } from '@/components/leads/LeadLabelPickerModal';
 import { AddLeadModal } from '@/components/leads/AddLeadModal';
@@ -321,7 +322,7 @@ function LeadMetricFilterRow({
     : `View ${selectedOption?.label || 'Metric'} Distribution`;
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-blue-200 bg-gradient-to-r from-blue-50 via-white to-amber-50 shadow-sm">
+    <section className="relative z-20 overflow-visible rounded-2xl border border-blue-200 bg-gradient-to-r from-blue-50 via-white to-amber-50 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-blue-100 px-4 py-3">
         <div>
           <div className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-700">Lead analytics</div>
@@ -382,6 +383,8 @@ function LeadsInner() {
     stage: (sp.get('stage') as LeadFilterType['stage']) || '',
     call_status: (sp.get('call_status') as LeadFilterType['call_status']) || '',
     followup: (sp.get('followup') as LeadFilterType['followup']) || '',
+    followup_strict: (sp.get('followup_strict') as LeadFilterType['followup_strict']) || '',
+    call_issues: (sp.get('call_issues') as LeadFilterType['call_issues']) || '',
     reassignment: (sp.get('reassignment') as LeadFilterType['reassignment']) || '',
     assignment: (sp.get('assignment') as LeadFilterType['assignment']) || '',
     assigned_today: (sp.get('assigned_today') as LeadFilterType['assigned_today']) || '',
@@ -536,6 +539,18 @@ function LeadsInner() {
       selected_date: scope.view === 'daily' && scope.from === scope.to ? scope.from || undefined : undefined,
       daily_metric: current.daily_metric || 'received',
       page: 1,
+    }));
+  }
+
+  function applySavedView(savedFilters: LeadFilterType) {
+    setSelectedIds([]);
+    setFilters(current => ({
+      page: 1,
+      page_size: current.page_size || 25,
+      sort: 'created_at',
+      order: 'desc',
+      ...(isSuperAdminLeadsView ? { lead_view: 'all_time' as const, all_time_metric: 'all' as const } : {}),
+      ...savedFilters,
     }));
   }
 
@@ -812,6 +827,8 @@ function LeadsInner() {
           })}
         </div>
       )}
+
+      <LeadSavedViews value={filters} role={user?.role} onApply={applySavedView} />
 
       {isSuperAdminLeadsView && (
         <LeadMetricFilterRow

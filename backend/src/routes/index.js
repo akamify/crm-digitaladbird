@@ -5,6 +5,8 @@ const leads   = require('../controllers/leadController');
 const reports = require('../controllers/reportController');
 const counselorReports = require('../controllers/counselorReportController');
 const leadDistributionAnalytics = require('../controllers/leadDistributionAnalyticsController');
+const actionQueue = require('../controllers/actionQueueController');
+const leadSavedViews = require('../controllers/leadSavedViewController');
 const meta    = require('../controllers/metaController');
 const customerNotes = require('../controllers/customerNoteController');
 const { authenticate, invalidateUser }    = require('../middleware/auth');
@@ -301,6 +303,11 @@ router.post('/notes/:noteId/reject', authenticate, requireRole('super_admin', 'a
 router.get('/personal-meetings', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), customerNotes.listPersonalMeetings);
 
 // ---- Leads --------------------------------------------------------
+router.get('/action-queue', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), actionQueue.list);
+router.get('/lead-saved-views', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner', 'client'), leadSavedViews.list);
+router.post('/lead-saved-views', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner', 'client'), leadSavedViews.create);
+router.patch('/lead-saved-views/:viewId', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner', 'client'), leadSavedViews.update);
+router.delete('/lead-saved-views/:viewId', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner', 'client'), leadSavedViews.remove);
 router.get('/leads/distribution/rms', authenticate, requireRole('super_admin', 'admin', 'rm'), leadDistributionAnalytics.rms);
 router.get('/leads/distribution/rms/:rmId/counselors', authenticate, requireRole('super_admin', 'admin', 'rm'), leadDistributionAnalytics.counselors);
 router.get('/leads/distribution/rms/:rmId/counselors/:counselorId/leads', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), leadDistributionAnalytics.counselorLeads);

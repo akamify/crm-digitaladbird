@@ -125,7 +125,7 @@ export function LeadFilters({ value, onChange, simplifiedAdmin = false }: Props)
   const hasFilters = !!(
     value.q || value.category || value.stage || value.call_status || value.followup || value.source || value.campaign
     || value.pending || (!simplifiedAdmin && value.assignment) || value.label_id || value.remark_status || value.customer_interest
-    || value.workflow_status || value.latest_activity
+    || value.workflow_status || value.latest_activity || value.call_issues
     || (!simplifiedAdmin && (value.from || value.to || value.created_preset || value.note_type || value.note_category
       || value.priority || value.has_rm_update || value.updated_by_rm || value.session_attendance || value.no_remark))
   );
@@ -143,6 +143,7 @@ export function LeadFilters({ value, onChange, simplifiedAdmin = false }: Props)
     value.campaign && { key: 'campaign', label: `Campaign: ${value.campaign}` },
     value.label_id && { key: 'label_id', label: `Label: ${optionLabel(labelOpts, value.label_id)}` },
     value.latest_activity && { key: 'latest_activity', label: `Activity: ${optionLabel(LATEST_ACTIVITY_OPTS, value.latest_activity)}` },
+    value.call_issues === 'true' && { key: 'call_issues', label: 'Call Issues' },
     !simplifiedAdmin && value.no_remark === 'true' && { key: 'no_remark', label: 'No remark' },
     !simplifiedAdmin && value.note_type && { key: 'note_type', label: `Note Type: ${optionLabel([{ value: '', label: '' }, ...LEAD_REMARK_NOTE_TYPE_OPTIONS], value.note_type)}` },
     !simplifiedAdmin && value.note_category && { key: 'note_category', label: `Note Category: ${optionLabel([{ value: '', label: '' }, ...LEAD_REMARK_CATEGORY_OPTIONS], value.note_category)}` },

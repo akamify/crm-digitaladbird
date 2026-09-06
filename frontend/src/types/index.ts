@@ -420,10 +420,19 @@ export interface LeadFilters {
   daily_metric?: LeadDailyMetric | '';
   lead_view?: LeadViewMode;
   all_time_metric?: LeadAllTimeMetric | '';
+  call_issues?: 'true' | '';
   page?: number;
   page_size?: number;
   sort?: string;
   order?: 'asc' | 'desc';
+}
+
+export interface LeadSavedView {
+  id: string;
+  name: string;
+  filters: LeadFilters;
+  created_at: string;
+  updated_at: string;
 }
 
 export type LeadDailyMetric = 'received' | 'worked' | 'pending' | 'personal_meeting' | 'session_9pm' | 'call_issues';
