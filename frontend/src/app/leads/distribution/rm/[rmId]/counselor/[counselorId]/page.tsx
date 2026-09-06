@@ -82,7 +82,7 @@ export default function CounselorLeadDistributionPage() {
   const totalPages = Math.max(1, Math.ceil((data?.total || 0) / (data?.page_size || 25)));
   const activeIssue = searchParams.get('call_issue_type') || '';
   const parentParams = new URLSearchParams(searchParams.toString());
-  ['metric', 'call_issue_type', 'page', 'search', 'sort', 'order'].forEach(key => parentParams.delete(key));
+  ['call_issue_type', 'page', 'search', 'sort', 'order'].forEach(key => parentParams.delete(key));
 
   return <AppShell title={data?.counselor.full_name || 'Counselor Lead Report'} subtitle="Lead-level explanation of counselor analytics" roles={['super_admin', 'admin', 'rm', 'member', 'partner']}>
     <div className="space-y-5">

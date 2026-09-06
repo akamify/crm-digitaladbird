@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { AlertTriangle, CalendarDays, ChevronLeft, ChevronRight, Eye, Inbox, Lock, Mail, MessageCircle, MessageSquarePlus, MoreVertical, Phone, Plus, ScrollText, Tag, Trash2 } from 'lucide-react';
+import { AlertTriangle, CalendarDays, ChevronLeft, ChevronRight, Eye, Inbox, Lock, Mail, MessageCircle, MessageSquarePlus, MoreHorizontal, MoreVertical, Phone, Plus, ScrollText, Tag, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
@@ -303,7 +303,6 @@ function LeadMetricFilterRow({
   options,
   loading,
   distributionHref,
-  onViewChange,
   onScopeChange,
   onMetricChange,
 }: {
@@ -313,52 +312,47 @@ function LeadMetricFilterRow({
   options: Array<{ key: string; label: string; hint: string; value?: number }>;
   loading: boolean;
   distributionHref: string;
-  onViewChange: (mode: LeadViewMode) => void;
   onScopeChange: (scope: LeadAnalyticsScope) => void;
   onMetricChange: (metric: string) => void;
 }) {
+  const selectedOption = options.find(option => option.key === selectedMetric);
+  const distributionLabel = selectedMetric === 'received' || selectedMetric === 'all'
+    ? 'View Team Distribution'
+    : `View ${selectedOption?.label || 'Metric'} Distribution`;
+
   return (
     <section className="overflow-hidden rounded-2xl border border-blue-200 bg-gradient-to-r from-blue-50 via-white to-amber-50 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-blue-100 px-4 py-3">
-        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-blue-100 bg-white/80 p-1">
-          {([
-            ['all_time', 'All Time Leads'],
-            ['daily', 'Daily Lead View'],
-          ] as Array<[LeadViewMode, string]>).map(([mode, label]) => (
-            <button
-              key={mode}
-              type="button"
-              onClick={() => onViewChange(mode)}
-              className={clsx(
-                'rounded-lg px-3 py-2 text-xs font-semibold transition',
-                viewMode === mode ? 'bg-brand-600 text-white shadow-sm' : 'text-slate-600 hover:bg-blue-50',
-              )}
-            >
-              {label}
-            </button>
-          ))}
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-700">Lead analytics</div>
+          <div className="mt-0.5 text-xs text-slate-500">{viewMode === 'all_time' ? 'Complete CRM history' : 'Metrics follow the selected received-lead period.'}</div>
         </div>
-        <LeadAnalyticsPeriodControl scope={scope} onChange={onScopeChange} showMode={false} />
+        <div className="flex flex-wrap items-center gap-2">
+          <LeadAnalyticsPeriodControl scope={scope} onChange={onScopeChange} />
+          <Link href={distributionHref} className="inline-flex h-10 items-center gap-2 rounded-xl border border-brand-200 bg-white px-3 text-xs font-semibold text-brand-700 shadow-sm transition hover:border-brand-300 hover:bg-brand-50">
+            {distributionLabel}<span aria-hidden>-&gt;</span>
+          </Link>
+        </div>
       </div>
       <div className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-3 xl:grid-cols-6">
         {options.map(option => {
           const active = selectedMetric === option.key;
           return (
-            <div
+            <button
               key={option.key}
+              type="button"
+              title={option.hint}
+              onClick={() => onMetricChange(option.key)}
               className={clsx(
-                'overflow-hidden rounded-xl border transition',
+                'min-h-[88px] rounded-xl border px-3 py-3 text-left transition',
                 active
                   ? 'border-brand-500 bg-brand-600 text-white shadow-md shadow-blue-200'
                   : 'border-white bg-white/90 text-slate-800 shadow-sm hover:border-brand-200 hover:bg-white',
               )}
             >
-              <button type="button" title={option.hint} onClick={() => onMetricChange(option.key)} className="min-h-[78px] w-full px-3 py-2.5 text-left">
-                <div className={clsx('text-[10px] font-semibold uppercase tracking-wide', active ? 'text-blue-100' : 'text-slate-500')}>{option.label}</div>
-                <div className="mt-1.5 text-xl font-bold tabular-nums">{loading || option.value === undefined ? '...' : Number(option.value).toLocaleString()}</div>
-              </button>
-              {option.key === 'received' && <Link href={distributionHref} className={clsx('flex items-center justify-between border-t px-3 py-2 text-[11px] font-semibold', active ? 'border-blue-500 text-blue-50 hover:bg-blue-500' : 'border-slate-100 text-brand-700 hover:bg-brand-50')}>View Distribution <span aria-hidden>→</span></Link>}
-            </div>
+              <div className={clsx('text-[10px] font-semibold uppercase tracking-wide', active ? 'text-blue-100' : 'text-slate-500')}>{option.label}</div>
+              <div className="mt-2 text-2xl font-bold tabular-nums">{loading || option.value === undefined ? '...' : Number(option.value).toLocaleString()}</div>
+            </button>
           );
         })}
       </div>
@@ -511,6 +505,11 @@ function LeadsInner() {
   });
   if (debouncedSearch) distributionSourceParams.set('q', debouncedSearch);
   copyDistributionFilters(distributionSourceParams, distributionParams);
+  const distributionMetric = selectedLeadView === 'daily'
+    ? filters.daily_metric || 'received'
+    : filters.all_time_metric === 'all' ? 'received' : filters.all_time_metric || 'received';
+  distributionParams.set('metric', distributionMetric);
+  distributionParams.set('sort', ['worked', 'pending', 'call_issues'].includes(distributionMetric) ? distributionMetric : 'received');
   const distributionHref = `/leads/distribution?${distributionParams.toString()}`;
 
   useEffect(() => {
@@ -526,19 +525,6 @@ function LeadsInner() {
     });
     router.replace(`/leads${params.toString() ? `?${params.toString()}` : ''}`);
   }, [filters, isSuperAdminLeadsView, router, selectedLeadView]);
-
-  function setLeadView(mode: LeadViewMode) {
-    setSelectedIds([]);
-    setFilters(current => current.lead_view === mode ? current : {
-      ...current,
-      lead_view: mode,
-      from: current.from || current.selected_date || businessToday(),
-      to: current.to || current.selected_date || businessToday(),
-      daily_metric: current.daily_metric || 'received',
-      all_time_metric: current.all_time_metric || 'all',
-      page: 1,
-    });
-  }
 
   function setAnalyticsScope(scope: LeadAnalyticsScope) {
     setSelectedIds([]);
@@ -659,19 +645,7 @@ function LeadsInner() {
   return (
     <div className="space-y-4">
       {(canAddManualLead || user?.role === 'member' || user?.role === 'partner') && (
-        <div className="flex justify-end gap-2">
-          {canDeleteLead && (
-            <button
-              type="button"
-              onClick={() => {
-                setDeleteAllScope(inferDeleteScopeFromFilters(filters, isAdminLeadsView));
-                setDeleteAllOpen(true);
-              }}
-              className="inline-flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-100"
-            >
-              <Trash2 className="h-4 w-4" /> Delete All Leads
-            </button>
-          )}
+        <div className="flex flex-wrap justify-end gap-2">
           <Link
             href="/notes"
             className="btn-outline inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"
@@ -682,8 +656,29 @@ function LeadsInner() {
             href="/personal-meetings"
             className="btn-outline inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"
           >
-            <CalendarDays className="h-4 w-4" /> Personal Meeting
+            <CalendarDays className="h-4 w-4" /> Personal Meetings
           </Link>
+          {canDeleteLead && (
+            <details className="group relative">
+              <summary className="btn-outline inline-flex h-10 cursor-pointer list-none items-center gap-2 rounded-lg px-3 text-sm [&::-webkit-details-marker]:hidden">
+                <MoreHorizontal className="h-4 w-4" /> More
+              </summary>
+              <div className="absolute right-0 z-40 mt-2 w-56 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
+                <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Admin actions</div>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.currentTarget.closest('details')?.removeAttribute('open');
+                    setDeleteAllScope(inferDeleteScopeFromFilters(filters, isAdminLeadsView));
+                    setDeleteAllOpen(true);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-rose-700 hover:bg-rose-50"
+                >
+                  <Trash2 className="h-4 w-4" /> Delete leads in scope
+                </button>
+              </div>
+            </details>
+          )}
           {canAddManualLead && (
             <button
               type="button"
@@ -699,7 +694,7 @@ function LeadsInner() {
       {isSuperAdminLeadsView ? (
         <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
           {[
-            { key: 'all', label: 'Leads', assignment: '' },
+            { key: 'all', label: 'All Leads', assignment: '' },
             { key: 'unassigned', label: 'Unassigned Leads', assignment: 'unassigned' },
             { key: 'assigned', label: 'Assigned Leads', assignment: 'assigned' },
           ].map(tab => {
@@ -831,7 +826,6 @@ function LeadsInner() {
           }))}
           loading={isLoading}
           distributionHref={distributionHref}
-          onViewChange={setLeadView}
           onScopeChange={setAnalyticsScope}
           onMetricChange={metric => {
             if (selectedLeadView === 'daily') setDailyMetric(metric as LeadDailyMetric);

@@ -1,8 +1,9 @@
 'use client';
-import { ChangeEvent } from 'react';
-import { Search, X } from 'lucide-react';
+import { ChangeEvent, useState } from 'react';
+import { ChevronDown, Search, SlidersHorizontal, X } from 'lucide-react';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Input';
+import { clsx } from '@/lib/format';
 import { useCampaignNames } from '@/hooks/useLeads';
 import { useLabels } from '@/hooks/useLeadLabels';
 import { LEAD_REMARK_GROUPS } from '@/constants/leadRemarkOptions';
@@ -110,6 +111,7 @@ function optionLabel(options: { value: string; label: string }[], value?: string
 }
 
 export function LeadFilters({ value, onChange, simplifiedAdmin = false }: Props) {
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const set = <K extends keyof LeadFilters>(k: K, v: LeadFilters[K]) =>
     onChange({ ...value, [k]: v, page: 1 });
 
@@ -122,7 +124,7 @@ export function LeadFilters({ value, onChange, simplifiedAdmin = false }: Props)
 
   const hasFilters = !!(
     value.q || value.category || value.stage || value.call_status || value.followup || value.source || value.campaign
-    || value.pending || value.assignment || value.label_id || value.remark_status || value.customer_interest
+    || value.pending || (!simplifiedAdmin && value.assignment) || value.label_id || value.remark_status || value.customer_interest
     || value.workflow_status || value.latest_activity
     || (!simplifiedAdmin && (value.from || value.to || value.created_preset || value.note_type || value.note_category
       || value.priority || value.has_rm_update || value.updated_by_rm || value.session_attendance || value.no_remark))
@@ -136,8 +138,9 @@ export function LeadFilters({ value, onChange, simplifiedAdmin = false }: Props)
     value.workflow_status && { key: 'workflow_status', label: `Workflow: ${optionLabel(WORKFLOW_OPTS, value.workflow_status)}` },
     value.followup && { key: 'followup', label: `Follow-up: ${optionLabel(FOLLOWUP_OPTS, value.followup)}` },
     !simplifiedAdmin && value.session_attendance && { key: 'session_attendance', label: `Session: ${optionLabel(SESSION_OPTS, value.session_attendance)}` },
-    value.assignment && { key: 'assignment', label: `Assignment: ${optionLabel(ASSIGNMENT_OPTS, value.assignment)}` },
+    !simplifiedAdmin && value.assignment && { key: 'assignment', label: `Assignment: ${optionLabel(ASSIGNMENT_OPTS, value.assignment)}` },
     value.source && { key: 'source', label: `Source: ${optionLabel(SOURCE_OPTS, value.source)}` },
+    value.campaign && { key: 'campaign', label: `Campaign: ${value.campaign}` },
     value.label_id && { key: 'label_id', label: `Label: ${optionLabel(labelOpts, value.label_id)}` },
     value.latest_activity && { key: 'latest_activity', label: `Activity: ${optionLabel(LATEST_ACTIVITY_OPTS, value.latest_activity)}` },
     !simplifiedAdmin && value.no_remark === 'true' && { key: 'no_remark', label: 'No remark' },
@@ -147,13 +150,34 @@ export function LeadFilters({ value, onChange, simplifiedAdmin = false }: Props)
     value.customer_interest && { key: 'customer_interest', label: `Interest: ${optionLabel([{ value: '', label: '' }, ...LEAD_REMARK_CUSTOMER_INTEREST_OPTIONS], value.customer_interest)}` },
     !simplifiedAdmin && value.has_rm_update && { key: 'has_rm_update', label: `RM Update: ${value.has_rm_update === 'true' ? 'Yes' : 'No'}` },
   ].filter(Boolean) as { key: keyof LeadFilters; label: string }[];
+  const advancedFilterCount = [
+    value.category, value.source, value.campaign, value.label_id, value.remark_status,
+    value.workflow_status, value.latest_activity, value.customer_interest,
+    ...(!simplifiedAdmin ? [value.session_attendance, value.no_remark, value.note_type, value.note_category, value.priority, value.has_rm_update] : []),
+  ].filter(Boolean).length;
+
+  function clearFilters() {
+    onChange({
+      page: 1,
+      page_size: value.page_size,
+      selected_date: value.selected_date,
+      daily_metric: value.daily_metric,
+      ...(simplifiedAdmin ? {
+        lead_view: value.lead_view,
+        from: value.from,
+        to: value.to,
+        all_time_metric: value.all_time_metric,
+        assignment: value.assignment,
+      } : {}),
+    });
+  }
 
   return (
     <div className="card p-4">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <div className="lg:col-span-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-6">
+        <div className="sm:col-span-2 xl:col-span-2">
           <Input
-            placeholder="Search name, phone, email…"
+            placeholder="Search name, phone, email..."
             value={value.q || ''}
             onChange={(e: ChangeEvent<HTMLInputElement>) => set('q', e.target.value)}
             leftIcon={<Search className="h-4 w-4" />}
@@ -174,18 +198,27 @@ export function LeadFilters({ value, onChange, simplifiedAdmin = false }: Props)
           options={FOLLOWUP_OPTS}
           onChange={(e: ChangeEvent<HTMLSelectElement>) => set('followup', e.target.value as LeadFilters['followup'])}
         />
+        {!simplifiedAdmin && <Select
+          value={value.assignment || ''}
+          options={ASSIGNMENT_OPTS}
+          onChange={(e: ChangeEvent<HTMLSelectElement>) => set('assignment', e.target.value as LeadFilters['assignment'])}
+        />}
       </div>
 
-      <div className="mt-3 grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+        <button type="button" onClick={() => setShowAdvanced(open => !open)} className={clsx('inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-semibold transition', showAdvanced || advancedFilterCount ? 'border-brand-200 bg-brand-50 text-brand-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50')} aria-expanded={showAdvanced}>
+          <SlidersHorizontal className="h-3.5 w-3.5" /> More filters
+          {advancedFilterCount > 0 && <span className="rounded-full bg-brand-600 px-1.5 py-0.5 text-[10px] text-white">{advancedFilterCount}</span>}
+          <ChevronDown className={clsx('h-3.5 w-3.5 transition', showAdvanced && 'rotate-180')} />
+        </button>
+        {hasFilters && <button type="button" onClick={clearFilters} className="inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-800"><X className="h-3.5 w-3.5" /> Clear all</button>}
+      </div>
+
+      {showAdvanced && <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-3 rounded-xl border border-slate-100 bg-slate-50/70 p-3">
         <Select
           value={value.category || ''}
           options={CATEGORY_OPTS}
           onChange={(e: ChangeEvent<HTMLSelectElement>) => set('category', e.target.value as LeadFilters['category'])}
-        />
-        <Select
-          value={value.assignment || ''}
-          options={ASSIGNMENT_OPTS}
-          onChange={(e: ChangeEvent<HTMLSelectElement>) => set('assignment', e.target.value as LeadFilters['assignment'])}
         />
         <Select
           value={value.source || ''}
@@ -262,22 +295,7 @@ export function LeadFilters({ value, onChange, simplifiedAdmin = false }: Props)
           value={value.to || ''}
           onChange={(e: ChangeEvent<HTMLInputElement>) => onChange({ ...value, to: e.target.value, created_preset: '', page: 1 })}
         />}
-        <div className="flex items-end">
-          {hasFilters && (
-            <button
-              onClick={() => onChange({
-                page: 1,
-                page_size: value.page_size,
-                selected_date: value.selected_date,
-                daily_metric: value.daily_metric,
-              })}
-              className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 px-3 text-xs text-slate-600 hover:bg-slate-50"
-            >
-              <X className="h-3.5 w-3.5" /> Clear filters
-            </button>
-          )}
-        </div>
-      </div>
+      </div>}
       {activeChips.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
           {activeChips.map(chip => (

@@ -6,6 +6,7 @@ import { ArrowLeft, BarChart3 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { LeadAnalyticsPeriodControl } from '@/components/leads/LeadAnalyticsPeriodControl';
 import {
+  DISTRIBUTION_METRICS,
   DistributionContextBar,
   DistributionError,
   DistributionPersonCard,
@@ -16,7 +17,7 @@ import {
 } from '@/components/leads/LeadDistributionUi';
 import { useRmDistribution } from '@/hooks/useLeadDistribution';
 import { copyDistributionFilters, normalizeAnalyticsScope } from '@/lib/leadAnalytics';
-import type { LeadAnalyticsScope } from '@/types';
+import type { LeadAnalyticsScope, LeadDailyMetric } from '@/types';
 
 function requestObject(params: URLSearchParams) {
   return Object.fromEntries(params.entries());
@@ -26,6 +27,7 @@ export default function LeadDistributionPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const scope = normalizeAnalyticsScope(searchParams.get('view'), searchParams.get('from'), searchParams.get('to'));
+  const activeMetric = (DISTRIBUTION_METRICS.some(option => option.key === searchParams.get('metric')) ? searchParams.get('metric') : 'received') as LeadDailyMetric;
   const query = useRmDistribution(requestObject(searchParams));
   const data = query.data;
 
@@ -66,9 +68,9 @@ export default function LeadDistributionPage() {
   if (scope.view === 'daily' && scope.from && scope.to) {
     leadParams.set('from', scope.from);
     leadParams.set('to', scope.to);
-    leadParams.set('daily_metric', 'received');
+    leadParams.set('daily_metric', activeMetric);
   } else {
-    leadParams.set('all_time_metric', 'all');
+    leadParams.set('all_time_metric', activeMetric === 'received' ? 'all' : activeMetric);
   }
 
   return <AppShell title="Lead Distribution" subtitle="See how incoming leads are distributed and progressing across RMs" roles={['super_admin', 'admin', 'rm']}>
@@ -80,7 +82,7 @@ export default function LeadDistributionPage() {
       <DistributionContextBar scope={scope} />
 
       {query.isLoading && !data ? <DistributionSkeleton /> : query.isError ? <DistributionError onRetry={() => query.refetch()} /> : data ? <>
-        <DistributionSummaryGrid summary={data.summary} />
+        <DistributionSummaryGrid summary={data.summary} activeMetric={activeMetric} />
 
         <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
