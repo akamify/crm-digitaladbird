@@ -11,7 +11,6 @@ import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPane
 import { LeadFilters } from '@/components/leads/LeadFilters';
 import { LeadAnalyticsPeriodControl } from '@/components/leads/LeadAnalyticsPeriodControl';
 import { LeadSavedViews } from '@/components/leads/LeadSavedViews';
-import { RemarkModal } from '@/components/leads/RemarkModal';
 import { LeadLabelPickerModal } from '@/components/leads/LeadLabelPickerModal';
 import { AddLeadModal } from '@/components/leads/AddLeadModal';
 import { EmptyState, Modal, Skeleton, StatusChip } from '@/components/ui/Modal';
@@ -421,7 +420,6 @@ function LeadsInner() {
   const [filters, setFilters] = useState<LeadFilterType>(initial);
   const [communicationLead, setCommunicationLead] = useState<Lead | null>(null);
   const [communicationTab, setCommunicationTab] = useState<CommunicationTab>('chat');
-  const [remarkLeadId, setRemarkLeadId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkRemarkOpen, setBulkRemarkOpen] = useState(false);
   const [bulkLabelOpen, setBulkLabelOpen] = useState(false);
@@ -1132,7 +1130,7 @@ function LeadsInner() {
                             onChat={() => openCommunication(lead, 'chat')}
                             onCreateNotes={() => router.push(`/notes?leadId=${encodeURIComponent(lead.id)}&compose=1`)}
                             onAddPersonalMeeting={() => router.push(`/personal-meetings?leadId=${encodeURIComponent(lead.id)}&create=1`)}
-                            onAddRemark={() => setRemarkLeadId(lead.id)}
+                            onAddRemark={() => router.push(`/leads/${lead.id}`)}
                             onDelete={canDeleteLead ? () => setDeleteLeadItem(lead) : undefined}
                           />
                         )}
@@ -1173,7 +1171,6 @@ function LeadsInner() {
           <LeadCommunicationPanel leadId={communicationLead.id} lead={communicationLead} defaultTab={communicationTab} />
         )}
       </Modal>
-      {remarkLeadId && <RemarkModal leadId={remarkLeadId} mode={isRmUser ? 'rm_update' : 'default'} open={!!remarkLeadId} onClose={() => setRemarkLeadId(null)} />}
       <AddLeadModal open={addLeadOpen} onClose={() => setAddLeadOpen(false)} />
       <LeadLabelPickerModal
         open={bulkLabelOpen}
