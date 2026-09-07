@@ -31,6 +31,7 @@ const {
   WORKFLOW_REMARK_OPTIONS,
   isWorkflowRemarkCompleted,
   isAnyWorkflowRemarkCompleted,
+  normalizeWorkflowRemarkStatus,
   normalizeWorkflowRemarkStatuses,
   saveWorkflowRemark,
 } = require('../services/leadWorkflowRemarkService');
@@ -43,6 +44,7 @@ const {
   cancelLeadActiveAttemptSequences,
   getSingleRetryableWorkflowStatus,
   getSingleCallIssueStatus,
+  assertUnscheduledCallAllowed,
 } = require('../services/leadCallAttemptService');
 const { workedLeadCondition, notWorkedLeadCondition } = require('../utils/leadWorkMetrics');
 const { remarkHasFollowupActivityCondition, leadHasFollowupActivityCondition } = require('../utils/followupMetrics');
@@ -5748,9 +5750,30 @@ router.post('/leads/:id/workflow/remark', authenticate, asyncHandler(async (req,
   const requestedStatuses = req.body?.remark_statuses || req.body?.workflow_step_1_statuses || req.body?.call_statuses || req.body?.remark_status;
   const remarkStatuses = normalizeWorkflowRemarkStatuses(requestedStatuses);
   getSingleCallIssueStatus(remarkStatuses);
-  const attemptTriggerStatus = String(req.body?.attempt_trigger_status || req.body?.remark_status || '').trim().toLowerCase() || null;
+  const hasExplicitAttemptTrigger = Object.prototype.hasOwnProperty.call(req.body || {}, 'attempt_trigger_status');
+  const rawAttemptTrigger = hasExplicitAttemptTrigger ? req.body.attempt_trigger_status : req.body?.remark_status;
+  const attemptTriggerStatus = rawAttemptTrigger == null || String(rawAttemptTrigger).trim() === ''
+    ? null
+    : normalizeWorkflowRemarkStatus(rawAttemptTrigger);
+  if (rawAttemptTrigger != null && String(rawAttemptTrigger).trim() !== '' && !attemptTriggerStatus) {
+    throw new AppError(400, 'INVALID_ATTEMPT_TRIGGER', 'Select a valid call outcome.');
+  }
+  if (attemptTriggerStatus && !remarkStatuses.includes(attemptTriggerStatus)) {
+    throw new AppError(400, 'ATTEMPT_TRIGGER_MISMATCH', 'The call outcome must match one of the saved Step 1 statuses.');
+  }
+  const attemptMode = String(req.body?.attempt_mode || 'remark_click').trim().toLowerCase();
+  if (!['remark_click', 'unscheduled_call'].includes(attemptMode)) {
+    throw new AppError(400, 'INVALID_ATTEMPT_MODE', 'Select a valid call recording mode.');
+  }
+  const orderedRemarkStatuses = attemptTriggerStatus
+    ? [attemptTriggerStatus, ...remarkStatuses.filter(status => status !== attemptTriggerStatus)]
+    : remarkStatuses;
   const retryableTriggerStatus = getSingleRetryableWorkflowStatus(attemptTriggerStatus);
-  if (remarkStatuses.length === 0) throw new AppError(400, 'INVALID', 'At least one remark status is required');
+  const isUnscheduledCall = attemptMode === 'unscheduled_call';
+  if (isUnscheduledCall && !retryableTriggerStatus) {
+    throw new AppError(400, 'INVALID_UNSCHEDULED_CALL_OUTCOME', 'An extra call requires a retryable call outcome.');
+  }
+  if (orderedRemarkStatuses.length === 0) throw new AppError(400, 'INVALID', 'At least one remark status is required');
 
   const interaction = await withTransaction(async (client) => {
     const saved = await createLeadInteraction({
@@ -5758,24 +5781,30 @@ router.post('/leads/:id/workflow/remark', authenticate, asyncHandler(async (req,
       user: req.user,
       leadId,
       note: req.body?.remark || req.body?.note || '',
-      status: remarkStatuses[0],
-      statuses: remarkStatuses,
+      status: orderedRemarkStatuses[0],
+      statuses: orderedRemarkStatuses,
       source: 'workflow_step_1',
       workflowStep: 1,
       syncWorkflowStep1: true,
-      updateLeadCallFields: !retryableTriggerStatus,
+      updateLeadCallFields: isUnscheduledCall || !retryableTriggerStatus,
     });
 
-    await reconcileWorkflowRemarkWithCallAttempts({
-      client,
-      leadId,
-      user: req.user,
-      triggerStatus: attemptTriggerStatus,
-      remarkId: saved.remark?.id || null,
-      explicitFollowupAt: req.body?.next_followup_at || null,
-      auditContext: req,
-      now: new Date(),
-    });
+    if (isUnscheduledCall) {
+      await assertUnscheduledCallAllowed({ client, leadId, now: new Date() });
+    }
+    if (attemptTriggerStatus && !isUnscheduledCall) {
+      await reconcileWorkflowRemarkWithCallAttempts({
+        client,
+        leadId,
+        user: req.user,
+        triggerStatus: attemptTriggerStatus,
+        remarkId: saved.remark?.id || null,
+        explicitFollowupAt: req.body?.next_followup_at || null,
+        confirmSequenceClose: req.body?.confirm_sequence_close === true,
+        auditContext: req,
+        now: new Date(),
+      });
+    }
 
     return saved;
   });
@@ -5785,8 +5814,13 @@ router.post('/leads/:id/workflow/remark', authenticate, asyncHandler(async (req,
     const { logActivity } = require('../utils/auditLog');
     await logActivity(req, {
       entity: 'lead', entity_id: leadId, action: 'remark_saved',
-      new_value: remarkStatuses.join(','),
-      metadata: { step: 1, step_1_statuses: remarkStatuses, attempt_trigger_status: attemptTriggerStatus },
+      new_value: orderedRemarkStatuses.join(','),
+      metadata: {
+        step: 1,
+        step_1_statuses: orderedRemarkStatuses,
+        attempt_trigger_status: attemptTriggerStatus,
+        attempt_mode: attemptMode,
+      },
     });
   }
 

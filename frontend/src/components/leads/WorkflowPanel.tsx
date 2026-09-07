@@ -13,7 +13,13 @@ import {
   type ConversionAttachment,
 } from '@/hooks/useWorkflow';
 import { fmtDate, humanize, clsx } from '@/lib/format';
-import { COMPLETED_REMARK_STATUS_VALUES, LEAD_REMARK_GROUPS } from '@/constants/leadRemarkOptions';
+import {
+  CALL_ISSUE_STATUS_VALUES,
+  COMPLETED_REMARK_STATUS_VALUES,
+  LEAD_REMARK_GROUPS,
+  RETRYABLE_CALL_ISSUE_VALUES,
+  SEQUENCE_CLOSING_REMARK_VALUES,
+} from '@/constants/leadRemarkOptions';
 import type { CallAttemptSequenceSummary, CallAttemptStateSummary, CallAttemptSummary, NextScheduledCallSummary } from '@/types';
 import { CallAttemptTracker } from './CallAttemptTracker';
 
@@ -379,6 +385,12 @@ function StepCard({ step, config, unlocked, completed, isOpen, onToggle, savedVa
 
 /* ── Step 1: Remark System ───────────────────────────────────────── */
 
+type PendingRemarkAction = {
+  kind: 'close_plan' | 'retry_due' | 'extra_call';
+  value: string;
+  nextSelection: string[];
+};
+
 function Step1Remark({ leadId, current, options, completed, callAttemptSequence, callAttempts, callAttemptState, nextScheduledCall }: {
   leadId: string;
   current: string[];
@@ -391,34 +403,37 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
 }) {
   const save = useSaveRemark();
   const [selected, setSelected] = useState<string[]>(current || []);
+  const [pendingAction, setPendingAction] = useState<PendingRemarkAction | null>(null);
   const availableGroups = LEAD_REMARK_GROUPS.map(group => ({
     ...group,
     options: group.options.filter(option => options.includes(option.value)),
   })).filter(group => group.options.length > 0);
-  const retryableIssueValues = new Set(availableGroups.find(group => group.key === 'issues')?.options.map(option => option.value) || []);
   const hasActiveCallSequence = !!callAttemptSequence?.has_active_sequence;
-  const retryableSelected = selected.find(value => availableGroups.some(group => group.key === 'issues' && group.options.some(option => option.value === value)));
-  const trackerAnchorStatus = hasActiveCallSequence
-    ? nextScheduledCall?.trigger_reason || callAttemptState?.anchor_status || retryableSelected || null
-    : retryableSelected || callAttemptState?.anchor_status || null;
+  const primaryStatus = hasActiveCallSequence && !CALL_ISSUE_STATUS_VALUES.has(selected[0])
+    ? selected.find(value => CALL_ISSUE_STATUS_VALUES.has(value)) || selected[0]
+    : selected[0];
+  const displayedSelection = primaryStatus
+    ? [primaryStatus, ...selected.filter(value => value !== primaryStatus)]
+    : selected;
 
   useEffect(() => {
     setSelected(current || []);
   }, [current]);
 
-  function toggle(value: string) {
-    if (save.isPending) return;
+  useEffect(() => {
+    if (!pendingAction) return undefined;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !save.isPending) setPendingAction(null);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [pendingAction, save.isPending]);
 
-    const isCallIssue = retryableIssueValues.has(value);
-    if (isCallIssue && selected.includes(value)) {
-      toast.error('Choose another call issue or response; the current issue cannot be cleared.');
-      return;
-    }
-
-    const nextSelection = selected.includes(value)
-      ? selected.filter(item => item !== value)
-      : [...selected.filter(item => !retryableIssueValues.has(item)), value];
-
+  function saveSelection(
+    nextSelection: string[],
+    triggerStatus: string | null,
+    settings: { attemptMode?: 'remark_click' | 'unscheduled_call'; confirmSequenceClose?: boolean } = {},
+  ) {
     if (nextSelection.length === 0) {
       toast.error('At least one Step 1 status must stay selected.');
       return;
@@ -431,21 +446,78 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
       leadId,
       remark_status: nextSelection[0],
       remark_statuses: nextSelection,
-      attempt_trigger_status: value,
-      attempt_mode: 'remark_click',
+      attempt_trigger_status: triggerStatus,
+      attempt_mode: settings.attemptMode || 'remark_click',
+      confirm_sequence_close: settings.confirmSequenceClose,
     }, {
-      onSuccess: () => toast.success('Remark updated'),
+      onSuccess: () => {
+        setPendingAction(null);
+        toast.success(settings.attemptMode === 'unscheduled_call' ? 'Extra call recorded' : 'Remark updated');
+      },
       onError: (e: unknown) => {
         setSelected(previousSelection);
         const responseData = typeof e === 'object' && e && 'response' in e
           ? (e as { response?: { data?: { error?: { code?: string; message?: string } } } }).response?.data
           : null;
-        const message = responseData?.error?.code === 'CALL_ATTEMPT_LOCKED' && callAttemptState?.active_attempt_number
-          ? `Retry ${callAttemptState.active_attempt_number - 1} is scheduled for later. Complete it from Call Attempts when it is due.`
-          : responseData?.error?.message;
+        if (responseData?.error?.code === 'CALL_ATTEMPT_SEQUENCE_CONFIRMATION_REQUIRED' && triggerStatus) {
+          setPendingAction({ kind: 'close_plan', value: triggerStatus, nextSelection });
+          return;
+        }
+        if (responseData?.error?.code === 'CALL_ATTEMPT_LOCKED' && triggerStatus) {
+          setPendingAction({ kind: 'extra_call', value: triggerStatus, nextSelection });
+          return;
+        }
+        const message = responseData?.error?.message;
         toast.error(message || 'Failed to save Step 1');
       },
     });
+  }
+
+  function toggle(value: string) {
+    if (save.isPending) return;
+
+    const isCallIssue = CALL_ISSUE_STATUS_VALUES.has(value);
+    const isAlreadySelected = selected.includes(value);
+    const nextSelection = isAlreadySelected
+      ? selected.filter(item => item !== value)
+      : value === 'custom_remark' && selected.length > 0
+        ? [...selected, value]
+        : [value, ...selected.filter(item => item !== value && (!isCallIssue || !CALL_ISSUE_STATUS_VALUES.has(item)))];
+
+    if (isCallIssue && isAlreadySelected && !hasActiveCallSequence) {
+      toast.error('Choose another call issue or response; the current issue cannot be cleared.');
+      return;
+    }
+
+    const selectedCallIssue = [value, ...selected.filter(item => item !== value && !CALL_ISSUE_STATUS_VALUES.has(item))];
+    if (hasActiveCallSequence && RETRYABLE_CALL_ISSUE_VALUES.has(value)) {
+      setPendingAction({
+        kind: callAttemptState?.is_due || callAttemptState?.is_overdue ? 'retry_due' : 'extra_call',
+        value,
+        nextSelection: selectedCallIssue,
+      });
+      return;
+    }
+    if (!isAlreadySelected && hasActiveCallSequence && SEQUENCE_CLOSING_REMARK_VALUES.has(value)) {
+      setPendingAction({ kind: 'close_plan', value, nextSelection });
+      return;
+    }
+
+    saveSelection(nextSelection, isAlreadySelected ? null : value);
+  }
+
+  function confirmPendingAction() {
+    if (!pendingAction) return;
+    if (pendingAction.kind === 'retry_due') {
+      setPendingAction(null);
+      document.getElementById('active-retry-plan')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    if (pendingAction.kind === 'extra_call') {
+      saveSelection(pendingAction.nextSelection, pendingAction.value, { attemptMode: 'unscheduled_call' });
+      return;
+    }
+    saveSelection(pendingAction.nextSelection, pendingAction.value, { confirmSequenceClose: true });
   }
 
   const hasCompletingSelection = selected.some(value => COMPLETED_REMARK_STATUS_VALUES.has(value));
@@ -453,10 +525,10 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
   return (
     <div>
       <p className="text-xs text-slate-500 mb-3">
-        Clicking any option saves it instantly. Selecting any completed response unlocks Step 2.
+        Choose the latest call result or record supporting context. Actions that close an active Retry Plan require confirmation.
       </p>
       <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-        Select one Call Issue at a time. When a retry is due, record its outcome in Call Attempts; a new issue selection cannot change a locked scheduled retry.
+        Select one Call Issue at a time. Record scheduled outcomes in the Retry Plan. You can still record a separate unscheduled call without changing its schedule.
       </p>
       {hasCompletingSelection && <p className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">A completed response is selected, so Step 2 unlocks automatically after this save.</p>}
       <div className="space-y-4">
@@ -468,59 +540,49 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {group.options.map(option => {
                 const display = REMARK_DISPLAY[option.value] || { label: option.label, bg: 'bg-slate-50', text: 'text-slate-700', ring: 'ring-slate-400' };
-                // An active sequence owns the live call issue. Saved Step 1 issue tags stay in history,
-                // but must not look like the latest retry outcome.
-                const isSelected = selected.includes(option.value) && !(hasActiveCallSequence && group.key === 'issues');
+                const isRecorded = selected.includes(option.value);
+                const isSelected = primaryStatus === option.value;
                 const isCompletingOption = COMPLETED_REMARK_STATUS_VALUES.has(option.value);
                 return (
-                  <div key={option.value} className={clsx(group.key === 'issues' && trackerAnchorStatus === option.value && 'contents')}>
-                    <button
-                      disabled={save.isPending}
-                      onClick={() => toggle(option.value)}
-                      className={clsx(
-                        'relative rounded-xl border-2 px-3 py-2.5 text-left text-xs font-semibold transition-all duration-200',
-                        isSelected
-                          ? `${display.bg} ${display.text} border-current ring-2 ${display.ring} shadow-md scale-[1.02]`
+                  <button
+                    key={option.value}
+                    type="button"
+                    disabled={save.isPending}
+                    aria-pressed={isRecorded}
+                    onClick={() => toggle(option.value)}
+                    className={clsx(
+                      'relative rounded-xl border-2 px-3 py-2.5 text-left text-xs font-semibold transition-all duration-200',
+                      isSelected
+                        ? `${display.bg} ${display.text} border-current ring-2 ${display.ring} shadow-md scale-[1.02]`
+                        : isRecorded
+                          ? 'border-brand-200 bg-brand-50/50 text-brand-700'
                           : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:shadow-sm hover:scale-[1.01]'
-                      )}
-                    >
-                      {save.isPending && <Loader2 className="absolute top-1 right-1 h-3 w-3 animate-spin text-slate-400" />}
-                      {isSelected && <CheckCircle2 className="absolute top-1 right-1 h-3.5 w-3.5 text-green-500" />}
-                      {option.label}
-                      {isCompletingOption && !isSelected && <span className="mt-1 block text-[9px] font-medium uppercase tracking-wide text-emerald-600">Completes step</span>}
-                    </button>
-                    {group.key === 'issues' && trackerAnchorStatus === option.value ? (
-                      <div className="col-span-2 sm:col-span-3">
-                        <CallAttemptTracker
-                          leadId={leadId}
-                          sequence={callAttemptSequence}
-                          attempts={callAttempts}
-                          callAttemptState={callAttemptState}
-                          nextScheduledCall={nextScheduledCall}
-                        />
-                      </div>
-                    ) : null}
-                  </div>
+                    )}
+                  >
+                    {save.isPending && <Loader2 className="absolute right-1 top-1 h-3 w-3 animate-spin text-slate-400" />}
+                    {isSelected && <CheckCircle2 className="absolute right-1 top-1 h-3.5 w-3.5 text-green-500" />}
+                    {option.label}
+                    {isRecorded && !isSelected && <span className="mt-1 block text-[9px] font-medium uppercase tracking-wide text-brand-600">Recorded</span>}
+                    {isCompletingOption && !isRecorded && <span className="mt-1 block text-[9px] font-medium uppercase tracking-wide text-emerald-600">Completes step</span>}
+                  </button>
                 );
               })}
             </div>
-            {group.key === 'issues' && trackerAnchorStatus && !group.options.some(option => option.value === trackerAnchorStatus) ? (
-              <CallAttemptTracker
-                leadId={leadId}
-                sequence={callAttemptSequence}
-                attempts={callAttempts}
-                callAttemptState={callAttemptState}
-                nextScheduledCall={nextScheduledCall}
-              />
-            ) : null}
           </div>
         ))}
       </div>
+      <CallAttemptTracker
+        leadId={leadId}
+        sequence={callAttemptSequence}
+        attempts={callAttempts}
+        callAttemptState={callAttemptState}
+        nextScheduledCall={nextScheduledCall}
+      />
       {selected.length > 0 && (
         <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-          <p className="mb-1.5 text-[11px] font-medium text-slate-500">{hasActiveCallSequence ? 'Saved Step 1 remarks. The active Call Attempts sequence is the live call status.' : 'Saved Step 1 remarks.'}</p>
+          <p className="mb-1.5 text-[11px] font-medium text-slate-500">Current status and recorded Step 1 context</p>
           <div className="flex flex-wrap gap-2">
-            {selected.filter(value => !(hasActiveCallSequence && retryableIssueValues.has(value))).map(value => <span key={value} className="chip-blue">{REMARK_DISPLAY[value]?.label || humanize(value)}</span>)}
+            {displayedSelection.map((value, index) => <span key={value} className={index === 0 ? 'chip-green' : 'chip-blue'}>{index === 0 ? 'Current: ' : ''}{REMARK_DISPLAY[value]?.label || humanize(value)}</span>)}
           </div>
         </div>
       )}
@@ -529,6 +591,38 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
           {save.isPending ? 'Saving remark...' : completed ? 'Step 1 stays editable.' : 'Step 1 saves automatically.'}
         </span>
       </div>
+      {pendingAction && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/45 p-4" role="dialog" aria-modal="true" aria-labelledby="remark-action-title">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 id="remark-action-title" className="text-base font-bold text-slate-950">
+                  {pendingAction.kind === 'close_plan' ? 'Close active retry plan?' : pendingAction.kind === 'retry_due' ? 'Record the due retry' : 'Record an extra call?'}
+                </h3>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  {pendingAction.kind === 'close_plan'
+                    ? `${REMARK_DISPLAY[pendingAction.value]?.label || humanize(pendingAction.value)} will cancel the upcoming retry. Completed call history will remain available.`
+                    : pendingAction.kind === 'retry_due'
+                      ? 'A scheduled retry is due now. Record its outcome inside the Retry Plan so compliance and timing remain accurate.'
+                      : `The scheduled retry stays at ${nextScheduledCall ? fmtDate(nextScheduledCall.scheduled_at) : 'its current time'}. This records ${REMARK_DISPLAY[pendingAction.value]?.label || humanize(pendingAction.value)} as a separate call now.`}
+                </p>
+              </div>
+              <button type="button" onClick={() => setPendingAction(null)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" disabled={save.isPending} onClick={() => setPendingAction(null)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60">
+                Keep retry plan
+              </button>
+              <button type="button" disabled={save.isPending} onClick={confirmPendingAction} className={clsx('inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-white disabled:opacity-60', pendingAction.kind === 'close_plan' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-brand-600 hover:bg-brand-700')}>
+                {save.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                {pendingAction.kind === 'close_plan' ? 'Close plan and save' : pendingAction.kind === 'retry_due' ? 'Show Retry Plan' : 'Record extra call'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

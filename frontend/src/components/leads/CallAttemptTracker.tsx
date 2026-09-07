@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Clock3, Loader2, Lock, PhoneCall, AlertTriangle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, Clock3, Loader2, Lock, PhoneCall } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { CallAttemptSequenceSummary, CallAttemptStateSummary, CallAttemptSummary, NextScheduledCallSummary } from '@/types';
 import { humanize, clsx } from '@/lib/format';
@@ -132,6 +132,11 @@ export function CallAttemptTracker({ leadId, sequence, attempts, callAttemptStat
     () => attemptList.find(item => item.status === 'scheduled') || null,
     [attemptList],
   );
+  const latestCompletedAttempt = useMemo(
+    () => [...attemptList].reverse().find(item => item.status === 'completed') || null,
+    [attemptList],
+  );
+  const closedOutcome = sequence?.closed_reason?.replace(/^workflow_|^terminal_/, '') || null;
   const activeAttemptState = deriveState(activeAttempt, nowMs);
 
   if (!sequence || attemptList.length === 0) return null;
@@ -153,24 +158,37 @@ export function CallAttemptTracker({ leadId, sequence, attempts, callAttemptStat
     }
   }
 
-  return (
-    <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+  const tracker = (
+    <div
+      id={sequence.has_active_sequence ? 'active-retry-plan' : undefined}
+      className={clsx('rounded-2xl border bg-white p-3 shadow-sm', sequence.has_active_sequence ? 'border-brand-200' : 'border-slate-200')}
+    >
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Call Attempts</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+            {sequence.has_active_sequence ? 'Active Retry Plan' : 'Retry Plan History'}
+          </p>
+          <p className="mt-1 text-xs font-semibold text-slate-800">
+            Started because: {OUTCOME_LABELS[sequence.initial_trigger_reason] || humanize(sequence.initial_trigger_reason)}
+          </p>
           <p className="mt-1 text-xs text-slate-500">
             {sequence.has_active_sequence
               ? nextScheduledCall?.is_overdue
-                ? `Overdue call tracked for ${humanize(nextScheduledCall.trigger_reason)}`
+                ? `Overdue retry based on ${OUTCOME_LABELS[nextScheduledCall.trigger_reason] || humanize(nextScheduledCall.trigger_reason)}`
                 : nextScheduledCall
-                  ? `Next call set for ${formatCompactDateTime(nextScheduledCall.scheduled_at)}`
-                  : 'Sequence active'
+                  ? `Next retry: ${formatCompactDateTime(nextScheduledCall.scheduled_at)} because of ${OUTCOME_LABELS[nextScheduledCall.trigger_reason] || humanize(nextScheduledCall.trigger_reason)}`
+                  : 'Retry plan active'
               : sequence.status === 'completed'
-                ? 'Sequence completed successfully'
+                ? 'Plan completed successfully'
                 : sequence.status === 'cold_closed'
-                  ? 'Sequence closed as cold / unresponsive'
-                  : 'Sequence closed'}
+                  ? 'Plan closed as cold / unresponsive'
+                  : `Plan closed${closedOutcome ? `: ${OUTCOME_LABELS[closedOutcome] || humanize(closedOutcome)}` : ''}`}
           </p>
+          {latestCompletedAttempt?.outcome && (
+            <p className="mt-1 text-xs text-slate-500">
+              Latest result: {OUTCOME_LABELS[latestCompletedAttempt.outcome] || humanize(latestCompletedAttempt.outcome)}
+            </p>
+          )}
         </div>
         {sequence.has_active_sequence && callAttemptState?.active_attempt_number ? (
           <span className="rounded-full bg-brand-50 px-2.5 py-1 text-[10px] font-semibold text-brand-700">
@@ -282,7 +300,7 @@ export function CallAttemptTracker({ leadId, sequence, attempts, callAttemptStat
             </button>
             <details className="rounded-lg border border-slate-200 bg-white">
               <summary className="cursor-pointer list-none px-3 py-2 text-xs font-semibold text-slate-700">
-                Other Call Issue
+                Other Outcome
               </summary>
               <div className="grid gap-2 border-t border-slate-200 p-2 sm:grid-cols-2">
                 {OTHER_OUTCOMES.map(outcome => (
@@ -303,4 +321,22 @@ export function CallAttemptTracker({ leadId, sequence, attempts, callAttemptStat
       ) : null}
     </div>
   );
+
+  if (!sequence.has_active_sequence) {
+    return (
+      <details className="group mt-3 rounded-2xl border border-slate-200 bg-slate-50/70">
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-3 text-xs font-semibold text-slate-700">
+          <Clock3 className="h-4 w-4 text-slate-400" />
+          Previous Retry Plan
+          <span className="font-normal text-slate-500">
+            Started as {OUTCOME_LABELS[sequence.initial_trigger_reason] || humanize(sequence.initial_trigger_reason)} - {humanize(sequence.status)}
+          </span>
+          <ChevronDown className="ml-auto h-4 w-4 text-slate-400 transition group-open:rotate-180" />
+        </summary>
+        <div className="border-t border-slate-200 p-2">{tracker}</div>
+      </details>
+    );
+  }
+
+  return <div className="mt-3">{tracker}</div>;
 }

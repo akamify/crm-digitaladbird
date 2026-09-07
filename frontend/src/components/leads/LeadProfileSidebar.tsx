@@ -37,7 +37,7 @@ export function LeadSummaryCard({ lead }: { lead: LeadDetail }) {
         )}
         <Row label="Lead category" value={getLeadCategoryLabel(lead.category)} />
         <Row label="Received" value={formatCompactDateTime(lead.created_at)} title={formatDateTimeTooltip(lead.created_at)} />
-        <Row label="Call attempts" value={lead.call_attempts ?? 0} />
+        <Row label="Logged calls" value={lead.call_attempts ?? 0} />
         <Row label="Last call" value={lead.last_call_at ? formatCompactDateTime(lead.last_call_at) : null} title={formatDateTimeTooltip(lead.last_call_at)} />
         <Row label="Next follow-up" value={lead.next_followup_at ? formatCompactDateTime(lead.next_followup_at) : null} title={formatDateTimeTooltip(lead.next_followup_at)} />
         <Row label="Campaign" value={lead.campaign_name || lead.campaign_label} />

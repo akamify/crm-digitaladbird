@@ -66,3 +66,16 @@ export const LEAD_REMARK_GROUPS: LeadRemarkGroup[] = [
 export const COMPLETED_REMARK_STATUS_VALUES = new Set(
   LEAD_REMARK_GROUPS.find(group => group.key === 'completed')!.options.map(option => option.value),
 );
+
+export const CALL_ISSUE_STATUS_VALUES = new Set(
+  LEAD_REMARK_GROUPS.find(group => group.key === 'issues')!.options.map(option => option.value),
+);
+
+export const RETRYABLE_CALL_ISSUE_VALUES = new Set([
+  'cnr', 'recall', 'busy', 'cb', 'rnr', 'cw', 'nn', 'so', 'nc', 'call_cut_busy',
+]);
+
+export const SEQUENCE_CLOSING_REMARK_VALUES = new Set([
+  'communication_completed', 'respond_hi', 'session_730_attend', 'yes_after_730_session',
+  'interested', 'converted', 'not_interested', 'callback_requested', 'follow_up', 'in', 'ni',
+]);

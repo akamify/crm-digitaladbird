@@ -35,6 +35,7 @@ const {
   getSingleCallIssueStatus,
   completeScheduledAttempt,
   getColdLeadLevelForCategory,
+  assertUnscheduledCallAllowed,
   reconcileWorkflowRemarkWithCallAttempts,
 } = require('../leadCallAttemptService');
 
@@ -194,6 +195,104 @@ describe('leadCallAttemptService', () => {
 
     await expect(promise).rejects.toBeInstanceOf(AppError);
     await expect(promise).rejects.toMatchObject({ code: 'CALL_ATTEMPT_LOCKED' });
+  });
+
+  test('custom remarks preserve an active retry plan', async () => {
+    const client = { query: jest.fn() };
+
+    const result = await reconcileWorkflowRemarkWithCallAttempts({
+      client,
+      leadId: 'lead-1',
+      user: { id: 'user-1' },
+      triggerStatus: 'custom_remark',
+    });
+
+    expect(result).toEqual({ mode: 'sequence_unchanged' });
+    expect(client.query).not.toHaveBeenCalled();
+  });
+
+  test('terminal workflow status requires confirmation before closing an active retry plan', async () => {
+    const client = {
+      query: jest.fn().mockImplementation(() => response([{
+        id: 'seq-1', lead_id: 'lead-1', status: 'active', initial_trigger_reason: 'cnr',
+      }])),
+    };
+
+    await expect(reconcileWorkflowRemarkWithCallAttempts({
+      client,
+      leadId: 'lead-1',
+      user: { id: 'user-1' },
+      triggerStatus: 'in',
+    })).rejects.toMatchObject({ code: 'CALL_ATTEMPT_SEQUENCE_CONFIRMATION_REQUIRED' });
+
+    expect(client.query).toHaveBeenCalledTimes(1);
+    expect(client.query.mock.calls[0][0]).toContain("status = 'active'");
+  });
+
+  test('confirmed terminal workflow status closes only future attempts and preserves history', async () => {
+    const client = {
+      query: jest.fn((sql) => {
+        if (sql.includes('FROM lead_call_attempt_sequences') && sql.includes("status = 'active'")) {
+          return response([{ id: 'seq-1', lead_id: 'lead-1', status: 'active', initial_trigger_reason: 'cnr' }]);
+        }
+        if (sql.includes('UPDATE lead_call_attempts')) {
+          return response([{ id: 'attempt-2', attempt_number: 2, scheduled_at: '2026-08-30T11:30:00.000Z' }]);
+        }
+        if (sql.includes('SELECT lead_id FROM lead_call_attempt_sequences')) {
+          return response([{ lead_id: 'lead-1' }]);
+        }
+        if (sql.includes('UPDATE lead_call_attempt_sequences')) {
+          return response([{ id: 'seq-1', status: 'cancelled', closed_reason: 'workflow_in' }]);
+        }
+        return response([]);
+      }),
+    };
+
+    const result = await reconcileWorkflowRemarkWithCallAttempts({
+      client,
+      leadId: 'lead-1',
+      user: { id: 'user-1' },
+      triggerStatus: 'in',
+      confirmSequenceClose: true,
+    });
+
+    expect(result).toEqual({ mode: 'sequence_cancelled', sequence_id: 'seq-1' });
+    expect(client.query.mock.calls.some(([sql]) => sql.includes("AND status = 'scheduled'"))).toBe(true);
+    expect(client.query.mock.calls.some(([sql]) => sql.includes("SET status = 'cancelled'"))).toBe(true);
+  });
+
+  test('extra call is allowed only while an active retry is still in the future', async () => {
+    const client = {
+      query: jest.fn()
+        .mockImplementationOnce(() => response([{ id: 'seq-1', lead_id: 'lead-1', status: 'active' }]))
+        .mockImplementationOnce(() => response([{
+          id: 'attempt-2', sequence_id: 'seq-1', status: 'scheduled', scheduled_at: '2026-08-30T12:00:00.000Z',
+        }])),
+    };
+
+    const result = await assertUnscheduledCallAllowed({
+      client,
+      leadId: 'lead-1',
+      now: new Date('2026-08-30T11:00:00.000Z'),
+    });
+
+    expect(result.scheduledAttempt.id).toBe('attempt-2');
+  });
+
+  test('extra call cannot bypass a retry that is already due', async () => {
+    const client = {
+      query: jest.fn()
+        .mockImplementationOnce(() => response([{ id: 'seq-1', lead_id: 'lead-1', status: 'active' }]))
+        .mockImplementationOnce(() => response([{
+          id: 'attempt-2', sequence_id: 'seq-1', status: 'scheduled', scheduled_at: '2026-08-30T11:00:00.000Z',
+        }])),
+    };
+
+    await expect(assertUnscheduledCallAllowed({
+      client,
+      leadId: 'lead-1',
+      now: new Date('2026-08-30T11:00:00.000Z'),
+    })).rejects.toMatchObject({ code: 'SCHEDULED_CALL_ATTEMPT_DUE' });
   });
 
   test('temporary monitoring honors CALL_ATTEMPT_MONITORING_ENABLED=false', async () => {
@@ -423,7 +522,7 @@ describe('leadCallAttemptService', () => {
       leadId: 'lead-1',
       userId: 'user-1',
       remarkStatus: 'cnr',
-      remarkStatuses: ['custom_remark', 'cnr'],
+      remarkStatuses: ['cnr', 'custom_remark'],
       source: 'call_attempt_outcome',
     }));
   });

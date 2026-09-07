@@ -313,8 +313,8 @@ async function syncCurrentWorkflowCallIssue(client, { leadId, userId, outcome })
     ? workflow.step_1_statuses
     : workflow?.remark_status ? [workflow.remark_status] : [];
   const statuses = [...new Set([
-    ...existing.filter(status => !CALL_ISSUE_WORKFLOW_STATUSES.has(String(status || '').toLowerCase())),
     outcome,
+    ...existing.filter(status => !CALL_ISSUE_WORKFLOW_STATUSES.has(String(status || '').toLowerCase())),
   ])];
 
   await saveWorkflowRemark({
@@ -1090,6 +1090,27 @@ async function completeScheduledAttempt({
   return { attempt: completedAttempt, sequence, closed: true, outcome: normalizedOutcome };
 }
 
+async function assertUnscheduledCallAllowed({ client, leadId, now = new Date() }) {
+  const sequence = await getSequenceRow(client, leadId, { forUpdate: true, activeOnly: true });
+  if (!sequence) {
+    throw new AppError(409, 'NO_ACTIVE_CALL_ATTEMPT_SEQUENCE', 'No active retry plan was found for this extra call.');
+  }
+
+  const scheduledAttempt = await getCurrentScheduledAttempt(client, sequence.id, { forUpdate: true });
+  if (!scheduledAttempt) {
+    throw new AppError(409, 'NO_SCHEDULED_CALL_ATTEMPT', 'No upcoming retry was found for this extra call.');
+  }
+  if (new Date(scheduledAttempt.scheduled_at).getTime() <= cloneDate(now).getTime()) {
+    throw new AppError(
+      409,
+      'SCHEDULED_CALL_ATTEMPT_DUE',
+      'The scheduled retry is due. Record its outcome in the Retry Plan instead.',
+    );
+  }
+
+  return { sequence, scheduledAttempt };
+}
+
 async function reconcileWorkflowRemarkWithCallAttempts({
   client,
   leadId,
@@ -1097,6 +1118,7 @@ async function reconcileWorkflowRemarkWithCallAttempts({
   triggerStatus,
   remarkId = null,
   explicitFollowupAt = null,
+  confirmSequenceClose = false,
   auditContext = null,
   now = new Date(),
 }) {
@@ -1156,13 +1178,24 @@ async function reconcileWorkflowRemarkWithCallAttempts({
     return { mode: 'sequence_advanced' };
   }
 
-  await cancelLeadActiveAttemptSequences({
-    client,
-    leadId,
-    reason: `workflow_${normalizedTriggerStatus}`,
-    userId: user?.id || null,
-  });
-  return { mode: 'sequence_cancelled' };
+  if (!shouldCancelAttemptSequencesForWorkflowStatuses(normalizedTriggerStatus)) {
+    return { mode: 'sequence_unchanged' };
+  }
+
+  const sequence = await getSequenceRow(client, leadId, { forUpdate: true, activeOnly: true });
+  if (!sequence) return { mode: 'no_active_sequence' };
+  if (!confirmSequenceClose) {
+    throw new AppError(
+      409,
+      'CALL_ATTEMPT_SEQUENCE_CONFIRMATION_REQUIRED',
+      'This status will close the active retry plan. Confirm before continuing.',
+    );
+  }
+
+  const reason = `workflow_${normalizedTriggerStatus}`;
+  await cancelFutureAttempts(sequence.id, reason, client, user?.id || null);
+  await closeSequence(client, sequence.id, 'cancelled', reason);
+  return { mode: 'sequence_cancelled', sequence_id: sequence.id };
 }
 
 function buildNextScheduledCallSummary(attempt, now = new Date()) {
@@ -1251,6 +1284,7 @@ module.exports = {
   isRetryableWorkflowStatus,
   getSingleRetryableWorkflowStatus,
   getSingleCallIssueStatus,
+  assertUnscheduledCallAllowed,
   shouldCancelAttemptSequencesForWorkflowStatuses,
   shouldCancelAttemptSequencesForCallStatuses,
   startAttemptSequenceFromRemark,
