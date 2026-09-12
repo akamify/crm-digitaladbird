@@ -13,6 +13,7 @@ describe('lead daily metrics', () => {
     expect(normalizeLeadDailyDate('2026-09-03', now)).toBe('2026-09-03');
     expect(normalizeLeadDailyDate('2026-09-02', now)).toBe('2026-09-02');
     expect(normalizeLeadDailyMetric('call_issues')).toBe('call_issues');
+    expect(normalizeLeadDailyMetric('converted')).toBe('converted');
     expect(normalizeLeadDailyMetric('')).toBe('received');
   });
 
@@ -31,7 +32,7 @@ describe('lead daily metrics', () => {
     expect(conditions.received).toContain("AT TIME ZONE 'Asia/Kolkata'");
     expect(conditions.received).toContain('l.created_at >=');
     expect(conditions.received).toContain('l.created_at <');
-    for (const metric of ['worked', 'pending', 'personal_meeting', 'session_9pm', 'call_issues']) {
+    for (const metric of ['worked', 'pending', 'session_9pm', 'personal_meeting', 'converted', 'call_issues']) {
       expect(conditions[metric]).toContain('l.created_at >=');
       expect(conditions[metric]).toContain('l.created_at <');
     }
@@ -39,6 +40,10 @@ describe('lead daily metrics', () => {
     expect(conditions.pending).not.toContain('daily_due');
     expect(conditions.pending).not.toContain('assigned_to_user_id');
     expect(conditions.session_9pm).toContain("'session_730_attend'");
+    expect(conditions.converted).toContain("daily_conversion_remark.call_status::text = 'converted'");
+    expect(conditions.converted).toContain("daily_conversion_event.event_type = 'lifecycle_closed'");
+    expect(conditions.converted).toContain('daily_conversion_event.occurred_at');
+    expect(conditions.converted).not.toContain('daily_conversion_event.created_at');
     expect(conditions.call_issues).toContain("seq.status = 'active'");
     expect(conditions.call_issues).toContain('daily_issue_remark.created_at');
     expect(conditions.call_issues).toContain('daily_issue_attempt.attempted_at');
@@ -46,6 +51,7 @@ describe('lead daily metrics', () => {
     expect(conditions.call_issues).toContain("issue_received.outcome = 'call_received'");
     expect(summarySql).toContain('AS received');
     expect(summarySql).toContain('AS call_issues');
+    expect(summarySql).toContain('AS converted');
   });
 
   test('uses inclusive IST day boundaries for a custom period', () => {

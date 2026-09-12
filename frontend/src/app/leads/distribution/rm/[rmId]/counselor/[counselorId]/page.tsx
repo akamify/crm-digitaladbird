@@ -15,7 +15,7 @@ import {
 import { useCounselorDistributionLeads } from '@/hooks/useLeadDistribution';
 import { clsx, fmtPhone, humanize } from '@/lib/format';
 import { normalizeAnalyticsScope } from '@/lib/leadAnalytics';
-import type { LeadAnalyticsScope, LeadDailyMetric, LeadDistributionAttempt } from '@/types';
+import type { LeadAnalyticsScope, LeadDailyMetric, LeadDistributionAttempt, LeadDistributionRow } from '@/types';
 
 function formatDate(value?: string | null) {
   return value ? new Intl.DateTimeFormat('en-IN', {
@@ -32,6 +32,20 @@ function formatMinutes(value?: number | null) {
 function AttemptTrail({ attempts }: { attempts: LeadDistributionAttempt[] }) {
   if (!attempts.length) return <span className="text-xs text-slate-400">No tracked sequence</span>;
   return <details className="min-w-44"><summary className="cursor-pointer text-xs font-semibold text-brand-700">{attempts.length} tracked attempt{attempts.length === 1 ? '' : 's'}</summary><div className="mt-2 space-y-1.5">{attempts.map(attempt => <div key={attempt.id} className={clsx('rounded-lg border px-2 py-1.5 text-[10px]', attempt.attempt_state === 'missed' ? 'border-rose-100 bg-rose-50 text-rose-700' : attempt.attempt_state === 'completed' ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-sky-100 bg-sky-50 text-sky-700')}><div className="font-semibold">{attempt.attempt_number === 1 ? 'Initial issue' : attempt.is_final_attempt ? 'Final recovery' : `Retry ${attempt.attempt_number - 1}`} · {humanize(attempt.trigger_reason || attempt.outcome || attempt.status)}</div><div className="mt-0.5">{attempt.attempt_state === 'missed' && attempt.overdue_by_minutes != null ? `Overdue by ${formatMinutes(attempt.overdue_by_minutes)}` : formatDate(attempt.attempted_at || attempt.scheduled_at)}</div></div>)}</div></details>;
+}
+
+function ConvertedEvidence({ rows }: { rows: LeadDistributionRow[] }) {
+  if (!rows.length) return null;
+  return <section className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4">
+    <h2 className="text-sm font-semibold text-emerald-950">Conversion Evidence</h2>
+    <p className="mt-1 text-xs text-emerald-800">Authoritative conversion source for leads on this page.</p>
+    <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+      {rows.map(lead => <Link key={lead.id} href={`/leads/${lead.id}`} className="flex items-center justify-between gap-3 rounded-xl border border-emerald-100 bg-white px-3 py-2.5 hover:border-emerald-300">
+        <div className="min-w-0"><div className="truncate text-sm font-semibold text-slate-900">{lead.full_name || 'Unnamed lead'}</div><div className="mt-0.5 text-xs text-slate-500">{humanize(lead.conversion_source || 'conversion record')} · {lead.converted_at ? formatDate(lead.converted_at) : 'Historical date unavailable'}</div></div>
+        <ArrowRight className="h-4 w-4 shrink-0 text-emerald-700" />
+      </Link>)}
+    </div>
+  </section>;
 }
 
 export default function CounselorLeadDistributionPage() {
@@ -91,6 +105,7 @@ export default function CounselorLeadDistributionPage() {
 
       {query.isLoading && !data ? <DistributionSkeleton cards={3} /> : query.isError ? <DistributionError onRetry={() => query.refetch()} /> : data ? <>
         <DistributionSummaryGrid summary={data.summary} activeMetric={metric} onMetricChange={setMetric} />
+        {metric === 'converted' && <ConvertedEvidence rows={data.rows} />}
 
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-100 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-slate-950">Counselor Leads</h2><p className="mt-0.5 text-xs text-slate-500">{data.total.toLocaleString()} lead{data.total === 1 ? '' : 's'} explain the selected metric.</p></div><div className="flex flex-wrap gap-2">{DISTRIBUTION_METRICS.map(option => <button key={option.key} type="button" onClick={() => setMetric(option.key)} className={clsx('rounded-lg border px-3 py-1.5 text-xs font-semibold transition', metric === option.key ? 'border-brand-500 bg-brand-600 text-white' : 'border-slate-200 text-slate-600 hover:border-brand-200 hover:bg-brand-50')}>{option.key === 'received' ? 'All Leads' : option.label} <span className="ml-1 opacity-80">({Number(data.summary[option.key] || 0).toLocaleString()})</span></button>)}</div></div>

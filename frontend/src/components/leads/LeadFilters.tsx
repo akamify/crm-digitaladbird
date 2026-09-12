@@ -174,7 +174,7 @@ export function LeadFilters({ value, onChange, simplifiedAdmin = false }: Props)
   }
 
   return (
-    <div className="card p-4">
+    <div className="card p-3 sm:p-4">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-6">
         <div className="sm:col-span-2 xl:col-span-2">
           <Input
@@ -194,6 +194,7 @@ export function LeadFilters({ value, onChange, simplifiedAdmin = false }: Props)
           options={STATUS_OPTS}
           onChange={(e: ChangeEvent<HTMLSelectElement>) => set('call_status', e.target.value as LeadFilters['call_status'])}
         />
+        <div className={clsx(showAdvanced ? 'contents' : 'hidden sm:contents')}>
         <Select
           value={value.followup || ''}
           options={FOLLOWUP_OPTS}
@@ -204,18 +205,19 @@ export function LeadFilters({ value, onChange, simplifiedAdmin = false }: Props)
           options={ASSIGNMENT_OPTS}
           onChange={(e: ChangeEvent<HTMLSelectElement>) => set('assignment', e.target.value as LeadFilters['assignment'])}
         />}
+        </div>
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-        <button type="button" onClick={() => setShowAdvanced(open => !open)} className={clsx('inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-semibold transition', showAdvanced || advancedFilterCount ? 'border-brand-200 bg-brand-50 text-brand-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50')} aria-expanded={showAdvanced}>
-          <SlidersHorizontal className="h-3.5 w-3.5" /> More filters
-          {advancedFilterCount > 0 && <span className="rounded-full bg-brand-600 px-1.5 py-0.5 text-[10px] text-white">{advancedFilterCount}</span>}
+        <button type="button" onClick={() => setShowAdvanced(open => !open)} className={clsx('inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 text-xs font-semibold transition sm:min-h-9', showAdvanced || advancedFilterCount ? 'border-brand-200 bg-brand-50 text-brand-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50')} aria-expanded={showAdvanced}>
+          <SlidersHorizontal className="h-3.5 w-3.5" /> Filters
+          {activeChips.length > 0 && <span className="rounded-full bg-brand-600 px-1.5 py-0.5 text-[10px] text-white">{activeChips.length}</span>}
           <ChevronDown className={clsx('h-3.5 w-3.5 transition', showAdvanced && 'rotate-180')} />
         </button>
-        {hasFilters && <button type="button" onClick={clearFilters} className="inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-800"><X className="h-3.5 w-3.5" /> Clear all</button>}
+        {hasFilters && <button type="button" onClick={clearFilters} className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-3 text-xs font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-800 sm:min-h-9"><X className="h-3.5 w-3.5" /> Clear all</button>}
       </div>
 
-      {showAdvanced && <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-3 rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+      {showAdvanced && <div className="mt-3 grid grid-cols-1 gap-3 rounded-xl border border-slate-100 bg-slate-50/70 p-3 sm:grid-cols-2 xl:grid-cols-[repeat(auto-fit,minmax(170px,1fr))]">
         <Select
           value={value.category || ''}
           options={CATEGORY_OPTS}
@@ -298,13 +300,13 @@ export function LeadFilters({ value, onChange, simplifiedAdmin = false }: Props)
         />}
       </div>}
       {activeChips.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="scroll-thin mt-3 flex snap-x gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible">
           {activeChips.map(chip => (
             <button
               key={String(chip.key)}
               type="button"
               onClick={() => set(chip.key, '' as never)}
-              className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-600 hover:bg-white"
+              className="inline-flex min-h-9 shrink-0 snap-start items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-600 hover:bg-white"
               title="Remove filter"
             >
               {chip.label}<X className="h-3 w-3" />

@@ -1,7 +1,7 @@
 'use client';
 
 import { FormEvent, useState } from 'react';
-import { Bookmark, Check, Copy, Pencil, Save, Trash2 } from 'lucide-react';
+import { Bookmark, Check, ChevronDown, Copy, Pencil, Save, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Modal } from '@/components/ui/Modal';
 import {
@@ -35,6 +35,7 @@ export function LeadSavedViews({ value, role, onApply }: Props) {
   const [editorMode, setEditorMode] = useState<'create' | 'rename' | null>(null);
   const [name, setName] = useState('');
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const selectedView = savedViews.find(view => view.id === selectedId) || null;
   const savableFilters = pickSavedLeadFilters(value, isSuperAdmin);
@@ -125,7 +126,11 @@ export function LeadSavedViews({ value, role, onApply }: Props) {
   return (
     <>
       <section className="rounded-2xl border border-slate-200 bg-white px-3 py-3 shadow-sm sm:px-4">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <button type="button" onClick={() => setMobileOpen(open => !open)} className="flex min-h-11 w-full items-center justify-between text-sm font-semibold text-slate-800 sm:hidden" aria-expanded={mobileOpen}>
+          <span className="flex items-center gap-2"><Bookmark className="h-4 w-4 text-brand-600" /> Saved Views</span>
+          <ChevronDown className={clsx('h-4 w-4 transition', mobileOpen && 'rotate-180')} />
+        </button>
+        <div className={clsx('flex-col gap-3 sm:flex xl:flex-row xl:items-center xl:justify-between', mobileOpen ? 'flex' : 'hidden')}>
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <div className="mr-1 flex items-center gap-2 text-sm font-semibold text-slate-800">
               <Bookmark className="h-4 w-4 text-brand-600" /> Saved Views
@@ -138,14 +143,14 @@ export function LeadSavedViews({ value, role, onApply }: Props) {
                   setSelectedId('');
                   onApply(view.filters);
                 }}
-                className="inline-flex h-9 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-700 transition hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700"
+                className="inline-flex min-h-11 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-700 transition hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700 sm:min-h-9"
               >
                 {view.name}
               </button>
             ))}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap">
             <select
               aria-label="Select a saved lead view"
               value={selectedId}
@@ -155,7 +160,7 @@ export function LeadSavedViews({ value, role, onApply }: Props) {
                 if (view) applyView(view);
                 else setSelectedId('');
               }}
-              className="h-9 min-w-[180px] rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100 disabled:bg-slate-50 disabled:text-slate-400"
+              className="col-span-2 h-11 min-w-0 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100 disabled:bg-slate-50 disabled:text-slate-400 sm:col-span-1 sm:h-9 sm:min-w-[180px]"
             >
               <option value="">{isLoading ? 'Loading views...' : isError ? 'Saved views unavailable' : savedViews.length ? 'Choose saved view' : 'No custom views yet'}</option>
               {savedViews.map(view => <option key={view.id} value={view.id}>{view.name}</option>)}
@@ -175,15 +180,15 @@ export function LeadSavedViews({ value, role, onApply }: Props) {
               </>
             )}
 
-            <button type="button" onClick={() => { setName(''); setEditorMode('create'); }} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-brand-600 px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-brand-700">
+            <button type="button" onClick={() => { setName(''); setEditorMode('create'); }} className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg bg-brand-600 px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-brand-700 sm:min-h-9">
               <Save className="h-3.5 w-3.5" /> Save current
             </button>
-            <button type="button" onClick={copyShareLink} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-brand-200 bg-white px-3 text-xs font-semibold text-brand-700 transition hover:bg-brand-50">
+            <button type="button" onClick={copyShareLink} className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-brand-200 bg-white px-3 text-xs font-semibold text-brand-700 transition hover:bg-brand-50 sm:min-h-9">
               <Copy className="h-3.5 w-3.5" /> Copy link
             </button>
           </div>
         </div>
-        <p className="mt-2 text-[11px] text-slate-500">Saved views are private to your account. Shared links apply the same filters within the recipient&apos;s own CRM permissions.</p>
+        <p className={clsx('mt-2 text-[11px] text-slate-500 sm:block', mobileOpen ? 'block' : 'hidden')}>Saved views are private to your account. Shared links apply the same filters within the recipient&apos;s own CRM permissions.</p>
       </section>
 
       <Modal

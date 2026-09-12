@@ -435,8 +435,8 @@ export interface LeadSavedView {
   updated_at: string;
 }
 
-export type LeadDailyMetric = 'received' | 'worked' | 'pending' | 'personal_meeting' | 'session_9pm' | 'call_issues';
-export type LeadAllTimeMetric = 'all' | 'worked' | 'pending' | 'personal_meeting' | 'session_9pm' | 'call_issues';
+export type LeadDailyMetric = 'received' | 'worked' | 'pending' | 'session_9pm' | 'personal_meeting' | 'converted' | 'call_issues';
+export type LeadAllTimeMetric = 'all' | 'worked' | 'pending' | 'session_9pm' | 'personal_meeting' | 'converted' | 'call_issues';
 export type LeadViewMode = 'all_time' | 'daily';
 
 export interface LeadDailySummary {
@@ -447,8 +447,9 @@ export interface LeadDailySummary {
   received: number;
   worked: number;
   pending: number;
-  personal_meeting: number;
   session_9pm: number;
+  personal_meeting: number;
+  converted: number;
   call_issues: number;
 }
 
@@ -457,8 +458,9 @@ export interface LeadAllTimeSummary {
   all: number;
   worked: number;
   pending: number;
-  personal_meeting: number;
   session_9pm: number;
+  personal_meeting: number;
+  converted: number;
   call_issues: number;
 }
 
@@ -472,8 +474,9 @@ export interface LeadDistributionSummary {
   received: number;
   worked: number;
   pending: number;
-  personal_meeting: number;
   session_9pm: number;
+  personal_meeting: number;
+  converted: number;
   call_issues: number;
 }
 
@@ -538,6 +541,8 @@ export interface LeadDistributionRow {
   attempt_outcome?: string | null;
   attempt_reason?: string | null;
   next_attempt_at?: string | null;
+  converted_at?: string | null;
+  conversion_source?: 'remark' | 'workflow' | 'lifecycle' | 'lead_state' | string | null;
   last_activity_at?: string | null;
   has_call_issue?: boolean;
   effective_call_issue?: string | null;

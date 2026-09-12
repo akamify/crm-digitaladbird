@@ -8,8 +8,9 @@ const LEAD_DAILY_METRICS = new Set([
   'received',
   'worked',
   'pending',
-  'personal_meeting',
   'session_9pm',
+  'personal_meeting',
+  'converted',
   'call_issues',
 ]);
 
@@ -97,6 +98,34 @@ function buildLeadPeriodMetricConditions(fromParam, toParam, leadAlias = 'l') {
   )`;
   const personalMeeting = `(${received} AND ${personalMeetingActivity})`;
   const session9pm = `(${received} AND ${session9pmActivity})`;
+  const convertedActivity = `(
+    EXISTS (
+      SELECT 1 FROM lead_remarks daily_conversion_remark
+       WHERE daily_conversion_remark.lead_id = ${lead}.id
+         AND ${onPeriod('daily_conversion_remark.created_at')}
+         AND (
+           daily_conversion_remark.call_status::text = 'converted'
+           OR COALESCE(daily_conversion_remark.call_statuses, '[]'::jsonb) ? 'converted'
+         )
+    )
+    OR EXISTS (
+      SELECT 1 FROM lead_workflow_history daily_conversion_history
+       WHERE daily_conversion_history.lead_id = ${lead}.id
+         AND ${onPeriod('daily_conversion_history.created_at')}
+         AND (
+           daily_conversion_history.new_value = 'converted'
+           OR (COALESCE(daily_conversion_history.metadata, '{}'::jsonb)->'step_1_statuses') ? 'converted'
+         )
+    )
+    OR EXISTS (
+      SELECT 1 FROM lead_lifecycle_events daily_conversion_event
+       WHERE daily_conversion_event.lead_id = ${lead}.id
+         AND daily_conversion_event.event_type = 'lifecycle_closed'
+         AND COALESCE(daily_conversion_event.metadata->>'terminal_state', '') = 'converted'
+         AND ${onPeriod('daily_conversion_event.occurred_at')}
+    )
+  )`;
+  const converted = `(${received} AND ${convertedActivity})`;
   const retryableIssueActivity = `(
     EXISTS (
       SELECT 1 FROM lead_remarks daily_issue_remark
@@ -141,8 +170,9 @@ function buildLeadPeriodMetricConditions(fromParam, toParam, leadAlias = 'l') {
     received,
     worked,
     pending,
-    personal_meeting: personalMeeting,
     session_9pm: session9pm,
+    personal_meeting: personalMeeting,
+    converted,
     call_issues: callIssues,
   };
 }

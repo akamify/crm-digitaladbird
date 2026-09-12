@@ -22,6 +22,7 @@ import { LeadActionBar } from '@/components/leads/LeadActionBar';
 import { RemarkModal } from '@/components/leads/RemarkModal';
 import { ReassignModal } from '@/components/leads/ReassignModal';
 import { WorkflowPanel } from '@/components/leads/WorkflowPanel';
+import { LeadLifecyclePanel } from '@/components/leads/LeadLifecyclePanel';
 import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
 import { LeadSessionsCard } from '@/components/leads/LeadSessionsCard';
 import { LeadLabelsCard } from '@/components/leads/LeadLabelsCard';
@@ -31,6 +32,7 @@ import { useLeadCommunication } from '@/hooks/useLeadCommunication';
 import { useAuth } from '@/lib/auth';
 import { useUpdateLeadCategory } from '@/hooks/useAdminEnterprise';
 import { triggerPhoneCall } from '@/lib/phone';
+import { useWorkflowSettings } from '@/hooks/useLifecycle';
 
 export default function LeadDetailPage() {
   return (
@@ -48,8 +50,8 @@ function LeadDetailInner() {
   const leadQuery = useLead(id);
   const deleteLead = useDeleteLead();
   const updateCategory = useUpdateLeadCategory();
+  const workflowSettings = useWorkflowSettings();
 
-  const [remarkOpen, setRemarkOpen] = useState(false);
   const [rmRemarkOpen, setRmRemarkOpen] = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -90,6 +92,7 @@ function LeadDetailInner() {
   const canSeeRmSummary = user.role === 'super_admin' || user.role === 'admin' || user.role === 'rm';
   const canDeleteLead = user.role === 'super_admin';
   const readOnlyAccess = Boolean(lead.read_only_access);
+  const lifecycleEnabled = workflowSettings.data?.enabled === true;
   const leadPhone = lead.phone;
 
   async function callLead() {
@@ -192,15 +195,6 @@ function LeadDetailInner() {
         </Button>
       )}
 
-      {!readOnlyAccess && !canAddRmUpdate && (
-        <Button
-          leftIcon={<MessageSquarePlus className="h-4 w-4" />}
-          onClick={() => setRemarkOpen(true)}
-        >
-          Add Remark
-        </Button>
-      )}
-
       {!readOnlyAccess && canAddRmUpdate && (
         <Button
           variant="outline"
@@ -256,10 +250,29 @@ function LeadDetailInner() {
 
       <div className="grid min-w-0 items-start gap-5 lg:grid-cols-[minmax(0,1.85fr)_minmax(280px,1fr)]">
         <main className="min-w-0 space-y-5">
-          {!readOnlyAccess && (
-            <section className="card-padded">
+          {(lifecycleEnabled || !readOnlyAccess) && (
+            <section className="card p-3 sm:p-5">
               <WorkflowBoundary>
-                <WorkflowPanel leadId={id} isAdmin={user.role === 'super_admin'} />
+                {lifecycleEnabled ? (
+                  <div className="space-y-4">
+                    <LeadLifecyclePanel leadId={id} readOnly={readOnlyAccess} canManage={['super_admin', 'admin', 'rm'].includes(user.role)} />
+                    {!readOnlyAccess && (
+                      <details className="rounded-xl border border-slate-200 bg-slate-50/70">
+                        <summary className="min-h-11 cursor-pointer px-3 py-3 text-sm font-semibold text-slate-700 sm:px-4">
+                          Call Issues &amp; Retry Plan
+                        </summary>
+                        <div className="border-t border-slate-200 bg-white p-2 sm:p-4">
+                          <p className="mb-4 text-xs text-slate-500">
+                            Record CNR and other call issues here. Their Call Retry sequence remains separate from the current journey action.
+                          </p>
+                          <WorkflowPanel leadId={id} isAdmin={user.role === 'super_admin'} />
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                ) : (
+                  <WorkflowPanel leadId={id} isAdmin={user.role === 'super_admin'} />
+                )}
               </WorkflowBoundary>
             </section>
           )}
@@ -270,9 +283,9 @@ function LeadDetailInner() {
 
           <LeadRemarkTimeline
             remarks={lead.remarks}
-            onAdd={() => (canAddRmUpdate ? setRmRemarkOpen(true) : setRemarkOpen(true))}
-            canAdd={!readOnlyAccess}
-            addLabel={canAddRmUpdate ? 'Add RM Update' : 'Add remark'}
+            onAdd={() => setRmRemarkOpen(true)}
+            canAdd={!readOnlyAccess && canAddRmUpdate}
+            addLabel="Add RM Update"
           />
         </main>
 
@@ -299,14 +312,19 @@ function LeadDetailInner() {
           onCall={callLead}
           callDisabled={!lead.phone}
           onChat={() => router.push(`/chat?leadId=${id}`)}
-          onRemark={() => (canAddRmUpdate ? setRmRemarkOpen(true) : setRemarkOpen(true))}
+          onRemark={() => {
+            if (canAddRmUpdate) {
+              setRmRemarkOpen(true);
+              return;
+            }
+            const composer = document.getElementById('conversation-note');
+            composer?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            window.setTimeout(() => composer?.querySelector('textarea')?.focus(), 350);
+          }}
           onReassign={canReassign ? () => setReassignOpen(true) : undefined}
         />
       )}
 
-      {!readOnlyAccess && (
-        <RemarkModal leadId={id} open={remarkOpen} onClose={() => setRemarkOpen(false)} />
-      )}
       {!readOnlyAccess && <PersonalMeetingModal lead={lead} open={personalMeetingOpen} onClose={() => setPersonalMeetingOpen(false)} />}
 
       {!readOnlyAccess && canAddRmUpdate && (

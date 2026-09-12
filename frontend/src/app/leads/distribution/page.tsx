@@ -20,7 +20,9 @@ import { copyDistributionFilters, normalizeAnalyticsScope } from '@/lib/leadAnal
 import type { LeadAnalyticsScope, LeadDailyMetric } from '@/types';
 
 function requestObject(params: URLSearchParams) {
-  return Object.fromEntries(params.entries());
+  const request = new URLSearchParams(params.toString());
+  request.delete('metric');
+  return Object.fromEntries(request.entries());
 }
 
 export default function LeadDistributionPage() {
@@ -45,6 +47,12 @@ export default function LeadDistributionPage() {
       next.delete('from');
       next.delete('to');
     }
+    replaceParams(next);
+  }
+
+  function updateMetric(metric: LeadDailyMetric) {
+    const next = new URLSearchParams(searchParams.toString());
+    next.set('metric', metric);
     replaceParams(next);
   }
 
@@ -82,13 +90,13 @@ export default function LeadDistributionPage() {
       <DistributionContextBar scope={scope} />
 
       {query.isLoading && !data ? <DistributionSkeleton /> : query.isError ? <DistributionError onRetry={() => query.refetch()} /> : data ? <>
-        <DistributionSummaryGrid summary={data.summary} activeMetric={activeMetric} />
+        <DistributionSummaryGrid summary={data.summary} activeMetric={activeMetric} onMetricChange={updateMetric} />
 
         <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-slate-950">RM Performance and Distribution</h2><p className="mt-0.5 text-xs text-slate-500">Metrics remain separate; share bars represent distribution only.</p></div><div className="flex flex-wrap gap-2">
               <DistributionSearchInput value={searchParams.get('search') || ''} placeholder="Search RM..." onSearch={value => { const next = new URLSearchParams(searchParams.toString()); if (value) next.set('search', value); else next.delete('search'); replaceParams(next); }} />
-              <select value={searchParams.get('sort') || 'received'} onChange={event => { const next = new URLSearchParams(searchParams.toString()); next.set('sort', event.target.value); replaceParams(next); }} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-brand-400"><option value="received">Sort: Leads Received</option><option value="worked">Sort: Worked</option><option value="pending">Sort: Pending</option><option value="call_issues">Sort: Call Issues</option><option value="name">Sort: Name</option></select>
+              <select value={searchParams.get('sort') || 'received'} onChange={event => { const next = new URLSearchParams(searchParams.toString()); next.set('sort', event.target.value); replaceParams(next); }} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-brand-400"><option value="received">Sort: Leads Received</option><option value="worked">Sort: Worked</option><option value="pending">Sort: Pending</option><option value="converted">Sort: Converted</option><option value="call_issues">Sort: Call Issues</option><option value="name">Sort: Name</option></select>
             </div></div>
             {data.rms.length ? <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">{data.rms.map(rm => <DistributionPersonCard key={rm.id} person={rm} href={rmHref(String(rm.id))} kind="rm" />)}</div> : <div className="rounded-xl border border-dashed border-slate-300 p-10 text-center text-sm text-slate-500">No RM distribution found for this period.</div>}
             {data.unassigned.received > 0 && <div className="mt-4"><UnassignedDistributionCard person={data.unassigned} label="Unassigned RM" /></div>}

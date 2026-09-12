@@ -12,8 +12,9 @@ export const DISTRIBUTION_METRICS: Array<{ key: LeadDailyMetric; label: string; 
   { key: 'received', label: 'Leads Received', shortLabel: 'Received' },
   { key: 'worked', label: 'Worked', shortLabel: 'Worked' },
   { key: 'pending', label: 'Pending', shortLabel: 'Pending' },
-  { key: 'personal_meeting', label: 'Meeting Attended', shortLabel: 'Meeting' },
-  { key: 'session_9pm', label: '9:00 PM Session', shortLabel: '9 PM Session' },
+  { key: 'session_9pm', label: 'Common Meeting', shortLabel: 'Common Meeting' },
+  { key: 'personal_meeting', label: 'Personal Meeting', shortLabel: 'Personal Meeting' },
+  { key: 'converted', label: 'Converted', shortLabel: 'Converted' },
   { key: 'call_issues', label: 'Call Issues', shortLabel: 'Call Issues' },
 ];
 
@@ -22,7 +23,7 @@ export function DistributionSummaryGrid({ summary, activeMetric, onMetricChange 
   activeMetric?: LeadDailyMetric;
   onMetricChange?: (metric: LeadDailyMetric) => void;
 }) {
-  return <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">{DISTRIBUTION_METRICS.map(metric => {
+  return <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-7">{DISTRIBUTION_METRICS.map(metric => {
     const active = metric.key === activeMetric;
     const className = clsx(
       'min-h-[82px] rounded-xl border px-3 py-3 text-left shadow-sm transition',
@@ -47,7 +48,7 @@ export function DistributionPersonCard({ person, href, kind }: {
       <div className="min-w-0 flex-1"><h3 className="truncate font-semibold text-slate-950">{person.full_name}</h3><p className="mt-0.5 text-xs text-slate-500">{role}{person.team_name ? ` - ${person.team_name}` : ''}</p></div>
       {kind === 'rm' && <div className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600"><Users className="h-3 w-3" />{person.counselor_count || 0}</div>}
     </div>
-    <div className="grid grid-cols-3 gap-px bg-slate-100">{DISTRIBUTION_METRICS.map(metric => <div key={metric.key} className="bg-white px-3 py-2.5"><div className="truncate text-[9px] font-semibold uppercase tracking-wide text-slate-400">{metric.shortLabel}</div><div className={clsx('mt-1 text-sm font-bold tabular-nums', metric.key === 'call_issues' && person[metric.key] ? 'text-rose-600' : metric.key === 'pending' && person[metric.key] ? 'text-amber-600' : 'text-slate-800')}>{Number(person[metric.key] || 0).toLocaleString()}</div></div>)}</div>
+    <div className="grid grid-cols-2 gap-px bg-slate-100 sm:grid-cols-4">{DISTRIBUTION_METRICS.map(metric => <div key={metric.key} className="bg-white px-3 py-2.5"><div className="truncate text-[9px] font-semibold uppercase tracking-wide text-slate-400">{metric.shortLabel}</div><div className={clsx('mt-1 text-sm font-bold tabular-nums', metric.key === 'converted' && person[metric.key] ? 'text-emerald-600' : metric.key === 'call_issues' && person[metric.key] ? 'text-rose-600' : metric.key === 'pending' && person[metric.key] ? 'text-amber-600' : 'text-slate-800')}>{Number(person[metric.key] || 0).toLocaleString()}</div></div>)}</div>
     {kind === 'rm' && <div className="px-4 pt-3"><div className="mb-1 flex justify-between text-[10px] font-medium text-slate-500"><span>Distribution share</span><span>{person.distribution_share || 0}%</span></div><div className="h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-brand-500" style={{ width: `${Math.min(100, person.distribution_share || 0)}%` }} /></div></div>}
     {kind === 'counselor' && <div className="flex items-center justify-between px-4 pt-3 text-[10px] text-slate-500"><span>Work rate</span><span className="font-semibold text-slate-700">{person.work_rate || 0}%</span></div>}
     <Link href={href} className="m-3 flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5 text-xs font-semibold text-brand-700 transition group-hover:bg-brand-50"><span>{action}</span><ArrowRight className="h-4 w-4" /></Link>
@@ -57,7 +58,7 @@ export function DistributionPersonCard({ person, href, kind }: {
 export function UnassignedDistributionCard({ person, label }: { person: LeadDistributionPerson; label: string }) {
   return <article className="rounded-2xl border border-dashed border-amber-300 bg-amber-50/60 p-4">
     <div className="flex items-center gap-3"><div className="grid h-10 w-10 place-items-center rounded-full bg-amber-100 text-amber-700"><UserRound className="h-5 w-5" /></div><div><h3 className="font-semibold text-amber-950">{label}</h3><p className="text-xs text-amber-700">Assignment state kept separate from workflow status.</p></div></div>
-    <div className="mt-4 grid grid-cols-3 gap-2">{DISTRIBUTION_METRICS.map(metric => <div key={metric.key} className="rounded-lg bg-white/80 px-2 py-2"><div className="truncate text-[9px] uppercase tracking-wide text-amber-700/70">{metric.shortLabel}</div><div className="mt-1 font-bold tabular-nums text-amber-950">{Number(person[metric.key] || 0).toLocaleString()}</div></div>)}</div>
+    <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">{DISTRIBUTION_METRICS.map(metric => <div key={metric.key} className="rounded-lg bg-white/80 px-2 py-2"><div className="truncate text-[9px] uppercase tracking-wide text-amber-700/70">{metric.shortLabel}</div><div className="mt-1 font-bold tabular-nums text-amber-950">{Number(person[metric.key] || 0).toLocaleString()}</div></div>)}</div>
   </article>;
 }
 
@@ -71,7 +72,7 @@ export function DistributionContextBar({ scope, rmName, counselorName }: { scope
 }
 
 export function DistributionSkeleton({ cards = 6 }: { cards?: number }) {
-  return <div className="space-y-4"><div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">{Array.from({ length: 6 }, (_, index) => <Skeleton key={index} className="h-20 rounded-xl" />)}</div><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{Array.from({ length: cards }, (_, index) => <Skeleton key={index} className="h-72 rounded-2xl" />)}</div></div>;
+  return <div className="space-y-4"><div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-7">{Array.from({ length: 7 }, (_, index) => <Skeleton key={index} className="h-20 rounded-xl" />)}</div><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{Array.from({ length: cards }, (_, index) => <Skeleton key={index} className="h-72 rounded-2xl" />)}</div></div>;
 }
 
 export function DistributionError({ onRetry }: { onRetry: () => void }) {

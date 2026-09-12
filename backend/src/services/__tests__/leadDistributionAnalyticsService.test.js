@@ -45,21 +45,22 @@ describe('lead distribution analytics service', () => {
     expect(built.sql).toContain('source_lead.pool_rm_id');
     expect(built.sql).toContain('candidate.assignee_rm_id = rm.id');
     expect(built.sql).toContain('AS metric_received');
+    expect(built.sql).toContain('AS metric_converted');
     expect(built.sql).toContain('AS metric_call_issues');
     expect(built.sql).toContain("AT TIME ZONE 'Asia/Kolkata'");
   });
 
   test('returns reconciliable RM rows and a separate unassigned bucket', async () => {
     query.mockResolvedValueOnce({ rows: [{
-      summary: { received: 10, worked: 6, pending: 4, personal_meeting: 1, session_9pm: 2, call_issues: 3 },
-      rms: [{ id: 'rm-1', full_name: 'RM One', counselor_count: 2, received: 8, worked: 5, pending: 3, personal_meeting: 1, session_9pm: 2, call_issues: 2 }],
-      unassigned: { received: 2, worked: 1, pending: 1, personal_meeting: 0, session_9pm: 0, call_issues: 1 },
+      summary: { received: 10, worked: 6, pending: 4, session_9pm: 2, personal_meeting: 1, converted: 2, call_issues: 3 },
+      rms: [{ id: 'rm-1', full_name: 'RM One', counselor_count: 2, received: 8, worked: 5, pending: 3, session_9pm: 2, personal_meeting: 1, converted: 2, call_issues: 2 }],
+      unassigned: { received: 2, worked: 1, pending: 1, session_9pm: 0, personal_meeting: 0, converted: 0, call_issues: 1 },
     }] });
 
     const result = await service.listRms({ id: 'admin-1', role: 'super_admin' }, { view: 'all_time' });
 
     expect(result.summary.received).toBe(10);
-    expect(result.rms[0]).toMatchObject({ received: 8, counselor_count: 2, distribution_share: 80 });
+    expect(result.rms[0]).toMatchObject({ received: 8, converted: 2, counselor_count: 2, distribution_share: 80 });
     expect(result.unassigned).toMatchObject({ full_name: 'Unassigned RM', received: 2 });
     expect(result.rms[0].received + result.unassigned.received).toBe(result.summary.received);
   });
@@ -120,5 +121,24 @@ describe('lead distribution analytics service', () => {
       counselorId,
       { view: 'all_time' },
     )).resolves.toMatchObject({ counselor: { id: counselorId }, total: 0 });
+  });
+
+  test('uses lifecycle occurrence time as converted drill-down evidence', async () => {
+    const rmId = '22222222-2222-4222-8222-222222222222';
+    const counselorId = '33333333-3333-4333-8333-333333333333';
+    query
+      .mockResolvedValueOnce({ rows: [{ id: rmId, full_name: 'RM', role: 'rm', status: 'active' }] })
+      .mockResolvedValueOnce({ rows: [{ id: counselorId, full_name: 'Counselor', role: 'member', status: 'active', report_to_id: rmId }] })
+      .mockResolvedValueOnce({ rows: [{ summary: {}, call_issue_buckets: {} }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await service.getCounselorLeads(
+      { id: 'admin-1', role: 'super_admin' },
+      rmId,
+      counselorId,
+      { view: 'all_time', metric: 'converted' },
+    );
+
+    expect(query.mock.calls[3][0]).toContain("SELECT le.occurred_at, 'lifecycle'::text");
   });
 });

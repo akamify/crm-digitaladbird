@@ -16,6 +16,7 @@ const leadCallRoutes = require('./routes/leadCalls');
 const passwordResetRoutes = require('./routes/passwordReset');
 const leadCategoryRoutes = require('./routes/leadCategories');
 const waspRoutes = require('./routes/wasp');
+const lifecycleRoutes = require('./routes/lifecycle');
 const errorHandler = require('./middleware/errorHandler');
 const meta         = require('./controllers/metaController');
 
@@ -169,6 +170,7 @@ app.use('/api', waspRoutes);
 // Everything else uses JSON body parser.
 app.use(express.json({ limit: '10mb' }));
 app.use('/api', apiRoutes);
+app.use('/api', lifecycleRoutes);
 
 app.get('/health',         (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
 app.get('/health/db',      async (_req, res) => {

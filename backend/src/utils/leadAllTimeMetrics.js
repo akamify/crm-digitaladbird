@@ -11,8 +11,9 @@ const LEAD_ALL_TIME_METRICS = new Set([
   'all',
   'worked',
   'pending',
-  'personal_meeting',
   'session_9pm',
+  'personal_meeting',
+  'converted',
   'call_issues',
 ]);
 
@@ -53,6 +54,31 @@ function buildLeadAllTimeMetricConditions(leadAlias = 'l') {
          )
     )
   )`;
+  const converted = `(
+    ${lead}.call_status::text = 'converted'
+    OR ${lead}.stage::text = 'won'
+    OR EXISTS (
+      SELECT 1 FROM lead_remarks all_conversion_remark
+       WHERE all_conversion_remark.lead_id = ${lead}.id
+         AND (
+           all_conversion_remark.call_status::text = 'converted'
+           OR COALESCE(all_conversion_remark.call_statuses, '[]'::jsonb) ? 'converted'
+         )
+    )
+    OR EXISTS (
+      SELECT 1 FROM lead_workflow_history all_conversion_history
+       WHERE all_conversion_history.lead_id = ${lead}.id
+         AND (
+           all_conversion_history.new_value = 'converted'
+           OR (COALESCE(all_conversion_history.metadata, '{}'::jsonb)->'step_1_statuses') ? 'converted'
+         )
+    )
+    OR EXISTS (
+      SELECT 1 FROM lead_lifecycle_state all_conversion_lifecycle
+       WHERE all_conversion_lifecycle.lead_id = ${lead}.id
+         AND all_conversion_lifecycle.terminal_state = 'converted'
+    )
+  )`;
   const agedUnworked = `(
     ${activeIssue} IS NULL
     AND COALESCE(${lead}.call_status::text, 'not_called') = 'not_called'
@@ -85,8 +111,9 @@ function buildLeadAllTimeMetricConditions(leadAlias = 'l') {
     all: 'TRUE',
     worked: workedLeadCondition(lead),
     pending,
-    personal_meeting: personalMeeting,
     session_9pm: session9pm,
+    personal_meeting: personalMeeting,
+    converted,
     call_issues: callIssues,
   };
 }

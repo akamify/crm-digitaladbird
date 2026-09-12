@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   CheckCircle2, Lock, ChevronRight, Loader2,
   Clock, History, MessageSquare, BarChart3, Target, Trophy,
@@ -22,6 +22,7 @@ import {
 } from '@/constants/leadRemarkOptions';
 import type { CallAttemptSequenceSummary, CallAttemptStateSummary, CallAttemptSummary, NextScheduledCallSummary } from '@/types';
 import { CallAttemptTracker } from './CallAttemptTracker';
+import { useAddRemark } from '@/hooks/useLeads';
 
 /* ── Remark display labels + colors ─────────────────────────────────── */
 
@@ -40,8 +41,8 @@ const REMARK_DISPLAY: Record<string, { label: string; bg: string; text: string; 
   ni:                       { label: 'NI (No Incoming)',         bg: 'bg-pink-50',    text: 'text-pink-700',    ring: 'ring-pink-400' },
   in:                       { label: 'IN (Invalid Number)',      bg: 'bg-slate-50',   text: 'text-slate-700',   ring: 'ring-slate-400' },
   cb:                       { label: 'CB (Call Busy)',           bg: 'bg-yellow-50',  text: 'text-yellow-700',  ring: 'ring-yellow-400' },
-  session_730_attend:       { label: '9:00 Session Attend',      bg: 'bg-emerald-50', text: 'text-emerald-700', ring: 'ring-emerald-400' },
-  yes_after_730_session:    { label: 'Yes After 9:00 Session',   bg: 'bg-teal-50',    text: 'text-teal-700',    ring: 'ring-teal-400' },
+  session_730_attend:       { label: 'Common Meeting Attended',  bg: 'bg-emerald-50', text: 'text-emerald-700', ring: 'ring-emerald-400' },
+  yes_after_730_session:    { label: 'Yes After Common Meeting', bg: 'bg-teal-50',    text: 'text-teal-700',    ring: 'ring-teal-400' },
 };
 
 /* ── Level display labels + colors ──────────────────────────────────── */
@@ -81,7 +82,7 @@ const STEP_CONFIG = [
 ];
 
 const FOLLOWUP_FIELDS = [
-  { key: 'attendance_730', label: '9:00 PM Session Attend', icon: '🕢' },
+  { key: 'attendance_730', label: 'Common Meeting Attended', icon: '🕢' },
   { key: 'yes_confirmation', label: 'Yes Confirmation', icon: '✅' },
   { key: 'day_1',  label: 'Day 1',  icon: '1️⃣' },
   { key: 'day_2',  label: 'Day 2',  icon: '2️⃣' },
@@ -306,13 +307,13 @@ function StepCard({ step, config, unlocked, completed, isOpen, onToggle, savedVa
       <button
         onClick={unlocked ? onToggle : undefined}
         className={clsx(
-          'flex w-full items-center gap-4 px-5 py-4 text-left transition-colors',
+          'flex min-h-11 w-full items-center gap-3 px-3 py-3 text-left transition-colors sm:gap-4 sm:px-5 sm:py-4',
           unlocked && !completed && 'hover:bg-slate-50/50',
           locked && 'cursor-not-allowed'
         )}
       >
         <div className={clsx(
-          'flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl shadow-lg transition-transform duration-200',
+          'flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl shadow-lg transition-transform duration-200 sm:h-12 sm:w-12',
           completed
             ? 'bg-gradient-to-br from-green-400 to-emerald-500 shadow-green-200'
             : unlocked
@@ -375,7 +376,7 @@ function StepCard({ step, config, unlocked, completed, isOpen, onToggle, savedVa
       </button>
 
       {unlocked && isOpen && (
-        <div className="border-t border-slate-100 px-5 py-4 bg-white/80">
+        <div className="border-t border-slate-100 bg-white/80 px-3 py-3 sm:px-5 sm:py-4">
           {children}
         </div>
       )}
@@ -402,7 +403,12 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
   nextScheduledCall?: NextScheduledCallSummary | null;
 }) {
   const save = useSaveRemark();
+  const addNote = useAddRemark();
   const [selected, setSelected] = useState<string[]>(current || []);
+  const [conversationNote, setConversationNote] = useState('');
+  const [noteError, setNoteError] = useState('');
+  const [customComposerActive, setCustomComposerActive] = useState(false);
+  const noteRef = useRef<HTMLTextAreaElement | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingRemarkAction | null>(null);
   const availableGroups = LEAD_REMARK_GROUPS.map(group => ({
     ...group,
@@ -474,7 +480,15 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
   }
 
   function toggle(value: string) {
-    if (save.isPending) return;
+    if (save.isPending || addNote.isPending) return;
+
+    if (value === 'custom_remark') {
+      setCustomComposerActive(true);
+      setNoteError('');
+      requestAnimationFrame(() => noteRef.current?.focus());
+      return;
+    }
+    setCustomComposerActive(false);
 
     const isCallIssue = CALL_ISSUE_STATUS_VALUES.has(value);
     const isAlreadySelected = selected.includes(value);
@@ -521,6 +535,40 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
   }
 
   const hasCompletingSelection = selected.some(value => COMPLETED_REMARK_STATUS_VALUES.has(value));
+  const customRemarkSelected = customComposerActive;
+
+  async function saveConversationNote() {
+    const note = conversationNote.trim();
+    if (!note) {
+      setNoteError(customRemarkSelected ? 'Write the custom remark before saving.' : 'Write a conversation note before saving.');
+      noteRef.current?.focus();
+      return;
+    }
+
+    setNoteError('');
+    try {
+      if (customRemarkSelected) {
+        const statuses = selected.includes('custom_remark') ? selected : [...selected, 'custom_remark'];
+        await save.mutateAsync({
+          leadId,
+          remark_status: statuses[0] || 'custom_remark',
+          remark_statuses: statuses,
+          remark: note,
+          attempt_trigger_status: 'custom_remark',
+        });
+      } else {
+        await addNote.mutateAsync({ id: leadId, remark: note, note_type: 'counselor_update', release_lock: true });
+      }
+      setConversationNote('');
+      setCustomComposerActive(false);
+      toast.success(customRemarkSelected ? 'Custom remark saved' : 'Conversation note saved');
+    } catch (error) {
+      const message = typeof error === 'object' && error && 'response' in error
+        ? (error as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message
+        : null;
+      setNoteError(message || 'Could not save the note. Your text has been kept.');
+    }
+  }
 
   return (
     <div>
@@ -537,21 +585,21 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
             <p className={clsx('mb-2 text-[11px] font-semibold uppercase tracking-wide', {
               emerald: 'text-emerald-700', sky: 'text-sky-700', amber: 'text-amber-700', slate: 'text-slate-500',
             }[group.tone])}>{group.label}</p>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-2 sm:grid-cols-3">
               {group.options.map(option => {
                 const display = REMARK_DISPLAY[option.value] || { label: option.label, bg: 'bg-slate-50', text: 'text-slate-700', ring: 'ring-slate-400' };
-                const isRecorded = selected.includes(option.value);
-                const isSelected = primaryStatus === option.value;
+                const isRecorded = selected.includes(option.value) || (option.value === 'custom_remark' && customComposerActive);
+                const isSelected = primaryStatus === option.value || (option.value === 'custom_remark' && customComposerActive);
                 const isCompletingOption = COMPLETED_REMARK_STATUS_VALUES.has(option.value);
                 return (
                   <button
                     key={option.value}
                     type="button"
-                    disabled={save.isPending}
+                    disabled={save.isPending || addNote.isPending}
                     aria-pressed={isRecorded}
                     onClick={() => toggle(option.value)}
                     className={clsx(
-                      'relative rounded-xl border-2 px-3 py-2.5 text-left text-xs font-semibold transition-all duration-200',
+                      'relative min-h-11 rounded-xl border-2 px-3 py-2.5 text-left text-xs font-semibold transition-all duration-200',
                       isSelected
                         ? `${display.bg} ${display.text} border-current ring-2 ${display.ring} shadow-md scale-[1.02]`
                         : isRecorded
@@ -570,6 +618,39 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
             </div>
           </div>
         ))}
+      </div>
+      <div id="conversation-note" className="mt-4 scroll-mt-24 rounded-xl border border-slate-200 bg-slate-50/70 p-3 sm:p-4">
+        <div className="mb-2">
+          <label htmlFor={`conversation-note-${leadId}`} className="text-sm font-semibold text-slate-900">
+            Conversation Note {customRemarkSelected ? <span className="text-rose-600">(required)</span> : <span className="font-normal text-slate-500">(optional)</span>}
+          </label>
+          <p className="mt-0.5 text-xs text-slate-500">Write a short summary of what was discussed.</p>
+        </div>
+        <textarea
+          ref={noteRef}
+          id={`conversation-note-${leadId}`}
+          value={conversationNote}
+          onChange={event => { setConversationNote(event.target.value); if (noteError) setNoteError(''); }}
+          rows={3}
+          maxLength={2000}
+          placeholder="Customer needs, questions, or agreed next step..."
+          aria-invalid={Boolean(noteError)}
+          aria-describedby={noteError ? `conversation-note-error-${leadId}` : undefined}
+          className="min-h-24 w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
+        />
+        {noteError && <p id={`conversation-note-error-${leadId}`} className="mt-1.5 text-xs font-medium text-rose-600">{noteError}</p>}
+        <div className="mt-2 flex items-center justify-between gap-3">
+          <span className="text-[11px] text-slate-400">{conversationNote.length}/2000</span>
+          <button
+            type="button"
+            onClick={saveConversationNote}
+            disabled={save.isPending || addNote.isPending || !conversationNote.trim()}
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {(save.isPending || addNote.isPending) && <Loader2 className="h-4 w-4 animate-spin" />}
+            Save note
+          </button>
+        </div>
       </div>
       <CallAttemptTracker
         leadId={leadId}

@@ -23,7 +23,11 @@ import { useRmLiveCounters, useTeamOverview, useMemberRequests } from '@/hooks/u
 import type { RmLiveCounters, TeamMemberOverview, MemberRequest } from '@/hooks/useRmMonitoring';
 import { useAuth } from '@/lib/auth';
 import { fmtDate, fmtRelative, isOverdue, isDueToday, humanize, initials, clsx } from '@/lib/format';
-import type { DailyPoint } from '@/types';
+import { LeadAnalyticsPeriodControl } from '@/components/leads/LeadAnalyticsPeriodControl';
+import { DistributionError, DistributionSummaryGrid } from '@/components/leads/LeadDistributionUi';
+import { useRmCounselorDistribution } from '@/hooks/useLeadDistribution';
+import { analyticsScopeParams } from '@/lib/leadAnalytics';
+import type { DailyPoint, LeadAnalyticsScope, LeadDailyMetric } from '@/types';
 
 const dayFmt = (d: string) => { try { return format(new Date(d), 'd MMM'); } catch { return d; } };
 
@@ -47,7 +51,11 @@ function RmDashboardInner() {
   const counters  = useRmLiveCounters();
   const teamOverview = useTeamOverview();
   const [reqCategory, setReqCategory] = useState('');
+  const [analyticsScope, setAnalyticsScope] = useState<LeadAnalyticsScope>({ view: 'all_time', from: null, to: null });
+  const [analyticsMetric, setAnalyticsMetric] = useState<LeadDailyMetric>('received');
   const memberRequests = useMemberRequests(reqCategory || undefined);
+  const analyticsParams = analyticsScopeParams(analyticsScope);
+  const teamAnalytics = useRmCounselorDistribution(user?.id || '', Object.fromEntries(analyticsParams.entries()));
   const qc = useQueryClient();
 
   // Live: refresh team-scoped counters when a new lead lands for one of
@@ -87,6 +95,10 @@ function RmDashboardInner() {
   const totalLeads = Number(k?.total_leads ?? 0);
   const conv       = Number(k?.converted ?? 0);
   const convRate   = totalLeads > 0 ? Math.round((conv / totalLeads) * 1000) / 10 : 0;
+  const teamDistributionParams = analyticsScopeParams(analyticsScope);
+  teamDistributionParams.set('metric', analyticsMetric);
+  teamDistributionParams.set('sort', ['worked', 'pending', 'converted', 'call_issues'].includes(analyticsMetric) ? analyticsMetric : 'received');
+  const teamDistributionHref = `/leads/distribution/rm/${user.id}?${teamDistributionParams.toString()}`;
 
   return (
     <div className="space-y-6">
@@ -97,6 +109,30 @@ function RmDashboardInner() {
           <strong>Monitoring Mode</strong> — Viewing your team&apos;s real-time activity. Lead assignment runs automatically.
         </span>
       </div>
+
+      <section className="overflow-visible rounded-2xl border border-blue-200 bg-gradient-to-r from-blue-50/70 via-white to-amber-50/60 shadow-sm">
+        <div className="flex flex-col gap-3 border-b border-blue-100 p-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-700">Lead Analytics</div>
+            <p className="mt-1 text-sm text-slate-500">Your team&apos;s lead distribution and counselor performance.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <LeadAnalyticsPeriodControl scope={analyticsScope} onChange={setAnalyticsScope} />
+            <Link href={teamDistributionHref} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-brand-200 bg-white px-3 text-xs font-semibold text-brand-700 shadow-sm transition hover:border-brand-300 hover:bg-brand-50">
+              View Team Distribution <ArrowRight className="h-4 w-4" />
+            </Link>
+          </div>
+        </div>
+        <div className="p-3 sm:p-4">
+          {teamAnalytics.isLoading && !teamAnalytics.data ? (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-7">{Array.from({ length: 7 }, (_, index) => <Skeleton key={index} className="h-20 rounded-xl" />)}</div>
+          ) : teamAnalytics.isError ? (
+            <DistributionError onRetry={() => teamAnalytics.refetch()} />
+          ) : teamAnalytics.data ? (
+            <DistributionSummaryGrid summary={teamAnalytics.data.summary} activeMetric={analyticsMetric} onMetricChange={setAnalyticsMetric} />
+          ) : null}
+        </div>
+      </section>
 
       {/* Live Monitoring Counters */}
       <MonitoringCounters data={counters.data ?? null} loading={counters.isLoading} />

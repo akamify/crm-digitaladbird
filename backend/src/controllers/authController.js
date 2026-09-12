@@ -65,7 +65,8 @@ exports.login = asyncHandler(async (req, res) => {
 
   // Lookup strategy: email > phone > cp_id > full_name
   let user;
-  const SELECT = `SELECT id, full_name, email, phone, role, member_type,
+  const SELECT = `SELECT id, full_name, email,
+   phone, role, member_type,
                          report_to_id, team_name, status, password_hash, cp_id, deleted_at
                     FROM users WHERE TRUE`;
 

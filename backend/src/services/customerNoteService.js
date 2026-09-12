@@ -17,6 +17,7 @@ const {
 } = require('../constants/personalMeetingOptions');
 const { sendMeetingNotification } = require('./customerMeetingNotificationService');
 const { logActivity } = require('../utils/auditLog');
+const lifecycleService = require('./lifecycleService');
 
 function normalizeText(value, max = 1000) {
   const text = String(value || '').trim().replace(/\s+/g, ' ');
@@ -975,6 +976,19 @@ async function createNote(actor, body) {
       [created.id, payload.initialEntryText, actor.id],
     );
 
+    if (isPersonalMeeting(payload)) {
+      await lifecycleService.syncLegacyPersonalMeeting({
+        client,
+        user: actor,
+        leadId: lead.id,
+        meetingId: created.id,
+        meetingAt: payload.meetingAt,
+        outcome: payload.meetingOutcome,
+        followupAt: payload.followupAt,
+        nextMeetingAt: payload.nextMeetingAt,
+      });
+    }
+
     return created;
   });
 
@@ -1322,8 +1336,9 @@ async function updatePersonalMeeting(actor, noteId, body, existing) {
   const durationMinutes = values.meetingEndAt
     ? Math.max(0, Math.round((new Date(values.meetingEndAt).getTime() - new Date(values.meetingAt).getTime()) / 60000))
     : null;
-  await query(
-    `UPDATE customer_notes
+  await withTransaction(async (client) => {
+    await client.query(
+      `UPDATE customer_notes
         SET meeting_at = $2, meeting_end_at = $3, duration_minutes = $4,
             meeting_owner_user_id = $5, meeting_owner_custom_name = $6,
             meeting_owner_custom_designation = $7, meeting_mode = $8,
@@ -1346,8 +1361,19 @@ async function updatePersonalMeeting(actor, noteId, body, existing) {
       payload.objectionNotes || existing.objection_notes, values.meetingOutcome,
       values.nextMeetingAt, Boolean(values.followupRequired), values.followupAt,
       payload.followupNote || existing.followup_note, actor.id,
-    ],
-  );
+      ],
+    );
+    await lifecycleService.syncLegacyPersonalMeeting({
+      client,
+      user: actor,
+      leadId: existing.lead_id,
+      meetingId: noteId,
+      meetingAt: values.meetingAt,
+      outcome: values.meetingOutcome,
+      followupAt: values.followupAt,
+      nextMeetingAt: values.nextMeetingAt,
+    });
+  });
   const detail = await getNoteDetail(actor, noteId, { includePendingForAdmin: true });
   void logActivity({ user: actor, ip: null, headers: {} }, {
     entity: 'personal_meeting', entity_id: noteId, action: 'updated',

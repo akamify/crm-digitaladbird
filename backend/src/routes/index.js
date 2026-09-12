@@ -36,6 +36,7 @@ const {
   saveWorkflowRemark,
 } = require('../services/leadWorkflowRemarkService');
 const { createLeadInteraction } = require('../services/leadInteractionService');
+const lifecycleService = require('../services/lifecycleService');
 const { assertLeadCommunicationAccess } = require('../services/leadCommunicationAccess');
 const {
   getLeadCallAttemptView,
@@ -5806,6 +5807,15 @@ router.post('/leads/:id/workflow/remark', authenticate, asyncHandler(async (req,
       });
     }
 
+    await lifecycleService.syncLegacyRemark({
+      client,
+      user: req.user,
+      leadId,
+      statuses: orderedRemarkStatuses,
+      remarkId: saved.remark?.id || null,
+      nextFollowupAt: req.body?.next_followup_at || null,
+    });
+
     return saved;
   });
   const wf = interaction.workflow;
@@ -5841,16 +5851,29 @@ router.post('/leads/:id/call-attempts/:attemptId/complete', authenticate, asyncH
 
   await assertLeadCommunicationAccess(req.user, leadId);
 
-  const result = await withTransaction(async (client) => completeScheduledAttempt({
-    client,
-    leadId,
-    attemptId,
-    user: req.user,
-    outcome,
-    explicitFollowupAt: req.body?.next_followup_at || null,
-    auditContext: req,
-    now: new Date(),
-  }));
+  const result = await withTransaction(async (client) => {
+    const completed = await completeScheduledAttempt({
+      client,
+      leadId,
+      attemptId,
+      user: req.user,
+      outcome,
+      explicitFollowupAt: req.body?.next_followup_at || null,
+      auditContext: req,
+      now: new Date(),
+    });
+    if (!completed?.alreadyProcessed) {
+      await lifecycleService.syncLegacyRemark({
+        client,
+        user: req.user,
+        leadId,
+        statuses: [completed?.outcome === 'call_received' ? 'communication_completed' : completed?.outcome || outcome],
+        remarkId: `attempt-${attemptId}`,
+        nextFollowupAt: req.body?.next_followup_at || null,
+      });
+    }
+    return completed;
+  });
 
   if (!result?.alreadyProcessed) {
     await logActivity(req, {
@@ -6093,6 +6116,14 @@ router.post('/leads/:id/workflow/conversion', authenticate, asyncHandler(async (
       INSERT INTO lead_workflow_history (lead_id, user_id, step, action, new_value, metadata)
       VALUES ($1, $2, 4, 'conversion_submitted', $3, $4)
     `, [leadId, req.user.id, customerType, JSON.stringify({ total_payment, part_payment, services, transaction_id: transactionId || null })]);
+
+    await lifecycleService.syncLegacyRemark({
+      client,
+      user: req.user,
+      leadId,
+      statuses: ['converted'],
+      remarkId: saved.id,
+    });
 
     return saved;
   });

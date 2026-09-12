@@ -5,6 +5,10 @@ const {
 } = require('../leadAllTimeMetrics');
 
 describe('lead all-time metrics', () => {
+  test('accepts converted as an all-time metric', () => {
+    expect(normalizeLeadAllTimeMetric('converted')).toBe('converted');
+  });
+
   test('accepts supported metrics and defaults to all leads', () => {
     expect(normalizeLeadAllTimeMetric('')).toBe('all');
     expect(normalizeLeadAllTimeMetric('pending')).toBe('pending');
@@ -28,8 +32,11 @@ describe('lead all-time metrics', () => {
     expect(conditions.pending).toContain('next_followup_at <= NOW()');
     expect(conditions.call_issues).toContain("seq.status = 'active'");
     expect(conditions.session_9pm).toContain("'session_730_attend'");
+    expect(conditions.converted).toContain("l.call_status::text = 'converted'");
+    expect(conditions.converted).toContain("all_conversion_lifecycle.terminal_state = 'converted'");
     expect(summarySql).toContain('AS "all"');
     expect(summarySql).toContain('AS "pending"');
     expect(summarySql).toContain('AS "call_issues"');
+    expect(summarySql).toContain('AS "converted"');
   });
 });

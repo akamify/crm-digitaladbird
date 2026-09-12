@@ -625,3 +625,92 @@ CREATE INDEX IF NOT EXISTS idx_lead_call_attempts_responsible_status_scheduled
 
 CREATE INDEX IF NOT EXISTS idx_lead_call_attempts_sequence_attempt
   ON lead_call_attempts(sequence_id, attempt_number);
+
+CREATE TABLE IF NOT EXISTS workflow_settings (
+  key TEXT PRIMARY KEY,
+  value JSONB NOT NULL,
+  label TEXT NOT NULL,
+  updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO workflow_settings(key, value, label) VALUES
+  ('lifecycle_v2_enabled', 'false'::jsonb, 'Enable Counselor Lifecycle V2'),
+  ('lifecycle_v2_pilot_user_ids', '[]'::jsonb, 'Lifecycle V2 pilot counselor IDs'),
+  ('first_contact_sla_minutes', '15'::jsonb, 'New lead first-contact SLA in minutes'),
+  ('responded_sla_minutes', '15'::jsonb, 'Responded lead next-action SLA in minutes'),
+  ('call_window_start', '"09:00"'::jsonb, 'Earliest counselor calling time'),
+  ('call_window_end', '"20:00"'::jsonb, 'Latest counselor calling time'),
+  ('working_days', '[1,2,3,4,5,6]'::jsonb, 'Calling days using ISO weekday numbers'),
+  ('common_meeting_start', '"21:00"'::jsonb, 'Default Common Meeting start time'),
+  ('common_meeting_end', '"21:30"'::jsonb, 'Default Common Meeting end time'),
+  ('common_meeting_outcome_deadline', '"11:00"'::jsonb, 'Next-day Common Meeting outcome deadline'),
+  ('stage_followup_max_attempts', '4'::jsonb, 'Maximum stage follow-up attempts')
+ON CONFLICT (key) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS lead_actions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  action_type VARCHAR(48) NOT NULL,
+  reason VARCHAR(96) NOT NULL,
+  parent_stage VARCHAR(32),
+  parent_action_id UUID REFERENCES lead_actions(id) ON DELETE SET NULL,
+  responsible_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  is_primary BOOLEAN NOT NULL DEFAULT TRUE,
+  stage_followup_attempt INTEGER,
+  stage_followup_max INTEGER,
+  status VARCHAR(24) NOT NULL DEFAULT 'scheduled',
+  scheduled_at TIMESTAMPTZ NOT NULL,
+  due_at TIMESTAMPTZ NOT NULL,
+  completed_at TIMESTAMPTZ,
+  outcome VARCHAR(64),
+  delay_minutes INTEGER,
+  pending_cycle_number INTEGER,
+  idempotency_key VARCHAR(128),
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS lead_lifecycle_state (
+  lead_id UUID PRIMARY KEY REFERENCES leads(id) ON DELETE CASCADE,
+  journey_stage VARCHAR(32) NOT NULL DEFAULT 'new',
+  terminal_state VARCHAR(16),
+  cold_reason VARCHAR(64),
+  cold_reason_note TEXT,
+  last_call_result VARCHAR(64),
+  current_primary_action_id UUID REFERENCES lead_actions(id) ON DELETE SET NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS lead_lifecycle_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  event_type VARCHAR(64) NOT NULL,
+  stage_before VARCHAR(32),
+  stage_after VARCHAR(32),
+  call_result VARCHAR(64),
+  action_id UUID REFERENCES lead_actions(id) ON DELETE SET NULL,
+  related_entity_type VARCHAR(40),
+  related_entity_id UUID,
+  reason VARCHAR(96),
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE lead_call_attempt_sequences
+  ADD COLUMN IF NOT EXISTS originating_action_id UUID REFERENCES lead_actions(id) ON DELETE SET NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_lead_actions_one_active_primary
+  ON lead_actions(lead_id)
+  WHERE is_primary = TRUE AND status IN ('scheduled', 'in_progress', 'paused', 'overdue');
+CREATE INDEX IF NOT EXISTS idx_lead_actions_owner_due
+  ON lead_actions(responsible_user_id, status, due_at);
+CREATE INDEX IF NOT EXISTS idx_lead_lifecycle_events_lead_time
+  ON lead_lifecycle_events(lead_id, occurred_at DESC);

@@ -44,8 +44,9 @@ const DAILY_METRIC_OPTIONS: Array<{ key: LeadDailyMetric; label: string; hint: s
   { key: 'received', label: 'Leads Received', hint: 'Leads created on the selected date.' },
   { key: 'worked', label: 'Worked', hint: 'Selected-date received leads with CRM activity on that date.' },
   { key: 'pending', label: 'Work Pending', hint: 'Selected-date received leads with no CRM activity on that date.' },
-  { key: 'personal_meeting', label: 'Meeting Attended', hint: 'Selected-date received leads with a Personal Meeting recorded that date.' },
-  { key: 'session_9pm', label: '9:00 PM Session', hint: 'Selected-date received leads marked 9:00 Session Attend that date.' },
+  { key: 'session_9pm', label: 'Common Meeting', hint: 'Selected-date received leads marked Common Meeting Attended that date.' },
+  { key: 'personal_meeting', label: 'Personal Meeting', hint: 'Selected-date received leads with a Personal Meeting recorded that date.' },
+  { key: 'converted', label: 'Converted', hint: 'Selected-date received leads converted during the same selected period.' },
   { key: 'call_issues', label: 'Call Issues', hint: 'Selected-date received leads with a current unresolved retryable call issue.' },
 ];
 
@@ -53,8 +54,9 @@ const ALL_TIME_METRIC_OPTIONS: Array<{ key: LeadAllTimeMetric; label: string; hi
   { key: 'all', label: 'All Leads', hint: 'All active leads matching the current filters.' },
   { key: 'worked', label: 'Worked', hint: 'Leads with any saved call, remark, or workflow activity.' },
   { key: 'pending', label: 'Pending', hint: 'Currently assigned leads with an overdue actionable obligation.' },
-  { key: 'personal_meeting', label: 'Meeting Attended', hint: 'Leads with a Personal Meeting recorded at any time.' },
-  { key: 'session_9pm', label: '9:00 PM Session', hint: 'Leads ever marked 9:00 Session Attend.' },
+  { key: 'session_9pm', label: 'Common Meeting', hint: 'Leads ever marked Common Meeting Attended.' },
+  { key: 'personal_meeting', label: 'Personal Meeting', hint: 'Leads with a Personal Meeting recorded at any time.' },
+  { key: 'converted', label: 'Converted', hint: 'Leads with authoritative current or historical conversion evidence.' },
   { key: 'call_issues', label: 'Call Issues', hint: 'Currently assigned leads with an unresolved retryable call issue.' },
 ];
 
@@ -269,14 +271,14 @@ function LeadRowActionsMenu({
             <ScrollText className="h-4 w-4" />
             <span>Create notes</span>
           </button>
-          <button
+          {isRmUser && <button
             type="button"
             onClick={() => runAndClose(onAddRemark)}
             className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-violet-50 hover:text-violet-700"
           >
             <MessageSquarePlus className="h-4 w-4" />
-            <span>{isRmUser ? 'Add RM update' : 'Add remark'}</span>
-          </button>
+            <span>Add RM update</span>
+          </button>}
           {onDelete && (
             <>
               <div className="my-1 h-px bg-slate-100" />
@@ -334,7 +336,7 @@ function LeadMetricFilterRow({
           </Link>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-3 xl:grid-cols-7">
         {options.map(option => {
           const active = selectedMetric === option.key;
           return (
@@ -510,7 +512,7 @@ function LeadsInner() {
     ? filters.daily_metric || 'received'
     : filters.all_time_metric === 'all' ? 'received' : filters.all_time_metric || 'received';
   distributionParams.set('metric', distributionMetric);
-  distributionParams.set('sort', ['worked', 'pending', 'call_issues'].includes(distributionMetric) ? distributionMetric : 'received');
+  distributionParams.set('sort', ['worked', 'pending', 'converted', 'call_issues'].includes(distributionMetric) ? distributionMetric : 'received');
   const distributionHref = `/leads/distribution?${distributionParams.toString()}`;
 
   useEffect(() => {
@@ -902,7 +904,48 @@ function LeadsInner() {
             icon={<Inbox className="h-6 w-6" />}
           />
         ) : (
-          <div className="overflow-x-auto scroll-thin">
+          <>
+          <div className="divide-y divide-slate-100 md:hidden">
+            {rows.map(lead => {
+              const followupAt = lead.latest_followup_at || lead.next_followup_at;
+              const locked = Boolean(lead.locked_until && new Date(lead.locked_until) > new Date());
+              return (
+                <article key={lead.id} className="p-3">
+                  <div className="flex items-start gap-3">
+                    <input type="checkbox" disabled={lead.read_only_access} checked={selectedIds.includes(lead.id)} onChange={event => toggleLeadSelection(lead.id, event.target.checked)} aria-label={`Select ${displayLeadName(lead)}`} className="mt-3 h-4 w-4 shrink-0" />
+                    <Link href={`/leads/${lead.id}`} className="min-w-0 flex-1 rounded-xl py-2 focus:outline-none focus:ring-2 focus:ring-brand-200">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 font-semibold text-slate-900"><span className="truncate">{displayLeadName(lead)}</span>{locked && <Lock className="h-3.5 w-3.5 shrink-0 text-amber-500" />}</div>
+                          <div className="mt-1 flex items-center gap-1.5 text-xs text-slate-600"><Phone className="h-3.5 w-3.5 text-slate-400" /><span>{fmtPhone(lead.phone)}</span></div>
+                        </div>
+                        <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-slate-400" />
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-1.5"><span className={stageChip[lead.stage] || 'chip-slate'}>{humanize(lead.stage)}</span><StatusChip status={latestStatus(lead)} /></div>
+                      <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2">
+                        <div className="line-clamp-2 text-xs text-slate-700">{lead.latest_remark_note || 'No conversation note yet'}</div>
+                        <div className="mt-1 text-[11px] text-slate-400">{lead.latest_remark_at ? formatISTCompact(lead.latest_remark_at) : 'No activity'}</div>
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                        <div><div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Next action</div><div className={clsx('mt-1 font-medium', followupAt && isOverdue(followupAt) ? 'text-rose-600' : 'text-slate-700')}>{followupAt ? formatISTCompact(followupAt) : 'Not scheduled'}</div></div>
+                        <div><div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Assigned</div><div className="mt-1 truncate font-medium text-slate-700">{lead.assigned_to_name || 'Unassigned'}</div></div>
+                      </div>
+                    </Link>
+                    {!lead.read_only_access && <LeadRowActionsMenu phone={lead.phone} isRmUser={isRmUser} onCall={() => { triggerPhoneCall(lead.phone); openCommunication(lead, 'calls'); }} onChat={() => openCommunication(lead, 'chat')} onCreateNotes={() => router.push(`/notes?leadId=${encodeURIComponent(lead.id)}&compose=1`)} onAddPersonalMeeting={() => router.push(`/personal-meetings?leadId=${encodeURIComponent(lead.id)}&create=1`)} onAddRemark={() => router.push(`/leads/${lead.id}`)} onDelete={canDeleteLead ? () => setDeleteLeadItem(lead) : undefined} />}
+                  </div>
+                  <details className="ml-7 mt-1 text-xs text-slate-600">
+                    <summary className="flex min-h-11 cursor-pointer items-center font-medium text-brand-700">More details</summary>
+                    <dl className="grid grid-cols-2 gap-x-3 gap-y-2 rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+                      <div><dt className="text-slate-400">Source</dt><dd className="mt-0.5 break-words">{lead.source_label || humanize(lead.source)}</dd></div>
+                      <div><dt className="text-slate-400">Category</dt><dd className="mt-0.5">{humanize(lead.category)}</dd></div>
+                      <div className="col-span-2"><dt className="text-slate-400">Campaign</dt><dd className="mt-0.5 break-words">{lead.campaign_name || lead.campaign_label || 'Not available'}</dd></div>
+                    </dl>
+                  </details>
+                </article>
+              );
+            })}
+          </div>
+          <div className="hidden overflow-x-auto scroll-thin md:block">
             <table className="w-full min-w-[1640px] table-fixed text-sm">
               <colgroup>
                 <col className="w-10" />
@@ -1141,6 +1184,7 @@ function LeadsInner() {
               </tbody>
             </table>
           </div>
+          </>
         )}
 
         {pages > 1 && (
@@ -1148,7 +1192,7 @@ function LeadsInner() {
             <button
               disabled={page <= 1}
               onClick={() => setFilters(f => ({ ...f, page: page - 1 }))}
-              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 disabled:opacity-50 hover:bg-slate-50"
+              className="inline-flex min-h-11 flex-1 items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 disabled:opacity-50 hover:bg-slate-50 sm:flex-none"
             >
               <ChevronLeft className="h-3.5 w-3.5" /> Prev
             </button>
@@ -1158,7 +1202,7 @@ function LeadsInner() {
             <button
               disabled={page >= pages}
               onClick={() => setFilters(f => ({ ...f, page: page + 1 }))}
-              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 disabled:opacity-50 hover:bg-slate-50"
+              className="inline-flex min-h-11 flex-1 items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 disabled:opacity-50 hover:bg-slate-50 sm:flex-none"
             >
               Next <ChevronRight className="h-3.5 w-3.5" />
             </button>

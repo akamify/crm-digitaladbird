@@ -16,7 +16,7 @@ const {
 
 const ADMIN_ROLES = new Set(['super_admin', 'admin']);
 const VIEW_MODES = new Set(['all_time', 'daily']);
-const METRICS = new Set(['received', 'worked', 'pending', 'personal_meeting', 'session_9pm', 'call_issues']);
+const METRICS = new Set(['received', 'worked', 'pending', 'session_9pm', 'personal_meeting', 'converted', 'call_issues']);
 const RETRYABLE_SQL = sqlArray(RETRYABLE_CONTACT_ISSUES);
 const MAX_RANGE_DAYS = 366;
 const UUID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
@@ -323,7 +323,7 @@ async function listRms(actor, input = {}) {
   const search = String(input.search || '').trim();
   const searchClause = search ? `AND rm.full_name ILIKE ${pushParam(params, `%${search}%`)}` : '';
   const order = sortSql(input, {
-    received: 'received', worked: 'worked', pending: 'pending', call_issues: 'call_issues', name: 'full_name',
+    received: 'received', worked: 'worked', pending: 'pending', converted: 'converted', call_issues: 'call_issues', name: 'full_name',
   }, 'received');
 
   const { rows: [result] } = await query(`${cte},
@@ -375,7 +375,7 @@ async function listCounselors(actor, rmId, input = {}) {
   const search = String(input.search || '').trim();
   const searchClause = search ? `AND counselor.full_name ILIKE ${pushParam(params, `%${search}%`)}` : '';
   const order = sortSql(input, {
-    received: 'received', worked: 'worked', pending: 'pending', call_issues: 'call_issues', name: 'full_name',
+    received: 'received', worked: 'worked', pending: 'pending', converted: 'converted', call_issues: 'call_issues', name: 'full_name',
   }, 'received');
 
   const { rows: [result] } = await query(`${cte},
@@ -494,6 +494,8 @@ async function getCounselorLeads(actor, rmId, counselorId, input = {}) {
       latest_attempt.outcome::text AS attempt_outcome,
       latest_attempt.trigger_reason::text AS attempt_reason,
       next_attempt.scheduled_at AS next_attempt_at,
+      conversion_evidence.converted_at,
+      conversion_evidence.conversion_source,
       GREATEST(c.updated_at, COALESCE(latest_remark.created_at, c.updated_at), COALESCE(last_call.created_at, c.updated_at)) AS last_activity_at,
       c.metric_call_issues AS has_call_issue,
       CASE WHEN c.metric_call_issues THEN ${issueStatusSql('c')} ELSE NULL END AS effective_call_issue,
@@ -521,6 +523,31 @@ async function getCounselorLeads(actor, rmId, counselorId, input = {}) {
     LEFT JOIN LATERAL (
       SELECT cl.created_at FROM lead_call_logs cl WHERE cl.lead_id = c.id ORDER BY cl.created_at DESC LIMIT 1
     ) last_call ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT evidence.converted_at, evidence.conversion_source
+      FROM (
+        SELECT lr.created_at AS converted_at, 'remark'::text AS conversion_source
+          FROM lead_remarks lr
+         WHERE lr.lead_id = c.id
+           AND (lr.call_status::text = 'converted' OR COALESCE(lr.call_statuses, '[]'::jsonb) ? 'converted')
+        UNION ALL
+        SELECT wh.created_at, 'workflow'::text
+          FROM lead_workflow_history wh
+         WHERE wh.lead_id = c.id
+           AND (wh.new_value = 'converted' OR (COALESCE(wh.metadata, '{}'::jsonb)->'step_1_statuses') ? 'converted')
+        UNION ALL
+        SELECT le.occurred_at, 'lifecycle'::text
+          FROM lead_lifecycle_events le
+         WHERE le.lead_id = c.id
+           AND le.event_type = 'lifecycle_closed'
+           AND COALESCE(le.metadata->>'terminal_state', '') = 'converted'
+        UNION ALL
+        SELECT NULL::timestamptz, 'lead_state'::text
+         WHERE c.call_status::text = 'converted' OR c.stage::text = 'won'
+      ) evidence
+      ORDER BY evidence.converted_at DESC NULLS LAST
+      LIMIT 1
+    ) conversion_evidence ON TRUE
     ORDER BY c.created_at DESC, c.id DESC
     LIMIT ${limitParam} OFFSET ${offsetParam}`, rowParams);
 

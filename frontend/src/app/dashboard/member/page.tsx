@@ -20,6 +20,8 @@ import { useAuth } from '@/lib/auth';
 import { fmtDate, fmtRelative, isOverdue, isDueToday, clsx } from '@/lib/format';
 import type { LeadCategory } from '@/types';
 import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
+import { CounselorLifecycleWorkspace } from '@/components/dashboard/CounselorLifecycleWorkspace';
+import { useWorkflowSettings } from '@/hooks/useLifecycle';
 
 export default function MemberDashboardPage() {
   return (
@@ -44,6 +46,7 @@ function MemberDashboardInner() {
   const myLeads   = useLeadList({ page: 1, page_size: 10, ...(category !== 'all' ? { category } : {}) });
   const followups = useLeadList({ followup: 'today', followup_strict: 'true', page: 1, page_size: 6 });
   const lrStats   = useLeadRequestStats();
+  const workflowSettings = useWorkflowSettings();
   const submitReq = useSubmitLeadRequest();
   const cancelReq = useCancelLeadRequest();
 
@@ -56,6 +59,7 @@ function MemberDashboardInner() {
   const activeRequest = stats?.my_pending_request && !hiddenRequestIds.includes(stats.my_pending_request.id)
     ? stats.my_pending_request
     : null;
+  const lifecycleEnabled = workflowSettings.data?.enabled === true;
 
   return (
     <div className="space-y-6">
@@ -183,6 +187,10 @@ function MemberDashboardInner() {
         )}
       </div>
 
+      {lifecycleEnabled && <CounselorLifecycleWorkspace />}
+
+      {!lifecycleEnabled && (
+        <>
       {/* KPIs */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {summary.isLoading ? (
@@ -289,6 +297,8 @@ function MemberDashboardInner() {
           )}
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }

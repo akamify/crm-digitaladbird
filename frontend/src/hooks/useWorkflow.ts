@@ -144,10 +144,11 @@ export function useLeadWorkflow(leadId: string | null | undefined) {
 export function useSaveRemark() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ leadId, remark_status, remark_statuses, attempt_trigger_status, attempt_mode, confirm_sequence_close }: {
+    mutationFn: ({ leadId, remark_status, remark_statuses, remark, attempt_trigger_status, attempt_mode, confirm_sequence_close }: {
       leadId: string;
       remark_status?: string;
       remark_statuses?: string[];
+      remark?: string;
       attempt_trigger_status?: string | null;
       attempt_mode?: 'remark_click' | 'unscheduled_call';
       confirm_sequence_close?: boolean;
@@ -155,6 +156,7 @@ export function useSaveRemark() {
       apiPost<WorkflowState>(`/leads/${leadId}/workflow/remark`, {
         remark_status,
         remark_statuses,
+        remark,
         attempt_trigger_status,
         attempt_mode,
         confirm_sequence_close,
