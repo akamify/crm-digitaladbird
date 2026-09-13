@@ -10,6 +10,7 @@ import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
 import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
 import { LeadFilters } from '@/components/leads/LeadFilters';
 import { LeadAnalyticsPeriodControl } from '@/components/leads/LeadAnalyticsPeriodControl';
+import { CounselorLifecycleWorkspace } from '@/components/dashboard/CounselorLifecycleWorkspace';
 import { LeadSavedViews } from '@/components/leads/LeadSavedViews';
 import { LeadLabelPickerModal } from '@/components/leads/LeadLabelPickerModal';
 import { AddLeadModal } from '@/components/leads/AddLeadModal';
@@ -375,6 +376,7 @@ function LeadsInner() {
   const sp = useSearchParams();
   const { user } = useAuth();
   const isSuperAdminLeadsView = user?.role === 'super_admin';
+  const isCounselorLeadsView = user?.role === 'member' || user?.role === 'partner';
   const initial = useMemo<LeadFilterType>(() => {
     const view = leadViewMode(sp.get('lead_view'), sp.has('selected_date') || sp.has('from'));
     const scope = normalizeAnalyticsScope(view, sp.get('from') || sp.get('selected_date'), sp.get('to') || sp.get('selected_date'));
@@ -479,7 +481,7 @@ function LeadsInner() {
     delete next.assignment;
     return next;
   }, [filters, debouncedSearch, isSuperAdminLeadsView]);
-  const { data, isLoading } = useLeadList(effectiveFilters);
+  const { data, isLoading } = useLeadList(effectiveFilters, { enabled: Boolean(user) && !isCounselorLeadsView });
   const bulkAddRemark = useBulkAddRemark();
   const deleteLead = useDeleteLead();
   const deleteAllLeads = useDeleteAllLeads();
@@ -655,6 +657,22 @@ function LeadsInner() {
     } catch (error: any) {
       toast.error(error?.response?.data?.error?.message || error?.response?.data?.message || 'Could not delete all leads');
     }
+  }
+
+  if (isCounselorLeadsView) {
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-wrap justify-end gap-2">
+          <Link href="/notes" className="btn-outline inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm">
+            <ScrollText className="h-4 w-4" /> Latest Notes
+          </Link>
+          <Link href="/personal-meetings" className="btn-outline inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm">
+            <CalendarDays className="h-4 w-4" /> Personal Meetings
+          </Link>
+        </div>
+        <CounselorLifecycleWorkspace leadsPage />
+      </div>
+    );
   }
 
   return (

@@ -14,11 +14,12 @@ function toQueryString(f: LeadFilters): string {
   return params.toString();
 }
 
-export function useLeadList(filters: LeadFilters) {
+export function useLeadList(filters: LeadFilters, options: { enabled?: boolean } = {}) {
   const qs = toQueryString(filters);
   return useQuery({
     queryKey: ['leads', qs],
     queryFn: () => apiGet<PageResult<Lead>>(`/leads?${qs}`),
+    enabled: options.enabled !== false,
     placeholderData: keepPreviousData,
     staleTime: 15_000,
     retry: 2,

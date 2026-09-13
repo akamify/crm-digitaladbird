@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useDeferredValue, useState } from 'react';
+import { useDeferredValue, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowLeft, ArrowRight, CalendarDays, Clock3, Search } from 'lucide-react';
 import { Skeleton } from '@/components/ui/Modal';
 import { useCounselorWorkspaceLeads, useCounselorWorkspaceSummary, type WorkspaceSummary, type WorkspaceView } from '@/hooks/useLifecycle';
@@ -16,13 +17,11 @@ const METRICS: Array<{ key: keyof WorkspaceSummary; label: string; hint: string 
   { key: 'reassigned', label: 'Reassigned To Me', hint: 'Received from another counselor in the selected period.' },
 ];
 
-const WORK_VIEWS: Array<[WorkspaceView, string]> = [
-  ['received', 'Leads Received'], ['worked', 'Worked'], ['pending', 'Pending'], ['unworked', 'Unworked'],
-  ['call_issues', 'Call Issues'], ['follow_up', 'Follow-up'],
-];
-const JOURNEY_VIEWS: Array<[WorkspaceView, string]> = [
+const ANALYTICS_VIEWS: Array<[WorkspaceView, string]> = [
+  ['worked', 'Worked'], ['call_issues', 'Call Issues'], ['pending', 'Pending'],
   ['responses', 'Responses'], ['common_meeting', 'Common Meeting'], ['tte', 'TTE'],
-  ['personal_meeting', 'Personal Meeting'], ['quotation', 'Quotation'], ['converted', 'Converted'], ['cold', 'Cold'],
+  ['personal_meeting', 'Personal Meeting'], ['quotation', 'Quotation'], ['follow_up', 'Follow-up'],
+  ['converted', 'Converted'], ['cold', 'Cold'],
 ];
 
 function istDate(date = new Date()) {
@@ -35,15 +34,27 @@ function shiftDate(value: string, amount: number) {
   return date.toISOString().slice(0, 10);
 }
 
-export function CounselorLifecycleWorkspace() {
+export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?: boolean }) {
   const today = istDate();
-  const [selectedDate, setSelectedDate] = useState(today);
-  const [view, setView] = useState<WorkspaceView>('received');
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedView = searchParams.get('workspace_view') as WorkspaceView | null;
+  const requestedDate = searchParams.get('selected_date') || '';
+  const initialView = leadsPage && ANALYTICS_VIEWS.some(([key]) => key === requestedView) ? requestedView as WorkspaceView : leadsPage ? 'worked' : 'received';
+  const initialDate = leadsPage && /^\d{4}-\d{2}-\d{2}$/.test(requestedDate) && requestedDate <= today ? requestedDate : today;
+  const [selectedDate, setSelectedDate] = useState(initialDate);
+  const [view, setView] = useState<WorkspaceView>(initialView);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search);
   const summary = useCounselorWorkspaceSummary(selectedDate, selectedDate);
-  const leads = useCounselorWorkspaceLeads({ view, from: selectedDate, to: selectedDate, page, q: deferredSearch, enabled: summary.data?.enabled !== false });
+  const leads = useCounselorWorkspaceLeads({ view, from: selectedDate, to: selectedDate, page, q: deferredSearch });
+
+  useEffect(() => {
+    if (!leadsPage) return;
+    const next = new URLSearchParams({ workspace_view: view, selected_date: selectedDate });
+    router.replace(`/leads?${next.toString()}`, { scroll: false });
+  }, [leadsPage, router, selectedDate, view]);
 
   function selectView(next: WorkspaceView) {
     setView(next);
@@ -59,8 +70,8 @@ export function CounselorLifecycleWorkspace() {
     <section className="overflow-hidden rounded-2xl border border-sky-200 bg-gradient-to-br from-sky-50 via-white to-amber-50 shadow-sm">
       <div className="flex flex-col gap-4 border-b border-sky-100 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">Counselor Workspace</p>
-          <h2 className="mt-1 text-lg font-semibold text-slate-950">Today&apos;s work, one clear queue</h2>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">{leadsPage ? 'Lead Analytics' : 'Counselor Workspace'}</p>
+          <h2 className="mt-1 text-lg font-semibold text-slate-950">{leadsPage ? 'Lead journey and work queues' : 'Today&apos;s work, one clear queue'}</h2>
           <p className="text-xs text-slate-500">Live workload stays current; activity metrics follow the selected date.</p>
         </div>
         <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
@@ -82,20 +93,18 @@ export function CounselorLifecycleWorkspace() {
       </div>
 
       <div className="space-y-4 bg-white/75 p-4 sm:p-5">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="mr-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Work queues</span>
-          {WORK_VIEWS.map(([key, label]) => <button key={key} type="button" onClick={() => selectView(key)} className={view === key ? 'chip-blue' : 'chip-slate'}>{label} <span className="ml-1 tabular-nums">{summary.data?.summary?.[key] ?? 0}</span></button>)}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="mr-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Journey views</span>
-          {JOURNEY_VIEWS.map(([key, label]) => <button key={key} type="button" onClick={() => selectView(key)} className={view === key ? 'chip-green' : 'chip-slate'}>{label} <span className="ml-1 tabular-nums">{summary.data?.summary?.[key] ?? 0}</span></button>)}
+        {summary.isError && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800"><span>Lead analytics counts could not be loaded.</span><button type="button" onClick={() => summary.refetch()} className="font-semibold underline underline-offset-2">Retry</button></div>}
+        <div className="scroll-thin flex gap-2 overflow-x-auto pb-1" aria-label="Lead analytics views">
+          {ANALYTICS_VIEWS.map(([key, label]) => <button key={key} type="button" onClick={() => selectView(key)} className={`${view === key ? 'chip-blue' : 'chip-slate'} min-h-10 shrink-0`}>{label} <span className="ml-1 tabular-nums">{summary.data?.summary?.[key] ?? 0}</span></button>)}
         </div>
         <label className="relative block max-w-md">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
           <input className="input pl-9" value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Search this queue..." />
         </label>
 
-        {leads.isLoading ? <div className="space-y-2">{[1, 2, 3].map(key => <Skeleton key={key} className="h-16" />)}</div> : !leads.data?.rows.length ? (
+        {leads.isLoading ? <div className="space-y-2">{[1, 2, 3].map(key => <Skeleton key={key} className="h-16" />)}</div> : leads.isError ? (
+          <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-8 text-center text-sm text-rose-800"><div>Leads in this view could not be loaded.</div><button type="button" onClick={() => leads.refetch()} className="mt-2 font-semibold underline underline-offset-2">Retry</button></div>
+        ) : !leads.data?.rows.length ? (
           <div className="rounded-xl border border-dashed border-slate-300 px-4 py-10 text-center text-sm text-slate-500">No leads in this view.</div>
         ) : (
           <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
