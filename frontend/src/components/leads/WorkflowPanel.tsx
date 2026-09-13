@@ -410,6 +410,11 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
   const [customComposerActive, setCustomComposerActive] = useState(false);
   const noteRef = useRef<HTMLTextAreaElement | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingRemarkAction | null>(null);
+  const [retryExpanded, setRetryExpanded] = useState(false);
+  const [retryRevealPending, setRetryRevealPending] = useState(false);
+  const [retryHighlighted, setRetryHighlighted] = useState(false);
+  const [retryAnnouncement, setRetryAnnouncement] = useState('');
+  const retryHighlightTimerRef = useRef<number | null>(null);
   const availableGroups = LEAD_REMARK_GROUPS.map(group => ({
     ...group,
     options: group.options.filter(option => options.includes(option.value)),
@@ -435,6 +440,42 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, [pendingAction, save.isPending]);
 
+  useEffect(() => () => {
+    if (retryHighlightTimerRef.current !== null) window.clearTimeout(retryHighlightTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (!callAttemptSequence?.has_active_sequence) {
+      setRetryExpanded(false);
+      return;
+    }
+    if (callAttemptState?.is_due || callAttemptState?.is_overdue) setRetryExpanded(true);
+  }, [callAttemptSequence?.has_active_sequence, callAttemptSequence?.id, callAttemptState?.is_due, callAttemptState?.is_overdue]);
+
+  useEffect(() => {
+    if (!retryRevealPending || !callAttemptSequence?.has_active_sequence) return undefined;
+    setRetryRevealPending(false);
+    setRetryExpanded(true);
+    setRetryHighlighted(true);
+    setRetryAnnouncement(nextScheduledCall
+      ? `Retry plan created. Next call is ${fmtDate(nextScheduledCall.scheduled_at)}.`
+      : 'Retry plan created.');
+    scrollToRetryPlan();
+    if (retryHighlightTimerRef.current !== null) window.clearTimeout(retryHighlightTimerRef.current);
+    retryHighlightTimerRef.current = window.setTimeout(() => {
+      setRetryHighlighted(false);
+      retryHighlightTimerRef.current = null;
+    }, 1800);
+    return undefined;
+  }, [callAttemptSequence?.has_active_sequence, callAttemptSequence?.id, nextScheduledCall, retryRevealPending]);
+
+  function scrollToRetryPlan() {
+    window.requestAnimationFrame(() => {
+      const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      document.getElementById('active-retry-plan')?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+    });
+  }
+
   function saveSelection(
     nextSelection: string[],
     triggerStatus: string | null,
@@ -446,6 +487,7 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
     }
 
     const previousSelection = selected;
+    const shouldRevealRetry = Boolean(triggerStatus && RETRYABLE_CALL_ISSUE_VALUES.has(triggerStatus) && !hasActiveCallSequence);
     setSelected(nextSelection);
 
     save.mutate({
@@ -458,9 +500,11 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
     }, {
       onSuccess: () => {
         setPendingAction(null);
+        if (shouldRevealRetry) setRetryRevealPending(true);
         toast.success(settings.attemptMode === 'unscheduled_call' ? 'Extra call recorded' : 'Remark updated');
       },
       onError: (e: unknown) => {
+        if (shouldRevealRetry) setRetryRevealPending(false);
         setSelected(previousSelection);
         const responseData = typeof e === 'object' && e && 'response' in e
           ? (e as { response?: { data?: { error?: { code?: string; message?: string } } } }).response?.data
@@ -524,7 +568,8 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
     if (!pendingAction) return;
     if (pendingAction.kind === 'retry_due') {
       setPendingAction(null);
-      document.getElementById('active-retry-plan')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setRetryExpanded(true);
+      scrollToRetryPlan();
       return;
     }
     if (pendingAction.kind === 'extra_call') {
@@ -616,9 +661,23 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
                 );
               })}
             </div>
+            {group.key === 'issues' && (
+              <CallAttemptTracker
+                leadId={leadId}
+                sequence={callAttemptSequence}
+                attempts={callAttempts}
+                callAttemptState={callAttemptState}
+                nextScheduledCall={nextScheduledCall}
+                displayMode="contextual"
+                expanded={retryExpanded}
+                onExpandedChange={setRetryExpanded}
+                highlighted={retryHighlighted}
+              />
+            )}
           </div>
         ))}
       </div>
+      <p className="sr-only" role="status" aria-live="polite">{retryAnnouncement}</p>
       <div id="conversation-note" className="mt-4 scroll-mt-24 rounded-xl border border-slate-200 bg-slate-50/70 p-3 sm:p-4">
         <div className="mb-2">
           <label htmlFor={`conversation-note-${leadId}`} className="text-sm font-semibold text-slate-900">
@@ -652,13 +711,6 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
           </button>
         </div>
       </div>
-      <CallAttemptTracker
-        leadId={leadId}
-        sequence={callAttemptSequence}
-        attempts={callAttempts}
-        callAttemptState={callAttemptState}
-        nextScheduledCall={nextScheduledCall}
-      />
       {selected.length > 0 && (
         <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
           <p className="mb-1.5 text-[11px] font-medium text-slate-500">Current status and recorded Step 1 context</p>

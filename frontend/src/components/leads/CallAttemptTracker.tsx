@@ -46,6 +46,10 @@ type Props = {
   attempts: CallAttemptSummary[] | undefined;
   callAttemptState: CallAttemptStateSummary | null | undefined;
   nextScheduledCall: NextScheduledCallSummary | null | undefined;
+  displayMode?: 'full' | 'contextual';
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
+  highlighted?: boolean;
 };
 
 function formatMinutes(minutes: number | null | undefined) {
@@ -106,9 +110,20 @@ function getIndicator(uiState: string) {
   return <Clock3 className="h-4 w-4 text-slate-400" />;
 }
 
-export function CallAttemptTracker({ leadId, sequence, attempts, callAttemptState, nextScheduledCall }: Props) {
+export function CallAttemptTracker({
+  leadId,
+  sequence,
+  attempts,
+  callAttemptState,
+  nextScheduledCall,
+  displayMode = 'full',
+  expanded,
+  onExpandedChange,
+  highlighted = false,
+}: Props) {
   const completeAttempt = useCompleteCallAttempt();
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [internalExpanded, setInternalExpanded] = useState(false);
   const attemptList = useMemo(() => attempts ?? [], [attempts]);
 
   useEffect(() => {
@@ -138,6 +153,19 @@ export function CallAttemptTracker({ leadId, sequence, attempts, callAttemptStat
   );
   const closedOutcome = sequence?.closed_reason?.replace(/^workflow_|^terminal_/, '') || null;
   const activeAttemptState = deriveState(activeAttempt, nowMs);
+  const panelExpanded = expanded ?? internalExpanded;
+
+  function setPanelExpanded(next: boolean) {
+    if (expanded === undefined) setInternalExpanded(next);
+    onExpandedChange?.(next);
+  }
+
+  useEffect(() => {
+    if (displayMode === 'contextual' && sequence?.has_active_sequence && activeAttemptState.isActionable && !panelExpanded) {
+      if (expanded === undefined) setInternalExpanded(true);
+      onExpandedChange?.(true);
+    }
+  }, [activeAttemptState.isActionable, displayMode, expanded, onExpandedChange, panelExpanded, sequence?.has_active_sequence]);
 
   if (!sequence || attemptList.length === 0) return null;
 
@@ -160,7 +188,6 @@ export function CallAttemptTracker({ leadId, sequence, attempts, callAttemptStat
 
   const tracker = (
     <div
-      id={sequence.has_active_sequence ? 'active-retry-plan' : undefined}
       className={clsx('rounded-2xl border bg-white p-3 shadow-sm', sequence.has_active_sequence ? 'border-brand-200' : 'border-slate-200')}
     >
       <div className="flex items-center justify-between gap-3">
@@ -324,10 +351,10 @@ export function CallAttemptTracker({ leadId, sequence, attempts, callAttemptStat
 
   if (!sequence.has_active_sequence) {
     return (
-      <details className="group mt-3 rounded-2xl border border-slate-200 bg-slate-50/70">
+      <details open={displayMode === 'contextual' ? panelExpanded : undefined} onToggle={displayMode === 'contextual' ? event => setPanelExpanded(event.currentTarget.open) : undefined} className="group mt-3 rounded-2xl border border-slate-200 bg-slate-50/70">
         <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-3 text-xs font-semibold text-slate-700">
           <Clock3 className="h-4 w-4 text-slate-400" />
-          Previous Retry Plan
+          Retry Plan History
           <span className="font-normal text-slate-500">
             Started as {OUTCOME_LABELS[sequence.initial_trigger_reason] || humanize(sequence.initial_trigger_reason)} - {humanize(sequence.status)}
           </span>
@@ -338,5 +365,27 @@ export function CallAttemptTracker({ leadId, sequence, attempts, callAttemptStat
     );
   }
 
-  return <div className="mt-3">{tracker}</div>;
+  if (displayMode === 'contextual') {
+    return (
+      <div id="active-retry-plan" className={clsx('mt-3 overflow-hidden rounded-2xl border bg-white transition-all duration-300', activeAttemptState.uiState === 'overdue' ? 'border-rose-300' : activeAttemptState.uiState === 'due' ? 'border-amber-300' : 'border-brand-200', highlighted && 'ring-4 ring-brand-100 shadow-lg')}>
+        <button type="button" onClick={() => setPanelExpanded(!panelExpanded)} aria-expanded={panelExpanded} aria-controls="active-retry-plan-details" className="flex min-h-11 w-full items-center gap-3 px-3 py-3 text-left hover:bg-slate-50">
+          <div className={clsx('flex h-9 w-9 shrink-0 items-center justify-center rounded-xl', activeAttemptState.uiState === 'overdue' ? 'bg-rose-100 text-rose-700' : activeAttemptState.uiState === 'due' ? 'bg-amber-100 text-amber-700' : 'bg-brand-50 text-brand-700')}>
+            {activeAttemptState.uiState === 'overdue' ? <AlertTriangle className="h-4 w-4" /> : <PhoneCall className="h-4 w-4" />}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">Active Retry Plan</span>
+              {callAttemptState?.active_attempt_number ? <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-semibold text-brand-700">{callAttemptState.active_attempt_number === 1 ? 'Initial issue' : callAttemptState.active_attempt_number === maxAttempts ? 'Final recovery' : `Retry ${callAttemptState.active_attempt_number - 1} of ${maxAttempts - 1}`}</span> : null}
+            </div>
+            <p className="mt-1 text-xs font-medium text-slate-800">Started because: {OUTCOME_LABELS[sequence.initial_trigger_reason] || humanize(sequence.initial_trigger_reason)}</p>
+            <p className={clsx('mt-0.5 text-xs', activeAttemptState.uiState === 'overdue' ? 'font-semibold text-rose-700' : 'text-slate-500')}>{nextScheduledCall?.is_overdue ? `Overdue: ${formatCompactDateTime(nextScheduledCall.scheduled_at)}` : nextScheduledCall ? `Next retry: ${formatCompactDateTime(nextScheduledCall.scheduled_at)}` : 'Retry plan active'}</p>
+          </div>
+          <ChevronDown className={clsx('h-4 w-4 shrink-0 text-slate-400 transition-transform', panelExpanded && 'rotate-180')} aria-hidden="true" />
+        </button>
+        {panelExpanded && <div id="active-retry-plan-details" className="border-t border-slate-200 bg-slate-50/50 p-2">{tracker}</div>}
+      </div>
+    );
+  }
+
+  return <div id="active-retry-plan" className="mt-3">{tracker}</div>;
 }

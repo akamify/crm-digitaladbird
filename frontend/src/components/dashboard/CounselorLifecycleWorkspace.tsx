@@ -1,9 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { useDeferredValue, useEffect, useState } from 'react';
+import { useDeferredValue, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowRight, Clock3, Phone, Search } from 'lucide-react';
+import { ArrowRight, Clock3, Loader2, Phone, Search } from 'lucide-react';
 import { Skeleton } from '@/components/ui/Modal';
 import { LeadAnalyticsPeriodControl } from '@/components/leads/LeadAnalyticsPeriodControl';
 import { LeadFilters } from '@/components/leads/LeadFilters';
@@ -22,7 +22,7 @@ const METRICS: Array<{ key: keyof WorkspaceSummary; label: string; hint: string 
 ];
 
 const ANALYTICS_VIEWS: Array<[WorkspaceView, string]> = [
-  ['worked', 'Worked'], ['call_issues', 'Call Issues'], ['pending', 'Pending'],
+  ['received', 'Leads Received'], ['worked', 'Worked'], ['call_issues', 'Call Issues'], ['pending', 'Pending'],
   ['responses', 'Responses'], ['common_meeting', 'Common Meeting'], ['tte', 'TTE'],
   ['personal_meeting', 'Personal Meeting'], ['quotation', 'Quotation'], ['follow_up', 'Follow-up'],
   ['converted', 'Converted'], ['cold', 'Cold'],
@@ -37,12 +37,13 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
   const router = useRouter();
   const searchParams = useSearchParams();
   const requestedView = searchParams.get('workspace_view') as WorkspaceView | null;
-  const initialView = leadsPage && ANALYTICS_VIEWS.some(([key]) => key === requestedView) ? requestedView as WorkspaceView : leadsPage ? 'worked' : 'received';
+  const initialView = leadsPage && ANALYTICS_VIEWS.some(([key]) => key === requestedView) ? requestedView as WorkspaceView : 'received';
   const [scope, setScope] = useState(() => leadsPage
     ? normalizeAnalyticsScope(searchParams.get('lead_view'), searchParams.get('from') || searchParams.get('selected_date'), searchParams.get('to') || searchParams.get('selected_date'))
     : { view: 'daily' as const, from: today, to: today });
   const [view, setView] = useState<WorkspaceView>(initialView);
   const [page, setPage] = useState(1);
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [filters, setFilters] = useState<LeadFilterState>(() => ({
     q: searchParams.get('q') || '', category: (searchParams.get('category') as LeadFilterState['category']) || '',
@@ -56,6 +57,12 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
   }));
   const deferredFilters = useDeferredValue(leadsPage ? filters : { ...filters, q: dashboardSearch });
   const leads = useCounselorWorkspaceLeads({ view, scope, filters: deferredFilters, page });
+  const activeViewIndex = ANALYTICS_VIEWS.findIndex(([key]) => key === view);
+  const activeViewLabel = ANALYTICS_VIEWS.find(([key]) => key === view)?.[1]
+    || METRICS.find(metric => metric.key === view)?.label
+    || humanize(view);
+  const isInitialLoading = leads.isLoading && !leads.data;
+  const isTransitioning = leads.isFetching && Boolean(leads.data);
 
   useEffect(() => {
     if (!leadsPage) return;
@@ -71,8 +78,20 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
   }, [filters, leadsPage, router, scope, view]);
 
   function selectView(next: WorkspaceView) {
+    if (next === view) return;
     setView(next);
     setPage(1);
+  }
+
+  function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    let nextIndex: number | null = null;
+    if (event.key === 'ArrowRight') nextIndex = (index + 1) % ANALYTICS_VIEWS.length;
+    else if (event.key === 'ArrowLeft') nextIndex = (index - 1 + ANALYTICS_VIEWS.length) % ANALYTICS_VIEWS.length;
+    else if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = ANALYTICS_VIEWS.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    tabRefs.current[nextIndex]?.focus();
   }
 
   function selectScope(next: typeof scope) {
@@ -102,17 +121,24 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
       </div>
 
       <div className="space-y-4 bg-white/75 p-4 sm:p-5">
-        <div className="scroll-thin flex gap-2 overflow-x-auto pb-1" aria-label="Lead analytics views">
-          {ANALYTICS_VIEWS.map(([key, label]) => <button key={key} type="button" onClick={() => selectView(key)} className={`${view === key ? 'chip-blue' : 'chip-slate'} min-h-10 shrink-0`}>{label} <span className="ml-1 tabular-nums">{leads.data?.summary?.[key] ?? 0}</span></button>)}
+        <div className="scroll-thin flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Lead analytics views">
+          {ANALYTICS_VIEWS.map(([key, label], index) => {
+            const active = view === key;
+            return <button ref={node => { tabRefs.current[index] = node; }} id={`workspace-tab-${key}`} key={key} type="button" role="tab" aria-selected={active} aria-controls="workspace-results" tabIndex={active || (activeViewIndex < 0 && index === 0) ? 0 : -1} onKeyDown={event => handleTabKeyDown(event, index)} onClick={() => selectView(key)} className={`${active ? 'chip-blue' : 'chip-slate'} min-h-10 shrink-0`}>{active && isTransitioning && <Loader2 className="mr-1.5 inline h-3.5 w-3.5 animate-spin" aria-hidden="true" />}{label} <span className="ml-1 tabular-nums">{leads.data?.summary?.[key] ?? 0}</span></button>;
+          })}
         </div>
         {leadsPage ? <LeadFilters value={filters} onChange={next => { setFilters(next); setPage(1); }} simplifiedAdmin /> : <label className="relative block max-w-md"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input className="input pl-9" value={dashboardSearch} onChange={event => { setDashboardSearch(event.target.value); setPage(1); }} placeholder="Search this queue..." /></label>}
 
-        {leads.isLoading ? <div className="space-y-2">{[1, 2, 3].map(key => <Skeleton key={key} className="h-16" />)}</div> : leads.isError ? (
-          <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-8 text-center text-sm text-rose-800"><div>Leads in this view could not be loaded.</div><button type="button" onClick={() => leads.refetch()} className="mt-2 font-semibold underline underline-offset-2">Retry</button></div>
-        ) : !leads.data?.rows.length ? (
-          <div className="rounded-xl border border-dashed border-slate-300 px-4 py-10 text-center text-sm text-slate-500">No leads in this view.</div>
-        ) : (
-          <div className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div id="workspace-results" role="tabpanel" aria-labelledby={activeViewIndex >= 0 ? `workspace-tab-${view}` : undefined} aria-label={activeViewIndex < 0 ? `${activeViewLabel} results` : undefined} aria-busy={isInitialLoading || isTransitioning} className="space-y-3 outline-none">
+          <div className="flex min-h-6 items-center justify-between gap-3" role="status" aria-live="polite">
+            <p className="text-sm font-semibold text-slate-800">{isInitialLoading || isTransitioning ? `Loading ${activeViewLabel}...` : `${Number(leads.data?.total || 0).toLocaleString()} ${activeViewLabel}`}</p>
+            {isTransitioning && <span className="inline-flex items-center gap-1.5 text-xs font-medium text-brand-700"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />Updating results</span>}
+          </div>
+          {leads.isError && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-4 text-center text-sm text-rose-800"><div>Leads in this view could not be loaded. Previous results have been kept where available.</div><button type="button" onClick={() => leads.refetch()} className="mt-2 font-semibold underline underline-offset-2">Retry</button></div>}
+          {isInitialLoading ? <div className="space-y-2">{[1, 2, 3].map(key => <Skeleton key={key} className="h-16" />)}</div> : !leads.data && leads.isError ? null : !leads.data?.rows.length ? (
+            <div className="rounded-xl border border-dashed border-slate-300 px-4 py-10 text-center text-sm text-slate-500">No leads in {activeViewLabel}.</div>
+          ) : (
+          <div aria-hidden={isTransitioning} inert={isTransitioning ? true : undefined} className={`divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white transition-opacity ${isTransitioning ? 'pointer-events-none opacity-45' : 'opacity-100'}`}>
             {leads.data.rows.map(lead => (
               <article key={lead.id} className="px-4 py-3 transition hover:bg-slate-50/80">
                 <div className="grid gap-3 lg:grid-cols-[minmax(0,1.25fr)_0.8fr_1fr_auto] lg:items-center">
@@ -125,8 +151,9 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
               </article>
             ))}
           </div>
-        )}
-        {(leads.data?.total || 0) > 25 && <div className="flex items-center justify-end gap-2"><span className="text-xs text-slate-500">Page {page} of {Math.ceil((leads.data?.total || 0) / 25)}</span><button className="btn-secondary" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>Previous</button><button className="btn-secondary" disabled={page * 25 >= (leads.data?.total || 0)} onClick={() => setPage(value => value + 1)}>Next</button></div>}
+          )}
+          {(leads.data?.total || 0) > 25 && <div className="flex items-center justify-end gap-2"><span className="text-xs text-slate-500">Page {page} of {Math.ceil((leads.data?.total || 0) / 25)}</span><button className="btn-secondary" disabled={page <= 1 || isTransitioning} onClick={() => setPage(value => value - 1)}>Previous</button><button className="btn-secondary" disabled={isTransitioning || page * 25 >= (leads.data?.total || 0)} onClick={() => setPage(value => value + 1)}>Next</button></div>}
+        </div>
       </div>
     </section>
   );
