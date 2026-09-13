@@ -2,6 +2,8 @@
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiGet, apiPatch, apiPost } from '@/lib/api';
+import { DISTRIBUTION_FILTER_KEYS } from '@/lib/leadAnalytics';
+import type { LeadAnalyticsScope, LeadFilters } from '@/types';
 
 export type JourneyStage = 'new' | 'response' | 'common_meeting' | 'tte' | 'personal_meeting' | 'quotation';
 export type WorkspaceView = 'received' | 'new' | 'worked' | 'pending' | 'unworked' | 'reassigned' | 'call_issues' | 'follow_up' | 'responses' | 'common_meeting' | 'tte' | 'personal_meeting' | 'quotation' | 'converted' | 'cold';
@@ -82,7 +84,10 @@ export interface WorkspaceLead {
   full_name: string | null;
   phone: string | null;
   source: string | null;
+  category: string | null;
   campaign_name: string | null;
+  campaign_label: string | null;
+  labels: Array<{ id: string; name: string; color: string }>;
   assigned_to_name: string | null;
   journey_stage: JourneyStage;
   terminal_state: string | null;
@@ -90,11 +95,27 @@ export interface WorkspaceLead {
   current_action_type: string | null;
   current_action_reason: string | null;
   current_action_due_at: string | null;
+  next_followup_at: string | null;
+  next_retry_at: string | null;
+  latest_interaction_at: string | null;
   has_call_issue: boolean;
   is_pending: boolean;
   pending_occurrences: number;
   total_delay_minutes: number;
   longest_delay_minutes: number;
+}
+
+function workspaceParams(scope: LeadAnalyticsScope, filters: LeadFilters = {}) {
+  const params = new URLSearchParams({ lead_view: scope.view });
+  if (scope.view === 'daily' && scope.from && scope.to) {
+    params.set('from', scope.from);
+    params.set('to', scope.to);
+  }
+  DISTRIBUTION_FILTER_KEYS.forEach(key => {
+    const value = filters[key as keyof LeadFilters];
+    if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
+  });
+  return params;
 }
 
 export function useWorkflowSettings() {
@@ -106,19 +127,22 @@ export function useWorkflowSettings() {
   });
 }
 
-export function useCounselorWorkspaceSummary(from: string, to: string, enabled = true) {
+export function useCounselorWorkspaceSummary(scope: LeadAnalyticsScope, filters: LeadFilters = {}, enabled = true) {
+  const params = workspaceParams(scope, filters);
   return useQuery({
-    queryKey: ['counselor-workspace', 'summary', from, to],
-    queryFn: () => apiGet<{ enabled: boolean; period: { from: string; to: string }; summary: WorkspaceSummary }>(`/counselor-workspace/summary?from=${from}&to=${to}`),
+    queryKey: ['counselor-workspace', 'summary', params.toString()],
+    queryFn: () => apiGet<{ enabled: boolean; period: LeadAnalyticsScope; summary: WorkspaceSummary }>(`/counselor-workspace/summary?${params}`),
     enabled,
     staleTime: 15_000,
     refetchInterval: 60_000,
   });
 }
 
-export function useCounselorWorkspaceLeads(input: { view: WorkspaceView; from: string; to: string; page: number; q?: string; enabled?: boolean }) {
-  const params = new URLSearchParams({ view: input.view, from: input.from, to: input.to, page: String(input.page), page_size: '25' });
-  if (input.q?.trim()) params.set('q', input.q.trim());
+export function useCounselorWorkspaceLeads(input: { view: WorkspaceView; scope: LeadAnalyticsScope; filters?: LeadFilters; page: number; enabled?: boolean }) {
+  const params = workspaceParams(input.scope, input.filters);
+  params.set('view', input.view);
+  params.set('page', String(input.page));
+  params.set('page_size', '25');
   return useQuery({
     queryKey: ['counselor-workspace', 'leads', params.toString()],
     queryFn: () => apiGet<{ enabled: boolean; summary: WorkspaceSummary; rows: WorkspaceLead[]; total: number; page: number; page_size: number }>(`/counselor-workspace/leads?${params}`),

@@ -70,16 +70,13 @@ describe('Counselor Lifecycle V2', () => {
     expect(lifecycle.normalizePeriod({ from: '2026-09-11', to: '2026-09-12' })).toEqual({ from: '2026-09-11', to: '2026-09-12' });
   });
 
-  test('workspace summary and drill-down reuse the same classified conditions', async () => {
+  test('workspace returns summary and drill-down from one classified query', async () => {
     getVisibleUserIds.mockResolvedValue(['11111111-1111-4111-8111-111111111111']);
     const sql = [];
     database.query.mockImplementation(async statement => {
       sql.push(statement);
       if (statement.includes('FROM workflow_settings')) return { rows: SETTINGS_ROWS };
-      if (statement.includes('FROM classified') && !statement.includes('filtered AS MATERIALIZED')) {
-        return { rows: [{ received: 2, pending: 1 }] };
-      }
-      return { rows: [{ total: 1, rows: [{ id: 'lead-1' }] }] };
+      return { rows: [{ summary: { received: 2, pending: 1 }, total: 1, rows: [{ id: 'lead-1' }] }] };
     });
 
     const result = await lifecycle.workspace({ id: 'member-1', role: 'member' }, {
@@ -87,12 +84,57 @@ describe('Counselor Lifecycle V2', () => {
     }, true);
 
     expect(result.total).toBe(1);
-    const summarySql = sql.find(value => value.includes('FROM classified') && !value.includes('filtered AS MATERIALIZED'));
+    expect(result.summary).toEqual(expect.objectContaining({ received: 2, pending: 1 }));
+    const workspaceSql = sql.find(value => value.includes('filtered AS MATERIALIZED'));
+    expect(workspaceSql).toContain('WITH bounds AS MATERIALIZED');
+    expect(workspaceSql).toContain('terminal_state IS NULL AND is_pending');
+    expect(workspaceSql).toContain('workspace_summary AS MATERIALIZED');
+    expect(workspaceSql).toContain('COUNT(*) FILTER (WHERE terminal_state IS NULL AND is_pending)');
+    expect(sql.filter(value => value.includes('WITH bounds AS MATERIALIZED'))).toHaveLength(1);
+  });
+
+  test('workspace reuses analytics filters for summary and rows', async () => {
+    getVisibleUserIds.mockResolvedValue(['11111111-1111-4111-8111-111111111111']);
+    const sql = [];
+    database.query.mockImplementation(async statement => {
+      sql.push(statement);
+      if (statement.includes('FROM workflow_settings')) return { rows: SETTINGS_ROWS };
+      if (statement.includes('filtered AS MATERIALIZED')) return { rows: [{ summary: {}, total: 0, rows: [] }] };
+      return { rows: [{}] };
+    });
+
+    await lifecycle.workspace({ id: 'member-1', role: 'member' }, {
+      lead_view: 'daily', from: '2026-09-11', to: '2026-09-11', view: 'worked',
+      source: 'meta', remark_status: 'cnr', label_id: '22222222-2222-4222-8222-222222222222',
+    }, true);
+
     const rowsSql = sql.find(value => value.includes('filtered AS MATERIALIZED'));
-    expect(summarySql).toContain('WITH bounds AS MATERIALIZED');
-    expect(rowsSql).toContain('WITH bounds AS MATERIALIZED');
-    expect(rowsSql).toContain('terminal_state IS NULL AND is_pending');
-    expect(summarySql).toContain('COUNT(*) FILTER (WHERE terminal_state IS NULL AND is_pending)');
+    expect(rowsSql).toContain('l.source::text = $5');
+    expect(rowsSql).toContain('distribution_remark.lead_id = l.id');
+    expect(rowsSql).toContain('distribution_label.lead_id = l.id');
+    expect(rowsSql).toContain('workspace_summary AS MATERIALIZED');
+    expect(rowsSql).toContain("COALESCE(labels.items,'[]'::jsonb) AS labels");
+    expect(rowsSql).toContain('latest_retry.scheduled_at AS next_retry_at');
+    expect(rowsSql).toContain('GREATEST(latest_remark.created_at,last_call.created_at,last_event.occurred_at) AS latest_interaction_at');
+  });
+
+  test('workspace all-time activity removes date predicates but preserves live overlap flags', async () => {
+    getVisibleUserIds.mockResolvedValue(['11111111-1111-4111-8111-111111111111']);
+    const sql = [];
+    database.query.mockImplementation(async statement => {
+      sql.push(statement);
+      if (statement.includes('FROM workflow_settings')) return { rows: SETTINGS_ROWS };
+      return { rows: [{}] };
+    });
+
+    const result = await lifecycle.workspace({ id: 'member-1', role: 'member' }, { lead_view: 'all_time' }, false);
+
+    expect(result.period).toEqual({ view: 'all_time', from: null, to: null });
+    const summarySql = sql.find(value => value.includes('FROM classified'));
+    expect(summarySql).toContain("journey_stage='personal_meeting'");
+    expect(summarySql).toContain('terminal_state IS NULL AND has_call_issue');
+    expect(summarySql).toContain('terminal_state IS NULL AND is_pending');
+    expect(summarySql).not.toContain('e.occurred_at >= b.from_at');
   });
 
   test('legacy dual-write is a no-op while feature is disabled', async () => {

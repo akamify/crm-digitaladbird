@@ -2,6 +2,7 @@ const { query, withTransaction } = require('../config/database');
 const { AppError } = require('../utils/errors');
 const { getVisibleUserIds } = require('../middleware/rbac');
 const { assertLeadCommunicationAccess } = require('./leadCommunicationAccess');
+const { normalizeScope: normalizeAnalyticsScope, buildAnalyticsFilters } = require('./leadDistributionAnalyticsService');
 
 const IST_OFFSET = '+05:30';
 const TERMINAL_STATES = new Set(['converted', 'cold']);
@@ -687,13 +688,17 @@ function normalizePeriod(input = {}) {
   return { from, to };
 }
 
-function workspaceCte(scopeSql) {
+function workspaceCte(period, scopeSql, filterSql) {
+  const onPeriod = expression => period.view === 'all_time'
+    ? 'TRUE'
+    : `(${expression} >= b.from_at AND ${expression} < b.to_at)`;
   return `WITH bounds AS MATERIALIZED (
     SELECT ($1::date::timestamp AT TIME ZONE 'Asia/Kolkata') AS from_at,
            ((($2::date + 1)::timestamp) AT TIME ZONE 'Asia/Kolkata') AS to_at
   ), classified AS MATERIALIZED (
     SELECT l.id,l.full_name,l.phone,l.email,l.source,l.campaign_name,l.campaign_label,l.category,
-      l.assigned_to_user_id,l.assigned_at,l.created_at,u.full_name AS assigned_to_name,
+      l.assigned_to_user_id,l.assigned_at,l.created_at,l.updated_at,l.last_call_at,l.next_followup_at,
+      u.full_name AS assigned_to_name,
       COALESCE(ls.journey_stage, CASE WHEN l.call_status::text='not_called' THEN 'new' ELSE 'response' END) AS journey_stage,
       COALESCE(ls.terminal_state, CASE WHEN l.stage::text='won' OR l.call_status::text='converted' THEN 'converted' WHEN l.stage::text IN ('lost','dropped') OR l.call_status::text='not_interested' THEN 'cold' END) AS terminal_state,
       COALESCE(ls.last_call_result,l.call_status::text) AS last_call_result,
@@ -702,12 +707,12 @@ function workspaceCte(scopeSql) {
       (EXISTS(SELECT 1 FROM lead_call_attempt_sequences seq WHERE seq.lead_id=l.id AND seq.status='active')
        OR COALESCE(ls.last_call_result,l.call_status::text) IN ('cnr','recall','so','cw','nn','nc','ni','in','cb','rnr','busy','call_cut_busy')) AS has_call_issue,
       EXISTS(SELECT 1 FROM lead_call_attempts ca JOIN lead_call_attempt_sequences seq ON seq.id=ca.sequence_id AND seq.status='active' WHERE ca.lead_id=l.id AND ca.status='scheduled' AND ca.scheduled_at<=NOW()) AS has_due_retry,
-      (l.assigned_at >= b.from_at AND l.assigned_at < b.to_at) AS is_new,
-      EXISTS(SELECT 1 FROM lead_assignments ra WHERE ra.lead_id=l.id AND COALESCE(ra.assigned_to_user_id,ra.user_id)=l.assigned_to_user_id AND ra.previous_user_id IS NOT NULL AND ra.assigned_at>=b.from_at AND ra.assigned_at<b.to_at) AS is_reassigned,
-      (EXISTS(SELECT 1 FROM lead_lifecycle_events e WHERE e.lead_id=l.id AND e.event_type=ANY($4::text[]) AND e.occurred_at>=b.from_at AND e.occurred_at<b.to_at)
-       OR EXISTS(SELECT 1 FROM lead_remarks r WHERE r.lead_id=l.id AND r.workflow_step IS NOT NULL AND r.created_at>=b.from_at AND r.created_at<b.to_at)
-       OR EXISTS(SELECT 1 FROM lead_call_logs cl WHERE cl.lead_id=l.id AND cl.created_at>=b.from_at AND cl.created_at<b.to_at)
-       OR EXISTS(SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id=l.id AND ca.status='completed' AND COALESCE(ca.attempted_at,ca.created_at)>=b.from_at AND COALESCE(ca.attempted_at,ca.created_at)<b.to_at)) AS is_worked,
+      ${onPeriod('l.assigned_at')} AS is_new,
+      EXISTS(SELECT 1 FROM lead_assignments ra WHERE ra.lead_id=l.id AND COALESCE(ra.assigned_to_user_id,ra.user_id)=l.assigned_to_user_id AND ra.previous_user_id IS NOT NULL AND ${onPeriod('ra.assigned_at')}) AS is_reassigned,
+      (EXISTS(SELECT 1 FROM lead_lifecycle_events e WHERE e.lead_id=l.id AND e.event_type=ANY($4::text[]) AND ${onPeriod('e.occurred_at')})
+       OR EXISTS(SELECT 1 FROM lead_remarks r WHERE r.lead_id=l.id AND r.workflow_step IS NOT NULL AND ${onPeriod('r.created_at')})
+       OR EXISTS(SELECT 1 FROM lead_call_logs cl WHERE cl.lead_id=l.id AND ${onPeriod('cl.created_at')})
+       OR EXISTS(SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id=l.id AND ca.status='completed' AND ${onPeriod('COALESCE(ca.attempted_at,ca.created_at)')})) AS is_worked,
       NOT (EXISTS(SELECT 1 FROM lead_lifecycle_events e WHERE e.lead_id=l.id AND e.event_type=ANY($4::text[]) AND e.occurred_at>=COALESCE(l.assigned_at,l.created_at))
        OR EXISTS(SELECT 1 FROM lead_remarks r WHERE r.lead_id=l.id AND r.workflow_step IS NOT NULL AND r.created_at>=COALESCE(l.assigned_at,l.created_at))
        OR EXISTS(SELECT 1 FROM lead_call_logs cl WHERE cl.lead_id=l.id AND cl.created_at>=COALESCE(l.assigned_at,l.created_at))
@@ -720,7 +725,7 @@ function workspaceCte(scopeSql) {
     LEFT JOIN users u ON u.id=l.assigned_to_user_id
     LEFT JOIN lead_lifecycle_state ls ON ls.lead_id=l.id
     LEFT JOIN lead_actions a ON a.id=ls.current_primary_action_id AND a.status IN ('scheduled','in_progress','overdue')
-    WHERE l.deleted_at IS NULL AND l.assigned_to_user_id IS NOT NULL ${scopeSql}
+    WHERE ${filterSql} AND l.assigned_to_user_id IS NOT NULL ${scopeSql}
   )`;
 }
 
@@ -736,36 +741,64 @@ const VIEW_SQL = {
 async function workspace(user, input = {}, includeRows = false) {
   const settings = await getSettings();
   const enabled = isEnabledFor(settings, user);
-  const period = normalizePeriod(input);
+  const period = normalizeAnalyticsScope({ ...input, view: input.lead_view || 'daily' });
   const visible = await getVisibleUserIds(user);
   if (visible !== null && visible.length === 0) return { enabled, period, summary: {}, rows: [], total: 0, page: 1, page_size: 25 };
   const params = [period.from, period.to];
   const scopeSql = 'AND ($3::uuid[] IS NULL OR l.assigned_to_user_id=ANY($3::uuid[]))';
   params.push(visible);
   params.push(QUALIFYING_EVENTS);
-  const cte = workspaceCte(scopeSql);
+  const filters = buildAnalyticsFilters(input, params, 'l');
+  const cte = workspaceCte(period, scopeSql, filters.join(' AND '));
   const summarySql = Object.entries(VIEW_SQL).map(([key, condition]) => `COUNT(*) FILTER (WHERE ${condition})::int AS "${key}"`).join(',');
-  const { rows: [summary] } = await query(`${cte} SELECT ${summarySql} FROM classified`, params);
-  if (!includeRows) return { enabled, period, summary };
+  if (!includeRows) {
+    const { rows: [summary] } = await query(`${cte} SELECT ${summarySql} FROM classified`, params);
+    return { enabled, period, summary };
+  }
   const view = text(input.view || 'received').toLowerCase();
   if (!WORKSPACE_VIEWS.has(view)) throw new AppError(400, 'INVALID_WORKSPACE_VIEW', 'Select a valid Counselor Workspace view.');
   const page = positiveInt(input.page, 1, 100000);
   const pageSize = positiveInt(input.page_size, 25, 100);
-  const search = text(input.q).slice(0, 120);
-  params.push(search ? `%${search}%` : null, pageSize, (page - 1) * pageSize);
-  const searchParam = `$${params.length - 2}`;
+  params.push(pageSize, (page - 1) * pageSize);
   const limitParam = `$${params.length - 1}`;
   const offsetParam = `$${params.length}`;
   const { rows: [result] } = await query(`${cte}, filtered AS MATERIALIZED (
     SELECT * FROM classified WHERE ${VIEW_SQL[view]}
-      AND (${searchParam}::text IS NULL OR full_name ILIKE ${searchParam} OR phone ILIKE ${searchParam} OR assigned_to_name ILIKE ${searchParam})
-  ) SELECT (SELECT COUNT(*)::int FROM filtered) AS total,
+  ), workspace_summary AS MATERIALIZED (
+    SELECT ${summarySql} FROM classified
+  ) SELECT to_jsonb(workspace_summary) AS summary,
+    (SELECT COUNT(*)::int FROM filtered) AS total,
     COALESCE((SELECT jsonb_agg(to_jsonb(page_rows) ORDER BY current_action_due_at ASC NULLS LAST, assigned_at DESC) FROM (
       SELECT f.*,
+        COALESCE(labels.items,'[]'::jsonb) AS labels,
+        GREATEST(latest_remark.created_at,last_call.created_at,last_event.occurred_at) AS latest_interaction_at,
+        latest_retry.scheduled_at AS next_retry_at,
         COALESCE(metrics.pending_occurrences,0)::int AS pending_occurrences,
         COALESCE(metrics.total_delay_minutes,0)::int AS total_delay_minutes,
         COALESCE(metrics.longest_delay_minutes,0)::int AS longest_delay_minutes
       FROM filtered f
+      LEFT JOIN LATERAL (
+        SELECT jsonb_agg(jsonb_build_object('id',ll.id,'name',ll.name,'color',ll.color) ORDER BY la.created_at DESC) AS items
+          FROM lead_label_assignments la
+          JOIN lead_labels ll ON ll.id=la.label_id AND ll.deleted_at IS NULL
+         WHERE la.lead_id=f.id
+      ) labels ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT r.created_at FROM lead_remarks r WHERE r.lead_id=f.id ORDER BY r.created_at DESC,r.id DESC LIMIT 1
+      ) latest_remark ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT cl.created_at FROM lead_call_logs cl WHERE cl.lead_id=f.id ORDER BY cl.created_at DESC,cl.id DESC LIMIT 1
+      ) last_call ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT e.occurred_at FROM lead_lifecycle_events e WHERE e.lead_id=f.id ORDER BY e.occurred_at DESC,e.id DESC LIMIT 1
+      ) last_event ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT ca.scheduled_at
+          FROM lead_call_attempts ca
+          JOIN lead_call_attempt_sequences seq ON seq.id=ca.sequence_id AND seq.status='active'
+         WHERE ca.lead_id=f.id AND ca.status='scheduled'
+         ORDER BY ca.scheduled_at ASC LIMIT 1
+      ) latest_retry ON TRUE
       LEFT JOIN LATERAL (
         SELECT COUNT(*) FILTER (WHERE e.event_type='pending_started') AS pending_occurrences,
           COALESCE(SUM((e.metadata->>'delay_minutes')::int) FILTER (WHERE e.event_type='action_completed'),0) AS total_delay_minutes,
@@ -773,8 +806,9 @@ async function workspace(user, input = {}, includeRows = false) {
         FROM lead_lifecycle_events e WHERE e.lead_id=f.id
       ) metrics ON TRUE
       ORDER BY f.current_action_due_at ASC NULLS LAST, f.assigned_at DESC LIMIT ${limitParam} OFFSET ${offsetParam}
-    ) page_rows),'[]'::jsonb) AS rows`, params);
-  return { enabled, period, summary, view, rows: result.rows || [], total: Number(result.total || 0), page, page_size: pageSize };
+    ) page_rows),'[]'::jsonb) AS rows
+  FROM workspace_summary`, params);
+  return { enabled, period, summary: result.summary || {}, view, rows: result.rows || [], total: Number(result.total || 0), page, page_size: pageSize };
 }
 
 async function updateSettings(user, input = {}) {
