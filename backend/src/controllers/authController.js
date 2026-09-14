@@ -55,6 +55,7 @@ function generateCpId() {
   return `MSA${String(crypto.randomInt(0, 100000000)).padStart(8, '0')}`;
 }
 
+
 exports.login = asyncHandler(async (req, res) => {
   const { identifier, password, role: selectedRole } = req.body;
   if (!identifier || !identifier.toString().trim()) {

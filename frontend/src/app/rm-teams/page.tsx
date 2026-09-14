@@ -114,7 +114,6 @@ export default function RMTeamsPage() {
     </AppShell>
   );
 }
-
 /* ---------- RM Card ---------- */
 function RMCardWidget({
   card,
