@@ -8,6 +8,7 @@ const { AppError, asyncHandler } = require('../utils/errors');
 const config = require('../config/env');
 const logger = require('../utils/logger');
 
+
 const VALID_ROLES = ['super_admin', 'rm', 'member', 'client'];
 
 function normalizePhone(input) {
