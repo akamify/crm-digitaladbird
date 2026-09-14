@@ -783,12 +783,12 @@ function workspaceCte(period, scopeSql, filterSql) {
       (EXISTS(SELECT 1 FROM lead_call_attempt_sequences seq WHERE seq.lead_id=l.id AND seq.status='active')
        OR COALESCE(ls.last_call_result,l.call_status::text) IN ('cnr','recall','so','cw','nn','nc','ni','in','cb','rnr','busy','call_cut_busy')) AS has_call_issue,
       EXISTS(SELECT 1 FROM lead_call_attempts ca JOIN lead_call_attempt_sequences seq ON seq.id=ca.sequence_id AND seq.status='active' WHERE ca.lead_id=l.id AND ca.status='scheduled' AND ca.scheduled_at<=NOW()) AS has_due_retry,
-      ${onPeriod('l.assigned_at')} AS is_new,
+      ${onPeriod('COALESCE(l.assigned_at,l.created_at)')} AS is_received,
       EXISTS(SELECT 1 FROM lead_assignments ra WHERE ra.lead_id=l.id AND COALESCE(ra.assigned_to_user_id,ra.user_id)=l.assigned_to_user_id AND ra.previous_user_id IS NOT NULL AND ${onPeriod('ra.assigned_at')}) AS is_reassigned,
-      (EXISTS(SELECT 1 FROM lead_lifecycle_events e WHERE e.lead_id=l.id AND e.event_type=ANY($4::text[]) AND ${onPeriod('e.occurred_at')})
-       OR EXISTS(SELECT 1 FROM lead_remarks r WHERE r.lead_id=l.id AND r.workflow_step IS NOT NULL AND ${onPeriod('r.created_at')})
-       OR EXISTS(SELECT 1 FROM lead_call_logs cl WHERE cl.lead_id=l.id AND ${onPeriod('cl.created_at')})
-       OR EXISTS(SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id=l.id AND ca.status='completed' AND ${onPeriod('COALESCE(ca.attempted_at,ca.created_at)')})) AS is_worked,
+      (EXISTS(SELECT 1 FROM lead_lifecycle_events e WHERE e.lead_id=l.id AND e.event_type=ANY($4::text[]) AND e.occurred_at>=COALESCE(l.assigned_at,l.created_at))
+       OR EXISTS(SELECT 1 FROM lead_remarks r WHERE r.lead_id=l.id AND r.workflow_step IS NOT NULL AND r.created_at>=COALESCE(l.assigned_at,l.created_at))
+       OR EXISTS(SELECT 1 FROM lead_call_logs cl WHERE cl.lead_id=l.id AND cl.created_at>=COALESCE(l.assigned_at,l.created_at))
+       OR EXISTS(SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id=l.id AND ca.status='completed' AND COALESCE(ca.attempted_at,ca.created_at)>=COALESCE(l.assigned_at,l.created_at))) AS is_worked,
       NOT (EXISTS(SELECT 1 FROM lead_lifecycle_events e WHERE e.lead_id=l.id AND e.event_type=ANY($4::text[]) AND e.occurred_at>=COALESCE(l.assigned_at,l.created_at))
        OR EXISTS(SELECT 1 FROM lead_remarks r WHERE r.lead_id=l.id AND r.workflow_step IS NOT NULL AND r.created_at>=COALESCE(l.assigned_at,l.created_at))
        OR EXISTS(SELECT 1 FROM lead_call_logs cl WHERE cl.lead_id=l.id AND cl.created_at>=COALESCE(l.assigned_at,l.created_at))
@@ -806,12 +806,16 @@ function workspaceCte(period, scopeSql, filterSql) {
 }
 
 const VIEW_SQL = {
-  received: 'terminal_state IS NULL', new: 'is_new', worked: 'is_worked', pending: 'terminal_state IS NULL AND is_pending',
-  unworked: 'terminal_state IS NULL AND is_unworked', reassigned: 'is_reassigned', call_issues: 'terminal_state IS NULL AND has_call_issue',
-  follow_up: "terminal_state IS NULL AND current_action_type IN ('follow_up','callback','recontact','responded_next_action')",
-  responses: "terminal_state IS NULL AND journey_stage='response'", common_meeting: "terminal_state IS NULL AND journey_stage='common_meeting'",
-  tte: "terminal_state IS NULL AND journey_stage='tte'", personal_meeting: "terminal_state IS NULL AND journey_stage='personal_meeting'",
-  quotation: "terminal_state IS NULL AND journey_stage='quotation'", converted: "terminal_state='converted'", cold: "terminal_state='cold'",
+  received: 'is_received', new: 'is_received AND terminal_state IS NULL AND is_unworked', worked: 'is_received AND is_worked',
+  pending: 'is_received AND terminal_state IS NULL AND is_pending', unworked: 'is_received AND terminal_state IS NULL AND is_unworked',
+  reassigned: 'is_received AND is_reassigned', call_issues: 'is_received AND terminal_state IS NULL AND has_call_issue',
+  follow_up: "is_received AND terminal_state IS NULL AND current_action_type IN ('follow_up','callback','recontact','responded_next_action')",
+  responses: "is_received AND terminal_state IS NULL AND journey_stage='response'",
+  common_meeting: "is_received AND terminal_state IS NULL AND journey_stage='common_meeting'",
+  tte: "is_received AND terminal_state IS NULL AND journey_stage='tte'",
+  personal_meeting: "is_received AND terminal_state IS NULL AND journey_stage='personal_meeting'",
+  quotation: "is_received AND terminal_state IS NULL AND journey_stage='quotation'",
+  converted: "is_received AND terminal_state='converted'", cold: "is_received AND terminal_state='cold'",
 };
 
 async function workspace(user, input = {}, includeRows = false) {

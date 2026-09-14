@@ -13,20 +13,23 @@ import { analyticsScopeParams, DISTRIBUTION_FILTER_KEYS, normalizeAnalyticsScope
 import type { LeadFilters as LeadFilterState } from '@/types';
 
 const METRICS: Array<{ key: keyof WorkspaceSummary; label: string; hint: string }> = [
-  { key: 'received', label: 'Leads Received', hint: 'Currently assigned active leads (live now).' },
-  { key: 'new', label: 'New Leads', hint: 'Newly assigned in the selected period.' },
-  { key: 'worked', label: 'Worked', hint: 'Unique leads with qualifying human activity in the selected period.' },
-  { key: 'pending', label: 'Pending', hint: 'Active leads with an overdue required action (live now).' },
-  { key: 'unworked', label: 'Unworked', hint: 'Assigned leads with no qualifying activity (live now).' },
-  { key: 'reassigned', label: 'Reassigned To Me', hint: 'Received from another counselor in the selected period.' },
+  { key: 'received', label: 'Leads Received', hint: 'Leads received during the selected period.' },
+  { key: 'new', label: 'New Leads', hint: 'Received leads with no qualifying work since assignment.' },
+  { key: 'worked', label: 'Worked', hint: 'Received leads with qualifying work since assignment.' },
+  { key: 'pending', label: 'Pending', hint: 'Received leads whose required action is currently overdue.' },
+  { key: 'common_meeting', label: 'Common Meeting', hint: 'Received leads currently in the Common Meeting journey.' },
+  { key: 'personal_meeting', label: 'Personal Meeting', hint: 'Received leads currently in the Personal Meeting journey.' },
 ];
 
 const ANALYTICS_VIEWS: Array<[WorkspaceView, string]> = [
-  ['received', 'Leads Received'], ['worked', 'Worked'], ['call_issues', 'Call Issues'], ['pending', 'Pending'],
-  ['responses', 'Responses'], ['common_meeting', 'Common Meeting'], ['tte', 'TTE'],
-  ['personal_meeting', 'Personal Meeting'], ['quotation', 'Quotation'], ['follow_up', 'Follow-up'],
-  ['converted', 'Converted'], ['cold', 'Cold'],
+  ['call_issues', 'Call Issues'], ['responses', 'Responses'], ['tte', 'TTE'], ['quotation', 'Quotation'],
+  ['follow_up', 'Follow-up'], ['converted', 'Converted'], ['cold', 'Cold'],
 ];
+
+const SELECTABLE_VIEWS = new Set<WorkspaceView>([
+  ...METRICS.map(metric => metric.key as WorkspaceView),
+  ...ANALYTICS_VIEWS.map(([key]) => key),
+]);
 
 function istDate(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
@@ -47,9 +50,9 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
   const router = useRouter();
   const searchParams = useSearchParams();
   const requestedView = searchParams.get('workspace_view') as WorkspaceView | null;
-  const initialView = leadsPage && ANALYTICS_VIEWS.some(([key]) => key === requestedView) ? requestedView as WorkspaceView : 'received';
+  const initialView = leadsPage && requestedView && SELECTABLE_VIEWS.has(requestedView) ? requestedView : 'received';
   const [scope, setScope] = useState(() => leadsPage
-    ? normalizeAnalyticsScope(searchParams.get('lead_view'), searchParams.get('from') || searchParams.get('selected_date'), searchParams.get('to') || searchParams.get('selected_date'))
+    ? normalizeAnalyticsScope(searchParams.get('lead_view') === 'all_time' ? 'all_time' : 'daily', searchParams.get('from') || searchParams.get('selected_date'), searchParams.get('to') || searchParams.get('selected_date'))
     : { view: 'daily' as const, from: today, to: today });
   const [view, setView] = useState<WorkspaceView>(initialView);
   const [page, setPage] = useState(1);
@@ -115,7 +118,7 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">{leadsPage ? 'Lead Analytics' : 'Counselor Workspace'}</p>
           <h2 className="mt-1 text-lg font-semibold text-slate-950">{leadsPage ? 'Lead journey and work queues' : 'Today&apos;s work, one clear queue'}</h2>
-          <p className="text-xs text-slate-500">Live workload stays current; activity metrics follow the selected period.</p>
+          <p className="text-xs text-slate-500">Every count uses the same selected lead-received period; work queues can overlap.</p>
         </div>
         <LeadAnalyticsPeriodControl scope={scope} onChange={selectScope} />
       </div>
@@ -125,7 +128,7 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
           <button key={metric.key} type="button" title={metric.hint} onClick={() => selectView(metric.key as WorkspaceView)} className={`min-h-24 bg-white px-4 py-3 text-left transition hover:bg-sky-50 ${view === metric.key ? 'shadow-[inset_0_-3px_0_#0284c7]' : ''}`}>
             <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{metric.label}</div>
             {leads.isLoading && !leads.data ? <Skeleton className="mt-3 h-7 w-14" /> : <div className="mt-2 text-2xl font-bold tabular-nums text-slate-950">{Number(leads.data?.summary?.[metric.key] || 0).toLocaleString()}</div>}
-            <div className="mt-1 line-clamp-1 text-[10px] text-slate-400">{metric.key === 'received' || metric.key === 'pending' || metric.key === 'unworked' ? 'Live now' : 'Selected period'}</div>
+            <div className="mt-1 line-clamp-1 text-[10px] text-slate-400">Selected period</div>
           </button>
         ))}
       </div>

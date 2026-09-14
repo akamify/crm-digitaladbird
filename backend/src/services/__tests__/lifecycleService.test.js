@@ -87,9 +87,12 @@ describe('Counselor Lifecycle V2', () => {
     expect(result.summary).toEqual(expect.objectContaining({ received: 2, pending: 1 }));
     const workspaceSql = sql.find(value => value.includes('filtered AS MATERIALIZED'));
     expect(workspaceSql).toContain('WITH bounds AS MATERIALIZED');
-    expect(workspaceSql).toContain('terminal_state IS NULL AND is_pending');
+    expect(workspaceSql).toContain('is_received AND terminal_state IS NULL AND is_pending');
     expect(workspaceSql).toContain('workspace_summary AS MATERIALIZED');
-    expect(workspaceSql).toContain('COUNT(*) FILTER (WHERE terminal_state IS NULL AND is_pending)');
+    expect(workspaceSql).toContain('COUNT(*) FILTER (WHERE is_received)::int AS "received"');
+    expect(workspaceSql).toContain('COUNT(*) FILTER (WHERE is_received AND terminal_state IS NULL AND is_unworked)::int AS "new"');
+    expect(workspaceSql).toContain('COUNT(*) FILTER (WHERE is_received AND is_worked)::int AS "worked"');
+    expect(workspaceSql).toContain('COUNT(*) FILTER (WHERE is_received AND terminal_state IS NULL AND is_pending)');
     expect(sql.filter(value => value.includes('WITH bounds AS MATERIALIZED'))).toHaveLength(1);
   });
 
@@ -113,6 +116,9 @@ describe('Counselor Lifecycle V2', () => {
     expect(rowsSql).toContain('distribution_remark.lead_id = l.id');
     expect(rowsSql).toContain('distribution_label.lead_id = l.id');
     expect(rowsSql).toContain('workspace_summary AS MATERIALIZED');
+    expect(rowsSql).toContain("COALESCE(l.assigned_at,l.created_at) >= b.from_at");
+    expect(rowsSql).toContain('e.occurred_at>=COALESCE(l.assigned_at,l.created_at)');
+    expect(rowsSql).not.toContain('e.occurred_at >= b.from_at');
     expect(rowsSql).toContain("COALESCE(labels.items,'[]'::jsonb) AS labels");
     expect(rowsSql).toContain('latest_retry.scheduled_at AS next_retry_at');
     expect(rowsSql).toContain('GREATEST(latest_remark.created_at,last_call.created_at,last_event.occurred_at) AS latest_interaction_at');
@@ -132,8 +138,8 @@ describe('Counselor Lifecycle V2', () => {
     expect(result.period).toEqual({ view: 'all_time', from: null, to: null });
     const summarySql = sql.find(value => value.includes('FROM classified'));
     expect(summarySql).toContain("journey_stage='personal_meeting'");
-    expect(summarySql).toContain('terminal_state IS NULL AND has_call_issue');
-    expect(summarySql).toContain('terminal_state IS NULL AND is_pending');
+    expect(summarySql).toContain('is_received AND terminal_state IS NULL AND has_call_issue');
+    expect(summarySql).toContain('is_received AND terminal_state IS NULL AND is_pending');
     expect(summarySql).not.toContain('e.occurred_at >= b.from_at');
   });
 
