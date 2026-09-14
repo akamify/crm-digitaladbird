@@ -12,6 +12,8 @@ function invalidateWorkflowRelatedQueries(qc: ReturnType<typeof useQueryClient>,
   qc.invalidateQueries({ queryKey: ['lead-request-stats'] });
   qc.invalidateQueries({ queryKey: ['workflow-stats'] });
   qc.invalidateQueries({ queryKey: ['workflow-summary'] });
+  qc.invalidateQueries({ queryKey: ['lead-lifecycle', leadId] });
+  qc.invalidateQueries({ queryKey: ['counselor-workspace'] });
 }
 
 export interface WorkflowState {

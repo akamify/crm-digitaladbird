@@ -1,13 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { AlertTriangle, CalendarClock, CheckCircle2, Clock3, GitBranch, History, PhoneCall } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/Button';
 import { Modal, Skeleton } from '@/components/ui/Modal';
 import { useCloseLifecycle, useCompleteLifecycleAction, useLeadLifecycle, useRecordLifecycleEvent, useReopenLifecycle } from '@/hooks/useLifecycle';
-import { fmtDate, humanize } from '@/lib/format';
+import { fmtDate, fmtRelative, humanize } from '@/lib/format';
 
 const ACTIVITIES = [
   ['responded', 'Responded'], ['communication_completed', 'Communication completed'],
@@ -20,7 +20,7 @@ const ACTIVITIES = [
 ] as const;
 
 const NEXT_ACTIONS = [
-  ['responded_next_action', 'Decide next step'], ['common_meeting', 'Common Meeting'], ['tte', 'TTE'],
+  ['responded_next_action', 'Decide next step'], ['common_meeting', 'Common Meeting outcome'], ['tte', 'TTE'],
   ['personal_meeting', 'Personal Meeting'], ['quotation', 'Quotation'], ['callback', 'Callback'],
   ['follow_up', 'Stage follow-up'], ['recontact', 'Re-contact'], ['other', 'Other'],
 ] as const;
@@ -48,6 +48,15 @@ function errorMessage(error: unknown) {
   return apiError.response?.data?.error?.message || 'Could not update lifecycle';
 }
 
+function actionLabel(actionType: string, reason?: string | null) {
+  if (['common_meeting', 'common_meeting_outcome'].includes(actionType)) return 'Update Common Meeting outcome';
+  if (actionType === 'lifecycle_review' && reason?.startsWith('lead_category_')) {
+    return `Follow up ${humanize(reason.replace('lead_category_', ''))}`;
+  }
+  if (actionType === 'lifecycle_review') return 'Select next action';
+  return humanize(actionType);
+}
+
 export function LeadLifecyclePanel({ leadId, readOnly = false, canManage = false }: { leadId: string; readOnly?: boolean; canManage?: boolean }) {
   const lifecycle = useLeadLifecycle(leadId);
   const record = useRecordLifecycleEvent();
@@ -64,6 +73,12 @@ export function LeadLifecyclePanel({ leadId, readOnly = false, canManage = false
   const [terminal, setTerminal] = useState<'' | 'converted' | 'cold'>('');
   const [coldReason, setColdReason] = useState('not_interested');
   const [coldNote, setColdNote] = useState('');
+
+  const [, setClockTick] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => setClockTick(value => value + 1), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   if (lifecycle.isLoading) return <div className="space-y-3"><Skeleton className="h-24" /><Skeleton className="h-40" /></div>;
   if (lifecycle.isError || !lifecycle.data?.enabled || !lifecycle.data.state) return null;
@@ -141,7 +156,7 @@ export function LeadLifecyclePanel({ leadId, readOnly = false, canManage = false
         </div>
         {(activeAction || activeRetry) && !state.terminal_state && (
           <div className="grid gap-3 p-4 lg:grid-cols-2">
-            {activeAction && <div className="rounded-xl border border-sky-200 bg-white p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-wide text-sky-700">Next Required Action</p><h3 className="mt-1 text-sm font-semibold text-slate-900">{humanize(activeAction.action_type)}</h3><p className="text-xs text-slate-500">{humanize(activeAction.reason)} / {activeAction.action_type === 'common_meeting' ? `Meeting ${fmtDate(activeAction.scheduled_at, 'd MMM, h:mm a')} / outcome due ${fmtDate(activeAction.due_at, 'd MMM, h:mm a')}` : fmtDate(activeAction.due_at, 'd MMM, h:mm a')}</p>{activeAction.status === 'paused' && <p className="mt-1 text-xs font-medium text-amber-700">Paused while the active Call Retry is completed.</p>}{activeAction.action_type === 'manager_escalation' && !canManage && <p className="mt-1 text-xs font-medium text-amber-700">RM or Admin resolution required.</p>}</div>{!readOnly && activeAction.status !== 'paused' && (activeAction.action_type !== 'manager_escalation' || canManage) && <Button size="sm" variant="outline" onClick={() => openRecord(true)}>Complete</Button>}</div></div>}
+            {activeAction && <div className="rounded-xl border border-sky-200 bg-white p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-wide text-sky-700">Next Required Action</p><h3 className="mt-1 text-sm font-semibold text-slate-900">{actionLabel(activeAction.action_type, activeAction.reason)}</h3><p className="text-xs text-slate-500">{humanize(activeAction.reason)} / {['common_meeting', 'common_meeting_outcome'].includes(activeAction.action_type) ? `Outcome due ${fmtDate(activeAction.due_at, 'd MMM, h:mm a')}` : fmtDate(activeAction.due_at, 'd MMM, h:mm a')}</p>{activeAction.due_at && <p className={`mt-1 text-xs font-semibold ${activeAction.status === 'overdue' ? 'text-rose-600' : 'text-amber-700'}`}>{activeAction.status === 'overdue' ? 'Pending since' : 'Pending if not updated'} {fmtRelative(activeAction.due_at)}</p>}{activeAction.status === 'paused' && <p className="mt-1 text-xs font-medium text-amber-700">Paused while the active Call Retry is completed.</p>}{activeAction.action_type === 'manager_escalation' && !canManage && <p className="mt-1 text-xs font-medium text-amber-700">RM or Admin resolution required.</p>}</div>{!readOnly && activeAction.status !== 'paused' && (activeAction.action_type !== 'manager_escalation' || canManage) && <Button size="sm" variant="outline" onClick={() => openRecord(true)}>Complete</Button>}</div></div>}
             {activeRetry && <div className="rounded-xl border border-amber-200 bg-white p-4"><p className="text-[10px] font-semibold uppercase tracking-wide text-amber-700">Active Call Retry</p><h3 className="mt-1 text-sm font-semibold text-slate-900">{humanize(String(activeRetry.initial_trigger_reason || 'Call issue'))}</h3><p className="text-xs text-slate-500">Belongs to {humanize(activeRetry.originating_action_id ? activeAction?.reason || state.journey_stage : state.journey_stage)}{activeRetry.next_attempt?.scheduled_at ? ` / ${fmtDate(activeRetry.next_attempt.scheduled_at, 'd MMM, h:mm a')}` : ''}</p></div>}
           </div>
         )}
@@ -155,7 +170,7 @@ export function LeadLifecyclePanel({ leadId, readOnly = false, canManage = false
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={reopenMode ? 'Reopen Lead' : completeMode ? 'Complete Required Action' : 'Record Activity'} description={reopenMode ? 'Reopen with one clear, scheduled next action.' : 'Record what happened and always leave one clear next action.'} size="md" footer={<><Button variant="ghost" onClick={() => setModalOpen(false)}>Cancel</Button><Button onClick={submit} disabled={record.isPending || complete.isPending || close.isPending || reopen.isPending}>Save lifecycle</Button></>}>
         <div className="space-y-4">
           {!reopenMode && <><div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setTerminal('')} className={`rounded-xl border p-3 text-sm font-medium ${!terminal ? 'border-sky-500 bg-sky-50 text-sky-800' : 'border-slate-200'}`}>Continue journey</button><button type="button" onClick={() => setTerminal('converted')} className={`rounded-xl border p-3 text-sm font-medium ${terminal === 'converted' ? 'border-emerald-500 bg-emerald-50 text-emerald-800' : 'border-slate-200'}`}>Converted</button></div><button type="button" onClick={() => setTerminal('cold')} className={`w-full rounded-xl border p-3 text-sm font-medium ${terminal === 'cold' ? 'border-rose-500 bg-rose-50 text-rose-800' : 'border-slate-200'}`}>Close as Cold</button></>}
-          {terminal === 'cold' ? <><label className="block"><span className="label">Cold reason</span><select className="input" value={coldReason} onChange={event => setColdReason(event.target.value)}>{COLD_REASONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>{coldReason === 'other' && <label className="block"><span className="label">Reason details</span><textarea className="input min-h-20" value={coldNote} onChange={event => setColdNote(event.target.value)} /></label>}</> : terminal === 'converted' ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"><CheckCircle2 className="mr-2 inline h-4 w-4" />Future actions and retries will be cancelled; history remains.</div> : <>{!reopenMode && <label className="block"><span className="label">Activity</span><select className="input" value={activity} onChange={event => setActivity(event.target.value)}>{ACTIVITIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}<label className="block"><span className="label">What happens next?</span><select className="input" value={nextAction} onChange={event => setNextAction(event.target.value)}>{NEXT_ACTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label className="block"><span className="label">Deadline</span><input type="datetime-local" className="input" value={dueAt} onChange={event => setDueAt(event.target.value)} /></label><label className="block"><span className="label">Reason / context</span><textarea className="input min-h-20" value={reason} onChange={event => setReason(event.target.value)} placeholder="Why is this the next action?" /></label></>}
+          {terminal === 'cold' ? <><label className="block"><span className="label">Cold reason</span><select className="input" value={coldReason} onChange={event => setColdReason(event.target.value)}>{COLD_REASONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>{coldReason === 'other' && <label className="block"><span className="label">Reason details</span><textarea className="input min-h-20" value={coldNote} onChange={event => setColdNote(event.target.value)} /></label>}</> : terminal === 'converted' ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"><CheckCircle2 className="mr-2 inline h-4 w-4" />Future actions and retries will be cancelled; history remains.</div> : <>{!reopenMode && <label className="block"><span className="label">Activity</span><select className="input" value={activity} onChange={event => setActivity(event.target.value)}>{ACTIVITIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}<label className="block"><span className="label">What happens next?</span><select className="input" value={nextAction} onChange={event => setNextAction(event.target.value)}>{NEXT_ACTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>{nextAction === 'common_meeting' ? <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">Outcome update will be due automatically on the next working day at 11:00 AM IST. No individual meeting is created.</div> : <label className="block"><span className="label">Deadline</span><input type="datetime-local" className="input" value={dueAt} onChange={event => setDueAt(event.target.value)} /></label>}<label className="block"><span className="label">Reason / context</span><textarea className="input min-h-20" value={reason} onChange={event => setReason(event.target.value)} placeholder="Why is this the next action?" /></label></>}
         </div>
       </Modal>
     </div>

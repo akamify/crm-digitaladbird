@@ -5907,30 +5907,43 @@ router.post('/leads/:id/workflow/level', authenticate, asyncHandler(async (req, 
     throw new AppError(400, 'INVALID_LEAD_LEVEL', 'Select a lead category option that matches this lead profile.');
   }
 
-  const { rows: [existing] } = await query(
-    `SELECT remark_status, step_1_statuses FROM lead_workflow WHERE lead_id = $1`, [leadId]
-  );
-  const step1Statuses = Array.isArray(existing?.step_1_statuses) && existing.step_1_statuses.length
-    ? existing.step_1_statuses
-    : existing?.remark_status ? [existing.remark_status] : [];
-  if (!isAnyWorkflowRemarkCompleted(step1Statuses)) {
-    throw new AppError(400, 'STEP_LOCKED', 'Select a completed Step 1 remark before classifying this lead.');
-  }
+  const result = await withTransaction(async client => {
+    const { rows: [existing] } = await client.query(
+      `SELECT remark_status, step_1_statuses FROM lead_workflow WHERE lead_id = $1 FOR UPDATE`, [leadId]
+    );
+    const step1Statuses = Array.isArray(existing?.step_1_statuses) && existing.step_1_statuses.length
+      ? existing.step_1_statuses
+      : existing?.remark_status ? [existing.remark_status] : [];
+    if (!isAnyWorkflowRemarkCompleted(step1Statuses)) {
+      throw new AppError(400, 'STEP_LOCKED', 'Select a completed Step 1 remark before classifying this lead.');
+    }
 
-  const { rows: [wf] } = await query(`
-    UPDATE lead_workflow
-       SET lead_level = $1,
-           step_2_statuses = $2::jsonb,
-           lead_level_saved_at = NOW(),
-           updated_at = NOW()
-     WHERE lead_id = $3
-     RETURNING *
-  `, [primaryLeadLevel, JSON.stringify(step2Statuses), leadId]);
+    const { rows: [wf] } = await client.query(`
+      UPDATE lead_workflow
+         SET lead_level = $1,
+             step_2_statuses = $2::jsonb,
+             lead_level_saved_at = NOW(),
+             updated_at = NOW()
+       WHERE lead_id = $3
+       RETURNING *
+    `, [primaryLeadLevel, JSON.stringify(step2Statuses), leadId]);
 
-  await query(`
-    INSERT INTO lead_workflow_history (lead_id, user_id, step, action, new_value)
-    VALUES ($1, $2, 2, 'level_saved', $3)
-  `, [leadId, req.user.id, step2Statuses.join(',')]);
+    const { rows: [history] } = await client.query(`
+      INSERT INTO lead_workflow_history (lead_id, user_id, step, action, new_value)
+      VALUES ($1, $2, 2, 'level_saved', $3)
+      RETURNING id
+    `, [leadId, req.user.id, step2Statuses.join(',')]);
+
+    await lifecycleService.syncLegacyLeadLevel({
+      client,
+      user: req.user,
+      leadId,
+      statuses: step2Statuses,
+      historyId: history?.id || null,
+    });
+    return { wf, existing };
+  });
+  const { wf, existing } = result;
 
   {
     const { logActivity } = require('../utils/auditLog');

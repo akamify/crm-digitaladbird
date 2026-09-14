@@ -149,6 +149,7 @@ export function useCounselorWorkspaceLeads(input: { view: WorkspaceView; scope: 
     enabled: input.enabled !== false,
     placeholderData: keepPreviousData,
     staleTime: 15_000,
+    refetchInterval: 60_000,
   });
 }
 

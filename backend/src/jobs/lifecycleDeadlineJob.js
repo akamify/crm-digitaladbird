@@ -6,6 +6,63 @@ const notifications = require('../services/notificationService');
 const TICK_MS = 60_000;
 const BATCH_SIZE = 200;
 
+async function repairLegacyMeetingDeadlines(settings) {
+  const scopeIds = settings.enabled ? null : settings.pilotUserIds;
+  if (!settings.enabled && scopeIds.length === 0) return 0;
+  const { rows } = await query(`
+    SELECT a.id,a.lead_id,a.status,e.occurred_at AS response_at
+      FROM lead_actions a
+      JOIN lead_lifecycle_state ls ON ls.lead_id=a.lead_id AND ls.current_primary_action_id=a.id
+      JOIN leads l ON l.id=a.lead_id AND l.deleted_at IS NULL
+      JOIN LATERAL (
+        SELECT le.occurred_at
+          FROM lead_lifecycle_events le
+         WHERE le.lead_id=a.lead_id
+           AND le.reason IN ('communication_completed','respond_hi')
+           AND le.metadata->>'remark_id'=a.metadata->>'remark_id'
+         ORDER BY le.occurred_at DESC,le.id DESC LIMIT 1
+      ) e ON TRUE
+     WHERE a.action_type IN ('lifecycle_review','responded_next_action','common_meeting')
+       AND a.reason IN ('next_action_not_selected','responded_requires_next_action','common_meeting_outcome_not_updated')
+       AND a.status IN ('scheduled','paused','overdue')
+       AND ($1::uuid[] IS NULL OR l.assigned_to_user_id=ANY($1::uuid[]))
+     ORDER BY a.updated_at ASC
+     LIMIT $2`, [scopeIds, BATCH_SIZE]);
+
+  let repaired = 0;
+  for (const row of rows) {
+    await withTransaction(async client => {
+      const { rows: [action] } = await client.query(`
+        SELECT a.id,a.status
+          FROM lead_actions a
+          JOIN lead_lifecycle_state ls ON ls.current_primary_action_id=a.id
+         WHERE a.id=$1 AND a.action_type IN ('lifecycle_review','responded_next_action','common_meeting')
+           AND a.reason IN ('next_action_not_selected','responded_requires_next_action','common_meeting_outcome_not_updated')
+         FOR UPDATE OF a`, [row.id]);
+      if (!action) return;
+      const dueAt = lifecycle.nextWorkingDeadline(new Date(row.response_at), settings);
+      await client.query(`
+        UPDATE lead_actions
+           SET action_type='common_meeting_outcome',reason='common_meeting_outcome_not_updated',
+               parent_stage='common_meeting',scheduled_at=NULL,due_at=$2,
+               status=CASE WHEN status='paused' THEN 'paused' WHEN $2<=NOW() THEN 'overdue' ELSE 'scheduled' END,
+               metadata=(metadata - 'meeting_at') || $3::jsonb,updated_at=NOW()
+         WHERE id=$1`, [row.id, dueAt.toISOString(), JSON.stringify({
+        repaired_from_legacy_deadline: true,
+        outcome_deadline_at: dueAt.toISOString(),
+      })]);
+      await client.query(`UPDATE lead_lifecycle_state SET journey_stage='common_meeting',version=version+1,updated_at=NOW() WHERE lead_id=$1`, [row.lead_id]);
+      await client.query(`
+        INSERT INTO lead_lifecycle_events(lead_id,event_type,stage_before,stage_after,action_id,reason,metadata)
+        VALUES($1,'action_rescheduled','response','common_meeting',$2,'legacy_common_meeting_deadline_repaired',$3::jsonb)`, [
+        row.lead_id, row.id, JSON.stringify({ outcome_deadline_at: dueAt.toISOString() }),
+      ]);
+      repaired += 1;
+    });
+  }
+  return repaired;
+}
+
 async function realignActionOwners(settings) {
   const scopeIds = settings.enabled ? null : settings.pilotUserIds;
   if (!settings.enabled && scopeIds.length === 0) return 0;
@@ -62,7 +119,7 @@ async function materializeMissingActions(settings) {
       const base = new Date(lead.assigned_at || lead.created_at || Date.now());
       const due = isNew
         ? lifecycle.clampToCallWindow(new Date(base.getTime() + settings.firstContactSlaMinutes * 60000), settings)
-        : new Date();
+        : lifecycle.nextWorkingDeadline(new Date(), settings);
       const materializeKey = `materialize:${lead.id}:${state.version}:${isNew ? 'first-contact' : 'review'}`;
       const action = await lifecycle.createPrimaryAction(client, {
         leadId: lead.id,
@@ -98,7 +155,7 @@ async function markOverdue(settings) {
        FOR UPDATE OF a SKIP LOCKED
        LIMIT $2`, [scopeIds, BATCH_SIZE]);
     for (const action of rows) {
-      const pendingReason = action.action_type === 'common_meeting'
+      const pendingReason = ['common_meeting', 'common_meeting_outcome'].includes(action.action_type)
         ? 'COMMON_MEETING_OUTCOME_NOT_UPDATED'
         : action.reason;
       const { rows: [count] } = await client.query(`SELECT COUNT(*)::int AS value FROM lead_lifecycle_events WHERE lead_id=$1 AND event_type='pending_started'`, [action.lead_id]);
@@ -133,10 +190,11 @@ async function tick() {
     const settings = await lifecycle.getSettings();
     if (!settings.enabled && settings.pilotUserIds.length === 0) return { skipped: true };
     const reassigned = await realignActionOwners(settings);
+    const repaired = await repairLegacyMeetingDeadlines(settings);
     const created = await materializeMissingActions(settings);
     const overdue = await markOverdue(settings);
-    if (reassigned || created || overdue) logger.info({ reassigned, created, overdue }, '[LifecycleV2] deadline tick');
-    return { reassigned, created, overdue };
+    if (reassigned || repaired || created || overdue) logger.info({ reassigned, repaired, created, overdue }, '[LifecycleV2] deadline tick');
+    return { reassigned, repaired, created, overdue };
   } catch (error) {
     logger.error({ error: error.message }, '[LifecycleV2] deadline tick failed');
     return { error: error.message };
@@ -148,4 +206,4 @@ function startLifecycleDeadlineJob() {
   return setInterval(() => tick().catch(() => {}), TICK_MS);
 }
 
-module.exports = { startLifecycleDeadlineJob, tick, realignActionOwners, materializeMissingActions, markOverdue };
+module.exports = { startLifecycleDeadlineJob, tick, realignActionOwners, repairLegacyMeetingDeadlines, materializeMissingActions, markOverdue };

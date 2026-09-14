@@ -30,12 +30,12 @@ const QUEUE_FILTERS: Array<{
   Icon: typeof ListChecks;
   tone: string;
 }> = [
-  { key: 'all', label: 'All Actions', description: 'Complete prioritized workload', Icon: ListChecks, tone: 'text-blue-700 bg-blue-50 border-blue-200' },
-  { key: 'overdue_retry', label: 'Overdue Retries', description: 'Scheduled retry time has passed', Icon: PhoneCall, tone: 'text-rose-700 bg-rose-50 border-rose-200' },
-  { key: 'unworked', label: 'Unworked Leads', description: 'No qualifying action recorded', Icon: AlertCircle, tone: 'text-amber-700 bg-amber-50 border-amber-200' },
-  { key: 'followup', label: 'Today Follow-ups', description: 'Follow-ups scheduled today', Icon: Clock3, tone: 'text-sky-700 bg-sky-50 border-sky-200' },
-  { key: 'meeting', label: 'Today Meetings', description: 'Meetings without an outcome', Icon: CalendarClock, tone: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
-];
+    { key: 'all', label: 'All Actions', description: 'Complete prioritized workload', Icon: ListChecks, tone: 'text-blue-700 bg-blue-50 border-blue-200' },
+    { key: 'overdue_retry', label: 'Overdue Retries', description: 'Scheduled retry time has passed', Icon: PhoneCall, tone: 'text-rose-700 bg-rose-50 border-rose-200' },
+    { key: 'unworked', label: 'Unworked Leads', description: 'No qualifying action recorded', Icon: AlertCircle, tone: 'text-amber-700 bg-amber-50 border-amber-200' },
+    { key: 'followup', label: 'Today Follow-ups', description: 'Follow-ups scheduled today', Icon: Clock3, tone: 'text-sky-700 bg-sky-50 border-sky-200' },
+    { key: 'meeting', label: 'Today Meetings', description: 'Meetings without an outcome', Icon: CalendarClock, tone: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
+  ];
 
 
 const VALID_TYPES = new Set(QUEUE_FILTERS.map(option => option.key));

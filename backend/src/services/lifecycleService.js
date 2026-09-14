@@ -226,33 +226,23 @@ function normalizeNextAction(input, state, settings, now) {
   const actionType = text(input.action_type).toLowerCase();
   if (!ACTION_TYPES.has(actionType)) throw new AppError(400, 'INVALID_ACTION_TYPE', 'Select a valid next action.');
   let dueAt = input.due_at ? new Date(input.due_at) : null;
-  let commonMeetingAt = actionType === 'common_meeting' && input.due_at ? new Date(input.due_at) : null;
   const callTypes = new Set(['first_contact', 'responded_next_action', 'recontact', 'callback', 'follow_up']);
-  if (actionType === 'common_meeting' && !dueAt) {
-    let date = businessDate(now);
-    const start = atIst(date, settings.commonMeetingStart);
-    if (start <= now) date = nextWorkingDate(date, settings);
-    commonMeetingAt = atIst(date, settings.commonMeetingStart);
-    dueAt = nextWorkingDeadline(commonMeetingAt, settings);
-  }
+  if (actionType === 'common_meeting') dueAt = nextWorkingDeadline(now, settings);
   if (!dueAt || Number.isNaN(dueAt.getTime())) {
     throw new AppError(400, 'NEXT_ACTION_REQUIRED', 'Select the next action date and time.');
   }
   if (callTypes.has(actionType)) dueAt = clampToCallWindow(dueAt, settings);
   const isStageFollowup = actionType === 'follow_up' && ['tte', 'personal_meeting', 'quotation'].includes(state.journey_stage);
-  if (commonMeetingAt && !Number.isNaN(commonMeetingAt.getTime())) {
-    dueAt = nextWorkingDeadline(commonMeetingAt, settings);
-  }
   return {
-    actionType,
+    actionType: actionType === 'common_meeting' ? 'common_meeting_outcome' : actionType,
     reason: text(input.reason) || `post_${state.journey_stage}`,
     parentStage: text(input.parent_stage) || state.journey_stage,
     parentActionId: input.parent_action_id || null,
     dueAt,
-    scheduledAt: commonMeetingAt,
+    scheduledAt: null,
     stageFollowupAttempt: isStageFollowup ? positiveInt(input.stage_followup_attempt, 1, settings.stageFollowupMaxAttempts) : null,
     stageFollowupMax: isStageFollowup ? settings.stageFollowupMaxAttempts : null,
-    metadata: { ...(input.metadata || {}), ...(commonMeetingAt ? { meeting_at: commonMeetingAt.toISOString(), outcome_deadline_at: dueAt.toISOString() } : {}) },
+    metadata: { ...(input.metadata || {}), ...(actionType === 'common_meeting' ? { outcome_deadline_at: dueAt.toISOString() } : {}) },
   };
 }
 
@@ -345,7 +335,7 @@ function legacyStageForStatuses(statuses, currentStage) {
   return currentStage;
 }
 
-async function syncLegacyRemark({ client, user, leadId, statuses = [], remarkId = null, nextFollowupAt = null }) {
+async function syncLegacyRemark({ client, user, leadId, statuses = [], remarkId = null, nextFollowupAt = null, now = new Date() }) {
   let settings;
   try {
     settings = await getSettings(client);
@@ -365,61 +355,88 @@ async function syncLegacyRemark({ client, user, leadId, statuses = [], remarkId 
     return { enabled: true, synced: false, duplicate: true };
   }
 
-  const converted = normalized.includes('converted');
-  const cold = normalized.includes('not_interested');
+  const primaryStatus = normalized[0];
+  const converted = primaryStatus === 'converted';
+  const invalidLead = primaryStatus === 'in';
+  const cold = primaryStatus === 'not_interested' || invalidLead;
   if (converted || cold) {
     const terminalState = converted ? 'converted' : 'cold';
     await client.query(`UPDATE lead_actions SET status='cancelled',outcome=$2,updated_at=NOW() WHERE lead_id=$1 AND status IN ('scheduled','in_progress','paused','overdue')`, [leadId, `legacy_${terminalState}`]);
     await client.query(`UPDATE lead_call_attempts SET status='cancelled',updated_at=NOW() WHERE lead_id=$1 AND status='scheduled'`, [leadId]);
     await client.query(`UPDATE lead_call_attempt_sequences SET status=$2,closed_reason=$3,closed_at=NOW(),updated_at=NOW() WHERE lead_id=$1 AND status='active'`, [leadId, cold ? 'cold_closed' : 'completed', `legacy_${terminalState}`]);
-    await client.query(`UPDATE lead_lifecycle_state SET terminal_state=$2,cold_reason=$3,cold_reason_note=NULL,current_primary_action_id=NULL,closed_at=NOW(),version=version+1,updated_at=NOW() WHERE lead_id=$1`, [leadId, terminalState, cold ? 'not_interested' : null]);
+    const coldReason = invalidLead ? 'invalid_lead' : cold ? 'not_interested' : null;
+    await client.query(`UPDATE lead_lifecycle_state SET terminal_state=$2,cold_reason=$3,cold_reason_note=NULL,current_primary_action_id=NULL,closed_at=NOW(),version=version+1,updated_at=NOW() WHERE lead_id=$1`, [leadId, terminalState, coldReason]);
+    await client.query(`UPDATE leads SET stage=$2,next_followup_at=NULL,updated_at=NOW() WHERE id=$1`, [leadId, converted ? 'won' : 'lost']);
     await client.query(`INSERT INTO lead_lifecycle_events(lead_id,user_id,event_type,stage_before,stage_after,reason,metadata) VALUES($1,$2,'lifecycle_closed',$3,$3,$4,$5::jsonb)`, [leadId, user.id, state.journey_stage, `legacy_${terminalState}`, JSON.stringify({ idempotency_key: idempotencyKey, source: 'legacy_workflow', terminal_state: terminalState })]);
     return { enabled: true, synced: true, terminal_state: terminalState };
   }
 
   if (state.terminal_state) return { enabled: true, synced: false, closed: true };
-  const callIssueResult = normalized.find(status => LEGACY_CALL_ISSUE_RESULTS.has(status)) || null;
-  const retryResult = normalized.find(status => LEGACY_RETRYABLE_RESULTS.has(status)) || null;
+  const callIssueResult = LEGACY_CALL_ISSUE_RESULTS.has(primaryStatus) ? primaryStatus : null;
+  const retryResult = LEGACY_RETRYABLE_RESULTS.has(primaryStatus) ? primaryStatus : null;
+  const schedulesCommonMeeting = primaryStatus === 'communication_completed' || primaryStatus === 'respond_hi';
   let activeSequence = null;
   if (callIssueResult) {
     const { rows: [sequence] } = await client.query(`SELECT id,originating_action_id FROM lead_call_attempt_sequences WHERE lead_id=$1 AND status='active' LIMIT 1`, [leadId]);
     activeSequence = sequence || null;
   }
-  const stageAfter = legacyStageForStatuses(normalized, state.journey_stage);
+  const stageAfter = schedulesCommonMeeting ? 'common_meeting' : legacyStageForStatuses(normalized, state.journey_stage);
   let action = null;
-  const needsCommonMeetingOutcome = normalized.includes('session_730_attend');
-  const needsRespondedDecision = normalized.includes('respond_hi');
-  const needsNextDecision = normalized.includes('communication_completed') || normalized.includes('yes_after_730_session');
-  const followupStatus = normalized.includes('callback_requested') ? 'callback' : normalized.includes('follow_up') ? 'follow_up' : null;
+  const needsCommonMeetingOutcome = primaryStatus === 'session_730_attend';
+  const needsNextDecision = primaryStatus === 'yes_after_730_session';
+  const needsGeneralNextAction = ['interested', 'custom_remark', 'ni'].includes(primaryStatus);
+  const followupStatus = primaryStatus === 'callback_requested' ? 'callback' : primaryStatus === 'follow_up' ? 'follow_up' : null;
   const hasCurrentAction = Boolean(state.current_primary_action_id);
+  let currentAction = null;
+  if (hasCurrentAction && (needsCommonMeetingOutcome || needsNextDecision)) {
+    const { rows: [existingAction] } = await client.query(`
+      SELECT id,action_type,due_at,scheduled_at,status
+        FROM lead_actions WHERE id=$1 AND lead_id=$2
+        LIMIT 1`, [state.current_primary_action_id, leadId]);
+    currentAction = existingAction || null;
+  }
+  const replacesCurrentAction = schedulesCommonMeeting || needsCommonMeetingOutcome || needsNextDecision
+    || needsGeneralNextAction || Boolean(followupStatus);
 
-  if (!hasCurrentAction && !(retryResult && activeSequence)) {
+  if ((replacesCurrentAction || !hasCurrentAction) && !(retryResult && activeSequence)) {
     let actionInput = null;
-    if (needsCommonMeetingOutcome) {
+    if (schedulesCommonMeeting) {
       actionInput = {
         actionType: 'common_meeting_outcome', reason: 'common_meeting_outcome_not_updated',
-        parentStage: 'common_meeting', dueAt: nextWorkingDeadline(new Date(), settings),
+        parentStage: 'common_meeting', dueAt: nextWorkingDeadline(now, settings),
       };
-    } else if (needsRespondedDecision) {
+    } else if (needsCommonMeetingOutcome) {
       actionInput = {
-        actionType: 'responded_next_action', reason: 'responded_requires_next_action', parentStage: 'response',
-        dueAt: clampToCallWindow(new Date(Date.now() + settings.respondedSlaMinutes * 60000), settings),
+        actionType: 'common_meeting_outcome', reason: 'common_meeting_outcome_not_updated',
+        parentStage: 'common_meeting',
+        dueAt: currentAction?.action_type === 'common_meeting' || currentAction?.action_type === 'common_meeting_outcome'
+          ? new Date(currentAction.due_at)
+          : nextWorkingDeadline(now, settings),
       };
     } else if (followupStatus && nextFollowupAt) {
       actionInput = {
         actionType: followupStatus, reason: `legacy_${followupStatus}`, parentStage: stageAfter,
         dueAt: clampToCallWindow(new Date(nextFollowupAt), settings),
       };
-    } else if (needsNextDecision || callIssueResult) {
+    } else if (followupStatus) {
+      actionInput = {
+        actionType: followupStatus, reason: `legacy_${followupStatus}`, parentStage: stageAfter,
+        dueAt: nextWorkingDeadline(now, settings),
+      };
+    } else if (needsNextDecision || needsGeneralNextAction || callIssueResult) {
+      const preservedOutcomeDeadline = currentAction
+        && ['common_meeting', 'common_meeting_outcome'].includes(currentAction.action_type)
+        ? new Date(currentAction.due_at)
+        : null;
       actionInput = {
         actionType: 'lifecycle_review', reason: callIssueResult ? 'call_issue_requires_resolution' : 'next_action_not_selected', parentStage: stageAfter,
-        dueAt: new Date(),
+        dueAt: preservedOutcomeDeadline || nextWorkingDeadline(now, settings),
       };
     }
     if (actionInput) {
       action = await createPrimaryAction(client, {
         leadId, userId: user.id, ...actionInput, idempotencyKey: `${idempotencyKey}:action`,
-        metadata: { source: 'legacy_workflow', remark_id: remarkId },
+        metadata: { ...(actionInput.metadata || {}), source: 'legacy_workflow', remark_id: remarkId },
       });
     }
   }
@@ -438,6 +455,61 @@ async function syncLegacyRemark({ client, user, leadId, statuses = [], remarkId 
   } else if (state.current_primary_action_id) {
     await client.query(`UPDATE lead_actions SET status=CASE WHEN due_at<=NOW() THEN 'overdue' ELSE 'scheduled' END,updated_at=NOW() WHERE id=$1 AND status='paused'`, [state.current_primary_action_id]);
   }
+  return { enabled: true, synced: true, action_id: action?.id || null };
+}
+
+async function syncLegacyLeadLevel({ client, user, leadId, statuses = [], historyId = null, now = new Date() }) {
+  let settings;
+  try {
+    settings = await getSettings(client);
+  } catch (error) {
+    if (error?.code === '42P01') return { enabled: false, migration_pending: true };
+    throw error;
+  }
+  if (!isEnabledFor(settings, user)) return { enabled: false };
+  const normalized = [...new Set((Array.isArray(statuses) ? statuses : [statuses]).map(value => text(value).toLowerCase()).filter(Boolean))];
+  if (!normalized.length) return { enabled: true, synced: false };
+  const primaryStatus = normalized[0];
+  const idempotencyKey = `legacy-level:${historyId || normalized.join('-')}`.slice(0, 128);
+  const state = await ensureState(client, leadId);
+  if (await findIdempotentEvent(client, leadId, idempotencyKey)) return { enabled: true, synced: false, duplicate: true };
+
+  const converted = primaryStatus === 'converted' || primaryStatus === 'closed';
+  const cold = ['cold_lead', 'cold_partner', 'cold_trader', 'not_interested', 'lost'].includes(primaryStatus);
+  if (converted || cold) {
+    const terminalState = converted ? 'converted' : 'cold';
+    await client.query(`UPDATE lead_actions SET status='cancelled',outcome=$2,updated_at=NOW() WHERE lead_id=$1 AND status IN ('scheduled','in_progress','paused','overdue')`, [leadId, `legacy_level_${terminalState}`]);
+    await client.query(`UPDATE lead_call_attempts SET status='cancelled',updated_at=NOW() WHERE lead_id=$1 AND status='scheduled'`, [leadId]);
+    await client.query(`UPDATE lead_call_attempt_sequences SET status=$2,closed_reason=$3,closed_at=NOW(),updated_at=NOW() WHERE lead_id=$1 AND status='active'`, [leadId, cold ? 'cold_closed' : 'completed', `legacy_level_${terminalState}`]);
+    await client.query(`UPDATE lead_lifecycle_state SET terminal_state=$2,cold_reason=$3,cold_reason_note=NULL,current_primary_action_id=NULL,closed_at=NOW(),version=version+1,updated_at=NOW() WHERE lead_id=$1`, [leadId, terminalState, cold ? 'legacy_import' : null]);
+    await client.query(`UPDATE leads SET stage=$2,call_status=$3,next_followup_at=NULL,updated_at=NOW() WHERE id=$1`, [leadId, converted ? 'won' : 'lost', converted ? 'converted' : 'not_interested']);
+    await client.query(`INSERT INTO lead_lifecycle_events(lead_id,user_id,event_type,stage_before,stage_after,reason,metadata) VALUES($1,$2,'lifecycle_closed',$3,$3,$4,$5::jsonb)`, [leadId, user.id, state.journey_stage, primaryStatus, JSON.stringify({ idempotency_key: idempotencyKey, source: 'legacy_workflow_level', terminal_state: terminalState, statuses: normalized })]);
+    return { enabled: true, synced: true, terminal_state: terminalState };
+  }
+  if (state.terminal_state) return { enabled: true, synced: false, closed: true };
+
+  const { rows: [activeRetry] } = await client.query(`SELECT id FROM lead_call_attempt_sequences WHERE lead_id=$1 AND status='active' LIMIT 1`, [leadId]);
+  let action = null;
+  if (!activeRetry) {
+    const actionType = primaryStatus === 'callback_requested'
+      ? 'callback'
+      : ['follow_up_required', 'followup_partner', 'followup_trader'].includes(primaryStatus) ? 'follow_up' : 'lifecycle_review';
+    action = await createPrimaryAction(client, {
+      leadId,
+      userId: user.id,
+      actionType,
+      reason: `lead_category_${primaryStatus}`,
+      parentStage: state.journey_stage,
+      dueAt: nextWorkingDeadline(now, settings),
+      idempotencyKey: `${idempotencyKey}:action`,
+      metadata: { source: 'legacy_workflow_level', history_id: historyId, statuses: normalized },
+    });
+  }
+  await client.query(`UPDATE lead_lifecycle_state SET current_primary_action_id=COALESCE($2,current_primary_action_id),version=version+1,updated_at=NOW() WHERE lead_id=$1`, [leadId, action?.id || null]);
+  await client.query(`INSERT INTO lead_lifecycle_events(lead_id,user_id,event_type,stage_before,stage_after,action_id,reason,metadata) VALUES($1,$2,'legacy_lead_level',$3,$3,$4,$5,$6::jsonb)`, [
+    leadId, user.id, state.journey_stage, action?.id || null, primaryStatus,
+    JSON.stringify({ idempotency_key: idempotencyKey, source: 'legacy_workflow_level', history_id: historyId, statuses: normalized, active_retry_preserved: Boolean(activeRetry) }),
+  ]);
   return { enabled: true, synced: true, action_id: action?.id || null };
 }
 
@@ -506,10 +578,11 @@ async function recordEvent(user, leadId, input = {}) {
     validateExpectedVersion(state, input.expected_version);
 
     let next = normalizeNextAction(input.next_action, state, settings, now);
-    if (eventType === 'responded' && !next) {
+    if (['responded', 'communication_completed'].includes(eventType) && !next) {
       next = {
-        actionType: 'responded_next_action', reason: 'responded_requires_next_action',
-        parentStage: 'response', dueAt: clampToCallWindow(new Date(now.getTime() + settings.respondedSlaMinutes * 60000), settings),
+        actionType: 'common_meeting_outcome', reason: 'common_meeting_outcome_not_updated',
+        parentStage: 'common_meeting', dueAt: nextWorkingDeadline(now, settings),
+        metadata: { outcome_deadline_at: nextWorkingDeadline(now, settings).toISOString() },
       };
     }
     if (eventType === 'common_meeting_missed' && !next) {
@@ -519,7 +592,7 @@ async function recordEvent(user, leadId, input = {}) {
       };
     }
     const requiresNext = new Set([
-      'communication_completed', 'common_meeting_attended', 'tte_completed',
+      'common_meeting_attended', 'tte_completed',
       'personal_meeting_completed', 'quotation_sent',
     ]);
     if (requiresNext.has(eventType) && !next) {
@@ -531,7 +604,9 @@ async function recordEvent(user, leadId, input = {}) {
       if (!retry) throw new AppError(400, 'NEXT_ACTION_REQUIRED', 'Schedule the next required action before saving.');
     }
 
-    const stageAfter = journeyStageForEvent(eventType, state.journey_stage);
+    const stageAfter = ['common_meeting', 'common_meeting_outcome'].includes(next?.actionType)
+      ? 'common_meeting'
+      : journeyStageForEvent(eventType, state.journey_stage);
     const callResult = eventType === 'call_result' ? text(input.call_result || input.outcome) : null;
     if (eventType === 'call_result' && !callResult) throw new AppError(400, 'CALL_RESULT_REQUIRED', 'Select the latest call result.');
     if (eventType === 'other' && !text(input.reason)) throw new AppError(400, 'ACTIVITY_REASON_REQUIRED', 'Describe the activity.');
@@ -587,7 +662,8 @@ async function completeAction(user, leadId, actionId, input = {}) {
     if (eventType === 'call_result' && !callResult) throw new AppError(400, 'CALL_RESULT_REQUIRED', 'Select the latest call result.');
     let next = normalizeNextAction(input.next_action, { ...state, journey_stage: stageAfter }, settings, now);
 
-    if (action.action_type === 'common_meeting' && (outcome === 'missed' || eventType === 'common_meeting_missed') && !next) {
+    if (['common_meeting', 'common_meeting_outcome'].includes(action.action_type)
+      && (outcome === 'missed' || eventType === 'common_meeting_missed') && !next) {
       next = { actionType: 'recontact', reason: 'common_meeting_no_show', parentStage: 'common_meeting', dueAt: nextWorkingDeadline(now, settings) };
     }
     const stageCompletion = ['tte', 'tte_outcome', 'personal_meeting', 'personal_meeting_outcome', 'quotation'];
@@ -873,5 +949,5 @@ module.exports = {
   getSettings, isEnabledFor, getLifecycle, recordEvent, completeAction, closeLifecycle,
   reopenLifecycle, workspace, updateSettings, ensureState, createPrimaryAction,
   clampToCallWindow, nextWorkingDeadline, publicSettings, normalizePeriod, syncLegacyRemark,
-  syncLegacyPersonalMeeting, applyStageFollowupPolicy,
+  syncLegacyLeadLevel, syncLegacyPersonalMeeting, applyStageFollowupPolicy,
 };

@@ -32,6 +32,16 @@ function istDate(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 }
 
+function nextActionLabel(actionType?: string | null, reason?: string | null, hasCallIssue?: boolean) {
+  if (!actionType) return hasCallIssue ? 'Call retry' : 'No next action';
+  if (['common_meeting', 'common_meeting_outcome'].includes(actionType)) return 'Update Common Meeting outcome';
+  if (actionType === 'lifecycle_review' && reason?.startsWith('lead_category_')) {
+    return `Follow up ${humanize(reason.replace('lead_category_', ''))}`;
+  }
+  if (actionType === 'lifecycle_review') return 'Select next action';
+  return humanize(actionType);
+}
+
 export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?: boolean }) {
   const today = istDate();
   const router = useRouter();
@@ -144,7 +154,7 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
                 <div className="grid gap-3 lg:grid-cols-[minmax(0,1.25fr)_0.8fr_1fr_auto] lg:items-center">
                   <div className="min-w-0"><div className="truncate text-sm font-semibold text-slate-900">{lead.full_name || 'Unnamed lead'}</div><div className="mt-0.5 text-xs text-slate-500">{lead.phone || 'No phone'} / {humanize(lead.source || 'manual')}</div><div className="mt-1 flex flex-wrap gap-1">{lead.labels?.slice(0, 3).map(label => <span key={label.id} className="rounded-full border px-1.5 py-0.5 text-[9px] font-semibold" style={{ borderColor: label.color || '#cbd5e1', color: label.color || '#475569' }}>{label.name}</span>)}</div></div>
                   <div className="text-xs text-slate-600"><div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Journey / Last result</div><div className="mt-1 font-semibold text-slate-800">{humanize(lead.terminal_state || lead.journey_stage)}</div><div>{humanize(lead.last_call_result || 'not called')}</div></div>
-                  <div className="text-xs text-slate-600"><div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Next required action</div><div className="mt-1 font-semibold text-slate-800">{humanize(lead.current_action_type || (lead.has_call_issue ? 'call retry' : 'no next action'))}</div>{(lead.next_retry_at || lead.current_action_due_at || lead.next_followup_at) && <div className={`mt-0.5 flex items-center gap-1 ${lead.is_pending ? 'font-semibold text-rose-600' : ''}`}><Clock3 className="h-3 w-3" />{fmtDate(lead.next_retry_at || lead.current_action_due_at || lead.next_followup_at, 'd MMM, h:mm a')} | {fmtRelative(lead.next_retry_at || lead.current_action_due_at || lead.next_followup_at)}</div>}{lead.is_pending && <span className="mt-1 inline-flex rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700">Pending cycle {lead.pending_occurrences || 1}</span>}</div>
+                  <div className="text-xs text-slate-600"><div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Next required action</div><div className="mt-1 font-semibold text-slate-800">{nextActionLabel(lead.current_action_type, lead.current_action_reason, lead.has_call_issue)}</div>{(lead.next_retry_at || lead.current_action_due_at || lead.next_followup_at) && <div className={`mt-0.5 flex items-center gap-1 ${lead.is_pending ? 'font-semibold text-rose-600' : ''}`}><Clock3 className="h-3 w-3" />{fmtDate(lead.next_retry_at || lead.current_action_due_at || lead.next_followup_at, 'd MMM, h:mm a')} | {fmtRelative(lead.next_retry_at || lead.current_action_due_at || lead.next_followup_at)}</div>}{lead.is_pending && <span className="mt-1 inline-flex rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700">Pending cycle {lead.pending_occurrences || 1}</span>}</div>
                   <div className="flex items-center gap-2 lg:justify-end">{lead.phone && <a href={`tel:${lead.phone}`} className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-emerald-200 px-3 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"><Phone className="h-3.5 w-3.5" />Call</a>}<Link href={`/leads/${lead.id}`} className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-brand-200 px-3 text-xs font-semibold text-brand-700 hover:bg-brand-50">Open<ArrowRight className="h-3.5 w-3.5" /></Link></div>
                 </div>
                 <details className="mt-2 text-xs text-slate-500"><summary className="cursor-pointer font-medium text-slate-600">More details</summary><div className="mt-2 grid gap-2 rounded-lg bg-slate-50 p-3 sm:grid-cols-3"><span><strong>Category:</strong> {humanize(lead.category || 'unknown')}</span><span><strong>Campaign:</strong> {lead.campaign_name || lead.campaign_label || '-'}</span><span><strong>Latest interaction:</strong> {lead.latest_interaction_at ? fmtDate(lead.latest_interaction_at, 'd MMM, h:mm a') : '-'}</span></div></details>

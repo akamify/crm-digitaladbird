@@ -156,6 +156,28 @@ describe('Counselor Lifecycle V2', () => {
     expect(params).toEqual([null, 200]);
   });
 
+  test('repairs existing immediate response deadlines without deleting lifecycle history', async () => {
+    database.query.mockResolvedValue({ rows: [{
+      id: 'old-action', lead_id: 'lead-legacy', status: 'overdue', response_at: '2026-09-14T03:30:00.000Z',
+    }] });
+    const statements = [];
+    database.withTransaction.mockImplementationOnce(async callback => callback({
+      query: jest.fn(async (sql, params) => {
+        statements.push({ sql, params });
+        if (sql.includes('SELECT a.id,a.status')) return { rows: [{ id: 'old-action', status: 'overdue' }] };
+        return { rows: [], rowCount: 1 };
+      }),
+    }));
+
+    await expect(deadlineJob.repairLegacyMeetingDeadlines({ ...SETTINGS, enabled: true })).resolves.toBe(1);
+
+    const update = statements.find(entry => entry.sql.includes("action_type='common_meeting_outcome'"));
+    expect(update.params[1]).toBe('2026-09-15T05:30:00.000Z');
+    expect(update.sql).toContain('scheduled_at=NULL');
+    expect(statements.some(entry => entry.sql.includes("event_type,stage_before") && entry.sql.includes("'action_rescheduled'"))).toBe(true);
+    expect(statements.some(entry => entry.sql.includes("journey_stage='common_meeting'"))).toBe(true);
+  });
+
   test('legacy dual-write tolerates migration not yet present during rolling deploy', async () => {
     const missing = Object.assign(new Error('missing relation'), { code: '42P01' });
     const client = { query: jest.fn().mockRejectedValue(missing) };
@@ -205,7 +227,7 @@ describe('Counselor Lifecycle V2', () => {
     expect(retryLink.params).toEqual(['sequence-1', 'action-followup-2']);
   });
 
-  test('non-retryable Invalid Number creates an explicit resolution action', async () => {
+  test('Invalid Number closes the lifecycle as an invalid lead', async () => {
     const enabledRows = SETTINGS_ROWS.map(row => row.key === 'lifecycle_v2_enabled' ? { ...row, value: true } : row);
     const statements = [];
     const client = {
@@ -217,7 +239,6 @@ describe('Counselor Lifecycle V2', () => {
           current_primary_action_id: null, version: 1,
         }] };
         if (sql.includes("metadata->>'idempotency_key'")) return { rows: [] };
-        if (sql.includes('INSERT INTO lead_actions')) return { rows: [{ id: 'resolution-action' }] };
         return { rows: [], rowCount: 1 };
       }),
     };
@@ -230,9 +251,231 @@ describe('Counselor Lifecycle V2', () => {
       remarkId: 'remark-2',
     });
 
-    const actionInsert = statements.find(entry => entry.sql.includes('INSERT INTO lead_actions'));
-    expect(actionInsert.params[1]).toBe('lifecycle_review');
-    expect(actionInsert.params[2]).toBe('call_issue_requires_resolution');
+    const stateClose = statements.find(entry => entry.sql.includes('SET terminal_state=$2'));
+    expect(stateClose.params).toEqual(['lead-2', 'cold', 'invalid_lead']);
+    expect(statements.some(entry => entry.sql.includes('INSERT INTO lead_actions'))).toBe(false);
     expect(statements.some(entry => entry.sql.includes('UPDATE lead_call_attempt_sequences SET originating_action_id'))).toBe(false);
+  });
+
+  test.each(['communication_completed', 'respond_hi'])('%s replaces an overdue action with a Common Meeting deadline', async status => {
+    const enabledRows = SETTINGS_ROWS.map(row => row.key === 'lifecycle_v2_enabled' ? { ...row, value: true } : row);
+    const statements = [];
+    const client = {
+      query: jest.fn(async (sql, params) => {
+        statements.push({ sql, params });
+        if (sql.includes('FROM workflow_settings')) return { rows: enabledRows };
+        if (sql.includes('SELECT * FROM lead_lifecycle_state')) return { rows: [{
+          lead_id: 'lead-3', journey_stage: 'response', terminal_state: null,
+          current_primary_action_id: 'overdue-action', version: 2,
+        }] };
+        if (sql.includes("metadata->>'idempotency_key'")) return { rows: [] };
+        if (sql.includes('INSERT INTO lead_actions')) return { rows: [{ id: 'common-meeting-action' }] };
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+
+    await lifecycle.syncLegacyRemark({
+      client, user: { id: 'member-1' }, leadId: 'lead-3', statuses: [status], remarkId: `remark-${status}`,
+      now: new Date('2026-09-14T03:30:00.000Z'),
+    });
+
+    const actionInsert = statements.find(entry => entry.sql.includes('INSERT INTO lead_actions'));
+    expect(actionInsert.params[1]).toBe('common_meeting_outcome');
+    expect(actionInsert.params[2]).toBe('common_meeting_outcome_not_updated');
+    expect(actionInsert.params[3]).toBe('common_meeting');
+    expect(actionInsert.params[7]).toBe('2026-09-15T05:30:00.000Z');
+    expect(actionInsert.params[11]).toBeNull();
+    expect(JSON.parse(actionInsert.params[9])).not.toHaveProperty('meeting_at');
+    expect(statements.some(entry => entry.sql.includes("SET status = 'cancelled'"))).toBe(true);
+    const stateUpdate = statements.find(entry => entry.sql.includes('UPDATE lead_lifecycle_state SET journey_stage'));
+    expect(stateUpdate.params[1]).toBe('common_meeting');
+    expect(stateUpdate.params[3]).toBe('common-meeting-action');
+  });
+
+  test('direct Common Meeting attendance creates an outcome deadline without a prior schedule', async () => {
+    const enabledRows = SETTINGS_ROWS.map(row => row.key === 'lifecycle_v2_enabled' ? { ...row, value: true } : row);
+    const statements = [];
+    const client = {
+      query: jest.fn(async (sql, params) => {
+        statements.push({ sql, params });
+        if (sql.includes('FROM workflow_settings')) return { rows: enabledRows };
+        if (sql.includes('SELECT * FROM lead_lifecycle_state')) return { rows: [{
+          lead_id: 'lead-direct', journey_stage: 'response', terminal_state: null,
+          current_primary_action_id: null, version: 1,
+        }] };
+        if (sql.includes("metadata->>'idempotency_key'")) return { rows: [] };
+        if (sql.includes('INSERT INTO lead_actions')) return { rows: [{ id: 'outcome-action' }] };
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+
+    await lifecycle.syncLegacyRemark({
+      client, user: { id: 'member-1' }, leadId: 'lead-direct',
+      statuses: ['session_730_attend'], remarkId: 'remark-direct',
+      now: new Date('2026-09-14T16:00:00.000Z'),
+    });
+
+    const actionInsert = statements.find(entry => entry.sql.includes('INSERT INTO lead_actions'));
+    expect(actionInsert.params[1]).toBe('common_meeting_outcome');
+    expect(actionInsert.params[7]).toBe('2026-09-15T05:30:00.000Z');
+  });
+
+  test('missed Common Meeting outcome creates the next re-contact action', async () => {
+    const enabledRows = SETTINGS_ROWS.map(row => row.key === 'lifecycle_v2_enabled' ? { ...row, value: true } : row);
+    const statements = [];
+    const state = {
+      lead_id: 'lead-missed', journey_stage: 'common_meeting', terminal_state: null,
+      current_primary_action_id: 'outcome-action', version: 2,
+    };
+    const client = {
+      query: jest.fn(async (sql, params) => {
+        statements.push({ sql, params });
+        if (sql.includes('FROM workflow_settings')) return { rows: enabledRows };
+        if (sql.includes('SELECT * FROM lead_lifecycle_state')) return { rows: [state] };
+        if (sql.includes("metadata->>'idempotency_key'")) return { rows: [] };
+        if (sql.includes('SELECT * FROM lead_actions WHERE id=')) return { rows: [{
+          id: 'outcome-action', action_type: 'common_meeting_outcome', status: 'overdue',
+          due_at: '2026-09-14T05:30:00.000Z', parent_stage: 'common_meeting',
+        }] };
+        if (sql.includes('INSERT INTO lead_actions')) return { rows: [{ id: 'recontact-action' }] };
+        if (sql.includes('SELECT ls.*')) return { rows: [{ ...state, current_primary_action_id: 'recontact-action' }] };
+        return { rows: [] };
+      }),
+    };
+    database.withTransaction.mockImplementationOnce(async callback => callback(client));
+
+    await lifecycle.completeAction({ id: 'member-1', role: 'member' }, 'lead-missed', 'outcome-action', {
+      idempotency_key: 'complete-missed', outcome: 'missed', expected_version: 2,
+    });
+
+    const actionInsert = statements.find(entry => entry.sql.includes('INSERT INTO lead_actions'));
+    expect(actionInsert.params[1]).toBe('recontact');
+    expect(actionInsert.params[2]).toBe('common_meeting_no_show');
+    expect(actionInsert.params[3]).toBe('common_meeting');
+  });
+
+  test('Common Meeting attendance preserves the scheduled meeting outcome deadline', async () => {
+    const enabledRows = SETTINGS_ROWS.map(row => row.key === 'lifecycle_v2_enabled' ? { ...row, value: true } : row);
+    const statements = [];
+    const client = {
+      query: jest.fn(async (sql, params) => {
+        statements.push({ sql, params });
+        if (sql.includes('FROM workflow_settings')) return { rows: enabledRows };
+        if (sql.includes('SELECT * FROM lead_lifecycle_state')) return { rows: [{
+          lead_id: 'lead-scheduled', journey_stage: 'common_meeting', terminal_state: null,
+          current_primary_action_id: 'meeting-action', version: 2,
+        }] };
+        if (sql.includes("metadata->>'idempotency_key'")) return { rows: [] };
+        if (sql.includes('SELECT id,action_type,due_at')) return { rows: [{
+          id: 'meeting-action', action_type: 'common_meeting', status: 'scheduled',
+          scheduled_at: '2026-09-14T15:30:00.000Z', due_at: '2026-09-15T05:30:00.000Z',
+        }] };
+        if (sql.includes('INSERT INTO lead_actions')) return { rows: [{ id: 'outcome-action' }] };
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+
+    await lifecycle.syncLegacyRemark({
+      client, user: { id: 'member-1' }, leadId: 'lead-scheduled',
+      statuses: ['session_730_attend', 'communication_completed'], remarkId: 'remark-attended',
+      now: new Date('2026-09-14T16:15:00.000Z'),
+    });
+
+    const actionInsert = statements.find(entry => entry.sql.includes('INSERT INTO lead_actions'));
+    expect(actionInsert.params[1]).toBe('common_meeting_outcome');
+    expect(actionInsert.params[7]).toBe('2026-09-15T05:30:00.000Z');
+    expect(statements.some(entry => entry.sql.includes("SET status = 'cancelled'"))).toBe(true);
+  });
+
+  test.each([
+    ['yes_after_730_session', 'lifecycle_review', 'next_action_not_selected'],
+    ['interested', 'lifecycle_review', 'next_action_not_selected'],
+    ['follow_up', 'follow_up', 'legacy_follow_up'],
+  ])('%s keeps the lead active with a next-working-day action', async (status, actionType, reason) => {
+    const enabledRows = SETTINGS_ROWS.map(row => row.key === 'lifecycle_v2_enabled' ? { ...row, value: true } : row);
+    const statements = [];
+    const client = {
+      query: jest.fn(async (sql, params) => {
+        statements.push({ sql, params });
+        if (sql.includes('FROM workflow_settings')) return { rows: enabledRows };
+        if (sql.includes('SELECT * FROM lead_lifecycle_state')) return { rows: [{
+          lead_id: 'lead-active', journey_stage: 'common_meeting', terminal_state: null,
+          current_primary_action_id: null, version: 2,
+        }] };
+        if (sql.includes("metadata->>'idempotency_key'")) return { rows: [] };
+        if (sql.includes('INSERT INTO lead_actions')) return { rows: [{ id: 'next-action' }] };
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+
+    await lifecycle.syncLegacyRemark({
+      client, user: { id: 'member-1' }, leadId: 'lead-active', statuses: [status], remarkId: `remark-${status}`,
+      now: new Date('2026-09-14T06:30:00.000Z'),
+    });
+
+    const actionInsert = statements.find(entry => entry.sql.includes('INSERT INTO lead_actions'));
+    expect(actionInsert.params[1]).toBe(actionType);
+    expect(actionInsert.params[2]).toBe(reason);
+    expect(actionInsert.params[7]).toBe('2026-09-15T05:30:00.000Z');
+  });
+
+  test.each([
+    ['hot_trader', 'lifecycle_review'],
+    ['interested', 'lifecycle_review'],
+    ['follow_up_required', 'follow_up'],
+  ])('%s classification renews the active lead deadline', async (status, actionType) => {
+    const enabledRows = SETTINGS_ROWS.map(row => row.key === 'lifecycle_v2_enabled' ? { ...row, value: true } : row);
+    const statements = [];
+    const client = {
+      query: jest.fn(async (sql, params) => {
+        statements.push({ sql, params });
+        if (sql.includes('FROM workflow_settings')) return { rows: enabledRows };
+        if (sql.includes('SELECT * FROM lead_lifecycle_state')) return { rows: [{
+          lead_id: 'lead-hot', journey_stage: 'common_meeting', terminal_state: null,
+          current_primary_action_id: 'old-action', version: 3,
+        }] };
+        if (sql.includes("metadata->>'idempotency_key'")) return { rows: [] };
+        if (sql.includes('SELECT id FROM lead_call_attempt_sequences')) return { rows: [] };
+        if (sql.includes('INSERT INTO lead_actions')) return { rows: [{ id: 'hot-action' }] };
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+
+    await lifecycle.syncLegacyLeadLevel({
+      client, user: { id: 'member-1' }, leadId: 'lead-hot', statuses: [status], historyId: `history-${status}`,
+      now: new Date('2026-09-14T06:30:00.000Z'),
+    });
+
+    const actionInsert = statements.find(entry => entry.sql.includes('INSERT INTO lead_actions'));
+    expect(actionInsert.params[1]).toBe(actionType);
+    expect(actionInsert.params[2]).toBe(`lead_category_${status}`);
+    expect(actionInsert.params[7]).toBe('2026-09-15T05:30:00.000Z');
+    expect(statements.some(entry => entry.sql.includes("SET status = 'cancelled'"))).toBe(true);
+  });
+
+  test('Cold Trader classification closes future action and retry cycles', async () => {
+    const enabledRows = SETTINGS_ROWS.map(row => row.key === 'lifecycle_v2_enabled' ? { ...row, value: true } : row);
+    const statements = [];
+    const client = {
+      query: jest.fn(async (sql, params) => {
+        statements.push({ sql, params });
+        if (sql.includes('FROM workflow_settings')) return { rows: enabledRows };
+        if (sql.includes('SELECT * FROM lead_lifecycle_state')) return { rows: [{
+          lead_id: 'lead-cold', journey_stage: 'response', terminal_state: null,
+          current_primary_action_id: 'old-action', version: 2,
+        }] };
+        if (sql.includes("metadata->>'idempotency_key'")) return { rows: [] };
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+
+    const result = await lifecycle.syncLegacyLeadLevel({
+      client, user: { id: 'member-1' }, leadId: 'lead-cold', statuses: ['cold_trader'], historyId: 'history-cold',
+    });
+
+    expect(result.terminal_state).toBe('cold');
+    expect(statements.some(entry => entry.sql.includes("UPDATE lead_call_attempt_sequences SET status=$2"))).toBe(true);
+    const stateClose = statements.find(entry => entry.sql.includes('SET terminal_state=$2'));
+    expect(stateClose.params).toEqual(['lead-cold', 'cold', 'legacy_import']);
   });
 });
