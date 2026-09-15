@@ -200,8 +200,8 @@ async function createPrimaryAction(client, {
       lead_id, action_type, reason, parent_stage, parent_action_id, responsible_user_id,
       stage_followup_attempt, stage_followup_max, scheduled_at, due_at, idempotency_key,
       metadata, created_by_user_id
-    ) VALUES ($1,$2,$3,$4,$5,(
-      SELECT CASE WHEN $2='manager_escalation' THEN COALESCE(u.report_to_id,l.assigned_to_user_id) ELSE l.assigned_to_user_id END
+    ) VALUES ($1,$2::varchar,$3,$4,$5,(
+      SELECT CASE WHEN $2::varchar='manager_escalation' THEN COALESCE(u.report_to_id,l.assigned_to_user_id) ELSE l.assigned_to_user_id END
         FROM leads l LEFT JOIN users u ON u.id=l.assigned_to_user_id WHERE l.id=$1
     ),$6,$7,COALESCE($12::timestamptz,NOW()),$8,$9,$10::jsonb,$11)
     RETURNING *`, [

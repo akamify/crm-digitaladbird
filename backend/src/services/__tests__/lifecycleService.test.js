@@ -286,6 +286,8 @@ describe('Counselor Lifecycle V2', () => {
     });
 
     const actionInsert = statements.find(entry => entry.sql.includes('INSERT INTO lead_actions'));
+    expect(actionInsert.sql).toContain('VALUES ($1,$2::varchar');
+    expect(actionInsert.sql).toContain("WHEN $2::varchar='manager_escalation'");
     expect(actionInsert.params[1]).toBe('common_meeting_outcome');
     expect(actionInsert.params[2]).toBe('common_meeting_outcome_not_updated');
     expect(actionInsert.params[3]).toBe('common_meeting');
