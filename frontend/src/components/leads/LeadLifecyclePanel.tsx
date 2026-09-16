@@ -57,7 +57,17 @@ function actionLabel(actionType: string, reason?: string | null) {
   return humanize(actionType);
 }
 
-export function LeadLifecyclePanel({ leadId, readOnly = false, canManage = false }: { leadId: string; readOnly?: boolean; canManage?: boolean }) {
+export function LeadLifecyclePanel({
+  leadId,
+  readOnly = false,
+  canManage = false,
+  callIssuesPanel,
+}: {
+  leadId: string;
+  readOnly?: boolean;
+  canManage?: boolean;
+  callIssuesPanel?: ReactNode;
+}) {
   const lifecycle = useLeadLifecycle(leadId);
   const record = useRecordLifecycleEvent();
   const complete = useCompleteLifecycleAction();
@@ -87,6 +97,11 @@ export function LeadLifecyclePanel({ leadId, readOnly = false, canManage = false
   const state = data.state;
   const activeAction = state.current_action;
   const activeRetry = state.active_call_retry;
+  const retryDueAt = activeRetry?.next_attempt?.scheduled_at || null;
+  const retryAttempt = Number(activeRetry?.next_attempt?.attempt_number || 0);
+  const retryMaximum = Math.max(1, Number(activeRetry?.max_attempts || 4) - 1);
+  const retryNumber = retryAttempt > 1 ? Math.min(retryMaximum, retryAttempt - 1) : null;
+  const retryOverdue = retryDueAt ? new Date(retryDueAt).getTime() <= Date.now() : false;
 
   function openRecord(isCompletion = false) {
     setCompleteMode(isCompletion);
@@ -144,7 +159,7 @@ export function LeadLifecyclePanel({ leadId, readOnly = false, canManage = false
     <div className="space-y-4">
       <section className="overflow-hidden rounded-2xl border border-sky-200 bg-gradient-to-br from-sky-50 via-white to-amber-50">
         <div className="flex flex-col gap-3 border-b border-sky-100 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:py-4">
-          <div><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-700">Lifecycle V2</p><h2 className="mt-1 text-base font-semibold text-slate-950">Current Journey</h2></div>
+          <h2 className="text-base font-semibold text-slate-950">Current Journey</h2>
           {!state.terminal_state && !readOnly && !activeRetry && <Button size="sm" onClick={() => openRecord(false)}>Record Activity</Button>}
           {state.terminal_state && canManage && <Button size="sm" variant="outline" onClick={openReopen}>Reopen Lead</Button>}
         </div>
@@ -156,11 +171,54 @@ export function LeadLifecyclePanel({ leadId, readOnly = false, canManage = false
         </div>
         {(activeAction || activeRetry) && !state.terminal_state && (
           <div className="grid gap-3 p-4 lg:grid-cols-2">
-            {activeAction && <div className="rounded-xl border border-sky-200 bg-white p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-wide text-sky-700">Next Required Action</p><h3 className="mt-1 text-sm font-semibold text-slate-900">{actionLabel(activeAction.action_type, activeAction.reason)}</h3><p className="text-xs text-slate-500">{humanize(activeAction.reason)} / {['common_meeting', 'common_meeting_outcome'].includes(activeAction.action_type) ? `Outcome due ${fmtDate(activeAction.due_at, 'd MMM, h:mm a')}` : fmtDate(activeAction.due_at, 'd MMM, h:mm a')}</p>{activeAction.due_at && <p className={`mt-1 text-xs font-semibold ${activeAction.status === 'overdue' ? 'text-rose-600' : 'text-amber-700'}`}>{activeAction.status === 'overdue' ? 'Pending since' : 'Pending if not updated'} {fmtRelative(activeAction.due_at)}</p>}{activeAction.status === 'paused' && <p className="mt-1 text-xs font-medium text-amber-700">Paused while the active Call Retry is completed.</p>}{activeAction.action_type === 'manager_escalation' && !canManage && <p className="mt-1 text-xs font-medium text-amber-700">RM or Admin resolution required.</p>}</div>{!readOnly && activeAction.status !== 'paused' && (activeAction.action_type !== 'manager_escalation' || canManage) && <Button size="sm" variant="outline" onClick={() => openRecord(true)}>Complete</Button>}</div></div>}
-            {activeRetry && <div className="rounded-xl border border-amber-200 bg-white p-4"><p className="text-[10px] font-semibold uppercase tracking-wide text-amber-700">Active Call Retry</p><h3 className="mt-1 text-sm font-semibold text-slate-900">{humanize(String(activeRetry.initial_trigger_reason || 'Call issue'))}</h3><p className="text-xs text-slate-500">Belongs to {humanize(activeRetry.originating_action_id ? activeAction?.reason || state.journey_stage : state.journey_stage)}{activeRetry.next_attempt?.scheduled_at ? ` / ${fmtDate(activeRetry.next_attempt.scheduled_at, 'd MMM, h:mm a')}` : ''}</p></div>}
+            {activeRetry && (
+              <div className="rounded-xl border border-amber-200 bg-white p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-700">Next Call</p>
+                <h3 className="mt-1 text-base font-semibold text-slate-950">
+                  {retryDueAt ? fmtDate(retryDueAt, 'd MMM yyyy, h:mm a') : 'Schedule unavailable'}
+                </h3>
+                <p className="mt-1 text-xs text-slate-600">
+                  {humanize(String(activeRetry.initial_trigger_reason || 'Call issue'))}
+                  {retryNumber ? ` / Retry ${retryNumber} of ${retryMaximum}` : ' / Initial call issue'}
+                </p>
+                {retryDueAt && (
+                  <p className={`mt-2 text-xs font-semibold ${retryOverdue ? 'text-rose-600' : 'text-amber-700'}`}>
+                    {retryOverdue ? 'Overdue' : 'Due'} {fmtRelative(retryDueAt)}
+                  </p>
+                )}
+              </div>
+            )}
+            {activeAction && (
+              <div className="rounded-xl border border-sky-200 bg-white p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-sky-700">
+                      {activeRetry && activeAction.status === 'paused' ? 'After This Call' : 'Next Required Action'}
+                    </p>
+                    <h3 className="mt-1 text-sm font-semibold text-slate-900">{actionLabel(activeAction.action_type, activeAction.reason)}</h3>
+                    {activeRetry && activeAction.status === 'paused' ? (
+                      <p className="mt-1 text-xs text-slate-500">Continue after the retry call.</p>
+                    ) : (
+                      <>
+                        <p className="mt-1 text-xs text-slate-500">Due {fmtDate(activeAction.due_at, 'd MMM yyyy, h:mm a')}</p>
+                        {activeAction.due_at && (
+                          <p className={`mt-1 text-xs font-semibold ${activeAction.status === 'overdue' ? 'text-rose-600' : 'text-amber-700'}`}>
+                            {activeAction.status === 'overdue' ? 'Overdue' : 'Due'} {fmtRelative(activeAction.due_at)}
+                          </p>
+                        )}
+                      </>
+                    )}
+                    {activeAction.action_type === 'manager_escalation' && !canManage && <p className="mt-1 text-xs font-medium text-amber-700">RM or Admin action required.</p>}
+                  </div>
+                  {!readOnly && activeAction.status !== 'paused' && (activeAction.action_type !== 'manager_escalation' || canManage) && <Button size="sm" variant="outline" onClick={() => openRecord(true)}>Complete</Button>}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </section>
+
+      {callIssuesPanel}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-3 sm:p-5">
         <div className="mb-4 flex items-center justify-between"><div className="flex items-center gap-2"><History className="h-4 w-4 text-sky-600" /><h2 className="text-sm font-semibold text-slate-900">Lead Journey</h2></div><span className="text-xs text-slate-500">{data.events.length} events</span></div>

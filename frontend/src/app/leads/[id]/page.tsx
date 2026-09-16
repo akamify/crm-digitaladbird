@@ -255,20 +255,21 @@ function LeadDetailInner() {
               <WorkflowBoundary>
                 {lifecycleEnabled ? (
                   <div className="space-y-4">
-                    <LeadLifecyclePanel leadId={id} readOnly={readOnlyAccess} canManage={['super_admin', 'admin', 'rm'].includes(user.role)} />
-                    {!readOnlyAccess && (
-                      <details className="rounded-xl border border-slate-200 bg-slate-50/70">
-                        <summary className="min-h-11 cursor-pointer px-3 py-3 text-sm font-semibold text-slate-700 sm:px-4">
-                          Call Issues &amp; Retry Plan
-                        </summary>
-                        <div className="border-t border-slate-200 bg-white p-2 sm:p-4">
-                          <p className="mb-4 text-xs text-slate-500">
-                            Record CNR and other call issues here. Their Call Retry sequence remains separate from the current journey action.
-                          </p>
-                          <WorkflowPanel leadId={id} isAdmin={user.role === 'super_admin'} />
-                        </div>
-                      </details>
-                    )}
+                    <LeadLifecyclePanel
+                      leadId={id}
+                      readOnly={readOnlyAccess}
+                      canManage={['super_admin', 'admin', 'rm'].includes(user.role)}
+                      callIssuesPanel={!readOnlyAccess ? (
+                        <details open className="rounded-xl border border-slate-200 bg-slate-50/70">
+                          <summary className="min-h-11 cursor-pointer px-3 py-3 text-sm font-semibold text-slate-700 sm:px-4">
+                            Call Issues &amp; Retry Plan
+                          </summary>
+                          <div className="border-t border-slate-200 bg-white p-2 sm:p-4">
+                            <WorkflowPanel leadId={id} isAdmin={user.role === 'super_admin'} />
+                          </div>
+                        </details>
+                      ) : undefined}
+                    />
                   </div>
                 ) : (
                   <WorkflowPanel leadId={id} isAdmin={user.role === 'super_admin'} />

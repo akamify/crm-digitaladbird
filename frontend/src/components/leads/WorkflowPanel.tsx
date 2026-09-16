@@ -116,7 +116,7 @@ export function WorkflowPanel({ leadId, isAdmin }: Props) {
   useEffect(() => {
     // Only auto-open on initial load, not when user manually closes
     if (wfData && openStep === null && !hasInteracted) {
-      setOpenStep(currentStep <= 4 ? currentStep : null);
+      setOpenStep(wfData.call_attempt_sequence?.has_active_sequence ? 1 : currentStep <= 4 ? currentStep : null);
     }
   }, [wfData, currentStep, openStep, hasInteracted]);
 
@@ -410,7 +410,7 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
   const [customComposerActive, setCustomComposerActive] = useState(false);
   const noteRef = useRef<HTMLTextAreaElement | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingRemarkAction | null>(null);
-  const [retryExpanded, setRetryExpanded] = useState(false);
+  const [retryExpanded, setRetryExpanded] = useState(true);
   const [retryRevealPending, setRetryRevealPending] = useState(false);
   const [retryHighlighted, setRetryHighlighted] = useState(false);
   const [retryAnnouncement, setRetryAnnouncement] = useState('');
@@ -449,7 +449,7 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
       setRetryExpanded(false);
       return;
     }
-    if (callAttemptState?.is_due || callAttemptState?.is_overdue) setRetryExpanded(true);
+    setRetryExpanded(true);
   }, [callAttemptSequence?.has_active_sequence, callAttemptSequence?.id, callAttemptState?.is_due, callAttemptState?.is_overdue]);
 
   useEffect(() => {
@@ -579,7 +579,6 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
     saveSelection(pendingAction.nextSelection, pendingAction.value, { confirmSequenceClose: true });
   }
 
-  const hasCompletingSelection = selected.some(value => COMPLETED_REMARK_STATUS_VALUES.has(value));
   const customRemarkSelected = customComposerActive;
 
   async function saveConversationNote() {
@@ -617,13 +616,6 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
 
   return (
     <div>
-      <p className="text-xs text-slate-500 mb-3">
-        Choose the latest call result or record supporting context. Actions that close an active Retry Plan require confirmation.
-      </p>
-      <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-        Select one Call Issue at a time. Record scheduled outcomes in the Retry Plan. You can still record a separate unscheduled call without changing its schedule.
-      </p>
-      {hasCompletingSelection && <p className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">A completed response is selected, so Step 2 unlocks automatically after this save.</p>}
       <div className="space-y-4">
         {availableGroups.map(group => (
           <div key={group.key}>

@@ -38,7 +38,8 @@ export interface ActiveCallRetry {
   id: string;
   initial_trigger_reason: string;
   originating_action_id: string | null;
-  next_attempt?: { scheduled_at?: string | null } | null;
+  max_attempts?: number | null;
+  next_attempt?: { attempt_number?: number | null; scheduled_at?: string | null } | null;
 }
 
 export interface LeadLifecycleResponse {
