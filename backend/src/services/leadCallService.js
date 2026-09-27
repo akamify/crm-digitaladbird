@@ -95,6 +95,7 @@ async function logLeadCall({ leadId, user, input }) {
   const notes = String(input.notes || input.note || '').trim() || null;
 
   const result = await withTransaction(async (client) => {
+    await client.query(`SELECT id FROM leads WHERE id=$1 FOR UPDATE`, [leadId]);
     await assertLeadCommunicationAccess(user, leadId, client);
 
     const { rows: [call] } = await client.query(`
@@ -121,9 +122,9 @@ async function logLeadCall({ leadId, user, input }) {
       input.failure_reason || null,
     ]);
 
-    await client.query(`
+    const { rows: [remark] } = await client.query(`
       INSERT INTO lead_remarks(lead_id, user_id, remark, call_status, next_followup_at)
-      VALUES ($1, $2, $3, $4, $5)
+      VALUES ($1, $2, $3, $4, $5) RETURNING id
     `, [
       leadId,
       user.id,
@@ -138,6 +139,13 @@ async function logLeadCall({ leadId, user, input }) {
       status,
       nextFollowupAt: input.next_followup_at || null,
       note: notes,
+    });
+
+    await require('./counselorWorkflowService').observeRemark({
+      client, leadId, user, remarkId: remark.id,
+      statuses: input.statuses || [mapCallStatusToLeadStatus(status)].filter(Boolean),
+      primaryStatus: input.primary_status, source: 'call_log',
+      followupAt: input.next_followup_at || null,
     });
 
     const { conversationId } = await getOrCreateLeadConversation({ leadId, user, runner: client });

@@ -5782,6 +5782,8 @@ router.post('/leads/:id/workflow/remark', authenticate, asyncHandler(async (req,
       user: req.user,
       leadId,
       note: req.body?.remark || req.body?.note || '',
+      primaryStatus: req.body?.primary_status,
+      nextFollowupAt: req.body?.next_followup_at || null,
       status: orderedRemarkStatuses[0],
       statuses: orderedRemarkStatuses,
       source: 'workflow_step_1',
@@ -6136,6 +6138,11 @@ router.post('/leads/:id/workflow/conversion', authenticate, asyncHandler(async (
       leadId,
       statuses: ['converted'],
       remarkId: saved.id,
+    });
+
+    await require('../services/counselorWorkflowService').observeRemark({
+      client, user: req.user, leadId, statuses: ['converted'],
+      remarkId: `conversion-${saved.id}`, source: 'legacy_conversion',
     });
 
     return saved;

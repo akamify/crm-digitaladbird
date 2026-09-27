@@ -5,6 +5,29 @@ const { asyncHandler } = require('../utils/errors');
 const lifecycle = require('../services/lifecycleService');
 
 const router = express.Router();
+const counselorWorkflow = require('../services/counselorWorkflowService');
+const counselors = requireRole('member', 'partner');
+router.get('/counselor-workflow/v1/guide', authenticate, counselors, asyncHandler(async (req,res)=>{
+  res.json({success:true,data:{...require('../services/counselorGuideService').guide(),enabled:counselorWorkflow.configuration(req.user).enabled}});
+}));
+
+router.get('/counselor-workflow/v1/config', authenticate, counselors, asyncHandler(async (req, res) => {
+  res.json({success:true,data:counselorWorkflow.configuration(req.user)});
+}));
+
+router.get('/counselor-workflow/v1/leads', authenticate, counselors, asyncHandler(async (req, res) => {
+  res.json({ success: true, data: await counselorWorkflow.workspace(req.user, req.query) });
+}));
+
+router.get('/counselor-workflow/v1/leads/:id', authenticate, counselors, asyncHandler(async (req, res) => {
+  res.json({ success: true, data: await counselorWorkflow.read(req.user, req.params.id, req.query) });
+}));
+
+router.post('/counselor-workflow/v1/leads/:id/remarks', authenticate, counselors, asyncHandler(async (req, res) => {
+  const data = await counselorWorkflow.recordRemark(req.user, req.params.id, req.body || {});
+  res.status(data.duplicate ? 200 : 201).json({ success: true, data });
+}));
+
 const workspaceRoles = requireRole('super_admin', 'admin', 'rm', 'member', 'partner');
 
 router.get('/counselor-workspace/summary', authenticate, workspaceRoles, asyncHandler(async (req, res) => {

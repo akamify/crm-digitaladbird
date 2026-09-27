@@ -1,0 +1,196 @@
+// Run with: node --test scripts/counselor-leads.test.cjs
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const ts = require('typescript');
+const React = require('react');
+const { renderToStaticMarkup } = require('react-dom/server');
+
+const root = path.resolve(__dirname, '../src');
+function harness(query = '', result = {}, overrides = {}) {
+  if (result.data) result = {...result, data: {enabled:true,worked:{n:0,o:0},status_options:[],summary:{},...result.data}};
+  const calls = [];
+  const cache = new Map();
+  const mocks = {
+    '@/lib/auth': {useAuth: () => ({user:{id:'counselor',full_name:'Counselor',role:'member'}})},
+    '@/hooks/useCounselorWorkflow': {
+      COUNSELOR_FILTER_KEYS: ['q','source','category','stage','call_status','remark_status','campaign','followup','assigned_to'],
+      useCounselorWorkflowLeads: input => { calls.push(input); return {isFetching:false,...result}; },
+      useCounselorWorkflowDetail: () => ({data:{enabled:true,read_only:false,state:null,events:[],status_options:['communication_completed','cnr']}}),
+      useCounselorRemark: () => ({isPending:false}),
+    },
+    'next/navigation': { useRouter: () => ({ replace() {} }), useSearchParams: () => new URLSearchParams(query) },
+    'next/link': { __esModule: true, default: ({ children, ...props }) => React.createElement('a', props, children) },
+    '@/hooks/useLifecycle': {
+      useCounselorWorkspaceLeads: input => { calls.push(input); return { isFetching: false, ...result }; },
+      useCounselorWorkspaceSummary: () => ({ data: { summary: { received: 17 } } }),
+    },
+    '@/hooks/useLeads': { useCampaignNames: () => ({ data: ['Example campaign'] }) },
+    '@/hooks/useLeadLabels': { useLabels: () => ({ data: [] }) },
+    '@/hooks/useDebouncedValue': { useDebouncedValue: value => value },
+    ...overrides,
+  };
+  function load(name) {
+    if (mocks[name]) return mocks[name];
+    if (!name.startsWith('@/') && !path.isAbsolute(name)) return require(name);
+    let filename = name.startsWith('@/') ? path.join(root, name.slice(2)) : name;
+    if (!path.extname(filename)) filename += fs.existsSync(filename + '.tsx') ? '.tsx' : '.ts';
+    if (cache.has(filename)) return cache.get(filename).exports;
+    const module = { exports: {} };
+    cache.set(filename, module);
+    const code = ts.transpileModule(fs.readFileSync(filename, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true, target: ts.ScriptTarget.ES2022 } }).outputText;
+    new Function('require', 'module', 'exports', code)(id => load(id.startsWith('.') ? path.resolve(path.dirname(filename), id) : id), module, module.exports);
+    return module.exports;
+  }
+  return { load, calls, render: () => renderToStaticMarkup(React.createElement(load('@/components/leads/CounselorLeadsWorkspace').CounselorLeadsWorkspace)) };
+}
+
+test('renders the exact 22-tab order and removes the old page chrome', () => {
+  const h = harness();
+  const tabs = h.load('@/components/leads/counselorLeadTabs').COUNSELOR_LEAD_TABS;
+  assert.deepEqual(tabs.map(tab => tab.key), ['received', 'new', 'old', 'worked', 'pending', 'cc', 'responded', 'call_issues', 'common_meeting', 'dim', 'personal_meeting', 'follow_up', 'quotation', 'hot', 'warm', 'special_category', 'call_reminder', 'handover_rm', 'not_attended', 'converted', 'cold', 'process_incomplete']);
+  const html = h.render();
+  assert.equal((html.match(/role="tab"/g) || []).length, 22);
+  assert.match(html, /Search leads/);
+  assert.match(html, />Filter/);
+  assert.match(html, />Actions/);
+  assert.doesNotMatch(html, /Latest Notes|Personal Meetings|Lead journey and work queues|Every count uses/);
+  assert.doesNotMatch(html, /<select/); // Filters are not permanently inline.
+});
+
+test('all 22 tabs use their own server view and real count', () => {
+  const tabs = harness().load('@/components/leads/counselorLeadTabs').COUNSELOR_LEAD_TABS;
+  for (const tab of tabs) {
+    const h = harness(`workspace_view=${tab.key}`, {data:{summary:{[tab.key]:7},total:0,rows:[]}});
+    const html = h.render();
+    assert.equal(h.calls[0].view, tab.key);
+    assert.match(html, />7<\/span>/);
+    assert.doesNotMatch(html, /Unavailable|This view is not available yet/);
+  }
+});
+
+test('passes URL search, filters, period and pagination to the existing query', () => {
+  const h = harness('workspace_view=call_issues&q=Test&source=meta&category=trader&page=2&lead_view=all_time');
+  h.render();
+  assert.equal(h.calls[0].view, 'call_issues');
+  assert.equal(h.calls[0].filters.q, 'Test');
+  assert.equal(h.calls[0].filters.source, 'meta');
+  assert.equal(h.calls[0].filters.category, 'trader');
+  assert.equal(h.calls[0].scope.view, 'all_time');
+  assert.equal(h.calls[0].page, 2);
+});
+
+test('shows real counts, Call/Open links, details and pagination', () => {
+  const h = harness('', { data: { summary: { received: 26 }, total: 26, rows: [{ id: 'fixture-lead', full_name: 'Fixture lead', phone: '1234567890', labels: [], journey_stage: 'new' }] } });
+  const html = h.render();
+  assert.match(html, /26 Leads Received/);
+  assert.match(html, /href="tel:1234567890"/);
+  assert.match(html, /href="\/leads\/fixture-lead"/);
+  assert.match(html, /More details/);
+  assert.match(html, /Lead pagination/);
+});
+
+test('does not display previous-view rows as current results while transitioning', () => {
+  const html = harness('workspace_view=pending', { isFetching: true, isPlaceholderData: true, data: { total: 1, rows: [{ id: 'old', full_name: 'Wrong queue' }] } }).render();
+  assert.doesNotMatch(html, /Wrong queue|href="\/leads\/old"/);
+  assert.match(html, /Loading/);
+});
+
+test('preserves empty and retry states without claiming errors are empty results', () => {
+  assert.match(harness('', { data: { total: 0, rows: [], summary: { received: 0 } } }).render(), /No leads in Leads Received/);
+  const html = harness('', { isError: true }).render();
+  assert.match(html, /role="alert"/);
+  assert.match(html, /Retry/);
+  assert.doesNotMatch(html, /No leads in|0 Leads Received/);
+});
+
+test('keeps legacy Responses and TTE URLs available without mapping them to new tabs', () => {
+  for (const view of ['responses', 'tte']) {
+    const h = harness(`workspace_view=${view}`);
+    h.render();
+    assert.equal(h.calls[1].view, view);
+  }
+});
+
+test('panel mode exposes existing filters; the default filter layout is retained', () => {
+  const h = harness();
+  const Filters = h.load('@/components/leads/LeadFilters').LeadFilters;
+  const render = panel => renderToStaticMarkup(React.createElement(Filters, { value: {}, onChange() {}, simplifiedAdmin: true, panel }));
+  const panel = render(true);
+  assert.doesNotMatch(panel, /Search name, phone, email/);
+  for (const label of ['Stage', 'Call status', 'Followup', 'Category', 'Source', 'Campaign', 'Label id', 'Remark status', 'Workflow status', 'Latest activity', 'Customer interest']) assert.ok(panel.includes(`aria-label="${label}"`), label);
+  assert.match(render(false), /Search name, phone, email/);
+});
+
+test('Worked total is N plus O while each lead renders once with both source badges', () => {
+  const html = harness('workspace_view=worked', {data:{summary:{worked:2},worked:{n:1,o:1},total:1,rows:[{id:'both',full_name:'Worked fixture',worked_n:true,worked_o:true,queue:'pending',generation:3,history:[]}]}}).render();
+  assert.match(html, /Worked: 2 .* 1 leads/);
+  assert.equal((html.match(/Worked fixture/g)||[]).length, 1);
+  assert.match(html, /title="New worked">N/);
+  assert.match(html, /title="Old worked">O/);
+  assert.match(html, /Current: Pending/);
+});
+
+test('history does not make an expired primary status current', () => {
+  const h = harness();
+  const {currentWorkflowLabel,JourneySteps} = h.load('@/components/leads/CounselorJourneyTracker');
+  assert.equal(currentWorkflowLabel({queue:'pending',primary_status:'communication_completed',journey_active:false}), 'Pending');
+  const events = ['workflow_enrolled','remark_saved','entered_old','entered_pending'].map((event_type,index)=>({id:String(index),event_type,primary_status:'communication_completed',new_state:{queue:'new'},occurred_at:'2030-09-26T04:00:00Z'}));
+  const html = renderToStaticMarkup(React.createElement(JourneySteps,{events}));
+  for (const label of ['New','CC','OL','Pending']) assert.ok(html.includes(`>${label}</span>`));
+});
+
+test('reassigned leads expose reading without mutation actions', () => {
+  const html = harness('workspace_view=worked', {data:{summary:{worked:1},total:1,rows:[{id:'past',full_name:'Past lead',phone:'123',read_only:true,worked_n:true}]}}).render();
+  assert.match(html, /Current: Reassigned/);
+  assert.match(html, /href="\/leads\/past"/);
+  assert.doesNotMatch(html, /tel:123|Add remark/);
+});
+
+test('disabled rollout does not fabricate zero counts or journey data', () => {
+  const html = harness('', {data:{enabled:false,rows:[],total:0}}).render();
+  assert.match(html, /workflow is not enabled yet/);
+  assert.doesNotMatch(html, /0 Leads Received|No leads in/);
+});
+
+test('remark form requires an explicit primary and offers follow-up preservation', () => {
+  const h = harness();
+  const html = renderToStaticMarkup(React.createElement(h.load('@/components/leads/CounselorRemarkForm').CounselorRemarkForm,{leadId:'lead'}));
+  assert.match(html, /select required/);
+  assert.match(html, /value="" selected="">Select one primary status/);
+  assert.match(html, /Keep existing schedule/);
+  assert.match(html, /Clear schedule/);
+  assert.match(html, /disabled="">Save remark/);
+});
+
+test('workflow caches and previous results stay within the current counselor', () => {
+  const h=harness('',{}, {'@tanstack/react-query':{useQuery:options=>options},'@/lib/api':{apiGet:url=>url}});
+  const hooks=h.load(path.join(root,'hooks/useCounselorWorkflow.ts'));
+  const config=hooks.useCounselorWorkflowConfig(true);
+  assert.deepEqual(config.queryKey,['counselor-workflow','config','counselor']);
+  assert.equal(config.queryFn(),'/counselor-workflow/v1/config');
+  assert.equal(hooks.useCounselorWorkflowConfig(false).enabled,false);
+  const list=hooks.useCounselorWorkflowLeads({view:'worked',scope:{view:'all_time'},filters:{},page:1});
+  const data={rows:[{id:'private'}]};
+  assert.equal(list.placeholderData(data,{queryKey:['counselor-workflow','list','other']}),undefined);
+  assert.equal(list.placeholderData(data,{queryKey:['counselor-workflow','list','counselor']}),data);
+  assert.equal(hooks.useCounselorWorkflowDetail('lead').queryKey[2],'counselor');
+});
+
+test('CRM Guide restricts page roles, filters codes and renders accurate explanatory sections',()=>{
+  const h=harness('',{}, {'@/components/layout/AppShell':{AppShell:()=>null},'@tanstack/react-query':{},'@/lib/api':{}});
+  const page=h.load('@/components/leads/CrmGuide');
+  assert.deepEqual(page.default().props.roles,['member','partner']);
+  const cards=[{status:'communication_completed',code:'CC',label:'Communication Completed',meaning:'Completed communication',category:'Journey',automaticAging:true,first:'1 hours after the remark.',second:'20 more hours after entering Old.',steps:['CC','CC + Old Leads','Pending'],special:null},
+    {status:'special_category',code:'SC',label:'Special Category',meaning:'Special lead',category:'Special',automaticAging:false,first:'No automatic Old/Pending timer',second:'No automatic Old/Pending timer',steps:['Special Category'],special:null}];
+  assert.equal(page.filterGuide(cards,'cc','All').length,1);
+  assert.equal(page.filterGuide(cards,'COMMUNICATION','Journey').length,1);
+  assert.equal(page.filterGuide(cards,'cc','Special').length,0);
+  assert.equal(page.filterGuide(cards,'missing','All').length,0);
+  const html=renderToStaticMarkup(React.createElement(page.WorkflowGuideCard,{card:cards[0]}));
+  assert.match(html,/CC \+ Old Leads/);assert.match(html,/20 more hours/);
+  assert.match(renderToStaticMarkup(React.createElement(page.WorkflowGuideCard,{card:cards[1]})),/No automatic Old\/Pending timer/);
+  const notes=renderToStaticMarkup(React.createElement(page.GuideReferenceNotes));
+  for(const phrase of ['Custom Follow-Up Overrides Automatic Timers','Worked = N + O','even after','unless you explicitly clear','outside those queues','history stays visible'])assert.ok(notes.includes(phrase),phrase);
+});

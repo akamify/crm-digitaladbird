@@ -459,6 +459,9 @@ async function syncLegacyRemark({ client, user, leadId, statuses = [], remarkId 
 }
 
 async function syncLegacyLeadLevel({ client, user, leadId, statuses = [], historyId = null, now = new Date() }) {
+  if (historyId) await require('./counselorWorkflowService').observeRemark({
+    client, user, leadId, statuses, remarkId: `level-${historyId}`, source: 'legacy_lead_level',
+  });
   let settings;
   try {
     settings = await getSettings(client);
@@ -515,6 +518,7 @@ async function syncLegacyLeadLevel({ client, user, leadId, statuses = [], histor
 
 async function syncLegacyPersonalMeeting({ client, user, leadId, meetingId, meetingAt, outcome = null, followupAt = null, nextMeetingAt = null }) {
   if (!leadId || !meetingId) return { enabled: false };
+  await require('./counselorWorkflowService').invalidateLegacy({client,leadId,user,origin:`meeting:${meetingId}:${meetingAt}:${outcome}:${followupAt}:${nextMeetingAt}`});
   let settings;
   try {
     settings = await getSettings(client);
@@ -568,6 +572,7 @@ async function recordEvent(user, leadId, input = {}) {
   if (!idempotencyKey) throw new AppError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'An idempotency key is required.');
   const now = new Date();
   return withTransaction(async client => {
+    await client.query('SELECT id FROM leads WHERE id=$1 FOR UPDATE',[leadId]);
     await assertLeadCommunicationAccess(user, leadId, client);
     const settings = await getSettings(client);
     assertEnabled(settings, user);
@@ -632,6 +637,7 @@ async function recordEvent(user, leadId, input = {}) {
       text(input.reason) || next?.reason || null,
       JSON.stringify({ ...(input.metadata || {}), idempotency_key: idempotencyKey }), input.occurred_at || null,
     ]);
+    await require('./counselorWorkflowService').invalidateLegacy({client,leadId,user,origin:`lifecycle:${idempotencyKey}`});
     return { duplicate: false, ...(await loadLifecycle(leadId, client)) };
   });
 }
@@ -640,6 +646,7 @@ async function completeAction(user, leadId, actionId, input = {}) {
   const idempotencyKey = text(input.idempotency_key).slice(0, 128);
   if (!idempotencyKey) throw new AppError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'An idempotency key is required.');
   return withTransaction(async client => {
+    await client.query('SELECT id FROM leads WHERE id=$1 FOR UPDATE',[leadId]);
     await assertLeadCommunicationAccess(user, leadId, client);
     const settings = await getSettings(client);
     assertEnabled(settings, user);
@@ -693,6 +700,7 @@ async function completeAction(user, leadId, actionId, input = {}) {
       leadId, user.id, state.journey_stage, stageAfter, action.id, action.reason,
       JSON.stringify({ idempotency_key: idempotencyKey, activity_event_type: eventType || null, call_result: callResult || null, outcome: outcome || 'completed', delay_minutes: delayMinutes, next_action_id: nextAction?.id || null }),
     ]);
+    await require('./counselorWorkflowService').invalidateLegacy({client,leadId,user,origin:`lifecycle:${idempotencyKey}`});
     return { duplicate: false, ...(await loadLifecycle(leadId, client)) };
   });
 }
@@ -708,6 +716,7 @@ async function closeLifecycle(user, leadId, input = {}) {
   const idempotencyKey = text(input.idempotency_key).slice(0, 128);
   if (!idempotencyKey) throw new AppError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'An idempotency key is required.');
   return withTransaction(async client => {
+    await client.query('SELECT id FROM leads WHERE id=$1 FOR UPDATE',[leadId]);
     await assertLeadCommunicationAccess(user, leadId, client);
     const settings = await getSettings(client);
     assertEnabled(settings, user);
@@ -726,6 +735,7 @@ async function closeLifecycle(user, leadId, input = {}) {
     await client.query(`
       INSERT INTO lead_lifecycle_events(lead_id,user_id,event_type,stage_before,stage_after,reason,metadata)
       VALUES($1,$2,'lifecycle_closed',$3,$3,$4,$5::jsonb)`, [leadId, user.id, state.journey_stage, terminalState === 'cold' ? coldReason : terminalState, JSON.stringify({ idempotency_key: idempotencyKey, terminal_state: terminalState, cold_reason_note: text(input.cold_reason_note) || null })]);
+    await require('./counselorWorkflowService').invalidateLegacy({client,leadId,user,origin:`lifecycle:${idempotencyKey}`});
     return { duplicate: false, ...(await loadLifecycle(leadId, client)) };
   });
 }
@@ -735,6 +745,7 @@ async function reopenLifecycle(user, leadId, input = {}) {
   const idempotencyKey = text(input.idempotency_key).slice(0, 128);
   if (!idempotencyKey) throw new AppError(400, 'IDEMPOTENCY_KEY_REQUIRED', 'An idempotency key is required.');
   return withTransaction(async client => {
+    await client.query('SELECT id FROM leads WHERE id=$1 FOR UPDATE',[leadId]);
     await assertLeadCommunicationAccess(user, leadId, client);
     const settings = await getSettings(client);
     assertEnabled(settings, user);
@@ -751,6 +762,7 @@ async function reopenLifecycle(user, leadId, input = {}) {
     await client.query(`UPDATE lead_lifecycle_state SET journey_stage=$2,terminal_state=NULL,cold_reason=NULL,cold_reason_note=NULL,current_primary_action_id=$3,closed_at=NULL,version=version+1,updated_at=NOW() WHERE lead_id=$1`, [leadId, stage, action.id]);
     await client.query(`UPDATE leads SET stage='contacted', call_status='follow_up', next_followup_at=$2, updated_at=NOW() WHERE id=$1`, [leadId, action.due_at]);
     await client.query(`INSERT INTO lead_lifecycle_events(lead_id,user_id,event_type,stage_before,stage_after,action_id,reason,metadata) VALUES($1,$2,'lifecycle_reopened',$3,$4,$5,$6,$7::jsonb)`, [leadId, user.id, state.journey_stage, stage, action.id, text(input.reason) || 'manager_reopened', JSON.stringify({ idempotency_key: idempotencyKey })]);
+    await require('./counselorWorkflowService').invalidateLegacy({client,leadId,user,origin:`lifecycle:${idempotencyKey}`});
     return { duplicate: false, ...(await loadLifecycle(leadId, client)) };
   });
 }

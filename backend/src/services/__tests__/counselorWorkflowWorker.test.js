@@ -1,0 +1,22 @@
+jest.mock('../../config/database',()=>({query:jest.fn(),withTransaction:jest.fn()}));
+jest.mock('../../utils/logger',()=>({info:jest.fn(),error:jest.fn()}));
+jest.mock('../notificationService',()=>({}));
+jest.mock('../lifecycleService',()=>({getSettings:jest.fn(async()=>({enabled:false,pilotUserIds:[]}))}));
+jest.mock('../counselorWorkflowService',()=>({tick:jest.fn()}));
+const service=require('../counselorWorkflowService');
+const job=require('../../jobs/lifecycleDeadlineJob');
+test('slow ticks do not overlap and shutdown waits for the active batch',async()=>{
+  jest.useFakeTimers();
+  let release;
+  service.tick.mockImplementationOnce(()=>new Promise(resolve=>{release=resolve;}));
+  const timer=job.startLifecycleDeadlineJob();
+  jest.advanceTimersByTime(180000);
+  expect(service.tick).toHaveBeenCalledTimes(1);
+  let drained=false;
+  const stopped=job.stopLifecycleDeadlineJob(timer).then(()=>{drained=true;});
+  await Promise.resolve();expect(drained).toBe(false);
+  release({transitioned:1});await stopped;
+  expect(drained).toBe(true);
+  jest.advanceTimersByTime(60000);expect(service.tick).toHaveBeenCalledTimes(1);
+  jest.useRealTimers();
+});

@@ -33,6 +33,9 @@ import { useAuth } from '@/lib/auth';
 import { useUpdateLeadCategory } from '@/hooks/useAdminEnterprise';
 import { triggerPhoneCall } from '@/lib/phone';
 import { useWorkflowSettings } from '@/hooks/useLifecycle';
+import { useCounselorWorkflowDetail } from '@/hooks/useCounselorWorkflow';
+import { CounselorRemarkForm } from '@/components/leads/CounselorRemarkForm';
+import { CounselorJourneyTracker, currentWorkflowLabel } from '@/components/leads/CounselorJourneyTracker';
 
 export default function LeadDetailPage() {
   return (
@@ -51,6 +54,7 @@ function LeadDetailInner() {
   const deleteLead = useDeleteLead();
   const updateCategory = useUpdateLeadCategory();
   const workflowSettings = useWorkflowSettings();
+  const counselorWorkflow = useCounselorWorkflowDetail(id,1,user?.role==='member'||user?.role==='partner');
 
   const [rmRemarkOpen, setRmRemarkOpen] = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
@@ -93,6 +97,9 @@ function LeadDetailInner() {
   const canDeleteLead = user.role === 'super_admin';
   const readOnlyAccess = Boolean(lead.read_only_access);
   const lifecycleEnabled = workflowSettings.data?.enabled === true;
+  const counselorEnabled = counselorWorkflow.data?.enabled === true;
+  const counselorRole = user.role === 'member' || user.role === 'partner';
+  const legacyWorkflowReady = !counselorRole || counselorWorkflow.data?.enabled === false;
   const leadPhone = lead.phone;
 
   async function callLead() {
@@ -250,7 +257,15 @@ function LeadDetailInner() {
 
       <div className="grid min-w-0 items-start gap-5 lg:grid-cols-[minmax(0,1.85fr)_minmax(280px,1fr)]">
         <main className="min-w-0 space-y-5">
-          {(lifecycleEnabled || !readOnlyAccess) && (
+          {counselorRole && !counselorWorkflow.data && <section className="card p-3" role={counselorWorkflow.isError ? 'alert' : 'status'}>
+            {counselorWorkflow.isError ? <>Could not load counselor workflow. <button className="underline" onClick={() => counselorWorkflow.refetch()}>Retry</button></> : 'Loading counselor workflow…'}
+          </section>}
+          {counselorEnabled && <section id="counselor-workflow" className="workflow-panel card min-w-0 space-y-4 p-3 sm:p-5">
+            <h2 className="font-semibold">Current: {currentWorkflowLabel(counselorWorkflow.data?.state||null)}</h2>
+            <CounselorJourneyTracker leadId={id} events={[...(counselorWorkflow.data?.events||[])].reverse()} total={counselorWorkflow.data?.has_more?51:counselorWorkflow.data?.events.length||0}/>
+            {!readOnlyAccess&&<CounselorRemarkForm leadId={id}/>}
+          </section>}
+          {legacyWorkflowReady && (lifecycleEnabled || !readOnlyAccess) && (
             <section className="card p-3 sm:p-5">
               <WorkflowBoundary>
                 {lifecycleEnabled ? (
@@ -318,9 +333,9 @@ function LeadDetailInner() {
               setRmRemarkOpen(true);
               return;
             }
-            const composer = document.getElementById('conversation-note');
+            const composer = document.getElementById(counselorEnabled ? 'counselor-workflow' : 'conversation-note');
             composer?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            window.setTimeout(() => composer?.querySelector('textarea')?.focus(), 350);
+            window.setTimeout(() => composer?.querySelector<HTMLElement>(counselorEnabled ? 'select' : 'textarea')?.focus(), 350);
           }}
           onReassign={canReassign ? () => setReassignOpen(true) : undefined}
         />

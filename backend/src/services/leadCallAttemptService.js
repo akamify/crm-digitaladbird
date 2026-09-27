@@ -1011,6 +1011,10 @@ async function completeScheduledAttempt({
   }
 
   if (isRetryableWorkflowStatus(normalizedOutcome)) {
+    await require('./counselorWorkflowService').observeRemark({
+      client, leadId, user, remarkId: `attempt-${attempt.id}`,
+      statuses: [normalizedOutcome], source: 'call_attempt', followupAt: explicitFollowupAt,
+    });
     const leadCallStatus = toLeadCallStatusValue(normalizedOutcome);
     await run(client, `
       UPDATE leads

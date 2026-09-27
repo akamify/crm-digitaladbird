@@ -283,6 +283,7 @@ async function createLeadInteraction({
   priority = null,
   customerInterest = null,
   nextFollowup = null,
+  primaryStatus,
 }) {
   const normalizedStatuses = normalizeInteractionStatuses(statuses || status);
   const normalizedStatus = normalizedStatuses[0] || '';
@@ -364,6 +365,11 @@ async function createLeadInteraction({
   }
   if (releaseLock !== false) updates.push('locked_by_user_id = NULL', 'locked_until = NULL');
   await client.query(`UPDATE leads SET ${updates.join(', ')} WHERE id = $1`, params);
+
+  await require('./counselorWorkflowService').observeRemark({
+    client, leadId, user, remarkId: remark.id, statuses: normalizedStatuses,
+    primaryStatus, source, followupAt: nextFollowupAt || nextFollowup || null,
+  });
 
   return {
     remark: {

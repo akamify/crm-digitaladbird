@@ -1,0 +1,750 @@
+{
+  "synthetic": true,
+  "leads": 50000,
+  "events": 500000,
+  "counselors": 50,
+  "migration_twice_ms": 33,
+  "plans": [
+    {
+      "kind": "classification",
+      "ms": 147.623,
+      "scans": [
+        {
+          "type": "Bitmap Heap Scan",
+          "relation": "counselor_workflow_events",
+          "rows": 10000,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Index Scan",
+          "index": "idx_counselor_workflow_work_source",
+          "rows": 10000,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Heap Scan",
+          "relation": "lead_assignments",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Index Scan",
+          "index": "idx_assignment_owner_date",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Seq Scan",
+          "relation": "leads",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Index Scan",
+          "relation": "leads",
+          "index": "leads_pkey",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Seq Scan",
+          "relation": "lead_assignments",
+          "rows": 0,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Seq Scan",
+          "relation": "counselor_workflow_state",
+          "rows": 50000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Subquery Scan",
+          "rows": 25,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        }
+      ]
+    },
+    {
+      "kind": "compact_history",
+      "ms": 2.091,
+      "scans": [
+        {
+          "type": "Bitmap Heap Scan",
+          "relation": "counselor_workflow_events",
+          "rows": 250,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Index Scan",
+          "index": "idx_counselor_workflow_history",
+          "rows": 250,
+          "loops": 1
+        }
+      ]
+    },
+    {
+      "kind": "classification",
+      "ms": 91.957,
+      "scans": [
+        {
+          "type": "Bitmap Heap Scan",
+          "relation": "counselor_workflow_events",
+          "rows": 10000,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Index Scan",
+          "index": "idx_counselor_workflow_work_source",
+          "rows": 10000,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Heap Scan",
+          "relation": "lead_assignments",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Index Scan",
+          "index": "idx_assignment_owner_date",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Seq Scan",
+          "relation": "leads",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Index Scan",
+          "relation": "leads",
+          "index": "leads_pkey",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Seq Scan",
+          "relation": "lead_assignments",
+          "rows": 0,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Seq Scan",
+          "relation": "counselor_workflow_state",
+          "rows": 50000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Subquery Scan",
+          "rows": 25,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        }
+      ]
+    },
+    {
+      "kind": "compact_history",
+      "ms": 0.881,
+      "scans": [
+        {
+          "type": "Bitmap Heap Scan",
+          "relation": "counselor_workflow_events",
+          "rows": 250,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Index Scan",
+          "index": "idx_counselor_workflow_history",
+          "rows": 250,
+          "loops": 1
+        }
+      ]
+    },
+    {
+      "kind": "classification",
+      "ms": 74.484,
+      "scans": [
+        {
+          "type": "Bitmap Heap Scan",
+          "relation": "counselor_workflow_events",
+          "rows": 10000,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Index Scan",
+          "index": "idx_counselor_workflow_work_source",
+          "rows": 10000,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Heap Scan",
+          "relation": "lead_assignments",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Index Scan",
+          "index": "idx_assignment_owner_date",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Seq Scan",
+          "relation": "leads",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Index Scan",
+          "relation": "leads",
+          "index": "leads_pkey",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Seq Scan",
+          "relation": "lead_assignments",
+          "rows": 0,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Seq Scan",
+          "relation": "counselor_workflow_state",
+          "rows": 50000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 0,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 0,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Subquery Scan",
+          "rows": 0,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 0,
+          "loops": 1
+        }
+      ]
+    },
+    {
+      "kind": "classification",
+      "ms": 75.274,
+      "scans": [
+        {
+          "type": "Bitmap Heap Scan",
+          "relation": "counselor_workflow_events",
+          "rows": 10000,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Index Scan",
+          "index": "idx_counselor_workflow_work_source",
+          "rows": 10000,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Heap Scan",
+          "relation": "lead_assignments",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Index Scan",
+          "index": "idx_assignment_owner_date",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Seq Scan",
+          "relation": "leads",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Index Scan",
+          "relation": "leads",
+          "index": "leads_pkey",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Seq Scan",
+          "relation": "lead_assignments",
+          "rows": 0,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Seq Scan",
+          "relation": "counselor_workflow_state",
+          "rows": 50000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Subquery Scan",
+          "rows": 25,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        }
+      ]
+    },
+    {
+      "kind": "compact_history",
+      "ms": 0.982,
+      "scans": [
+        {
+          "type": "Bitmap Heap Scan",
+          "relation": "counselor_workflow_events",
+          "rows": 250,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Index Scan",
+          "index": "idx_counselor_workflow_history",
+          "rows": 250,
+          "loops": 1
+        }
+      ]
+    },
+    {
+      "kind": "classification",
+      "ms": 72.706,
+      "scans": [
+        {
+          "type": "Bitmap Heap Scan",
+          "relation": "counselor_workflow_events",
+          "rows": 10000,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Index Scan",
+          "index": "idx_counselor_workflow_work_source",
+          "rows": 10000,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Heap Scan",
+          "relation": "lead_assignments",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Index Scan",
+          "index": "idx_assignment_owner_date",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Seq Scan",
+          "relation": "leads",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Index Scan",
+          "relation": "leads",
+          "index": "leads_pkey",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Seq Scan",
+          "relation": "lead_assignments",
+          "rows": 0,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Seq Scan",
+          "relation": "counselor_workflow_state",
+          "rows": 50000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Subquery Scan",
+          "rows": 25,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        }
+      ]
+    },
+    {
+      "kind": "compact_history",
+      "ms": 1.191,
+      "scans": [
+        {
+          "type": "Bitmap Heap Scan",
+          "relation": "counselor_workflow_events",
+          "rows": 250,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Index Scan",
+          "index": "idx_counselor_workflow_history",
+          "rows": 250,
+          "loops": 1
+        }
+      ]
+    },
+    {
+      "kind": "classification",
+      "ms": 57.789,
+      "scans": [
+        {
+          "type": "Bitmap Heap Scan",
+          "relation": "counselor_workflow_events",
+          "rows": 10000,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Index Scan",
+          "index": "idx_counselor_workflow_work_source",
+          "rows": 10000,
+          "loops": 1
+        },
+        {
+          "type": "Index Scan",
+          "relation": "lead_assignments",
+          "index": "idx_assignment_owner_date",
+          "rows": 0,
+          "loops": 1
+        },
+        {
+          "type": "Seq Scan",
+          "relation": "leads",
+          "rows": 0,
+          "loops": 1
+        },
+        {
+          "type": "Seq Scan",
+          "relation": "leads",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Seq Scan",
+          "relation": "lead_assignments",
+          "rows": 0,
+          "loops": 1
+        },
+        {
+          "type": "Seq Scan",
+          "relation": "counselor_workflow_state",
+          "rows": 50000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 0,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        },
+        {
+          "type": "Subquery Scan",
+          "rows": 25,
+          "loops": 1
+        },
+        {
+          "type": "CTE Scan",
+          "rows": 1000,
+          "loops": 1
+        }
+      ]
+    },
+    {
+      "kind": "compact_history",
+      "ms": 1.345,
+      "scans": [
+        {
+          "type": "Bitmap Heap Scan",
+          "relation": "counselor_workflow_events",
+          "rows": 250,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Index Scan",
+          "index": "idx_counselor_workflow_history",
+          "rows": 250,
+          "loops": 1
+        }
+      ]
+    },
+    {
+      "kind": "worker_enrollment",
+      "ms": 55.209,
+      "scans": [
+        {
+          "type": "Seq Scan",
+          "relation": "users",
+          "rows": 50,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Heap Scan",
+          "relation": "leads",
+          "rows": 20,
+          "loops": 50
+        },
+        {
+          "type": "Bitmap Index Scan",
+          "index": "idx_leads_assigned",
+          "rows": 1000,
+          "loops": 50
+        },
+        {
+          "type": "Index Scan",
+          "relation": "counselor_workflow_state",
+          "index": "counselor_workflow_state_pkey",
+          "rows": 1,
+          "loops": 1000
+        }
+      ]
+    },
+    {
+      "kind": "worker_deadlines",
+      "ms": 1.692,
+      "scans": [
+        {
+          "type": "Bitmap Heap Scan",
+          "relation": "counselor_workflow_state",
+          "rows": 0,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Index Scan",
+          "index": "idx_counselor_workflow_old_deadline",
+          "rows": 0,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Index Scan",
+          "index": "idx_counselor_workflow_pending_deadline",
+          "rows": 0,
+          "loops": 1
+        },
+        {
+          "type": "Index Scan",
+          "relation": "leads",
+          "index": "leads_pkey",
+          "rows": 0,
+          "loops": 0
+        },
+        {
+          "type": "Index Scan",
+          "relation": "users",
+          "index": "users_pkey",
+          "rows": 0,
+          "loops": 0
+        }
+      ]
+    },
+    {
+      "kind": "full_history",
+      "ms": 0.059,
+      "scans": [
+        {
+          "type": "Bitmap Heap Scan",
+          "relation": "counselor_workflow_events",
+          "rows": 10,
+          "loops": 1
+        },
+        {
+          "type": "Bitmap Index Scan",
+          "index": "idx_counselor_workflow_history",
+          "rows": 10,
+          "loops": 1
+        }
+      ]
+    }
+  ]
+}

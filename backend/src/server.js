@@ -15,7 +15,7 @@ const { startMetaPullJob } = require('./jobs/metaPullJob');
 const { startMetaTokenHealthJob } = require('./jobs/metaTokenHealthJob');
 const { startGoogleSheetSyncJob } = require('./jobs/googleSheetSyncJob');
 const { startCustomerMeetingReminderJob } = require('./jobs/customerMeetingReminderJob');
-const { startLifecycleDeadlineJob } = require('./jobs/lifecycleDeadlineJob');
+const { startLifecycleDeadlineJob, stopLifecycleDeadlineJob } = require('./jobs/lifecycleDeadlineJob');
 const { startDistributionScheduler } = require('./services/distributionScheduler');
 const { syncAllCampaigns } = require('./services/metaSyncService');
 const { initSocket } = require('./services/socketService');
@@ -80,8 +80,10 @@ function shutdown(signal) {
   clearInterval(googleSheetSyncTimer);
   clearInterval(customerMeetingTimer);
   clearInterval(lifecycleDeadlineTimer);
+  const workflowDrained = stopLifecycleDeadlineJob(lifecycleDeadlineTimer);
   clearInterval(campaignSyncTimer);
   server.close(async () => {
+    await workflowDrained;
     await closePool();
     logger.info('Bye.');
     process.exit(0);

@@ -1,0 +1,158 @@
+{
+  "result": "PASS",
+  "scope": "Local synthetic recovery rehearsal; not deployed staging",
+  "method": "Cold physical copy after clean PostgreSQL shutdown; separate restored cluster directory",
+  "postgres_major": "18",
+  "backup_ms": 7538,
+  "recovery_and_validation_ms": 44694,
+  "backup_directory": "C:\\Users\\faiza\\AppData\\Local\\Temp\\crm-workflow-backup-B4UwVt",
+  "restored_directory": "C:\\Users\\faiza\\AppData\\Local\\Temp\\crm-workflow-restore-KgXFZA",
+  "tables": [
+    {
+      "schemaname": "public",
+      "tablename": "counselor_workflow_events",
+      "rows": 536,
+      "digest": "1bc972db275a327585458fca779b4eff"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "counselor_workflow_state",
+      "rows": 194,
+      "digest": "7cc11a05f416f3903f055062ca6e357b"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "lead_assignments",
+      "rows": 187,
+      "digest": "d0b1349c44a1d6179b628140703c2db4"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "lead_remarks",
+      "rows": 238,
+      "digest": "65ac06c42515d32bb3863e7010a826b8"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "leads",
+      "rows": 195,
+      "digest": "70402c7d2f15719e852c81daaac2af76"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "users",
+      "rows": 338,
+      "digest": "5f591fb76d041fe8ea9d5a0e48437416"
+    },
+    {
+      "schemaname": "readiness",
+      "tablename": "counselor_workflow_events",
+      "rows": 500000,
+      "digest": "eacaafedd2bf845e83369902f328556c"
+    },
+    {
+      "schemaname": "readiness",
+      "tablename": "counselor_workflow_state",
+      "rows": 50000,
+      "digest": "7d45f8f6920219b796b0f67727d30b5d"
+    },
+    {
+      "schemaname": "readiness",
+      "tablename": "fixture_users",
+      "rows": 50,
+      "digest": "2952ec81f04870d4b84802de1a731532"
+    },
+    {
+      "schemaname": "readiness",
+      "tablename": "lead_assignments",
+      "rows": 50000,
+      "digest": "84b93628fa75fa6e45cab6adb7038449"
+    },
+    {
+      "schemaname": "readiness",
+      "tablename": "leads",
+      "rows": 50000,
+      "digest": "c97cf1c9d00ef786551118eed70466b2"
+    },
+    {
+      "schemaname": "readiness",
+      "tablename": "users",
+      "rows": 50,
+      "digest": "989d4785c7e29d3af0d378f8c8887e50"
+    }
+  ],
+  "indexes": [
+    {
+      "schemaname": "public",
+      "indexname": "counselor_workflow_events_lead_id_idempotency_key_key"
+    },
+    {
+      "schemaname": "public",
+      "indexname": "counselor_workflow_events_pkey"
+    },
+    {
+      "schemaname": "public",
+      "indexname": "counselor_workflow_state_pkey"
+    },
+    {
+      "schemaname": "public",
+      "indexname": "idx_counselor_workflow_history"
+    },
+    {
+      "schemaname": "public",
+      "indexname": "idx_counselor_workflow_old_deadline"
+    },
+    {
+      "schemaname": "public",
+      "indexname": "idx_counselor_workflow_owner_queue"
+    },
+    {
+      "schemaname": "public",
+      "indexname": "idx_counselor_workflow_pending_deadline"
+    },
+    {
+      "schemaname": "public",
+      "indexname": "idx_counselor_workflow_work_source"
+    },
+    {
+      "schemaname": "readiness",
+      "indexname": "counselor_workflow_events_lead_id_idempotency_key_key"
+    },
+    {
+      "schemaname": "readiness",
+      "indexname": "counselor_workflow_events_pkey"
+    },
+    {
+      "schemaname": "readiness",
+      "indexname": "counselor_workflow_state_pkey"
+    },
+    {
+      "schemaname": "readiness",
+      "indexname": "idx_counselor_workflow_history"
+    },
+    {
+      "schemaname": "readiness",
+      "indexname": "idx_counselor_workflow_old_deadline"
+    },
+    {
+      "schemaname": "readiness",
+      "indexname": "idx_counselor_workflow_owner_queue"
+    },
+    {
+      "schemaname": "readiness",
+      "indexname": "idx_counselor_workflow_pending_deadline"
+    },
+    {
+      "schemaname": "readiness",
+      "indexname": "idx_counselor_workflow_work_source"
+    }
+  ],
+  "table_fingerprint_sha256": "cb41aac131acd3e1d438bd7fbb7092ae04e18c98f8c4474e5616ef596a03af59",
+  "health_statements": 7,
+  "application_service_reads": "PASS",
+  "limitations": [
+    "Synthetic minimal CRM schema, not a full application backup",
+    "Same PostgreSQL binaries and machine",
+    "No deployed staging app, JWT/login, provider snapshot or production RTO verified"
+  ]
+}

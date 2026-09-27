@@ -1340,6 +1340,7 @@ exports.addRemark = asyncHandler(async (req, res) => {
       user: req.user,
       leadId: req.params.id,
       note: note ?? remark,
+      primaryStatus: req.body.primary_status,
       status: call_status,
       statuses: call_statuses || remark_statuses,
       stage,
@@ -1443,6 +1444,7 @@ exports.bulkAddRemarks = asyncHandler(async (req, res) => {
         user: req.user,
         leadId,
         note: note ?? remark,
+        primaryStatus: req.body.primary_status,
         status: call_status,
         statuses: call_statuses || remark_statuses,
         stage,
@@ -1669,12 +1671,12 @@ exports.createManual = asyncHandler(async (req, res) => {
     }
 
     if (initialRemark || normalizedCallStatus || normalizedStage || nextFollowupAt) {
-      await client.query(
+      const {rows:[initialSavedRemark]} = await client.query(
         `INSERT INTO lead_remarks(
          lead_id, user_id, remark, call_status, stage, next_followup_at,
            source, is_completed_response, call_statuses
          )
-         VALUES ($1::uuid, $2::uuid, $3::text, $4::call_status, $5::lead_stage, $6::timestamptz, 'manual', FALSE, $7::jsonb)`,
+         VALUES ($1::uuid, $2::uuid, $3::text, $4::call_status, $5::lead_stage, $6::timestamptz, 'manual', FALSE, $7::jsonb) RETURNING id`,
         [
           lead.id,
           req.user.id,
@@ -1700,6 +1702,8 @@ exports.createManual = asyncHandler(async (req, res) => {
           [lead.id],
         );
       }
+      await require('../services/counselorWorkflowService').observeRemark({client,leadId:lead.id,user:req.user,
+        remarkId:initialSavedRemark.id,statuses:normalizedCallStatus?[normalizedCallStatus]:[],source:'manual',followupAt:nextFollowupAt});
       logger.info({ route: 'POST /api/leads/manual', leadId: lead.id, has_status: Boolean(dbCallStatus), has_stage: Boolean(normalizedStage) }, 'Manual lead initial remark saved');
     }
 

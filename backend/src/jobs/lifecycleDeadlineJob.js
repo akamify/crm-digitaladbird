@@ -186,6 +186,12 @@ async function markOverdue(settings) {
 }
 
 async function tick() {
+  // Independent rollout boundary; reuse this job's cadence, never its V2 policy.
+  try {
+    await require('../services/counselorWorkflowService').tick();
+  } catch (error) {
+    logger.error({ code: error.code, component:'counselor_workflow',event:'worker_batch_failed' }, '[CounselorWorkflow] tick failed');
+  }
   try {
     const settings = await lifecycle.getSettings();
     if (!settings.enabled && settings.pilotUserIds.length === 0) return { skipped: true };
@@ -201,9 +207,21 @@ async function tick() {
   }
 }
 
+let activeTick = null;
+let stopping = false;
 function startLifecycleDeadlineJob() {
-  tick().catch(() => {});
-  return setInterval(() => tick().catch(() => {}), TICK_MS);
+  stopping = false;
+  const run = () => {
+    if (stopping || activeTick) return;
+    activeTick = tick().catch(() => {}).finally(() => { activeTick = null; });
+  };
+  run();
+  return setInterval(run, TICK_MS);
+}
+async function stopLifecycleDeadlineJob(timer) {
+  stopping = true;
+  clearInterval(timer);
+  await activeTick;
 }
 
-module.exports = { startLifecycleDeadlineJob, tick, realignActionOwners, repairLegacyMeetingDeadlines, materializeMissingActions, markOverdue };
+module.exports = { startLifecycleDeadlineJob, stopLifecycleDeadlineJob, tick, realignActionOwners, repairLegacyMeetingDeadlines, materializeMissingActions, markOverdue };
