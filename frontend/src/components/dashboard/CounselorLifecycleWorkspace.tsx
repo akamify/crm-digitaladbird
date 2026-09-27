@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useDeferredValue, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowRight, Clock3, Loader2, Phone, Search } from 'lucide-react';
-import { CounselorJourneyTracker } from '@/components/leads/CounselorJourneyTracker';
+import { JourneySteps } from '@/components/leads/CounselorJourneyTracker';
 import { Skeleton } from '@/components/ui/Modal';
 import { LeadAnalyticsPeriodControl } from '@/components/leads/LeadAnalyticsPeriodControl';
 import { LeadFilters } from '@/components/leads/LeadFilters';
@@ -67,14 +67,14 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
   const router = useRouter();
   const searchParams = useSearchParams();
   const requestedView = searchParams.get('workspace_view') as WorkspaceView | null;
-  const initialView = leadsPage && requestedView && selectable.has(requestedView) ? requestedView : 'received';
-  const [scope, setScope] = useState(() => leadsPage
+  const initialView = requestedView && selectable.has(requestedView) ? requestedView : 'received';
+  const [scope, setScope] = useState(() => (leadsPage || searchParams.has('lead_view'))
     ? normalizeAnalyticsScope(searchParams.get('lead_view') === 'all_time' ? 'all_time' : 'daily', searchParams.get('from') || searchParams.get('selected_date'), searchParams.get('to') || searchParams.get('selected_date'))
     : { view: 'daily' as const, from: today, to: today });
   const [view, setView] = useState<WorkspaceView>(initialView);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(() => Math.max(1, Math.min(100000, Math.trunc(Number(searchParams.get('page')) || 1))));
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const [dashboardSearch, setDashboardSearch] = useState('');
+  const [dashboardSearch, setDashboardSearch] = useState(searchParams.get('q') || '');
   const [filters, setFilters] = useState<LeadFilterState>(() => ({
     q: searchParams.get('q') || '', category: (searchParams.get('category') as LeadFilterState['category']) || '',
     stage: (searchParams.get('stage') as LeadFilterState['stage']) || '', call_status: (searchParams.get('call_status') as LeadFilterState['call_status']) || '',
@@ -103,18 +103,19 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
   const isInitialLoading = leads.isLoading && !leads.data;
   const isTransitioning = leads.isFetching && Boolean(leads.data);
 
+  const returnParams = analyticsScopeParams(scope);
+  returnParams.delete('view');
+  returnParams.set('lead_view', scope.view);
+  returnParams.set('workspace_view', view);
+  returnParams.set('page', String(page));
+  DISTRIBUTION_FILTER_KEYS.forEach(key => {
+    const value = (leadsPage ? filters : {...filters, q: dashboardSearch})[key as keyof LeadFilterState];
+    if (value !== undefined && value !== null && value !== '') returnParams.set(key, String(value));
+  });
+  const returnTo = `${leadsPage ? '/leads' : '/dashboard/member'}?${returnParams.toString()}`;
   useEffect(() => {
-    if (!leadsPage) return;
-    const next = analyticsScopeParams(scope);
-    next.delete('view');
-    next.set('lead_view', scope.view);
-    next.set('workspace_view', view);
-    DISTRIBUTION_FILTER_KEYS.forEach(key => {
-      const value = filters[key as keyof LeadFilterState];
-      if (value !== undefined && value !== null && value !== '') next.set(key, String(value));
-    });
-    router.replace(`/leads?${next.toString()}`, { scroll: false });
-  }, [filters, leadsPage, router, scope, view]);
+    router.replace(returnTo, { scroll: false });
+  }, [returnTo, router]);
 
   function selectView(next: WorkspaceView) {
     if (next === view) return;
@@ -185,12 +186,12 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
               <article key={lead.id} className="px-4 py-3 transition hover:bg-slate-50/80">
                 <div className="grid gap-3 lg:grid-cols-[minmax(0,1.25fr)_0.8fr_1fr_auto] lg:items-center">
                   <div className="min-w-0"><div className="truncate text-sm font-semibold text-slate-900">{lead.full_name || 'Unnamed lead'}</div><div className="mt-0.5 text-xs text-slate-500">{lead.phone || 'No phone'} / {humanize(lead.source || 'manual')}</div><div className="mt-1 flex flex-wrap gap-1">{leadsPage&&view==='worked'&&<>{lead.legacy_worked&&!lead.worked_n&&!lead.worked_o&&<span className="chip-slate">Previous work</span>}{lead.worked_n&&<span className="chip-blue" title="Worked while New">N</span>}{lead.worked_o&&<span className="chip-slate" title="Worked while Old">O</span>}</>}{lead.labels?.slice(0, 3).map(label => <span key={label.id} className="rounded-full border px-1.5 py-0.5 text-[9px] font-semibold" style={{ borderColor: label.color || '#cbd5e1', color: label.color || '#475569' }}>{label.name}</span>)}</div></div>
-                  <div className="text-xs text-slate-600"><div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Journey / Last result</div><div className="mt-1 font-semibold text-slate-800">{humanize(managed ? (lead.workflow_queue==='pending'?'pending':lead.workflow_primary_status || lead.workflow_queue || 'awaiting primary') : lead.terminal_state || lead.journey_stage)}{managed&&lead.workflow_queue==='old'?' + Old':''}</div><div>{humanize(lead.last_call_result || 'not called')}</div></div>
-                  <div className="text-xs text-slate-600"><div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Next required action</div><div className="mt-1 font-semibold text-slate-800">{managed?(lead.followup_override?'Custom follow-up':lead.workflow_queue==='pending'?'Add next remark':due?'Workflow deadline':'Add next remark'):nextActionLabel(lead.current_action_type, lead.current_action_reason, lead.has_call_issue)}</div>{due && <div className={`mt-0.5 flex items-center gap-1 ${(managed?lead.workflow_queue==='pending':lead.is_pending) ? 'font-semibold text-rose-600' : ''}`}><Clock3 className="h-3 w-3" />{fmtDate(due, 'd MMM, h:mm a')} | {fmtRelative(due)}</div>}{(managed?lead.workflow_queue==='pending':lead.is_pending) && <span className="mt-1 inline-flex rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700">{managed?'Pending':`Pending cycle ${lead.pending_occurrences || 1}`}</span>}</div>
-                  <div className="flex items-center gap-2 lg:justify-end">{!lead.read_only && lead.phone && <a href={`tel:${lead.phone}`} className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-emerald-200 px-3 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"><Phone className="h-3.5 w-3.5" />Call</a>}<Link href={`/leads/${lead.id}`} className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-brand-200 px-3 text-xs font-semibold text-brand-700 hover:bg-brand-50">Open<ArrowRight className="h-3.5 w-3.5" /></Link></div>
+                  <div className="text-xs text-slate-600"><div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Journey / Last result</div><div className="mt-1 font-semibold text-slate-800">{humanize((managed && lead.workflow_primary_status) || lead.last_call_result || lead.terminal_state || lead.journey_stage)}</div></div>
+                  <div className="text-xs text-slate-600"><div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Next required action</div><div className="mt-1 font-semibold text-slate-800">{managed?(lead.followup_override?'Custom follow-up':lead.workflow_queue==='pending'?'Add next remark':due?(lead.workflow_next_queue==='old'?'Moves to Old Leads':lead.workflow_next_queue==='pending'?'Moves to Pending':'Workflow deadline'):'Add next remark'):nextActionLabel(lead.current_action_type, lead.current_action_reason, lead.has_call_issue)}</div>{due && <div className={`mt-0.5 flex items-center gap-1 ${(managed?lead.workflow_queue==='pending':lead.is_pending) ? 'font-semibold text-rose-600' : ''}`}><Clock3 className="h-3 w-3" />{fmtDate(due, 'd MMM, h:mm a')} | {fmtRelative(due)}</div>}{(managed?lead.workflow_queue==='pending':lead.is_pending) && <span className="mt-1 inline-flex rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700">{managed?'Pending':`Pending cycle ${lead.pending_occurrences || 1}`}</span>}</div>
+                  <div className="flex items-center gap-2 lg:justify-end">{!lead.read_only && lead.phone && <a href={`tel:${lead.phone}`} className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-emerald-200 px-3 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"><Phone className="h-3.5 w-3.5" />Call</a>}<Link href={`/leads/${lead.id}?returnTo=${encodeURIComponent(returnTo)}`} className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-brand-200 px-3 text-xs font-semibold text-brand-700 hover:bg-brand-50">Open<ArrowRight className="h-3.5 w-3.5" /></Link></div>
                 </div>
-                {leadsPage&&Boolean(lead.history?.length)&&<div className="mt-2"><CounselorJourneyTracker leadId={lead.id} events={lead.history||[]} total={lead.history_total||0}/></div>}
-                <details className="mt-2 text-xs text-slate-500"><summary className="cursor-pointer font-medium text-slate-600">More details</summary><div className="mt-2 grid gap-2 rounded-lg bg-slate-50 p-3 sm:grid-cols-3"><span><strong>Category:</strong> {humanize(lead.category || 'unknown')}</span><span><strong>Campaign:</strong> {lead.campaign_name || lead.campaign_label || '-'}</span><span><strong>Latest interaction:</strong> {lead.latest_interaction_at ? fmtDate(lead.latest_interaction_at, 'd MMM, h:mm a') : '-'}</span></div></details>
+                {leadsPage&&Boolean(lead.history?.length)&&<div className="mt-2"><JourneySteps events={lead.history||[]}/></div>}
+
               </article>
             );})}
           </div>

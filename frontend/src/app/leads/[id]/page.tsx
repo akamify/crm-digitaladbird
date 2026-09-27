@@ -1,8 +1,9 @@
 'use client';
 
+import { leadReturnPath } from '@/lib/leadReturnPath';
 import { Component, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AlertTriangle, CalendarClock, MessageCircle, MessageSquarePlus, Phone, Tag, Trash2, UserCog } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { AppShell } from '@/components/layout/AppShell';
@@ -48,6 +49,7 @@ export default function LeadDetailPage() {
 function LeadDetailInner() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const backHref = leadReturnPath(useSearchParams().get('returnTo'));
   const { user } = useAuth();
   const comm = useLeadCommunication(id);
   const leadQuery = useLead(id);
@@ -84,7 +86,7 @@ function LeadDetailInner() {
       <EmptyState
         title="Lead not found"
         description="It may have been deleted or you may not have access."
-        action={<Button onClick={() => router.push('/leads')}>Back to leads</Button>}
+        action={<Button onClick={() => router.push(backHref)}>Back to leads</Button>}
       />
     );
   }
@@ -127,7 +129,7 @@ function LeadDetailInner() {
     try {
       await deleteLead.mutateAsync({ id });
       toast.success('Lead deleted permanently.');
-      router.push('/leads');
+      router.push(backHref);
     } catch (error: any) {
       toast.error(error?.response?.data?.error?.message || error?.response?.data?.message || 'Could not delete lead');
     }

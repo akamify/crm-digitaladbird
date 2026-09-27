@@ -218,7 +218,7 @@ test('original Leads layout gains requested boxes, chips and Worked badges witho
   const h=harness('workspace_view=worked',{data:{summary:{received:4,new:1,old:1,worked:2,worked_n:1,worked_o:1,pending:1},total:1,rows:[{id:'both',full_name:'Original row',phone:'123',worked_n:true,worked_o:true,labels:[]}]}});
   const Component=h.load('@/components/dashboard/CounselorLifecycleWorkspace').CounselorLifecycleWorkspace;
   const html=renderToStaticMarkup(React.createElement(Component,{leadsPage:true}));
-  for(const label of ['Assigned Leads','New Leads','Old Leads','Worked Leads','Pending','Journey / Last result','Next required action','More details','Original row']) assert.ok(html.includes(label),label);
+  for(const label of ['Assigned Leads','New Leads','Old Leads','Worked Leads','Pending','Journey / Last result','Next required action','Original row']) assert.ok(html.includes(label),label);
   for(const key of ['cc','responded','call_issues','common_meeting','dim','personal_meeting','hot','warm','special_category','call_reminder','handover_rm','not_attended','process_incomplete','responses','tte']) assert.ok(html.includes(`workspace-tab-${key}`),key);
   assert.match(html,/Worked while New/);assert.match(html,/Worked while Old/);
   assert.equal(h.calls[0].journey,true);
@@ -260,4 +260,50 @@ test('dashboard uses the same journey classification and legacy work stays visib
   const dashboard=renderToStaticMarkup(React.createElement(Component));
   assert.equal(h.calls.at(-1).journey,true);
   assert.match(dashboard,/Today&#x27;s work|Today&#39;s work/);
+});
+
+
+test('lead links carry date, tab, page and filters through a safe return URL',()=>{
+  for(const tab of ['worked','common_meeting']) {
+    const h=harness(`workspace_view=${tab}&lead_view=daily&from=2026-09-25&to=2026-09-25&page=3&q=Example`,{data:{summary:{},total:80,rows:[{id:'lead',full_name:'Example'}]}});
+    const Component=h.load('@/components/dashboard/CounselorLifecycleWorkspace').CounselorLifecycleWorkspace;
+    const html=renderToStaticMarkup(React.createElement(Component,{leadsPage:true}));
+    const href=html.match(/href="(\/leads\/lead\?returnTo=[^"]+)"/)[1];
+    const back=new URL(href,'https://example.test').searchParams.get('returnTo');
+    const params=new URL(back,'https://example.test').searchParams;
+    assert.equal(params.get('workspace_view'),tab);assert.equal(params.get('from'),'2026-09-25');
+    assert.equal(params.get('page'),'3');assert.equal(params.get('q'),'Example');assert.equal(h.calls[0].page,3);
+    const restored=harness(params.toString(),{data:{rows:[],summary:{}}});
+    renderToStaticMarkup(React.createElement(restored.load('@/components/dashboard/CounselorLifecycleWorkspace').CounselorLifecycleWorkspace,{leadsPage:true}));
+    assert.equal(restored.calls[0].view,tab);assert.equal(restored.calls[0].scope.from,'2026-09-25');
+    const safe=h.load('@/lib/leadReturnPath').leadReturnPath;
+    assert.equal(safe(back),back);
+    for(const invalid of ['https://evil.test','//evil.test','/leads/123','/leads/../admin','javascript:alert(1)'])assert.equal(safe(invalid),'/leads');
+  }
+});
+
+test('clean rows show latest primary once and the actual next queue, respecting follow-up overrides',()=>{
+  for(const [next,override,label] of [['old',false,'Moves to Old Leads'],['pending',false,'Moves to Pending'],['old',true,'Custom follow-up']]) {
+    const h=harness('',{data:{summary:{},rows:[{id:'lead',workflow_managed:true,workflow_primary_status:'communication_completed',last_call_result:'communication_completed',workflow_deadline:'2026-09-28T10:00:00Z',workflow_next_queue:next,followup_override:override,next_followup_at:'2026-10-01T10:00:00Z',history:[]}]}});
+    const html=renderToStaticMarkup(React.createElement(h.load('@/components/dashboard/CounselorLifecycleWorkspace').CounselorLifecycleWorkspace,{leadsPage:true}));
+    assert.match(html,new RegExp(label));assert.equal((html.match(/Communication Completed/g)||[]).length,1);
+    assert.doesNotMatch(html,/More details|View history details|Category:|Campaign:|Latest interaction:/);
+    if(override)assert.doesNotMatch(html,/Moves to Old Leads|Moves to Pending/);
+  }
+  const h=harness('',{data:{summary:{},rows:[{id:'legacy',journey_stage:'common_meeting',last_call_result:'communication_completed'}]}});
+  const html=renderToStaticMarkup(React.createElement(h.load('@/components/dashboard/CounselorLifecycleWorkspace').CounselorLifecycleWorkspace,{leadsPage:true}));
+  assert.equal((html.match(/Communication Completed/g)||[]).length,1);
+  assert.doesNotMatch(html,/Common Meeting<\/div>/);
+});
+
+
+test('parent URL effect preserves counselor state and waits for auth',()=>{
+  const source=fs.readFileSync(path.join(root,'app/leads/page.tsx'),'utf8');
+  const body=source.match(/useEffect\(\(\) => \{(\s*if \(!user \|\| isCounselorLeadsView\)[\s\S]*?)\}, \[filters,/)[1];
+  const run=new Function('user','isCounselorLeadsView','isSuperAdminLeadsView','filters','router','selectedLeadView',body);
+  const calls=[];
+  for(const [user,counselor] of [[null,false],[{role:'member'},true],[{role:'partner'},true]])run(user,counselor,false,{}, {replace:url=>calls.push(url)},'daily');
+  assert.equal(calls.length,0);
+  run({role:'rm'},false,false,{q:'kept'}, {replace:url=>calls.push(url)},'daily');
+  assert.deepEqual(calls,['/leads?q=kept']);
 });

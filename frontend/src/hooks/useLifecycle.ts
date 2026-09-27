@@ -85,6 +85,7 @@ export interface WorkspaceSummary {
 }
 
 export interface WorkspaceLead {
+  workflow_next_queue?: 'old' | 'pending' | null;
   legacy_worked?: boolean;
   history?: import('@/hooks/useCounselorWorkflow').WorkflowEvent[]; history_total?: number;
   worked_n?: boolean; worked_o?: boolean; read_only?: boolean;

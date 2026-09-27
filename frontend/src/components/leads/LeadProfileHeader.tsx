@@ -2,6 +2,8 @@
 
 import { ArrowLeft, MapPin, Phone } from 'lucide-react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import { leadReturnPath } from '@/lib/leadReturnPath';
 import type { LeadDetail } from '@/types';
 import { LeadCategoryBadge } from './LeadCategoryBadge';
 import { fmtPhone, humanize } from '@/lib/format';
@@ -15,11 +17,12 @@ interface Props {
 }
 
 export function LeadProfileHeader({ lead, actions }: Props) {
+  const backHref = leadReturnPath(useSearchParams().get('returnTo'));
   const location = [lead.city, lead.state].filter(isMeaningfulValue).join(', ');
   const labels = useLeadLabels(lead.id);
   return (
     <header className="sticky top-0 z-20 -mx-3 border-b border-slate-200 bg-white/95 px-3 py-3 backdrop-blur sm:mx-0 sm:rounded-lg sm:border lg:static lg:px-5 lg:py-4">
-      <Link href="/leads" className="mb-2 inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-slate-900">
+      <Link href={backHref} className="mb-2 inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-slate-900">
         <ArrowLeft className="h-3.5 w-3.5" /> Back to leads
       </Link>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">

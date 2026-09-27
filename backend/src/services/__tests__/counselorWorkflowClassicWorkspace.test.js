@@ -170,4 +170,18 @@ suite('original workspace with counselor journey views (PostgreSQL)',()=>{
     } finally {await pool.query('ROLLBACK');}
   });
 
+  test('next queue is taken from the authoritative deadline and suppressed for custom follow-ups',async()=>{
+    await pool.query('BEGIN');
+    try {
+      for(const [oldAt,pendingAt,override,next] of [
+        ['2026-09-28','2026-09-29',false,'old'],[null,'2026-09-29',false,'pending'],
+        ['2026-09-28','2026-09-29',true,null],[null,null,false,null]]) {
+        await pool.query('UPDATE counselor_workflow_state SET move_to_old_at=$2,move_to_pending_at=$3,followup_override=$4 WHERE lead_id=$1',[ids.old,oldAt ? `${oldAt}T00:00:00Z` : null,pendingAt ? `${pendingAt}T00:00:00Z` : null,override]);
+        const result=await lifecycle.workspace(user,{...input,view:'received',q:'old'},true);
+        expect(result.rows[0].workflow_next_queue).toBe(next);
+        expect(result.rows[0].workflow_deadline ? new Date(result.rows[0].workflow_deadline).toISOString().slice(0,10) : null).toBe(oldAt||pendingAt);
+      }
+    } finally {await pool.query('ROLLBACK');}
+  });
+
 });

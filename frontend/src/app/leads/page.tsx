@@ -518,6 +518,7 @@ function LeadsInner() {
   const distributionHref = `/leads/distribution?${distributionParams.toString()}`;
 
   useEffect(() => {
+    if (!user || isCounselorLeadsView) return; // The counselor workspace owns its date, tab and filter URL.
     const params = new URLSearchParams();
     Object.entries(filters).forEach(([key, value]) => {
       if (isSuperAdminLeadsView && SUPER_ADMIN_REMOVED_FILTERS.has(key)) return;
@@ -529,7 +530,7 @@ function LeadsInner() {
       }
     });
     router.replace(`/leads${params.toString() ? `?${params.toString()}` : ''}`);
-  }, [filters, isSuperAdminLeadsView, router, selectedLeadView]);
+  }, [filters, isCounselorLeadsView, isSuperAdminLeadsView, router, selectedLeadView, user]);
 
   function setAnalyticsScope(scope: LeadAnalyticsScope) {
     setSelectedIds([]);

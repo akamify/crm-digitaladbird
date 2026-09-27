@@ -805,6 +805,8 @@ function workspaceCte(period, scopeSql, filterSql, journey = false, actor = null
     SELECT ${journey ? `cw.primary_status AS workflow_primary_status,cw.queue AS workflow_queue,cw.journey_active,(cw.lead_id IS NOT NULL AND NOT COALESCE(cw.awaiting_primary,FALSE)) AS workflow_managed,
       (${legacyWorkSql()}) AS legacy_worked,
       COALESCE(cw.move_to_old_at,cw.move_to_pending_at) AS workflow_deadline,cw.followup_override,
+      CASE WHEN cw.followup_override THEN NULL WHEN cw.move_to_old_at IS NOT NULL THEN 'old'
+        WHEN cw.move_to_pending_at IS NOT NULL THEN 'pending' END AS workflow_next_queue,
       COALESCE(w.n,FALSE) AS worked_n,COALESCE(w.o,FALSE) AS worked_o,
       l.assigned_to_user_id IS DISTINCT FROM ${actor}::uuid AS read_only,` : ''} l.id,l.full_name,l.phone,l.email,l.source,l.campaign_name,l.campaign_label,l.category,
       l.assigned_to_user_id,l.assigned_at,l.created_at,l.updated_at,l.last_call_at,l.next_followup_at,

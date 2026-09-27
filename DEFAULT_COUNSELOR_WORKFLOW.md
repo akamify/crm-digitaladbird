@@ -73,3 +73,20 @@ No schema migration or production data write is required for carry-forward. Depl
 - Production Next.js build, TypeScript and frontend lint completed successfully; existing lint warnings remain. Backend lint was not rerun; its previously reported missing ESLint 9 config remains unresolved.
 - Node syntax and git diff checks passed. Original workspace fixture EXPLAIN ANALYZE: 1.458 ms; not a production-scale performance guarantee.
 - Production deployment and live/browser acceptance remain pending. GO for code review; no production PASS claim.
+
+
+## Navigation and row clarity correction
+
+- Fixed competing URL writers: the parent Leads page no longer overwrites counselor workspace parameters, including during auth loading.
+- Open links carry a validated local return URL. Back to leads, missing-lead return and post-delete return preserve the selected date/range, tab, filters and page. Dashboard workspace links retain their own context. Direct profile visits still default to /leads.
+- Pagination is initialized from and written to the URL. Reloading a saved list URL preserves the same selection.
+- The backend exposes workflow_next_queue from the same stored deadline used by the worker. Rows show Moves to Old Leads or Moves to Pending with the deadline; custom follow-ups retain their own label. Existing legacy meeting actions retain their action labels because they do not have a new-workflow automatic transition to promise.
+- Rows display the authoritative workflow primary, falling back to the recorded last call result for legacy leads. Removed the duplicate stage/result line.
+- Removed More details and expandable history from list rows. Compact recorded journey steps remain; profile history is unchanged.
+- Timer policies, membership rules, schema and historical data are unchanged.
+
+Files: lifecycleService.js and its PostgreSQL workspace tests; CounselorLifecycleWorkspace.tsx; useLifecycle.ts; Leads list/detail pages; LeadProfileHeader.tsx; new leadReturnPath.ts; frontend regression tests; this report.
+
+Verification: 24 frontend tests passed; production build passed with existing lint warnings; final TypeScript check passed after the parent URL guard change. Node syntax and diff checks passed. Browser connection retry failed with `codex/sandbox-state-meta: missing field sandboxPolicy`; live back-navigation and visual verification remain pending. No deployment was performed.
+
+Final navigation/deadline regression run: 395 PostgreSQL tests passed across eight suites (exit 0). Frontend: 24 tests passed. Final diff check passed. GO for code review; deployment and browser acceptance remain pending.
