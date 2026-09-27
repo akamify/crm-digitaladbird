@@ -1,0 +1,11 @@
+# Default counselor remark workflow
+
+Member and partner accounts now use the new primary/secondary remark form, save API and workflow policies by default. Production no longer reads `COUNSELOR_WORKFLOW_MODE`, `COUNSELOR_WORKFLOW_ROLLOUT_AT` or `COUNSELOR_WORKFLOW_PILOTS`. Existing frontend consumers receive `enabled: true` and `remarks_enabled: true`; no separate UI switch is required.
+
+The stable assignment boundary is 27 September 2026 at 00:00 Asia/Kolkata. Assignments from this boundary are eligible for existing New-lead enrollment rules. Untouched eligible assignments may already be overdue when the worker runs. Earlier assignments start a journey when the counselor explicitly saves a new primary remark, without reconstructing historical primary status, New/Old membership or Worked counts. Existing persisted journeys and follow-up overrides remain intact. Timer durations and ownership checks are unchanged.
+
+The worker-only `COUNSELOR_WORKFLOW_WORKER_ENABLED=false` switch remains available for API-only processes; at least one worker must run for automatic deadline transitions. It does not disable the remark form or saving. Explicit service factory options are retained for isolated tests, not exposed to HTTP clients.
+
+This supersedes the off/pilot instructions in the historical Stage 6/7 reports. The existing workflow migration must be present before deployment. No migration, production data changes or deployment was performed in this change.
+
+Verification: ordinary backend suite passed (324 tests; 171 PostgreSQL tests skipped there). The isolated PostgreSQL run exposed an old test expectation from the prior UI change: workspace reads are now always enabled even when an explicitly configured test pilot excludes the user. Updated that assertion to preserve the separate remark permission check. Final isolated PostgreSQL run passed all 328 tests across six suites, including the new existing-lead default-save test and 50,000-lead readiness checks. Frontend checks passed 17 tests. Syntax and diff checks passed. Backend lint remains blocked by the existing missing ESLint 9 configuration. Frontend source was unchanged, so the production build/typecheck was not repeated. Browser and production verification remain pending.

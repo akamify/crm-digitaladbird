@@ -1,4 +1,5 @@
 process.env.PROCESS_TZ = 'Asia/Kolkata';
+jest.mock('../counselorWorkflowService', () => ({observeRemark: jest.fn(async () => ({}))}));
 
 jest.mock('../../config/database', () => ({
   query: jest.fn(),

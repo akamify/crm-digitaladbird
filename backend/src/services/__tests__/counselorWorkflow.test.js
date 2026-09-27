@@ -79,13 +79,27 @@ integration('counselor workflow PostgreSQL transactions', () => {
     await query('INSERT INTO leads(id,assigned_to_user_id,assigned_at) VALUES ($1,$2,NOW())',[leadId,user.id]);
     await query('INSERT INTO lead_assignments(lead_id,user_id,assigned_to_user_id) VALUES ($1,$2,$2)',[leadId,user.id]);
   });
+  test('default workflow opens and saves an existing lead without rollout configuration',async()=>{
+    const current=createService(db,{logger:false});
+    await query("UPDATE leads SET assigned_at='2020-01-01T00:00:00Z' WHERE id=$1",[leadId]);
+    expect(current.configuration(user)).toEqual({enabled:true});
+    expect(await current.read(user,leadId)).toMatchObject({enabled:true,managed:false});
+    const saved=await current.recordRemark(user,leadId,input());
+    expect(saved.state).toMatchObject({primary_status:'communication_completed',journey_active:true,queue:null});
+    expect(new Date(saved.state.move_to_pending_at)-new Date(saved.state.move_to_old_at)).toBe(20*3600000);
+    expect((await events()).filter(event=>event.is_work).map(event=>event.work_source)).toEqual([null]);
+    expect(await current.workspace(user,{view:'cc'})).toMatchObject({enabled:true,remarks_enabled:true,total:1});
+    const retry=await current.processDeadline({leadId,generation:saved.state.generation,kind:'old',dueAt:saved.state.move_to_old_at});
+    expect(retry.transitioned).not.toBe(true); // Future deadlines are not run early.
+  });
+
   test('pilot gates API, legacy adapters, enrollment, and disables without deleting history', async () => {
     const options={logger:false,rolloutMode:'pilot',rolloutAt:cutoff,pilotStarts:{[user.id]:cutoff}};
     const pilot=createService(db,options);
     expect(pilot.configuration(user)).toEqual({enabled:true});
     expect(pilot.configuration(other)).toEqual({enabled:false});
     await expect(pilot.recordRemark(other,leadId,input())).rejects.toMatchObject({code:'WORKFLOW_DISABLED'});
-    expect(await pilot.workspace(other)).toMatchObject({enabled:false});
+    expect(await pilot.workspace(other)).toMatchObject({enabled:true,remarks_enabled:false});
     await pilot.tick();
     expect((await state()).queue).toBe('new');
     const saved=await pilot.recordRemark(user,leadId,input((await state()).generation));

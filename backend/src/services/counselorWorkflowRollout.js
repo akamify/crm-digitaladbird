@@ -1,10 +1,12 @@
 const { AppError } = require('../utils/errors');
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Read on demand so tests and controlled restarts can exercise disable/resume.
-// Configuration errors fail closed; no environment value is logged.
+// Stable release boundary: restarts must not move the New-assignment cutoff.
+const DEFAULT_ACTIVATION = '2026-09-26T18:30:00.000Z'; // 27 September, midnight IST.
+// Production uses the new workflow for every counselor. Explicit service options
+// remain available for isolated tests; legacy environment flags no longer gate it.
 function configuration(options = {}) {
-  const mode = options.rolloutMode ?? process.env.COUNSELOR_WORKFLOW_MODE ?? 'off';
+  const mode = options.rolloutMode ?? 'all';
   const invalid = () => { throw new AppError(503,'WORKFLOW_CONFIG_INVALID','Invalid counselor workflow rollout configuration.'); };
   const timestamp = value => {
     if (typeof value !== 'string' || !/(Z|[+-]\d{2}:\d{2})$/.test(value) || !Number.isFinite(Date.parse(value))) invalid();
@@ -12,11 +14,11 @@ function configuration(options = {}) {
   };
   if (mode === 'off') return {mode,cutoff:null,pilots:{}};
   if (!['pilot','all'].includes(mode)) invalid();
-  const value = options.rolloutAt === undefined ? process.env.COUNSELOR_WORKFLOW_ROLLOUT_AT : options.rolloutAt;
+  const value = options.rolloutAt === undefined ? DEFAULT_ACTIVATION : options.rolloutAt;
   if (!value) return {mode,cutoff:null,pilots:{}};
   const cutoff = timestamp(value);
   let pilots;
-  try { pilots = options.pilotStarts ?? JSON.parse(process.env.COUNSELOR_WORKFLOW_PILOTS || '{}'); } catch { invalid(); }
+  pilots = options.pilotStarts ?? {};
   if (!pilots || Array.isArray(pilots) || typeof pilots !== 'object') invalid();
   pilots = Object.fromEntries(Object.entries(pilots).map(([id,start]) => {
     if (!UUID.test(id)) invalid();
@@ -35,4 +37,4 @@ function cutoffFor(config,user) {
   return Date.parse(start)<=Date.now()?start:null;
 }
 
-module.exports = {configuration,cutoffFor};
+module.exports = {configuration,cutoffFor,DEFAULT_ACTIVATION};

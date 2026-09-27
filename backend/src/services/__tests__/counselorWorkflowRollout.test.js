@@ -3,8 +3,22 @@ const id = '11111111-1111-4111-8111-111111111111';
 const other = '22222222-2222-4222-8222-222222222222';
 const past = '2020-01-01T00:00:00Z';
 const user = {id,role:'member'};
-test('off is the default even with an activation timestamp',()=>{
+test('explicit isolated service option can disable activation',()=>{
   expect(cutoffFor(configuration({rolloutMode:'off',rolloutAt:past}),user)).toBeNull();
+});
+
+test.each(['member','partner'])('new workflow is the default for %s despite old environment flags',role=>{
+  const keys=['COUNSELOR_WORKFLOW_MODE','COUNSELOR_WORKFLOW_ROLLOUT_AT','COUNSELOR_WORKFLOW_PILOTS'];
+  const before=keys.map(key=>process.env[key]);
+  try {
+    process.env.COUNSELOR_WORKFLOW_MODE='off';
+    process.env.COUNSELOR_WORKFLOW_ROLLOUT_AT='';
+    process.env.COUNSELOR_WORKFLOW_PILOTS='invalid legacy setting';
+    const config=configuration();
+    expect(config).toEqual({mode:'all',cutoff:'2026-09-26T18:30:00.000Z',pilots:{}});
+    expect(cutoffFor(config,{...user,role})).toBe(config.cutoff);
+    expect(configuration()).toEqual(config);
+  } finally { keys.forEach((key,index)=>{if(before[index]===undefined)delete process.env[key];else process.env[key]=before[index];}); }
 });
 test.each(['member','partner'])('pilot accepts only explicitly activated %s',role=>{
   const config=configuration({rolloutMode:'pilot',rolloutAt:past,pilotStarts:{[id]:past}});

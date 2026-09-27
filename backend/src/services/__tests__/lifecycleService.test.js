@@ -4,6 +4,12 @@ jest.mock('../../config/database', () => ({
 }));
 jest.mock('../../middleware/rbac', () => ({ getVisibleUserIds: jest.fn() }));
 jest.mock('../leadCommunicationAccess', () => ({ assertLeadCommunicationAccess: jest.fn() }));
+// This suite isolates the legacy service; real workflow adapters are exercised
+// with UUIDs and PostgreSQL in counselorWorkflow.test.js.
+jest.mock('../counselorWorkflowService', () => ({
+  observeRemark: jest.fn(async () => ({})), invalidateLegacy: jest.fn(async () => ({})),
+  tick: jest.fn(async () => ({skipped:true})),
+}));
 
 const database = require('../../config/database');
 const { getVisibleUserIds } = require('../../middleware/rbac');
