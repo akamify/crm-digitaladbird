@@ -268,7 +268,7 @@ function LeadDetailInner() {
             {!readOnlyAccess&&<CounselorRemarkForm leadId={id}/>}
           </section>}
           {legacyWorkflowReady && (lifecycleEnabled || !readOnlyAccess) && (
-            <section className="card p-3 sm:p-5">
+            <section className="min-w-0 p-3 sm:p-5">
               <WorkflowBoundary>
                 {lifecycleEnabled ? (
                   <div className="space-y-4">
@@ -277,14 +277,14 @@ function LeadDetailInner() {
                       readOnly={readOnlyAccess}
                       canManage={['super_admin', 'admin', 'rm'].includes(user.role)}
                       callIssuesPanel={!readOnlyAccess ? (
-                        <details open className="rounded-xl border border-slate-200 bg-slate-50/70">
-                          <summary className="min-h-11 cursor-pointer px-3 py-3 text-sm font-semibold text-slate-700 sm:px-4">
+                        <section className="min-w-0 space-y-4">
+                          <h2 className="text-sm font-semibold text-slate-700">
                             Call Issues &amp; Retry Plan
-                          </summary>
-                          <div className="border-t border-slate-200 bg-white p-2 sm:p-4">
+                          </h2>
+                          <div className="min-w-0">
                             <WorkflowPanel leadId={id} isAdmin={user.role === 'super_admin'} />
                           </div>
-                        </details>
+                        </section>
                       ) : undefined}
                     />
                   </div>

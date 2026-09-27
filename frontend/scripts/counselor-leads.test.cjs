@@ -349,3 +349,19 @@ test('workspace cache reuses fresh tabs and still refetches on invalidation',asy
     await client.fetchQuery(hook({...args,filters:{q:'different'}}));assert.equal(requests,5);
   } finally {client.clear();}
 });
+
+
+test('remark and conversion remain open without retired steps or accordion headers',()=>{
+  for(const current_step of [1,2,3,4,5]) {
+    const h=harness('',{}, {
+      '@/hooks/useWorkflow':{useLeadWorkflow:()=>({data:{current_step,workflow:{},remark_options:['communication_completed'],workflow_step_1_statuses:[],lead_category:'trader'}}),
+        useSaveRemark:()=>({}),useSaveConversion:()=>({}),useWorkflowHistory:()=>({data:[]})},
+      '@/hooks/useLeads':{useAddRemark:()=>({})},
+      '@/components/leads/CallAttemptTracker':{CallAttemptTracker:()=>null}});
+    const html=renderToStaticMarkup(React.createElement(h.load('@/components/leads/WorkflowPanel').WorkflowPanel,{leadId:'lead'}));
+    assert.match(html,/Step 1: Remark/);assert.match(html,/Communication Completed/);
+    assert.match(html,/Step 4: Conversion/);assert.match(html,/Transaction/);
+    assert.doesNotMatch(html,/Step 2|Step 3|Follow-up Tracker|Complete Step|Locked|of 4|border-green-300/);
+    assert.doesNotMatch(html,/<button[^>]*>[^<]*Step 1/);
+  }
+});

@@ -1,14 +1,14 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
 import {
-  CheckCircle2, Lock, ChevronRight, Loader2,
+  CheckCircle2, Loader2,
   Clock, History, MessageSquare, BarChart3, Target, Trophy,
-  Zap, TrendingUp, Upload, Paperclip, X, ExternalLink, FileText,
+  Zap, Upload, Paperclip, X, ExternalLink, FileText,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
-  useLeadWorkflow, useSaveRemark, useSaveLeadLevel,
-  useUpdateFollowup, useSaveConversion, useWorkflowHistory,
+  useLeadWorkflow, useSaveRemark,
+  useSaveConversion, useWorkflowHistory,
   useConversionAttachments, useUploadConversionAttachments, useDeleteConversionAttachment,
   type ConversionAttachment,
 } from '@/hooks/useWorkflow';
@@ -47,33 +47,6 @@ const REMARK_DISPLAY: Record<string, { label: string; bg: string; text: string; 
 
 /* ── Level display labels + colors ──────────────────────────────────── */
 
-const LEVEL_DISPLAY: Record<string, { label: string; bg: string; text: string; ring: string }> = {
-  hot_lead:          { label: 'Hot Lead',          bg: 'bg-red-50',     text: 'text-red-700',     ring: 'ring-red-400' },
-  cold_lead:         { label: 'Cold Lead',         bg: 'bg-slate-100',  text: 'text-slate-700',   ring: 'ring-slate-400' },
-  interested:        { label: 'Interested',        bg: 'bg-blue-50',    text: 'text-blue-700',    ring: 'ring-blue-400' },
-  not_interested:    { label: 'Not Interested',    bg: 'bg-rose-50',    text: 'text-rose-700',    ring: 'ring-rose-400' },
-  follow_up_required:{ label: 'Follow-up Required',bg: 'bg-violet-50',  text: 'text-violet-700',  ring: 'ring-violet-400' },
-  payment_discussed: { label: 'Payment Discussed', bg: 'bg-emerald-50', text: 'text-emerald-700', ring: 'ring-emerald-400' },
-  demo_required:     { label: 'Demo Required',     bg: 'bg-indigo-50',  text: 'text-indigo-700',  ring: 'ring-indigo-400' },
-  documents_shared:  { label: 'Documents Shared',  bg: 'bg-cyan-50',    text: 'text-cyan-700',    ring: 'ring-cyan-400' },
-  callback_requested:{ label: 'Callback Requested',bg: 'bg-amber-50',   text: 'text-amber-700',   ring: 'ring-amber-400' },
-  decision_pending:  { label: 'Decision Pending',  bg: 'bg-yellow-50',  text: 'text-yellow-700',  ring: 'ring-yellow-400' },
-  converted:         { label: 'Converted',         bg: 'bg-green-50',   text: 'text-green-700',   ring: 'ring-green-400' },
-  lost:              { label: 'Lost',              bg: 'bg-red-50',     text: 'text-red-700',     ring: 'ring-red-400' },
-  new_partner:       { label: 'New Partner',       bg: 'bg-blue-50',    text: 'text-blue-700',    ring: 'ring-blue-400' },
-  new_trader:        { label: 'New Trader',        bg: 'bg-cyan-50',    text: 'text-cyan-700',    ring: 'ring-cyan-400' },
-  followup_partner:  { label: 'Follow-up Partner', bg: 'bg-violet-50',  text: 'text-violet-700',  ring: 'ring-violet-400' },
-  followup_trader:   { label: 'Follow-up Trader',  bg: 'bg-indigo-50',  text: 'text-indigo-700',  ring: 'ring-indigo-400' },
-  hot_partner:       { label: 'Hot Partner',       bg: 'bg-red-50',     text: 'text-red-700',     ring: 'ring-red-400' },
-  hot_trader:        { label: 'Hot Trader',        bg: 'bg-orange-50',  text: 'text-orange-700',  ring: 'ring-orange-400' },
-  cold_partner:      { label: 'Cold Partner',      bg: 'bg-slate-100',  text: 'text-slate-700',   ring: 'ring-slate-400' },
-  cold_trader:       { label: 'Cold Trader',       bg: 'bg-gray-100',   text: 'text-gray-700',    ring: 'ring-gray-400' },
-  all_partner:       { label: 'ALL Partner',       bg: 'bg-sky-50',     text: 'text-sky-700',     ring: 'ring-sky-400' },
-  all_trader:        { label: 'ALL Trader',        bg: 'bg-teal-50',    text: 'text-teal-700',    ring: 'ring-teal-400' },
-  advance_payment:   { label: 'Advance Payment',   bg: 'bg-emerald-50', text: 'text-emerald-700', ring: 'ring-emerald-400' },
-  closed:            { label: 'Closed',            bg: 'bg-green-50',   text: 'text-green-700',   ring: 'ring-green-400' },
-};
-
 const STEP_CONFIG = [
   { label: 'Remark', icon: MessageSquare, gradient: 'from-violet-500 to-purple-600', light: 'bg-violet-50 border-violet-200', badge: 'bg-violet-100 text-violet-700' },
   { label: 'Lead Category', icon: BarChart3, gradient: 'from-blue-500 to-indigo-600', light: 'bg-blue-50 border-blue-200', badge: 'bg-blue-100 text-blue-700' },
@@ -81,45 +54,13 @@ const STEP_CONFIG = [
   { label: 'Conversion', icon: Trophy, gradient: 'from-amber-500 to-orange-600', light: 'bg-amber-50 border-amber-200', badge: 'bg-amber-100 text-amber-700' },
 ];
 
-const FOLLOWUP_FIELDS = [
-  { key: 'attendance_730', label: 'Common Meeting Attended', icon: '🕢' },
-  { key: 'yes_confirmation', label: 'Yes Confirmation', icon: '✅' },
-  { key: 'day_1',  label: 'Day 1',  icon: '1️⃣' },
-  { key: 'day_2',  label: 'Day 2',  icon: '2️⃣' },
-  { key: 'day_3',  label: 'Day 3',  icon: '3️⃣' },
-  { key: 'day_4',  label: 'Day 4',  icon: '4️⃣' },
-  { key: 'day_5',  label: 'Day 5',  icon: '5️⃣' },
-  { key: 'day_6',  label: 'Day 6',  icon: '6️⃣' },
-  { key: 'day_7',  label: 'Day 7',  icon: '7️⃣' },
-  { key: 'day_8',  label: 'Day 8',  icon: '8️⃣' },
-  { key: 'day_9',  label: 'Day 9',  icon: '9️⃣' },
-  { key: 'day_10', label: 'Day 10', icon: '🔟' },
-  { key: 'day_11', label: 'Day 11', icon: '1️⃣1️⃣' },
-  { key: 'day_12', label: 'Day 12', icon: '1️⃣2️⃣' },
-  { key: 'day_13', label: 'Day 13', icon: '1️⃣3️⃣' },
-  { key: 'day_14', label: 'Day 14', icon: '1️⃣4️⃣' },
-  { key: 'day_15', label: 'Day 15', icon: '1️⃣5️⃣' },
-] as const;
-
 interface Props {
   leadId: string;
   isAdmin?: boolean;
 }
 
-export function WorkflowPanel({ leadId, isAdmin }: Props) {
+export function WorkflowPanel({ leadId }: Props) {
   const { data: wfData, isLoading, isError } = useLeadWorkflow(leadId);
-  const [openStep, setOpenStep] = useState<number | null>(null);
-  const [hasInteracted, setHasInteracted] = useState(false);
-
-  const currentStep = wfData?.current_step ?? 1;
-
-  useEffect(() => {
-    // Only auto-open on initial load, not when user manually closes
-    if (wfData && openStep === null && !hasInteracted) {
-      setOpenStep(wfData.call_attempt_sequence?.has_active_sequence ? 1 : currentStep <= 4 ? currentStep : null);
-    }
-  }, [wfData, currentStep, openStep, hasInteracted]);
-
   if (isLoading) {
     return (
       <div className="space-y-3">
@@ -127,7 +68,7 @@ export function WorkflowPanel({ leadId, isAdmin }: Props) {
           <div className="h-8 w-8 rounded-xl bg-slate-200 animate-pulse" />
           <div className="h-5 w-40 bg-slate-200 rounded animate-pulse" />
         </div>
-        {[1, 2, 3, 4].map(i => (
+        {[1, 4].map(i => (
           <div key={i} className="h-20 rounded-2xl bg-slate-100 animate-pulse" />
         ))}
       </div>
@@ -144,75 +85,13 @@ export function WorkflowPanel({ leadId, isAdmin }: Props) {
     );
   }
 
-  const completedSteps = [
-    !!wfData.workflow_remark_completed,
-    !!(wfData.step_2_statuses?.length || wfData.workflow?.lead_level),
-    !!wfData.workflow?.followup_completed,
-    !!wfData.workflow?.conversion_completed,
-  ];
-  const completedCount = completedSteps.filter(Boolean).length;
-
+  const completedSteps = [!!wfData.workflow_remark_completed, false, false, !!wfData.workflow?.conversion_completed];
   return (
-    <div className="space-y-4">
-      {/* Header + Progress */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-brand-700 shadow-lg shadow-brand-200">
-            <TrendingUp className="h-5 w-5 text-white" />
-          </div>
-          <div>
-            <h3 className="text-base font-bold text-slate-900">Lead Workflow</h3>
-            <p className="text-xs text-slate-500">
-              {completedCount === 4
-                ? 'All steps completed'
-                : `Step ${currentStep} of 4 — ${STEP_CONFIG[currentStep - 1]?.label || 'Complete'}`}
-            </p>
-          </div>
-        </div>
-        {completedCount === 4 ? (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-3 py-1.5 text-xs font-bold text-green-700 shadow-sm">
-            <CheckCircle2 className="h-4 w-4" /> Completed
-          </span>
-        ) : (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-3 py-1.5 text-xs font-bold text-brand-700">
-            <Zap className="h-3.5 w-3.5" /> {completedCount}/4
-          </span>
-        )}
-      </div>
-
-      {/* Progress Bar */}
-      <div className="flex items-center gap-2">
-        {STEP_CONFIG.map((cfg, i) => {
-          const done = completedSteps[i];
-          const active = currentStep === i + 1;
-          return (
-            <div key={i} className="flex-1">
-              <div className="relative h-2.5 overflow-hidden rounded-full bg-slate-200">
-                <div
-                  className={clsx(
-                    'absolute inset-y-0 left-0 rounded-full transition-all duration-500',
-                    done ? `bg-gradient-to-r ${cfg.gradient}` : active ? `bg-gradient-to-r ${cfg.gradient} opacity-50` : ''
-                  )}
-                  style={{ width: done ? '100%' : active ? '30%' : '0%' }}
-                />
-              </div>
-              <p className={clsx(
-                'mt-1 text-center text-[10px] font-semibold',
-                done ? 'text-green-600' : active ? 'text-slate-700' : 'text-slate-400'
-              )}>
-                {cfg.label}
-              </p>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* 4 Workflow Cards */}
-      <div className="space-y-3">
+    <div className="space-y-6">
+      <div className="space-y-6">
         <StepCard
           step={1} config={STEP_CONFIG[0]}
-          unlocked={currentStep >= 1} completed={completedSteps[0]}
-          isOpen={openStep === 1} onToggle={() => { setHasInteracted(true); setOpenStep(openStep === 1 ? null : 1); }}
+          completed={completedSteps[0]}
           savedValue={(wfData.workflow_step_1_statuses?.length ? wfData.workflow_step_1_statuses : wfData.workflow?.remark_status ? [wfData.workflow.remark_status] : [])
             .map(status => REMARK_DISPLAY[status]?.label || humanize(status)).join(', ') || undefined}
           savedAt={wfData.workflow?.remark_saved_at || undefined}
@@ -230,35 +109,8 @@ export function WorkflowPanel({ leadId, isAdmin }: Props) {
         </StepCard>
 
         <StepCard
-          step={2} config={STEP_CONFIG[1]}
-          unlocked={currentStep >= 2} completed={completedSteps[1]}
-          isOpen={openStep === 2} onToggle={() => { setHasInteracted(true); setOpenStep(openStep === 2 ? null : 2); }}
-          savedValue={(wfData.step_2_statuses?.length ? wfData.step_2_statuses : wfData.workflow?.lead_level ? [wfData.workflow.lead_level] : [])
-            .map(level => LEVEL_DISPLAY[level]?.label || humanize(level)).join(', ') || undefined}
-          savedAt={wfData.workflow?.lead_level_saved_at || undefined}
-        >
-          <Step2Level
-            leadId={leadId}
-            current={wfData.step_2_statuses?.length ? wfData.step_2_statuses : wfData.workflow?.lead_level ? [wfData.workflow.lead_level] : []}
-            options={wfData.lead_level_options}
-            leadCategory={wfData.lead_category}
-          />
-        </StepCard>
-
-        <StepCard
-          step={3} config={STEP_CONFIG[2]}
-          unlocked={currentStep >= 3} completed={completedSteps[2]}
-          isOpen={openStep === 3} onToggle={() => { setHasInteracted(true); setOpenStep(openStep === 3 ? null : 3); }}
-          savedValue={wfData.workflow?.followup_completed ? 'Follow-up complete' : undefined}
-          savedAt={wfData.workflow?.followup_completed_at || undefined}
-        >
-          <Step3Followup leadId={leadId} tracker={wfData.followup_tracker} />
-        </StepCard>
-
-        <StepCard
           step={4} config={STEP_CONFIG[3]}
-          unlocked={currentStep >= 4} completed={completedSteps[3]}
-          isOpen={openStep === 4} onToggle={() => { setHasInteracted(true); setOpenStep(openStep === 4 ? null : 4); }}
+          completed={completedSteps[3]}
           savedValue={wfData.conversion?.customer_type ? `${humanize(wfData.conversion.customer_type)} — ₹${Number(wfData.conversion.total_payment || 0).toLocaleString()}` : undefined}
           savedAt={wfData.conversion?.submitted_at || undefined}
         >
@@ -279,118 +131,27 @@ export function WorkflowPanel({ leadId, isAdmin }: Props) {
 
 /* ── Accordion Step Card ──────────────────────────────────────────── */
 
-function StepCard({ step, config, unlocked, completed, isOpen, onToggle, savedValue, savedAt, children }: {
-  step: number;
-  config: typeof STEP_CONFIG[0];
-  unlocked: boolean;
-  completed: boolean;
-  isOpen: boolean;
-  onToggle: () => void;
-  savedValue?: string;
-  savedAt?: string;
-  children: React.ReactNode;
+function StepCard({ step, config, completed, savedValue, savedAt, children }: {
+  step: number; config: typeof STEP_CONFIG[0]; completed: boolean;
+  savedValue?: string; savedAt?: string; children: React.ReactNode;
 }) {
   const Icon = config.icon;
-  const locked = !unlocked;
-
-  return (
-    <div
-      className={clsx(
-        'rounded-2xl border-2 overflow-hidden transition-all duration-300',
-        completed
-          ? 'border-green-300 bg-gradient-to-r from-green-50 to-emerald-50 shadow-sm'
-          : unlocked
-            ? 'border-slate-200 bg-white shadow-md hover:shadow-lg'
-            : 'border-slate-200 bg-slate-50 opacity-70'
-      )}
-    >
-      <button
-        onClick={unlocked ? onToggle : undefined}
-        className={clsx(
-          'flex min-h-11 w-full items-center gap-3 px-3 py-3 text-left transition-colors sm:gap-4 sm:px-5 sm:py-4',
-          unlocked && !completed && 'hover:bg-slate-50/50',
-          locked && 'cursor-not-allowed'
-        )}
-      >
-        <div className={clsx(
-          'flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl shadow-lg transition-transform duration-200 sm:h-12 sm:w-12',
-          completed
-            ? 'bg-gradient-to-br from-green-400 to-emerald-500 shadow-green-200'
-            : unlocked
-              ? `bg-gradient-to-br ${config.gradient} shadow-slate-200`
-              : 'bg-slate-300 shadow-none'
-        )}>
-          {completed ? (
-            <CheckCircle2 className="h-6 w-6 text-white" />
-          ) : locked ? (
-            <Lock className="h-5 w-5 text-white/80" />
-          ) : (
-            <Icon className="h-6 w-6 text-white" />
-          )}
+  return <section className="min-w-0 space-y-4" aria-label={`Step ${step}: ${config.label}`}>
+    <div className="flex flex-wrap items-start gap-3">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600"><Icon className="h-5 w-5" /></div>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-semibold text-slate-900">Step {step}: {config.label}</h3>
+          {completed && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700"><CheckCircle2 className="h-3 w-3" />Saved</span>}
         </div>
-
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className={clsx(
-              'text-sm font-bold',
-              completed ? 'text-green-700' : unlocked ? 'text-slate-900' : 'text-slate-400'
-            )}>
-              Step {step}: {config.label}
-            </span>
-            {completed && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-bold text-green-700">
-                <CheckCircle2 className="h-3 w-3" /> Done
-              </span>
-            )}
-            {locked && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
-                <Lock className="h-2.5 w-2.5" /> Locked
-              </span>
-            )}
-          </div>
-          {savedValue && (
-            <div className="mt-0.5 flex items-center gap-2">
-              <span className={clsx('inline-block rounded-md px-2 py-0.5 text-xs font-semibold', config.badge)}>
-                {savedValue}
-              </span>
-              {savedAt && (
-                <span className="flex items-center gap-0.5 text-[10px] text-slate-400">
-                  <Clock className="h-2.5 w-2.5" /> {fmtDate(savedAt)}
-                </span>
-              )}
-            </div>
-          )}
-          {locked && (
-            <p className="mt-0.5 text-[11px] text-slate-400">Complete Step {step - 1} to unlock</p>
-          )}
-        </div>
-
-        {unlocked && (
-          <div className={clsx(
-            'flex h-8 w-8 items-center justify-center rounded-full transition-all duration-200',
-            isOpen ? 'bg-slate-200 rotate-90' : 'bg-slate-100'
-          )}>
-            <ChevronRight className="h-4 w-4 text-slate-600" />
-          </div>
-        )}
-      </button>
-
-      {unlocked && isOpen && (
-        <div className="border-t border-slate-100 bg-white/80 px-3 py-3 sm:px-5 sm:py-4">
-          {children}
-        </div>
-      )}
+        {savedValue && <p className="mt-1 break-words text-xs text-slate-600">{savedValue}</p>}
+        {savedAt && <p className="mt-1 text-[10px] text-slate-400">{fmtDate(savedAt)}</p>}
+      </div>
     </div>
-  );
+    <div className="min-w-0">{children}</div>
+  </section>;
 }
 
-/* ── Step 1: Remark System ───────────────────────────────────────── */
-
-type PendingRemarkAction = {
-  kind: 'close_plan' | 'retry_due' | 'extra_call';
-  value: string;
-  nextSelection: string[];
-};
+type PendingRemarkAction = { kind: 'close_plan' | 'retry_due' | 'extra_call'; value: string; nextSelection: string[] };
 
 function Step1Remark({ leadId, current, options, completed, callAttemptSequence, callAttempts, callAttemptState, nextScheduledCall }: {
   leadId: string;
@@ -755,189 +516,6 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
 }
 
 /* ── Step 2: Lead Level ──────────────────────────────────────────── */
-
-function Step2Level({ leadId, current, options, leadCategory }: {
-  leadId: string; current: string[]; options: string[]; leadCategory: 'partner' | 'trader' | 'unknown' | null;
-}) {
-  const save = useSaveLeadLevel();
-  const selected = new Set(current || []);
-  const isCold = ['cold_lead', 'cold_partner', 'cold_trader'].some(value => selected.has(value));
-
-  function nextSelection(option: string) {
-    const next = new Set(selected);
-    if (next.has(option)) {
-      next.delete(option);
-      return [...next];
-    }
-    if (['hot_lead', 'hot_partner', 'hot_trader'].includes(option)) {
-      ['cold_lead', 'cold_partner', 'cold_trader'].forEach(value => next.delete(value));
-    }
-    if (['cold_lead', 'cold_partner', 'cold_trader'].includes(option)) {
-      ['hot_lead', 'hot_partner', 'hot_trader'].forEach(value => next.delete(value));
-    }
-    next.add(option);
-    return [...next];
-  }
-
-  return (
-    <div>
-      <p className="text-xs text-slate-500 mb-3">
-        Classify this {leadCategory ? `${humanize(leadCategory)} lead` : 'lead'} using its profile category.
-      </p>
-      <p className="mb-3 text-xs text-slate-500">Cold Lead and Hot Lead cannot be selected together.</p>
-      {isCold && <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">Cold leads remain editable, but do not unlock the follow-up step.</p>}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {options.map(opt => {
-          const display = LEVEL_DISPLAY[opt] || { label: humanize(opt), bg: 'bg-slate-50', text: 'text-slate-700', ring: 'ring-slate-400' };
-          const isSelected = selected.has(opt);
-          return (
-            <button
-              key={opt}
-              disabled={save.isPending}
-              onClick={() => {
-                const statuses = nextSelection(opt);
-                if (statuses.length === 0) {
-                  toast.error('Select at least one Step 2 option.');
-                  return;
-                }
-                save.mutate({ leadId, step_2_statuses: statuses }, {
-                onSuccess: () => toast.success(statuses.length ? 'Step 2 updated' : 'Step 2 cleared'),
-                onError: (e: any) => toast.error(e?.message || 'Failed'),
-              });
-              }}
-              className={clsx(
-                'relative rounded-xl border-2 px-3 py-2.5 text-center text-xs font-semibold transition-all duration-200',
-                isSelected
-                  ? `${display.bg} ${display.text} border-current ring-2 ${display.ring} shadow-md scale-[1.02]`
-                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:shadow-sm hover:scale-[1.01]'
-              )}
-            >
-              {isSelected && <CheckCircle2 className="absolute -top-1 -right-1 h-4 w-4 text-green-500 bg-white rounded-full" />}
-              {display.label}
-            </button>
-          );
-        })}
-      </div>
-      {current.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {current.map(value => <span key={value} className="chip-blue">{LEVEL_DISPLAY[value]?.label || humanize(value)}</span>)}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ── Step 3: Follow-up Tracker ────────────────────────────────────── */
-
-function Step3Followup({ leadId, tracker }: {
-  leadId: string; tracker: any;
-}) {
-  const update = useUpdateFollowup();
-  const checkedCount = tracker ? FOLLOWUP_FIELDS.filter(f => tracker[f.key]).length : 0;
-  const percentage = Math.round((checkedCount / FOLLOWUP_FIELDS.length) * 100);
-
-  // Partner/member/RM/admin can move to Step 4 as soon as ANY one option is
-  // picked. The previous rule required attendance + confirmation + one day
-  // simultaneously, which blocked partial follow-up logging.
-  const canProceed = checkedCount >= 1;
-
-  function toggle(field: string, currentVal: boolean) {
-    update.mutate({ leadId, [field]: !currentVal }, {
-      onSuccess: (d) => {
-        toast.success(d.all_complete ? 'Follow-up complete!' : `${humanize(field)} updated`);
-      },
-      onError: (e: any) => toast.error(e?.message || 'Failed'),
-    });
-  }
-
-  function handleNext() {
-    if (!canProceed) return;
-    const payload: { leadId: string; [key: string]: any } = { leadId, _force_complete: true };
-    for (const f of FOLLOWUP_FIELDS) {
-      if (tracker?.[f.key]) payload[f.key] = true;
-    }
-    update.mutate(payload, {
-      onSuccess: () => toast.success('Follow-up saved! Step 4 unlocked.'),
-      onError: (e: any) => toast.error(e?.message || 'Failed'),
-    });
-  }
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-3">
-        <p className="text-xs text-slate-500">Select follow-up days (multi-select, any order):</p>
-        <div className="flex items-center gap-2">
-          <div className="h-2 w-24 rounded-full bg-slate-200 overflow-hidden">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-teal-500 transition-all duration-500"
-              style={{ width: `${percentage}%` }}
-            />
-          </div>
-          <span className="text-xs font-bold text-emerald-600">{checkedCount}/{FOLLOWUP_FIELDS.length}</span>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-        {FOLLOWUP_FIELDS.map(({ key, label, icon }) => {
-          const checked = tracker?.[key] ?? false;
-          const ts = tracker?.[`${key}_at`];
-          return (
-            <button
-              key={key}
-              disabled={update.isPending}
-              onClick={() => toggle(key, checked)}
-              className={clsx(
-                'flex items-center gap-2.5 rounded-xl border-2 px-3 py-2.5 text-left transition-all duration-200',
-                checked
-                  ? 'border-emerald-300 bg-emerald-50 shadow-sm'
-                  : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm'
-              )}
-            >
-              <div className={clsx(
-                'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-sm transition-colors',
-                checked ? 'bg-emerald-100' : 'bg-slate-100'
-              )}>
-                {checked ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : <span className="text-xs">{icon}</span>}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className={clsx('text-[11px] font-semibold truncate', checked ? 'text-emerald-700' : 'text-slate-700')}>
-                  {label}
-                </p>
-                {ts && <p className="text-[9px] text-slate-400">{fmtDate(ts)}</p>}
-              </div>
-              {update.isPending && <Loader2 className="h-3 w-3 animate-spin text-slate-400 flex-shrink-0" />}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Status pill — pick any combination; Next unlocks at 1+ selection */}
-      <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px]">
-        <span className={clsx('inline-flex items-center gap-1 font-semibold', canProceed ? 'text-emerald-600' : 'text-slate-400')}>
-          {canProceed ? <CheckCircle2 className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
-          {canProceed ? `${checkedCount} selected — ready to proceed` : 'Select any 1 option to continue'}
-        </span>
-      </div>
-
-      {/* NEXT Button */}
-      <button
-        onClick={handleNext}
-        disabled={!canProceed || update.isPending}
-        className={clsx(
-          'mt-4 w-full rounded-xl py-3.5 text-sm font-bold shadow-lg transition-all duration-200',
-          'inline-flex items-center justify-center gap-2',
-          canProceed
-            ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white hover:from-emerald-600 hover:to-teal-700 hover:shadow-xl hover:scale-[1.01] active:scale-[0.99]'
-            : 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
-        )}
-      >
-        {update.isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : <ChevronRight className="h-5 w-5" />}
-        {update.isPending ? 'Saving...' : canProceed ? 'NEXT — Unlock Step 4' : 'Select at least 1 option'}
-      </button>
-    </div>
-  );
-}
-
-/* ── Step 4: Conversion ───────────────────────────────────────────── */
 
 function Step4Conversion({ leadId, conversion, completed, leadCategory }: {
   leadId: string; conversion: any; completed: boolean; leadCategory: 'partner' | 'trader' | 'unknown' | null;

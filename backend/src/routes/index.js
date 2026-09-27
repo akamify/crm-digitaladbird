@@ -6090,13 +6090,6 @@ router.post('/leads/:id/workflow/conversion', authenticate, asyncHandler(async (
     throw new AppError(400, 'TRANSACTION_ID_REQUIRED', 'Transaction ID is required when recording a payment.');
   }
 
-  const { rows: [existing] } = await query(
-    `SELECT followup_completed FROM lead_workflow WHERE lead_id = $1`, [leadId]
-  );
-  if (!existing?.followup_completed) {
-    throw new AppError(400, 'STEP_LOCKED', 'Complete Step 3 (Follow-up Tracker) first');
-  }
-
   const conv = await withTransaction(async (client) => {
     const { rows: [saved] } = await client.query(`
       INSERT INTO lead_conversion (lead_id, user_id, followup_status, address, total_payment, part_payment, customer_type, services, transaction_id)
@@ -6111,9 +6104,10 @@ router.post('/leads/:id/workflow/conversion', authenticate, asyncHandler(async (
         customerType, services || null, transactionId || null]);
 
     await client.query(`
-      UPDATE lead_workflow SET conversion_completed = TRUE, conversion_completed_at = NOW(), updated_at = NOW()
-      WHERE lead_id = $1
-    `, [leadId]);
+      INSERT INTO lead_workflow (lead_id, user_id, conversion_completed, conversion_completed_at)
+      VALUES ($1, $2, TRUE, NOW())
+      ON CONFLICT (lead_id) DO UPDATE SET conversion_completed=TRUE, conversion_completed_at=NOW(), updated_at=NOW()
+    `, [leadId, req.user.id]);
 
     await client.query(`
       UPDATE leads SET stage = 'won', call_status = 'converted', updated_at = NOW()

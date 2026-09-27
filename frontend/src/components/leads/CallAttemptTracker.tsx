@@ -188,7 +188,7 @@ export function CallAttemptTracker({
 
   const tracker = (
     <div
-      className={clsx('rounded-2xl border bg-white p-3 shadow-sm', sequence.has_active_sequence ? 'border-brand-200' : 'border-slate-200')}
+      className="rounded-xl bg-slate-50 p-3"
     >
       <div className="flex items-center justify-between gap-3">
         <div>
@@ -367,7 +367,7 @@ export function CallAttemptTracker({
 
   if (displayMode === 'contextual') {
     return (
-      <div id="active-retry-plan" className={clsx('mt-3 overflow-hidden rounded-2xl border bg-white transition-all duration-300', activeAttemptState.uiState === 'overdue' ? 'border-rose-300' : activeAttemptState.uiState === 'due' ? 'border-amber-300' : 'border-brand-200', highlighted && 'ring-4 ring-brand-100 shadow-lg')}>
+      <div id="active-retry-plan" className={clsx('mt-3 overflow-hidden rounded-xl bg-slate-50 transition-colors', highlighted && 'bg-brand-50')}>
         <button type="button" onClick={() => setPanelExpanded(!panelExpanded)} aria-expanded={panelExpanded} aria-controls="active-retry-plan-details" className="flex min-h-11 w-full items-center gap-3 px-3 py-3 text-left hover:bg-slate-50">
           <div className={clsx('flex h-9 w-9 shrink-0 items-center justify-center rounded-xl', activeAttemptState.uiState === 'overdue' ? 'bg-rose-100 text-rose-700' : activeAttemptState.uiState === 'due' ? 'bg-amber-100 text-amber-700' : 'bg-brand-50 text-brand-700')}>
             {activeAttemptState.uiState === 'overdue' ? <AlertTriangle className="h-4 w-4" /> : <PhoneCall className="h-4 w-4" />}
@@ -382,7 +382,7 @@ export function CallAttemptTracker({
           </div>
           <ChevronDown className={clsx('h-4 w-4 shrink-0 text-slate-400 transition-transform', panelExpanded && 'rotate-180')} aria-hidden="true" />
         </button>
-        {panelExpanded && <div id="active-retry-plan-details" className="border-t border-slate-200 bg-slate-50/50 p-2">{tracker}</div>}
+        {panelExpanded && <div id="active-retry-plan-details" className="p-2">{tracker}</div>}
       </div>
     );
   }

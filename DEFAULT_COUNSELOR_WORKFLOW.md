@@ -107,3 +107,16 @@ Files: useLifecycle.ts, CounselorLifecycleWorkspace.tsx, counselor-leads.test.cj
 Verification: 26 frontend checks passed, including real QueryClient cache reuse/invalidation, first load, placeholder transitions, background refresh and errors. Final TypeScript and diff checks passed. Browser visual verification and production deployment remain pending.
 
 Reference: https://tanstack.com/query/latest/docs/framework/react/guides/important-defaults
+
+
+## Simplified lead profile workflow
+
+- Removed Step 2 Lead Category and Step 3 Follow-up Tracker controls and the obsolete four-step progress bar.
+- Step 1 Remark is always open, without an accordion toggle or green outer completion border. Step 4 Conversion remains available as an open section.
+- Removed the outer Call Issues & Retry Plan accordion, its enclosing card styling, and active retry-plan container borders/shadows. Individual action controls retain visible selection and focus styling.
+- Conversion no longer requires the removed Step 3 completion flag. Existing access, category and payment checks remain. Completion inserts a workflow record with its required user_id when absent, or updates only conversion fields on an existing record.
+- Historical category/follow-up records, history labels, remark timers and retry behavior remain intact; no database schema change.
+
+Files: WorkflowPanel.tsx, CallAttemptTracker.tsx, lead profile page, backend/routes/index.js, frontend regression suite and conversionWithoutRetiredSteps.test.js.
+
+Checks: 27 frontend tests passed; existing backend suite 380 passed (182 database-dependent tests skipped), plus two new conversion-handler tests passed. Node syntax and diff checks passed. Browser visual QA and production deployment remain pending; backend lint configuration limitation is unchanged.
