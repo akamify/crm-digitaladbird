@@ -5726,7 +5726,7 @@ router.get('/leads/:id/workflow', authenticate, asyncHandler(async (req, res) =>
       followup_tracker: ft || null,
       conversion: conv || null,
       current_step: currentStep,
-      remark_options: REMARK_OPTIONS,
+      remark_options: ['member','partner'].includes(req.user.role) ? require('../services/leadWorkflowRemarkService').COUNSELOR_REMARK_OPTIONS : REMARK_OPTIONS,
       workflow_step_1_statuses: step1Statuses,
       workflow_step_1_labels: step1Statuses.map(status => status.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())),
       lead_level_options: levelOptionsForCategory(lead.category),

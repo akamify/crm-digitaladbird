@@ -415,9 +415,11 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
   const [retryHighlighted, setRetryHighlighted] = useState(false);
   const [retryAnnouncement, setRetryAnnouncement] = useState('');
   const retryHighlightTimerRef = useRef<number | null>(null);
+  const reuseMeetingCard = options.includes('common_meeting');
   const availableGroups = LEAD_REMARK_GROUPS.map(group => ({
     ...group,
-    options: group.options.filter(option => options.includes(option.value)),
+    options: group.options.filter(option => options.includes(option.value)&&(!reuseMeetingCard||option.value!=='common_meeting')).map(option=>
+      reuseMeetingCard&&option.value==='session_730_attend'?{value:'common_meeting',label:'Common Meeting (CM)'}:option),
   })).filter(group => group.options.length > 0);
   const hasActiveCallSequence = !!callAttemptSequence?.has_active_sequence;
   const primaryStatus = hasActiveCallSequence && !CALL_ISSUE_STATUS_VALUES.has(selected[0])
@@ -428,8 +430,8 @@ function Step1Remark({ leadId, current, options, completed, callAttemptSequence,
     : selected;
 
   useEffect(() => {
-    setSelected(current || []);
-  }, [current]);
+    setSelected([...new Set((current||[]).map(value=>reuseMeetingCard&&value==='session_730_attend'?'common_meeting':value))]);
+  }, [current,reuseMeetingCard]);
 
   useEffect(() => {
     if (!pendingAction) return undefined;

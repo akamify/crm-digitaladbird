@@ -69,6 +69,7 @@ const RETRY_POLICY_DEFAULTS = {
 };
 
 const SEQUENCE_CANCELLING_WORKFLOW_STATUSES = new Set([
+  'common_meeting','dim','personal_meeting','quotation','hot','warm','special_category','call_reminder','handover_rm','not_attended','cold','process_incomplete','nrac','nracm','nrapm','nraf','nraq',
   'communication_completed',
   'respond_hi',
   'session_730_attend',
@@ -877,6 +878,7 @@ async function completeAttemptAsLeadInteraction(client, {
     note: note || `Call attempt ${attemptNumber} outcome: ${String(outcome || '').replace(/_/g, ' ')}`,
     status: outcome,
     statuses: [outcome],
+    primaryStatus: ['member','partner'].includes(user.role) ? outcome : undefined,
     source: 'workflow_step_1_attempt',
     workflowStep: 1,
     syncWorkflowStep1: ['communication_completed', 'not_interested', 'in', 'callback_requested', 'follow_up'].includes(outcome),
@@ -1014,6 +1016,7 @@ async function completeScheduledAttempt({
     await require('./counselorWorkflowService').observeRemark({
       client, leadId, user, remarkId: `attempt-${attempt.id}`,
       statuses: [normalizedOutcome], source: 'call_attempt', followupAt: explicitFollowupAt,
+      primaryStatus: ['member','partner'].includes(user.role) ? normalizedOutcome : undefined,
     });
     const leadCallStatus = toLeadCallStatusValue(normalizedOutcome);
     await run(client, `

@@ -7,15 +7,15 @@ test('explicit isolated service option can disable activation',()=>{
   expect(cutoffFor(configuration({rolloutMode:'off',rolloutAt:past}),user)).toBeNull();
 });
 
-test.each(['member','partner'])('rollback keeps workflow off for %s despite environment flags',role=>{
+test.each(['member','partner'])('original UI workflow is active for %s without environment flags',role=>{
   const keys=['COUNSELOR_WORKFLOW_MODE','COUNSELOR_WORKFLOW_ROLLOUT_AT','COUNSELOR_WORKFLOW_PILOTS'];
   const before=keys.map(key=>process.env[key]);
   try {
-    process.env.COUNSELOR_WORKFLOW_MODE='all';
+    process.env.COUNSELOR_WORKFLOW_MODE='off';
     process.env.COUNSELOR_WORKFLOW_ROLLOUT_AT='';
     process.env.COUNSELOR_WORKFLOW_PILOTS='invalid legacy setting';
     const config=configuration();
-    expect(config).toEqual({mode:'off',cutoff:null,pilots:{}});
+    expect(config).toEqual({mode:'all',cutoff:'2026-09-26T18:30:00.000Z',pilots:{}});
     expect(cutoffFor(config,{...user,role})).toBe(config.cutoff);
     expect(configuration()).toEqual(config);
   } finally { keys.forEach((key,index)=>{if(before[index]===undefined)delete process.env[key];else process.env[key]=before[index];}); }

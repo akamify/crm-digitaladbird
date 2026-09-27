@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useDeferredValue, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowRight, Clock3, Loader2, Phone, Search } from 'lucide-react';
+import { CounselorJourneyTracker } from '@/components/leads/CounselorJourneyTracker';
 import { Skeleton } from '@/components/ui/Modal';
 import { LeadAnalyticsPeriodControl } from '@/components/leads/LeadAnalyticsPeriodControl';
 import { LeadFilters } from '@/components/leads/LeadFilters';
@@ -26,6 +27,19 @@ const ANALYTICS_VIEWS: Array<[WorkspaceView, string]> = [
   ['follow_up', 'Follow-up'], ['converted', 'Converted'], ['cold', 'Cold'],
 ];
 
+const LEADS_METRICS: typeof METRICS = [
+  {key:'received',label:'Assigned Leads',hint:'Leads assigned during the selected period.'},
+  {key:'new',label:'New Leads',hint:'Untouched leads in the New queue.'},
+  {key:'old',label:'Old Leads',hint:'Leads aged into Old; the remark tab can overlap.'},
+  {key:'worked',label:'Worked Leads',hint:'N + O: unique leads worked in New and Old during the work period.'},
+  {key:'pending',label:'Pending',hint:'Leads whose workflow has moved to Pending.'},
+];
+const LEADS_VIEWS: typeof ANALYTICS_VIEWS = [
+  ['cc','CC'],['responded','R'],['call_issues','CI'],['common_meeting','CM'],['dim','DIM'],['personal_meeting','PM'],
+  ['follow_up','Follow-up'],['quotation','Quotation'],['hot','Hot'],['warm','Warm'],
+  ['special_category','SC'],['call_reminder','CR'],['handover_rm','RM'],['not_attended','NT'],
+  ['converted','Converted'],['cold','Cold'],['process_incomplete','PI'],['responses','Responses'],['tte','TTE'],
+];
 const SELECTABLE_VIEWS = new Set<WorkspaceView>([
   ...METRICS.map(metric => metric.key as WorkspaceView),
   ...ANALYTICS_VIEWS.map(([key]) => key),
@@ -46,11 +60,14 @@ function nextActionLabel(actionType?: string | null, reason?: string | null, has
 }
 
 export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?: boolean }) {
+  const metrics = leadsPage ? LEADS_METRICS : METRICS;
+  const analyticsViews = leadsPage ? LEADS_VIEWS : ANALYTICS_VIEWS;
+  const selectable = leadsPage ? new Set([...LEADS_METRICS.map(metric=>metric.key),...LEADS_VIEWS.map(([key])=>key)]) : SELECTABLE_VIEWS;
   const today = istDate();
   const router = useRouter();
   const searchParams = useSearchParams();
   const requestedView = searchParams.get('workspace_view') as WorkspaceView | null;
-  const initialView = leadsPage && requestedView && SELECTABLE_VIEWS.has(requestedView) ? requestedView : 'received';
+  const initialView = leadsPage && requestedView && selectable.has(requestedView) ? requestedView : 'received';
   const [scope, setScope] = useState(() => leadsPage
     ? normalizeAnalyticsScope(searchParams.get('lead_view') === 'all_time' ? 'all_time' : 'daily', searchParams.get('from') || searchParams.get('selected_date'), searchParams.get('to') || searchParams.get('selected_date'))
     : { view: 'daily' as const, from: today, to: today });
@@ -69,11 +86,20 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
     customer_interest: (searchParams.get('customer_interest') as LeadFilterState['customer_interest']) || '',
   }));
   const deferredFilters = useDeferredValue(leadsPage ? filters : { ...filters, q: dashboardSearch });
-  const leads = useCounselorWorkspaceLeads({ view, scope, filters: deferredFilters, page });
-  const activeViewIndex = ANALYTICS_VIEWS.findIndex(([key]) => key === view);
-  const activeViewLabel = ANALYTICS_VIEWS.find(([key]) => key === view)?.[1]
-    || METRICS.find(metric => metric.key === view)?.label
+  const leads = useCounselorWorkspaceLeads({ view, scope, filters: deferredFilters, page, journey:leadsPage });
+  const activeViewIndex = analyticsViews.findIndex(([key]) => key === view);
+  const activeViewLabel = analyticsViews.find(([key]) => key === view)?.[1]
+    || metrics.find(metric => metric.key === view)?.label
     || humanize(view);
+  useEffect(()=>{
+    const tab=tabRefs.current[activeViewIndex];
+    const strip=tab?.parentElement;
+    if(tab&&strip){
+      const left=tab.offsetLeft-strip.offsetLeft;
+      if(left<strip.scrollLeft)strip.scrollLeft=left;
+      else if(left+tab.offsetWidth>strip.scrollLeft+strip.clientWidth)strip.scrollLeft=left+tab.offsetWidth-strip.clientWidth;
+    }
+  },[activeViewIndex]);
   const isInitialLoading = leads.isLoading && !leads.data;
   const isTransitioning = leads.isFetching && Boolean(leads.data);
 
@@ -98,10 +124,10 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
 
   function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
     let nextIndex: number | null = null;
-    if (event.key === 'ArrowRight') nextIndex = (index + 1) % ANALYTICS_VIEWS.length;
-    else if (event.key === 'ArrowLeft') nextIndex = (index - 1 + ANALYTICS_VIEWS.length) % ANALYTICS_VIEWS.length;
+    if (event.key === 'ArrowRight') nextIndex = (index + 1) % analyticsViews.length;
+    else if (event.key === 'ArrowLeft') nextIndex = (index - 1 + analyticsViews.length) % analyticsViews.length;
     else if (event.key === 'Home') nextIndex = 0;
-    else if (event.key === 'End') nextIndex = ANALYTICS_VIEWS.length - 1;
+    else if (event.key === 'End') nextIndex = analyticsViews.length - 1;
     if (nextIndex === null) return;
     event.preventDefault();
     tabRefs.current[nextIndex]?.focus();
@@ -113,29 +139,29 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
   }
 
   return (
-    <section className="overflow-visible rounded-2xl border border-sky-200 bg-gradient-to-br from-sky-50 via-white to-amber-50 shadow-sm">
+    <section className="min-w-0 max-w-full overflow-visible rounded-2xl border border-sky-200 bg-gradient-to-br from-sky-50 via-white to-amber-50 shadow-sm">
       <div className="flex flex-col gap-4 border-b border-sky-100 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">{leadsPage ? 'Lead Analytics' : 'Counselor Workspace'}</p>
           <h2 className="mt-1 text-lg font-semibold text-slate-950">{leadsPage ? 'Lead journey and work queues' : 'Today&apos;s work, one clear queue'}</h2>
-          <p className="text-xs text-slate-500">Every count uses the same selected lead-received period; work queues can overlap.</p>
+          <p className="text-xs text-slate-500">{leadsPage ? 'Assigned and queue tabs use assignment date; Worked uses work date. Old and remark tabs can overlap.' : 'Every count uses the same selected lead-received period; work queues can overlap.'}</p>
         </div>
         <LeadAnalyticsPeriodControl scope={scope} onChange={selectScope} />
       </div>
 
-      <div className="grid grid-cols-2 gap-px bg-slate-200/70 lg:grid-cols-6">
-        {METRICS.map(metric => (
+      <div className={`grid grid-cols-2 gap-px bg-slate-200/70 ${leadsPage ? 'lg:grid-cols-5' : 'lg:grid-cols-6'}`}>
+        {metrics.map(metric => (
           <button key={metric.key} type="button" title={metric.hint} onClick={() => selectView(metric.key as WorkspaceView)} className={`min-h-24 bg-white px-4 py-3 text-left transition hover:bg-sky-50 ${view === metric.key ? 'shadow-[inset_0_-3px_0_#0284c7]' : ''}`}>
             <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{metric.label}</div>
             {leads.isLoading && !leads.data ? <Skeleton className="mt-3 h-7 w-14" /> : <div className="mt-2 text-2xl font-bold tabular-nums text-slate-950">{Number(leads.data?.summary?.[metric.key] || 0).toLocaleString()}</div>}
-            <div className="mt-1 line-clamp-1 text-[10px] text-slate-400">Selected period</div>
+            <div className="mt-1 line-clamp-1 text-[10px] text-slate-400">{leadsPage&&metric.key==='worked'?`N ${leads.data?.summary?.worked_n ?? 0} / O ${leads.data?.summary?.worked_o ?? 0}`:'Selected period'}</div>
           </button>
         ))}
       </div>
 
       <div className="space-y-4 bg-white/75 p-4 sm:p-5">
-        <div className="scroll-thin flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Lead analytics views">
-          {ANALYTICS_VIEWS.map(([key, label], index) => {
+        <div className="scroll-thin flex min-w-0 max-w-full gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Lead analytics views">
+          {analyticsViews.map(([key, label], index) => {
             const active = view === key;
             return <button ref={node => { tabRefs.current[index] = node; }} id={`workspace-tab-${key}`} key={key} type="button" role="tab" aria-selected={active} aria-controls="workspace-results" tabIndex={active || (activeViewIndex < 0 && index === 0) ? 0 : -1} onKeyDown={event => handleTabKeyDown(event, index)} onClick={() => selectView(key)} className={`${active ? 'chip-blue' : 'chip-slate'} min-h-10 shrink-0`}>{active && isTransitioning && <Loader2 className="mr-1.5 inline h-3.5 w-3.5 animate-spin" aria-hidden="true" />}{label} <span className="ml-1 tabular-nums">{leads.data?.summary?.[key] ?? 0}</span></button>;
           })}
@@ -152,17 +178,21 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
             <div className="rounded-xl border border-dashed border-slate-300 px-4 py-10 text-center text-sm text-slate-500">No leads in {activeViewLabel}.</div>
           ) : (
           <div aria-hidden={isTransitioning} inert={isTransitioning ? true : undefined} className={`divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white transition-opacity ${isTransitioning ? 'pointer-events-none opacity-45' : 'opacity-100'}`}>
-            {leads.data.rows.map(lead => (
+            {leads.data.rows.map(lead => {
+              const managed=leadsPage&&lead.workflow_managed;
+              const due=managed?(lead.followup_override?lead.next_followup_at:lead.workflow_deadline):(lead.next_retry_at || lead.current_action_due_at || lead.next_followup_at);
+              return (
               <article key={lead.id} className="px-4 py-3 transition hover:bg-slate-50/80">
                 <div className="grid gap-3 lg:grid-cols-[minmax(0,1.25fr)_0.8fr_1fr_auto] lg:items-center">
-                  <div className="min-w-0"><div className="truncate text-sm font-semibold text-slate-900">{lead.full_name || 'Unnamed lead'}</div><div className="mt-0.5 text-xs text-slate-500">{lead.phone || 'No phone'} / {humanize(lead.source || 'manual')}</div><div className="mt-1 flex flex-wrap gap-1">{lead.labels?.slice(0, 3).map(label => <span key={label.id} className="rounded-full border px-1.5 py-0.5 text-[9px] font-semibold" style={{ borderColor: label.color || '#cbd5e1', color: label.color || '#475569' }}>{label.name}</span>)}</div></div>
-                  <div className="text-xs text-slate-600"><div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Journey / Last result</div><div className="mt-1 font-semibold text-slate-800">{humanize(lead.terminal_state || lead.journey_stage)}</div><div>{humanize(lead.last_call_result || 'not called')}</div></div>
-                  <div className="text-xs text-slate-600"><div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Next required action</div><div className="mt-1 font-semibold text-slate-800">{nextActionLabel(lead.current_action_type, lead.current_action_reason, lead.has_call_issue)}</div>{(lead.next_retry_at || lead.current_action_due_at || lead.next_followup_at) && <div className={`mt-0.5 flex items-center gap-1 ${lead.is_pending ? 'font-semibold text-rose-600' : ''}`}><Clock3 className="h-3 w-3" />{fmtDate(lead.next_retry_at || lead.current_action_due_at || lead.next_followup_at, 'd MMM, h:mm a')} | {fmtRelative(lead.next_retry_at || lead.current_action_due_at || lead.next_followup_at)}</div>}{lead.is_pending && <span className="mt-1 inline-flex rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700">Pending cycle {lead.pending_occurrences || 1}</span>}</div>
-                  <div className="flex items-center gap-2 lg:justify-end">{lead.phone && <a href={`tel:${lead.phone}`} className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-emerald-200 px-3 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"><Phone className="h-3.5 w-3.5" />Call</a>}<Link href={`/leads/${lead.id}`} className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-brand-200 px-3 text-xs font-semibold text-brand-700 hover:bg-brand-50">Open<ArrowRight className="h-3.5 w-3.5" /></Link></div>
+                  <div className="min-w-0"><div className="truncate text-sm font-semibold text-slate-900">{lead.full_name || 'Unnamed lead'}</div><div className="mt-0.5 text-xs text-slate-500">{lead.phone || 'No phone'} / {humanize(lead.source || 'manual')}</div><div className="mt-1 flex flex-wrap gap-1">{leadsPage&&view==='worked'&&<>{lead.worked_n&&<span className="chip-blue" title="Worked while New">N</span>}{lead.worked_o&&<span className="chip-slate" title="Worked while Old">O</span>}</>}{lead.labels?.slice(0, 3).map(label => <span key={label.id} className="rounded-full border px-1.5 py-0.5 text-[9px] font-semibold" style={{ borderColor: label.color || '#cbd5e1', color: label.color || '#475569' }}>{label.name}</span>)}</div></div>
+                  <div className="text-xs text-slate-600"><div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Journey / Last result</div><div className="mt-1 font-semibold text-slate-800">{humanize(managed ? (lead.workflow_queue==='pending'?'pending':lead.workflow_primary_status || lead.workflow_queue || 'awaiting primary') : lead.terminal_state || lead.journey_stage)}{managed&&lead.workflow_queue==='old'?' + Old':''}</div><div>{humanize(lead.last_call_result || 'not called')}</div></div>
+                  <div className="text-xs text-slate-600"><div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Next required action</div><div className="mt-1 font-semibold text-slate-800">{managed?(lead.followup_override?'Custom follow-up':lead.workflow_queue==='pending'?'Add next remark':due?'Workflow deadline':'Add next remark'):nextActionLabel(lead.current_action_type, lead.current_action_reason, lead.has_call_issue)}</div>{due && <div className={`mt-0.5 flex items-center gap-1 ${(managed?lead.workflow_queue==='pending':lead.is_pending) ? 'font-semibold text-rose-600' : ''}`}><Clock3 className="h-3 w-3" />{fmtDate(due, 'd MMM, h:mm a')} | {fmtRelative(due)}</div>}{(managed?lead.workflow_queue==='pending':lead.is_pending) && <span className="mt-1 inline-flex rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700">{managed?'Pending':`Pending cycle ${lead.pending_occurrences || 1}`}</span>}</div>
+                  <div className="flex items-center gap-2 lg:justify-end">{!lead.read_only && lead.phone && <a href={`tel:${lead.phone}`} className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-emerald-200 px-3 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"><Phone className="h-3.5 w-3.5" />Call</a>}<Link href={`/leads/${lead.id}`} className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-brand-200 px-3 text-xs font-semibold text-brand-700 hover:bg-brand-50">Open<ArrowRight className="h-3.5 w-3.5" /></Link></div>
                 </div>
+                {leadsPage&&Boolean(lead.history?.length)&&<div className="mt-2"><CounselorJourneyTracker leadId={lead.id} events={lead.history||[]} total={lead.history_total||0}/></div>}
                 <details className="mt-2 text-xs text-slate-500"><summary className="cursor-pointer font-medium text-slate-600">More details</summary><div className="mt-2 grid gap-2 rounded-lg bg-slate-50 p-3 sm:grid-cols-3"><span><strong>Category:</strong> {humanize(lead.category || 'unknown')}</span><span><strong>Campaign:</strong> {lead.campaign_name || lead.campaign_label || '-'}</span><span><strong>Latest interaction:</strong> {lead.latest_interaction_at ? fmtDate(lead.latest_interaction_at, 'd MMM, h:mm a') : '-'}</span></div></details>
               </article>
-            ))}
+            );})}
           </div>
           )}
           {(leads.data?.total || 0) > 25 && <div className="flex items-center justify-end gap-2"><span className="text-xs text-slate-500">Page {page} of {Math.ceil((leads.data?.total || 0) / 25)}</span><button className="btn-secondary" disabled={page <= 1 || isTransitioning} onClick={() => setPage(value => value - 1)}>Previous</button><button className="btn-secondary" disabled={isTransitioning || page * 25 >= (leads.data?.total || 0)} onClick={() => setPage(value => value + 1)}>Next</button></div>}

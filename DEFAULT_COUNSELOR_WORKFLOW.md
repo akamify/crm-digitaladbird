@@ -1,19 +1,47 @@
-# Default counselor remark workflow
+# Counselor workflow in the original UI
 
-## Emergency rollback — current status
+## Current result
 
-The default activation described below has been withdrawn at the user's request. Production service defaults to OFF regardless of old environment flags. The `/leads` page uses the original `CounselorLifecycleWorkspace`, and the lead-detail page uses the original remark/action interface without waiting for the new workflow API. New workflow enrollment, saves and deadline processing are paused. Existing remarks, workflow events and database records are preserved; no data rollback or deletion was performed. The new UI remains in source for later revision, but is not selected by these pages.
+The original Leads page and Step 1 remark-card design are retained. Counselor functionality is active by default, as explicitly requested. There is no environment or pilot switch controlling the member/partner UI. The replacement dropdown remark form remains hidden on the lead profile.
 
-Rollback verification: 324 backend tests and 17 frontend tests passed; 171 database integration tests were skipped in the ordinary run. Live deployment/browser verification is not claimed. The activation notes below are historical, not current operating instructions.
+## Visible changes
 
-## Previous activation (superseded)
+- Removed the counselor Leads page's Latest Notes and Personal Meetings buttons.
+- Main boxes: Assigned Leads, New Leads, Old Leads, Worked Leads, Pending.
+- Existing small-chip row: CC, R, CI, CM, DIM, PM, Follow-up, Quotation, Hot, Warm, SC, CR, RM, NT, Converted, Cold, PI, Responses and TTE.
+- Kept the original gradient header, date control, inline filters, labels, row structure, Call/Open actions and expandable details.
+- Worked box shows N/O totals; Worked rows show the recorded N and/or O badges without duplicating a lead.
+- New remark options appear as cards inside the existing Step 1 design. The selected primary is submitted explicitly by counselor clients. Admin/RM remark options and dashboard layout retain their existing selection.
 
-Member and partner accounts now use the new primary/secondary remark form, save API and workflow policies by default. Production no longer reads `COUNSELOR_WORKFLOW_MODE`, `COUNSELOR_WORKFLOW_ROLLOUT_AT` or `COUNSELOR_WORKFLOW_PILOTS`. Existing frontend consumers receive `enabled: true` and `remarks_enabled: true`; no separate UI switch is required.
+- Common Meeting reuses its existing Step 1 card and saves the CM journey status; no duplicate CM card is added. Historical attendance records remain unchanged.
+- Original lead rows reuse the compact journey tracker. A bounded batch query loads recent recorded events; expanded history retains earlier steps, including after Pending.
 
-The stable assignment boundary is 27 September 2026 at 00:00 Asia/Kolkata. Assignments from this boundary are eligible for existing New-lead enrollment rules. Untouched eligible assignments may already be overdue when the worker runs. Earlier assignments start a journey when the counselor explicitly saves a new primary remark, without reconstructing historical primary status, New/Old membership or Worked counts. Existing persisted journeys and follow-up overrides remain intact. Timer durations and ownership checks are unchanged.
+## Backend behavior
 
-The worker-only `COUNSELOR_WORKFLOW_WORKER_ENABLED=false` switch remains available for API-only processes; at least one worker must run for automatic deadline transitions. It does not disable the remark form or saving. Explicit service factory options are retained for isolated tests, not exposed to HTTP clients.
+The original counselor workspace endpoint supports a journey projection selected by the Leads page. This is a request for the documented data model, not an activation flag. Noncounselor roles cannot opt into these counselor-specific views. The dashboard keeps its original projection.
 
-This supersedes the off/pilot instructions in the historical Stage 6/7 reports. The existing workflow migration must be present before deployment. No migration, production data changes or deployment was performed in this change.
+Counters and rows use one shared classified query. Existing analytics filters remain server-side. Old and remark membership can overlap; Pending ends active remark membership. Worked uses the actual actor's work date, deduplicates each lead within N/O, and retains previously assigned leads as read-only. Leads assigned to another counselor cannot appear in current queue counts. Assignment timestamps must match workflow state before it can classify a current queue.
 
-Verification: ordinary backend suite passed (324 tests; 171 PostgreSQL tests skipped there). The isolated PostgreSQL run exposed an old test expectation from the prior UI change: workspace reads are now always enabled even when an explicitly configured test pilot excludes the user. Updated that assertion to preserve the separate remark permission check. Final isolated PostgreSQL run passed all 328 tests across six suites, including the new existing-lead default-save test and 50,000-lead readiness checks. Frontend checks passed 17 tests. Syntax and diff checks passed. Backend lint remains blocked by the existing missing ESLint 9 configuration. Frontend source was unchanged, so the production build/typecheck was not repeated. Browser and production verification remain pending.
+The existing remark-save endpoint now receives the selected primary from counselor clients. New remark values pass through the existing validation/storage path; unsupported database enum values remain in the JSON status fields instead of requiring an enum migration. Existing retry-plan confirmation also handles the added remark cards. Explicit call-attempt outcomes restart the matching workflow policy.
+
+Existing timer durations and cutoff rules are reused. Future custom follow-ups retain priority. Once due, a scheduled lead appears in Follow-up regardless of its assignment period; saving an explicit primary remark completes the due schedule and starts the new policy. Expiry alone does not resume background aging. Activation uses the stable 27 September 2026, midnight Asia/Kolkata assignment boundary. Older leads begin a recorded journey when a counselor saves a primary remark. Historical N/O counts are not reconstructed or guessed. The worker must run for automatic enrollment and deadline transitions; its process-only enable/disable switch remains separate from UI availability.
+
+## Files changed
+
+- Frontend: Leads page, CounselorLifecycleWorkspace, leadRemarkOptions, WorkflowPanel, CrmGuide, useLifecycle, useWorkflow and counselor-leads tests.
+- Backend: lifecycleService, counselorWorkspaceService, counselorWorkflowService, counselorWorkflowRollout, leadWorkflowRemarkService, leadInteractionService, leadCallAttemptService, leadStatusOptions, routes/index, rollout tests and two new focused test suites.
+- Documentation: this report and counselor-workflow.env.example.
+- No database migration, authController change, production write or deployment.
+
+## Verification
+
+- Ordinary backend suite: 380 passed; 178 database tests skipped in that run.
+- Isolated PostgreSQL run: 391 passed across eight suites, including original-workspace cases and 50,000-lead readiness checks for the existing workflow service.
+- Frontend component/hook checks: 20 passed, including original row/filter rendering, dashboard isolation, N/O badges and explicit counselor primary payloads.
+- SQL parameter typing issue found by PostgreSQL was corrected. Existing filters, aliases, actor scope and assignment joins were reviewed. A fixture EXPLAIN ANALYZE check is included for the new projection; this is not production-scale evidence for that query.
+- Browser connection failed with `codex/sandbox-state-meta: missing field sandboxPolicy`. Responsive visual verification and screenshots remain pending.
+- Production build and TypeScript checks passed; frontend lint completed with existing warnings.
+- Final isolated rerun passed all 391 tests (exit 0); the original projection fixture EXPLAIN ANALYZE completed in 2.077 ms. This is test-fixture evidence, not a production benchmark.
+- Backend lint remains blocked by the previously identified missing ESLint 9 configuration. Diff checks passed.
+
+GO for code review. Live deployment and final visual acceptance remain pending. This report supersedes the earlier default-UI activation and emergency rollback instructions.

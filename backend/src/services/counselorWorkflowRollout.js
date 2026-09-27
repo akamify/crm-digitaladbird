@@ -3,10 +3,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Stable release boundary: restarts must not move the New-assignment cutoff.
 const DEFAULT_ACTIVATION = '2026-09-26T18:30:00.000Z'; // 27 September, midnight IST.
-// Emergency rollback: production stays off while the original UI is restored.
+// Counselor functionality is active in the original UI; environment flags do not gate it.
 // Explicit service options are retained only for isolated tests.
 function configuration(options = {}) {
-  const mode = options.rolloutMode ?? 'off';
+  const mode = options.rolloutMode ?? 'all';
   const invalid = () => { throw new AppError(503,'WORKFLOW_CONFIG_INVALID','Invalid counselor workflow rollout configuration.'); };
   const timestamp = value => {
     if (typeof value !== 'string' || !/(Z|[+-]\d{2}:\d{2})$/.test(value) || !Number.isFinite(Date.parse(value))) invalid();

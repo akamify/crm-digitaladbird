@@ -4,7 +4,7 @@ export type LeadRemarkOption = {
 };
 
 export type LeadRemarkGroup = {
-  key: 'completed' | 'responses' | 'issues' | 'other';
+  key: 'completed' | 'responses' | 'issues' | 'other' | 'journey' | 'nr';
   label: string;
   tone: 'emerald' | 'sky' | 'amber' | 'slate';
   options: LeadRemarkOption[];
@@ -51,6 +51,19 @@ export const LEAD_REMARK_GROUPS: LeadRemarkGroup[] = [
     ],
   },
   {
+    key: 'journey', label: 'Journey Remarks', tone: 'sky', options: [
+      {value:'common_meeting',label:'CM - Common Meeting'}, {value:'dim',label:'DIM - Discussed in Meeting'},
+      {value:'personal_meeting',label:'PM - Personal Meeting'}, {value:'quotation',label:'Quotation'},
+      {value:'hot',label:'Hot'}, {value:'warm',label:'Warm'}, {value:'process_incomplete',label:'PI - Process Incomplete'},
+      {value:'special_category',label:'SC - Special Category'}, {value:'call_reminder',label:'CR - Call Reminder'},
+      {value:'handover_rm',label:'RM - Handover to RM'}, {value:'not_attended',label:'NT - Not Attended'}, {value:'cold',label:'Cold'},
+    ],
+  },
+  {key:'nr',label:'Not Responding',tone:'amber',options:[
+    {value:'nrac',label:'NRAC'}, {value:'nracm',label:'NRACM'}, {value:'nrapm',label:'NRAPM'},
+    {value:'nraf',label:'NRAF'}, {value:'nraq',label:'NRAQ'},
+  ]},
+  {
     key: 'other',
     label: 'Follow-up & Other',
     tone: 'slate',
@@ -76,6 +89,7 @@ export const RETRYABLE_CALL_ISSUE_VALUES = new Set([
 ]);
 
 export const SEQUENCE_CLOSING_REMARK_VALUES = new Set([
+  ...LEAD_REMARK_GROUPS.filter(group=>group.key==='journey'||group.key==='nr').flatMap(group=>group.options.map(option=>option.value)),
   'communication_completed', 'respond_hi', 'session_730_attend', 'yes_after_730_session',
   'interested', 'converted', 'not_interested', 'callback_requested', 'follow_up', 'in', 'ni',
 ]);

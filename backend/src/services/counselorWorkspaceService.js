@@ -85,20 +85,25 @@ async function workspace(db,user,input,membership) {
     (SELECT jsonb_build_object('n',COALESCE(SUM(worked_n::int),0)::int,'o',COALESCE(SUM(worked_o::int),0)::int) FROM classified) AS worked,
     COALESCE((SELECT jsonb_agg(p ORDER BY p.id) FROM (SELECT * FROM selected ORDER BY id LIMIT 25 OFFSET ${offset}) p),'[]'::jsonb) AS rows`,params);
 
+  result.rows = await attachHistory(db,result.rows);
+  return {enabled:true,...result,period:dates,page,page_size:25};
+}
+
+async function attachHistory(db, rows) {
   // One bounded history query for the page, not one request/query per card.
-  if (result.rows.length) {
+  if (rows.length) {
     const {rows:history} = await db.query(`SELECT * FROM (
       SELECT id,lead_id,event_type,occurred_at,recorded_at,primary_status,new_state,source,
         ROW_NUMBER() OVER (PARTITION BY lead_id ORDER BY recorded_at DESC,id DESC) AS rank,
         COUNT(*) OVER (PARTITION BY lead_id)::int AS history_total
       FROM counselor_workflow_events WHERE lead_id=ANY($1::uuid[])
         AND event_type IN ('workflow_enrolled','assignment_changed','remark_saved','legacy_activity_observed','legacy_state_changed','entered_old','entered_pending')
-    ) h WHERE rank<=8 ORDER BY lead_id,recorded_at,id`,[result.rows.map(row => row.id)]);
+    ) h WHERE rank<=8 ORDER BY lead_id,recorded_at,id`,[rows.map(row => row.id)]);
     const grouped = new Map();
     for (const row of history) { if (!grouped.has(row.lead_id)) grouped.set(row.lead_id,[]); grouped.get(row.lead_id).push(row); }
-    result.rows = result.rows.map(row => ({...row,history:grouped.get(row.id)||[],history_total:grouped.get(row.id)?.[0]?.history_total||0}));
+    rows = rows.map(row => ({...row,history:grouped.get(row.id)||[],history_total:grouped.get(row.id)?.[0]?.history_total||0}));
   }
-  return {enabled:true,...result,period:dates,page,page_size:25};
+  return rows;
 }
 
-module.exports = {workspace,period,TABS};
+module.exports = {workspace,period,TABS,attachHistory};

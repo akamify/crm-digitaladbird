@@ -212,3 +212,41 @@ test('CRM Guide restricts page roles, filters codes and renders accurate explana
   const notes=renderToStaticMarkup(React.createElement(page.GuideReferenceNotes));
   for(const phrase of ['Custom Follow-Up Overrides Automatic Timers','Worked = N + O','even after','unless you explicitly clear','outside those queues','history stays visible'])assert.ok(notes.includes(phrase),phrase);
 });
+
+
+test('original Leads layout gains requested boxes, chips and Worked badges without replacing rows',()=>{
+  const h=harness('workspace_view=worked',{data:{summary:{received:4,new:1,old:1,worked:2,worked_n:1,worked_o:1,pending:1},total:1,rows:[{id:'both',full_name:'Original row',phone:'123',worked_n:true,worked_o:true,labels:[]}]}});
+  const Component=h.load('@/components/dashboard/CounselorLifecycleWorkspace').CounselorLifecycleWorkspace;
+  const html=renderToStaticMarkup(React.createElement(Component,{leadsPage:true}));
+  for(const label of ['Assigned Leads','New Leads','Old Leads','Worked Leads','Pending','Journey / Last result','Next required action','More details','Original row']) assert.ok(html.includes(label),label);
+  for(const key of ['cc','responded','call_issues','common_meeting','dim','personal_meeting','hot','warm','special_category','call_reminder','handover_rm','not_attended','process_incomplete','responses','tte']) assert.ok(html.includes(`workspace-tab-${key}`),key);
+  assert.match(html,/Worked while New/);assert.match(html,/Worked while Old/);
+  assert.equal(h.calls[0].journey,true);
+  assert.equal((html.match(/Original row/g)||[]).length,1);
+  assert.match(html,/tel:123/);assert.match(html,/All stages/);
+  assert.doesNotMatch(html,/Latest Notes|Personal Meetings|Add remark/);
+  const dashboard=renderToStaticMarkup(React.createElement(Component));
+  assert.match(dashboard,/Leads Received/);assert.doesNotMatch(dashboard,/Old Leads|workspace-tab-dim/);
+});
+
+test('existing remark cards send selected primary for counselors only',async()=>{
+  for(const role of ['member','partner','rm']) {
+    const calls=[];
+    const h=harness('',{}, {'@/lib/auth':{useAuth:()=>({user:{id:'actor',role}})},
+      '@tanstack/react-query':{useQueryClient:()=>({}),useMutation:value=>value},
+      '@/lib/api':{apiPost:(...args)=>{calls.push(args);return Promise.resolve({});}}});
+    const hook=h.load(path.join(root,'hooks/useWorkflow.ts')).useSaveRemark();
+    await hook.mutationFn({leadId:'lead',remark_status:'dim',remark_statuses:['dim','cnr']});
+    assert.equal(calls[0][0],'/leads/lead/workflow/remark');
+    assert.equal(calls[0][1].primary_status,role==='rm'?undefined:'dim');
+  }
+});
+
+
+test('existing lead rows show the recorded journey through Pending',()=>{
+  const history=['workflow_enrolled','remark_saved','entered_old','entered_pending'].map((event_type,index)=>({id:String(index),event_type,primary_status:'communication_completed',new_state:{queue:index===0?'new':'pending'},occurred_at:'2026-09-25T10:00:00Z'}));
+  const h=harness('workspace_view=pending',{data:{summary:{pending:1},total:1,rows:[{id:'journey',full_name:'Tracked lead',workflow_managed:true,workflow_queue:'pending',history,history_total:4}]}});
+  const html=renderToStaticMarkup(React.createElement(h.load('@/components/dashboard/CounselorLifecycleWorkspace').CounselorLifecycleWorkspace,{leadsPage:true}));
+  for(const label of ['New','CC','OL','Pending'])assert.ok(html.includes(`>${label}</span>`));
+  assert.match(html,/Journey history/);assert.match(html,/Open/);
+});

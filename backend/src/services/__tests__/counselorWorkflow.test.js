@@ -831,7 +831,7 @@ integration('counselor workflow PostgreSQL transactions', () => {
       expect(await service.processDeadline(job(saved,'pending'),later)).toEqual({stale:true});
       expect(await state()).toMatchObject({queue:null,journey_active:true});
       clock = later;
-      const restarted = await service.recordRemark(user,leadId,{...input(saved.generation),next_followup_at:null});
+      const restarted = await service.recordRemark(user,leadId,input(saved.generation));
       expect(restarted.state.followup_override).toBe(false);
       expect(restarted.state.move_to_old_at.getTime()).toBe(later.getTime()+hour);
     });

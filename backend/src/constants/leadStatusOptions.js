@@ -10,6 +10,7 @@ const leadStatuses = [
 ];
 
 const callStatuses = [
+  'common_meeting','dim','personal_meeting','quotation','hot','warm','special_category','call_reminder','handover_rm','not_attended','cold','process_incomplete','nrac','nracm','nrapm','nraf','nraq',
   'not_called',
   'communication_completed',
   'respond_hi',

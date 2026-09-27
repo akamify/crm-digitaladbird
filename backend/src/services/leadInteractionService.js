@@ -368,7 +368,7 @@ async function createLeadInteraction({
 
   await require('./counselorWorkflowService').observeRemark({
     client, leadId, user, remarkId: remark.id, statuses: normalizedStatuses,
-    primaryStatus, source, followupAt: nextFollowupAt || nextFollowup || null,
+    primaryStatus: primaryStatus === undefined ? undefined : validateCallStatus(primaryStatus), source, followupAt: nextFollowupAt || nextFollowup || null,
   });
 
   return {

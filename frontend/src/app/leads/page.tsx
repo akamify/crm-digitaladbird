@@ -659,13 +659,7 @@ function LeadsInner() {
     }
   }
 
-  if (isCounselorLeadsView) return <div className="space-y-4">
-    <div className="flex flex-wrap justify-end gap-2">
-      <Link href="/notes" className="btn-outline inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm"><ScrollText className="h-4 w-4" /> Latest Notes</Link>
-      <Link href="/personal-meetings" className="btn-outline inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm"><CalendarDays className="h-4 w-4" /> Personal Meetings</Link>
-    </div>
-    <CounselorLifecycleWorkspace leadsPage />
-  </div>;
+  if (isCounselorLeadsView) return <CounselorLifecycleWorkspace leadsPage />;
 
   return (
     <div className="space-y-4">

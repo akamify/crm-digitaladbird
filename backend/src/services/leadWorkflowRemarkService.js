@@ -9,6 +9,8 @@ const WORKFLOW_REMARK_OPTIONS = [
   'not_interested', 'callback_requested', 'follow_up', 'custom_remark',
 ];
 
+const COUNSELOR_REMARK_OPTIONS = [...WORKFLOW_REMARK_OPTIONS, 'common_meeting','dim','personal_meeting','quotation','hot','warm','special_category','call_reminder','handover_rm','not_attended','cold','process_incomplete','nrac','nracm','nrapm','nraf','nraq'];
+
 const STEP_TWO_UNLOCKING_REMARKS = new Set([
   'communication_completed',
   'respond_hi',
@@ -25,7 +27,7 @@ const REMARK_ALIASES = {
 function normalizeWorkflowRemarkStatus(value) {
   const normalized = String(value || '').trim().toLowerCase();
   const canonical = REMARK_ALIASES[normalized] || normalized;
-  return WORKFLOW_REMARK_OPTIONS.includes(canonical) ? canonical : null;
+  return COUNSELOR_REMARK_OPTIONS.includes(canonical) ? canonical : null;
 }
 
 function normalizeWorkflowRemarkStatuses(value) {
@@ -97,7 +99,7 @@ async function saveWorkflowRemark({ leadId, userId, remarkStatus, remarkStatuses
 }
 
 module.exports = {
-  WORKFLOW_REMARK_OPTIONS,
+  WORKFLOW_REMARK_OPTIONS, COUNSELOR_REMARK_OPTIONS,
   STEP_TWO_UNLOCKING_REMARKS,
   normalizeWorkflowRemarkStatus,
   normalizeWorkflowRemarkStatuses,

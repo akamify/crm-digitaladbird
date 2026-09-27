@@ -1,6 +1,7 @@
 'use client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiGet, apiPost, apiPatch } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import type { CallAttemptStateSummary, CallAttemptSummary, CallAttemptSequenceSummary, NextScheduledCallSummary } from '@/types';
 
 function invalidateWorkflowRelatedQueries(qc: ReturnType<typeof useQueryClient>, leadId: string) {
@@ -14,6 +15,7 @@ function invalidateWorkflowRelatedQueries(qc: ReturnType<typeof useQueryClient>,
   qc.invalidateQueries({ queryKey: ['workflow-summary'] });
   qc.invalidateQueries({ queryKey: ['lead-lifecycle', leadId] });
   qc.invalidateQueries({ queryKey: ['counselor-workspace'] });
+  qc.invalidateQueries({ queryKey: ['counselor-workflow'] });
 }
 
 export interface WorkflowState {
@@ -145,6 +147,7 @@ export function useLeadWorkflow(leadId: string | null | undefined) {
 
 export function useSaveRemark() {
   const qc = useQueryClient();
+  const {user}=useAuth();
   return useMutation({
     mutationFn: ({ leadId, remark_status, remark_statuses, remark, attempt_trigger_status, attempt_mode, confirm_sequence_close }: {
       leadId: string;
@@ -157,6 +160,7 @@ export function useSaveRemark() {
     }) =>
       apiPost<WorkflowState>(`/leads/${leadId}/workflow/remark`, {
         remark_status,
+        ...(['member','partner'].includes(user?.role || '') ? {primary_status:remark_status} : {}),
         remark_statuses,
         remark,
         attempt_trigger_status,

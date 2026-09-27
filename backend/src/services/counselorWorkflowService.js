@@ -156,6 +156,13 @@ function createService(db, options = {}) {
 
   async function applyRemark(client, { lead, user, primaryStatus, statuses, remarkId, source, key, hash, followupAt, explicit }) {
     const startedAt = options.now ? new Date(options.now()) : new Date();
+    // Working a due scheduled follow-up starts the explicitly selected journey.
+    // A future schedule keeps priority; no background job clears it merely for expiring.
+    if (explicit && lead.next_followup_at && new Date(lead.next_followup_at)<=startedAt) {
+      await client.query('UPDATE leads SET next_followup_at=NULL,updated_at=NOW() WHERE id=$1',[lead.id]);
+      lead.next_followup_at = null;
+      followupAt = null;
+    }
     const prior = await ensureState(client, lead, startedAt, remarkId);
     const isWork = COUNSELORS.has(user.role) && user.id === lead.assigned_to_user_id;
     const workSource = isWork && ['new','old'].includes(prior.queue) ? prior.queue : null;

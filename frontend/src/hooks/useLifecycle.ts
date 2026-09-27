@@ -6,7 +6,7 @@ import { DISTRIBUTION_FILTER_KEYS } from '@/lib/leadAnalytics';
 import type { LeadAnalyticsScope, LeadFilters } from '@/types';
 
 export type JourneyStage = 'new' | 'response' | 'common_meeting' | 'tte' | 'personal_meeting' | 'quotation';
-export type WorkspaceView = 'received' | 'new' | 'worked' | 'pending' | 'unworked' | 'reassigned' | 'call_issues' | 'follow_up' | 'responses' | 'common_meeting' | 'tte' | 'personal_meeting' | 'quotation' | 'converted' | 'cold';
+export type WorkspaceView = 'received' | 'new' | 'old' | 'worked' | 'pending' | 'unworked' | 'reassigned' | 'call_issues' | 'follow_up' | 'responses' | 'common_meeting' | 'tte' | 'personal_meeting' | 'quotation' | 'converted' | 'cold' | 'cc' | 'responded' | 'dim' | 'hot' | 'warm' | 'special_category' | 'call_reminder' | 'handover_rm' | 'not_attended' | 'process_incomplete';
 
 export interface LifecycleAction {
   id: string;
@@ -63,6 +63,9 @@ export interface LeadLifecycleResponse {
 }
 
 export interface WorkspaceSummary {
+  old: number; cc: number; responded: number; dim: number; hot: number; warm: number;
+  special_category: number; call_reminder: number; handover_rm: number; not_attended: number; process_incomplete: number;
+  worked_n: number; worked_o: number;
   received: number;
   new: number;
   worked: number;
@@ -81,6 +84,10 @@ export interface WorkspaceSummary {
 }
 
 export interface WorkspaceLead {
+  history?: import('@/hooks/useCounselorWorkflow').WorkflowEvent[]; history_total?: number;
+  worked_n?: boolean; worked_o?: boolean; read_only?: boolean;
+  workflow_primary_status?: string|null; workflow_queue?: string|null;
+  workflow_managed?: boolean; workflow_deadline?: string|null; followup_override?: boolean;
   id: string;
   full_name: string | null;
   phone: string | null;
@@ -139,8 +146,9 @@ export function useCounselorWorkspaceSummary(scope: LeadAnalyticsScope, filters:
   });
 }
 
-export function useCounselorWorkspaceLeads(input: { view: WorkspaceView; scope: LeadAnalyticsScope; filters?: LeadFilters; page: number; enabled?: boolean }) {
+export function useCounselorWorkspaceLeads(input: { view: WorkspaceView; scope: LeadAnalyticsScope; filters?: LeadFilters; page: number; enabled?: boolean; journey?: boolean }) {
   const params = workspaceParams(input.scope, input.filters);
+  if(input.journey) params.set('journey','true');
   params.set('view', input.view);
   params.set('page', String(input.page));
   params.set('page_size', '25');
