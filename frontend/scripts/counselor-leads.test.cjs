@@ -148,10 +148,25 @@ test('reassigned leads expose reading without mutation actions', () => {
   assert.doesNotMatch(html, /tel:123|Add remark/);
 });
 
-test('disabled rollout does not fabricate zero counts or journey data', () => {
+test('older disabled backend response does not fabricate zero counts or journey data', () => {
   const html = harness('', {data:{enabled:false,rows:[],total:0}}).render();
   assert.match(html, /workflow is not enabled yet/);
   assert.doesNotMatch(html, /0 Leads Received|No leads in/);
+});
+
+test('workspace shows real leads and existing remark entry when timer rollout is off',()=>{
+  const html=harness('',{data:{remarks_enabled:false,summary:{received:1},total:1,rows:[{id:'existing',full_name:'Existing assigned lead',read_only:false,history:[]}]}}).render();
+  assert.match(html,/Existing assigned lead/);
+  assert.match(html,/1 Leads Received/);
+  assert.match(html,/href="\/leads\/existing">Add remark<\/a>/);
+  assert.doesNotMatch(html,/workflow is not enabled yet/);
+});
+
+test('member and partner page routing uses new workspace without a config dependency',()=>{
+  const source=fs.readFileSync(path.join(root,'app/leads/page.tsx'),'utf8');
+  assert.match(source,/user\?\.role === 'member' \|\| user\?\.role === 'partner'/);
+  assert.match(source,/if \(isCounselorLeadsView\) return <CounselorLeadsWorkspace \/>;/);
+  assert.doesNotMatch(source,/useCounselorWorkflowConfig|workflowConfig|CounselorLifecycleWorkspace/);
 });
 
 test('remark form requires an explicit primary and offers follow-up preservation', () => {

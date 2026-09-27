@@ -25,6 +25,7 @@ export interface CounselorLead extends WorkflowState {
   worked_n: boolean; worked_o: boolean; history: WorkflowEvent[]; history_total: number;
 }
 export interface CounselorWorkspaceResponse {
+  remarks_enabled?: boolean;
   enabled: boolean; summary: Record<string,number>; worked: {n:number;o:number}; status_options: string[];
   rows: CounselorLead[]; total: number; page: number; page_size: number;
 }

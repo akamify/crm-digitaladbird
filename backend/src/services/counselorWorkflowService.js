@@ -395,8 +395,9 @@ function createService(db, options = {}) {
   }
   async function workspace(user, input = {}) {
     if (!COUNSELORS.has(user.role)) fail(403,'WORKFLOW_FORBIDDEN','Counselor access required.');
-    if (!cutoffFor(user)) return { enabled:false,rows:[],total:0 };
-    return {...await require('./counselorWorkspaceService').workspace(db,user,input,membership),status_options:[...STATUS_VALUES]};
+    // Reading the counselor workspace is always available; rollout only controls mutations.
+    return {...await require('./counselorWorkspaceService').workspace(db,user,input,membership),
+      remarks_enabled:Boolean(cutoffFor(user)),status_options:[...STATUS_VALUES]};
   }
   return { rolloutAt, configuration, observeRemark, invalidateLegacy, recordRemark, schedule, processDeadline, tick, read, workspace };
 }
