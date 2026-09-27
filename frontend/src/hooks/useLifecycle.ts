@@ -160,7 +160,9 @@ export function useCounselorWorkspaceLeads(input: { view: WorkspaceView; scope: 
     queryFn: () => apiGet<{ enabled: boolean; summary: WorkspaceSummary; rows: WorkspaceLead[]; total: number; page: number; page_size: number }>(`/counselor-workspace/leads?${params}`),
     enabled: input.enabled !== false,
     placeholderData: keepPreviousData,
-    staleTime: 15_000,
+    // Reopening a recently visited tab uses its cache. Polling and mutation
+    // invalidation still refresh current queue membership in the background.
+    staleTime: 60_000,
     refetchInterval: 60_000,
   });
 }

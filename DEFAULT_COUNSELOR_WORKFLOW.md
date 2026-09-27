@@ -90,3 +90,20 @@ Files: lifecycleService.js and its PostgreSQL workspace tests; CounselorLifecycl
 Verification: 24 frontend tests passed; production build passed with existing lint warnings; final TypeScript check passed after the parent URL guard change. Node syntax and diff checks passed. Browser connection retry failed with `codex/sandbox-state-meta: missing field sandboxPolicy`; live back-navigation and visual verification remain pending. No deployment was performed.
 
 Final navigation/deadline regression run: 395 PostgreSQL tests passed across eight suites (exit 0). Frontend: 24 tests passed. Final diff check passed. GO for code review; deployment and browser acceptance remain pending.
+
+
+## Tab loading and refresh correction
+
+Root cause: the workspace treated every isFetching result as a tab transition, fading and blocking already-loaded rows during its existing 60-second polling. Its 15-second stale window also triggered frequent refetches when returning to tabs.
+
+- Initial loads and uncached tab/filter/page changes retain Loading text and skeletons. Previous-tab rows are not presented as current-tab results.
+- Cached current results remain visible and usable during background refresh, including stale-cache revalidation and mutation-triggered refresh.
+- Workspace tab data stays fresh for 60 seconds. Existing 60-second active polling, reconnect handling and remark-save invalidation remain enabled. No infinite cache or disabled freshness checks.
+- A 16px refresh icon in a 36px rounded button appears beside the results count. It spins during fetches, prevents duplicate refresh clicks, has an accessible label and respects reduced-motion settings. Manual refresh requests the current query immediately.
+- Error/retry and empty states remain intact. Backend policies, database and list layout are unchanged.
+
+Files: useLifecycle.ts, CounselorLifecycleWorkspace.tsx, counselor-leads.test.cjs and this report.
+
+Verification: 26 frontend checks passed, including real QueryClient cache reuse/invalidation, first load, placeholder transitions, background refresh and errors. Final TypeScript and diff checks passed. Browser visual verification and production deployment remain pending.
+
+Reference: https://tanstack.com/query/latest/docs/framework/react/guides/important-defaults

@@ -307,3 +307,45 @@ test('parent URL effect preserves counselor state and waits for auth',()=>{
   run({role:'rm'},false,false,{q:'kept'}, {replace:url=>calls.push(url)},'daily');
   assert.deepEqual(calls,['/leads?q=kept']);
 });
+
+
+test('classic workspace distinguishes initial load, tab transition and background refresh',()=>{
+  const render=result=>{
+    const h=harness('workspace_view=cc',result);
+    return renderToStaticMarkup(React.createElement(h.load('@/components/dashboard/CounselorLifecycleWorkspace').CounselorLifecycleWorkspace,{leadsPage:true}));
+  };
+  const data={summary:{cc:1},total:1,rows:[{id:'current',full_name:'Current lead',phone:'123'}]};
+  const initial=render({isLoading:true,isFetching:true});
+  assert.match(initial,/Loading CC/);assert.doesNotMatch(initial,/No leads in/);
+  const transition=render({isFetching:true,isPlaceholderData:true,data});
+  assert.match(transition,/Loading CC/);assert.doesNotMatch(transition,/Current lead|No leads in/);
+  const background=render({isFetching:true,isPlaceholderData:false,data});
+  assert.match(background,/1 CC/);assert.match(background,/Current lead/);
+  assert.doesNotMatch(background,/Loading CC|Updating results|opacity-45|inert=""/);
+  assert.match(background,/aria-label="Refreshing leads"/);assert.match(background,/h-4 w-4 animate-spin/);
+  const cached=render({isFetching:false,isPlaceholderData:false,data});
+  assert.match(cached,/1 CC/);assert.doesNotMatch(cached,/Loading CC|opacity-45/);
+  assert.match(cached,/aria-label="Refresh leads"/);
+  const error=render({isError:true,isFetching:false,data});
+  assert.match(error,/could not be loaded/);assert.match(error,/Retry/);assert.match(error,/Current lead/);
+});
+
+test('workspace cache reuses fresh tabs and still refetches on invalidation',async()=>{
+  const {QueryClient}=require('@tanstack/react-query');
+  let requests=0;
+  const h=harness('',{}, {'@tanstack/react-query':{...require('@tanstack/react-query'),useQuery:options=>options},
+    '@/lib/api':{apiGet:async()=>{requests++;return {rows:[],summary:{},total:0};}}});
+  const hook=h.load(path.join(root,'hooks/useLifecycle.ts')).useCounselorWorkspaceLeads;
+  const args={view:'received',scope:{view:'all_time'},page:1,journey:true};
+  const assigned=hook(args),cc=hook({...args,view:'cc'});
+  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
+  try {
+    assert.equal(assigned.refetchInterval,60000);
+    await client.fetchQuery(assigned);await client.fetchQuery(cc);await client.fetchQuery(assigned);
+    assert.equal(requests,2,'returning to a fresh tab must not refetch');
+    await client.invalidateQueries({queryKey:['counselor-workspace']});
+    await client.fetchQuery(assigned);assert.equal(requests,3,'remark-save invalidation must still refresh');
+    await client.fetchQuery(hook({...args,page:2}));assert.equal(requests,4);
+    await client.fetchQuery(hook({...args,filters:{q:'different'}}));assert.equal(requests,5);
+  } finally {client.clear();}
+});

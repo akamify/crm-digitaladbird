@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useDeferredValue, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowRight, Clock3, Loader2, Phone, Search } from 'lucide-react';
+import { ArrowRight, Clock3, Loader2, Phone, RefreshCw, Search } from 'lucide-react';
 import { JourneySteps } from '@/components/leads/CounselorJourneyTracker';
 import { Skeleton } from '@/components/ui/Modal';
 import { LeadAnalyticsPeriodControl } from '@/components/leads/LeadAnalyticsPeriodControl';
@@ -101,7 +101,9 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
     }
   },[activeViewIndex]);
   const isInitialLoading = leads.isLoading && !leads.data;
-  const isTransitioning = leads.isFetching && Boolean(leads.data);
+  // Previous-query rows are not results for the newly selected tab/filter.
+  // Same-query polling can keep the current rows and actions fully usable.
+  const isTransitioning = Boolean(leads.isPlaceholderData);
 
   const returnParams = analyticsScopeParams(scope);
   returnParams.delete('view');
@@ -172,13 +174,15 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
         <div id="workspace-results" role="tabpanel" aria-labelledby={activeViewIndex >= 0 ? `workspace-tab-${view}` : undefined} aria-label={activeViewIndex < 0 ? `${activeViewLabel} results` : undefined} aria-busy={isInitialLoading || isTransitioning} className="space-y-3 outline-none">
           <div className="flex min-h-6 items-center justify-between gap-3" role="status" aria-live="polite">
             <p className="text-sm font-semibold text-slate-800">{isInitialLoading || isTransitioning ? `Loading ${activeViewLabel}...` : `${Number(leads.data?.total || 0).toLocaleString()} ${activeViewLabel}`}</p>
-            {isTransitioning && <span className="inline-flex items-center gap-1.5 text-xs font-medium text-brand-700"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />Updating results</span>}
+            <button type="button" onClick={() => { void leads.refetch(); }} disabled={leads.isFetching} aria-label={leads.isFetching ? 'Refreshing leads' : 'Refresh leads'} title={leads.isFetching ? 'Refreshing leads' : 'Refresh leads'} className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500 disabled:cursor-wait">
+              <RefreshCw className={`h-4 w-4 ${leads.isFetching ? 'animate-spin motion-reduce:animate-none' : ''}`} aria-hidden="true" />
+            </button>
           </div>
           {leads.isError && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-4 text-center text-sm text-rose-800"><div>Leads in this view could not be loaded. Previous results have been kept where available.</div><button type="button" onClick={() => leads.refetch()} className="mt-2 font-semibold underline underline-offset-2">Retry</button></div>}
-          {isInitialLoading ? <div className="space-y-2">{[1, 2, 3].map(key => <Skeleton key={key} className="h-16" />)}</div> : !leads.data && leads.isError ? null : !leads.data?.rows.length ? (
+          {isInitialLoading || isTransitioning ? <div className="space-y-2">{[1, 2, 3].map(key => <Skeleton key={key} className="h-16" />)}</div> : !leads.data && leads.isError ? null : !leads.data?.rows.length ? (
             <div className="rounded-xl border border-dashed border-slate-300 px-4 py-10 text-center text-sm text-slate-500">No leads in {activeViewLabel}.</div>
           ) : (
-          <div aria-hidden={isTransitioning} inert={isTransitioning ? true : undefined} className={`divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white transition-opacity ${isTransitioning ? 'pointer-events-none opacity-45' : 'opacity-100'}`}>
+          <div className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">
             {leads.data.rows.map(lead => {
               const managed=lead.workflow_managed;
               const due=managed?(lead.followup_override?lead.next_followup_at:lead.workflow_deadline):(lead.next_retry_at || lead.current_action_due_at || lead.next_followup_at);
