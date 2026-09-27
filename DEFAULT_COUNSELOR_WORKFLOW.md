@@ -1,5 +1,13 @@
 # Default counselor remark workflow
 
+## Emergency rollback — current status
+
+The default activation described below has been withdrawn at the user's request. Production service defaults to OFF regardless of old environment flags. The `/leads` page uses the original `CounselorLifecycleWorkspace`, and the lead-detail page uses the original remark/action interface without waiting for the new workflow API. New workflow enrollment, saves and deadline processing are paused. Existing remarks, workflow events and database records are preserved; no data rollback or deletion was performed. The new UI remains in source for later revision, but is not selected by these pages.
+
+Rollback verification: 324 backend tests and 17 frontend tests passed; 171 database integration tests were skipped in the ordinary run. Live deployment/browser verification is not claimed. The activation notes below are historical, not current operating instructions.
+
+## Previous activation (superseded)
+
 Member and partner accounts now use the new primary/secondary remark form, save API and workflow policies by default. Production no longer reads `COUNSELOR_WORKFLOW_MODE`, `COUNSELOR_WORKFLOW_ROLLOUT_AT` or `COUNSELOR_WORKFLOW_PILOTS`. Existing frontend consumers receive `enabled: true` and `remarks_enabled: true`; no separate UI switch is required.
 
 The stable assignment boundary is 27 September 2026 at 00:00 Asia/Kolkata. Assignments from this boundary are eligible for existing New-lead enrollment rules. Untouched eligible assignments may already be overdue when the worker runs. Earlier assignments start a journey when the counselor explicitly saves a new primary remark, without reconstructing historical primary status, New/Old membership or Worked counts. Existing persisted journeys and follow-up overrides remain intact. Timer durations and ownership checks are unchanged.

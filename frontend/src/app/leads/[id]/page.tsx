@@ -54,7 +54,7 @@ function LeadDetailInner() {
   const deleteLead = useDeleteLead();
   const updateCategory = useUpdateLeadCategory();
   const workflowSettings = useWorkflowSettings();
-  const counselorWorkflow = useCounselorWorkflowDetail(id,1,user?.role==='member'||user?.role==='partner');
+  const counselorWorkflow = useCounselorWorkflowDetail(id,1,false);
 
   const [rmRemarkOpen, setRmRemarkOpen] = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
@@ -97,9 +97,9 @@ function LeadDetailInner() {
   const canDeleteLead = user.role === 'super_admin';
   const readOnlyAccess = Boolean(lead.read_only_access);
   const lifecycleEnabled = workflowSettings.data?.enabled === true;
-  const counselorEnabled = counselorWorkflow.data?.enabled === true;
-  const counselorRole = user.role === 'member' || user.role === 'partner';
-  const legacyWorkflowReady = !counselorRole || counselorWorkflow.data?.enabled === false;
+  const counselorEnabled = false; // Emergency rollback to the original remark/action UI.
+  const counselorRole = false;
+  const legacyWorkflowReady = true;
   const leadPhone = lead.phone;
 
   async function callLead() {

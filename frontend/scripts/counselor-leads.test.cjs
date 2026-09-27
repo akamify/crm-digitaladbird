@@ -162,11 +162,14 @@ test('workspace shows real leads and existing remark entry when timer rollout is
   assert.doesNotMatch(html,/workflow is not enabled yet/);
 });
 
-test('member and partner page routing uses new workspace without a config dependency',()=>{
+test('emergency rollback restores both original counselor screens',()=>{
   const source=fs.readFileSync(path.join(root,'app/leads/page.tsx'),'utf8');
-  assert.match(source,/user\?\.role === 'member' \|\| user\?\.role === 'partner'/);
-  assert.match(source,/if \(isCounselorLeadsView\) return <CounselorLeadsWorkspace \/>;/);
-  assert.doesNotMatch(source,/useCounselorWorkflowConfig|workflowConfig|CounselorLifecycleWorkspace/);
+  assert.match(source,/<CounselorLifecycleWorkspace leadsPage \/>/);
+  assert.doesNotMatch(source,/CounselorLeadsWorkspace/);
+  const detail=fs.readFileSync(path.join(root,'app/leads/[id]/page.tsx'),'utf8');
+  assert.match(detail,/const counselorEnabled = false/);
+  assert.match(detail,/const legacyWorkflowReady = true/);
+  assert.match(detail,/useCounselorWorkflowDetail\(id,1,false\)/);
 });
 
 test('remark form requires an explicit primary and offers follow-up preservation', () => {

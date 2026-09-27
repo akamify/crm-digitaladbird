@@ -79,8 +79,8 @@ integration('counselor workflow PostgreSQL transactions', () => {
     await query('INSERT INTO leads(id,assigned_to_user_id,assigned_at) VALUES ($1,$2,NOW())',[leadId,user.id]);
     await query('INSERT INTO lead_assignments(lead_id,user_id,assigned_to_user_id) VALUES ($1,$2,$2)',[leadId,user.id]);
   });
-  test('default workflow opens and saves an existing lead without rollout configuration',async()=>{
-    const current=createService(db,{logger:false});
+  test('explicitly enabled workflow opens and saves an existing lead',async()=>{
+    const current=createService(db,{logger:false,rolloutMode:'all'});
     await query("UPDATE leads SET assigned_at='2020-01-01T00:00:00Z' WHERE id=$1",[leadId]);
     expect(current.configuration(user)).toEqual({enabled:true});
     expect(await current.read(user,leadId)).toMatchObject({enabled:true,managed:false});

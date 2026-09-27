@@ -10,7 +10,7 @@ import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
 import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
 import { LeadFilters } from '@/components/leads/LeadFilters';
 import { LeadAnalyticsPeriodControl } from '@/components/leads/LeadAnalyticsPeriodControl';
-import { CounselorLeadsWorkspace } from '@/components/leads/CounselorLeadsWorkspace';
+import { CounselorLifecycleWorkspace } from '@/components/dashboard/CounselorLifecycleWorkspace';
 import { LeadSavedViews } from '@/components/leads/LeadSavedViews';
 import { LeadLabelPickerModal } from '@/components/leads/LeadLabelPickerModal';
 import { AddLeadModal } from '@/components/leads/AddLeadModal';
@@ -659,7 +659,13 @@ function LeadsInner() {
     }
   }
 
-  if (isCounselorLeadsView) return <CounselorLeadsWorkspace />;
+  if (isCounselorLeadsView) return <div className="space-y-4">
+    <div className="flex flex-wrap justify-end gap-2">
+      <Link href="/notes" className="btn-outline inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm"><ScrollText className="h-4 w-4" /> Latest Notes</Link>
+      <Link href="/personal-meetings" className="btn-outline inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm"><CalendarDays className="h-4 w-4" /> Personal Meetings</Link>
+    </div>
+    <CounselorLifecycleWorkspace leadsPage />
+  </div>;
 
   return (
     <div className="space-y-4">
