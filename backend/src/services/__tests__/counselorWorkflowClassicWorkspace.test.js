@@ -31,7 +31,7 @@ suite('original workspace with counselor journey views (PostgreSQL)',()=>{
       CREATE TABLE lead_labels(id uuid,name text,color text,deleted_at timestamptz);
       CREATE TABLE lead_label_assignments(lead_id uuid,label_id uuid,created_at timestamptz);
       CREATE TABLE counselor_workflow_state(lead_id uuid,assigned_to_user_id uuid,assignment_at timestamptz,primary_status text,
-        queue text,journey_active boolean,move_to_old_at timestamptz,move_to_pending_at timestamptz,followup_override boolean);
+        queue text,journey_active boolean,awaiting_primary boolean DEFAULT false,move_to_old_at timestamptz,move_to_pending_at timestamptz,followup_override boolean);
       CREATE TABLE counselor_workflow_events(lead_id uuid,actor_id uuid,is_work boolean,work_source text,occurred_at timestamptz,id uuid DEFAULT gen_random_uuid(),event_type text,recorded_at timestamptz DEFAULT NOW(),primary_status text,new_state jsonb,source text);
     `);
     user={id:randomUUID(),role:'member'};other={id:randomUUID(),role:'partner'};
@@ -94,7 +94,7 @@ suite('original workspace with counselor journey views (PostgreSQL)',()=>{
         [ids.pending,type,JSON.stringify({queue:index===0?'new':'pending'}),`2026-09-25T${10+index}:00:00Z`]);
     }
     const result=await lifecycle.workspace(user,{...input,view:'pending'},true);
-    expect(result.rows[0].history.map(event=>event.event_type)).toEqual(['workflow_enrolled','remark_saved','entered_old','entered_pending']);
+    expect(result.rows.find(row=>row.id===ids.pending).history.map(event=>event.event_type)).toEqual(['workflow_enrolled','remark_saved','entered_old','entered_pending']);
     await pool.query("UPDATE counselor_workflow_state SET followup_override=true WHERE lead_id=$1",[ids.worked]);
     await pool.query("UPDATE leads SET next_followup_at=NOW()-INTERVAL '1 minute' WHERE id=$1",[ids.worked]);
     const followup=await lifecycle.workspace(user,{...input,view:'follow_up'},true);
@@ -104,4 +104,70 @@ suite('original workspace with counselor journey views (PostgreSQL)',()=>{
     await expect(lifecycle.workspace(user,{...input,view:'bad'},true)).rejects.toMatchObject({code:'INVALID_WORKSPACE_VIEW'});
     await expect(lifecycle.workspace({...user,role:'rm'},{...input,view:'old'},true)).rejects.toMatchObject({code:'INVALID_WORKSPACE_VIEW'});
   });
+  test('legacy carry-forward preserves Pending and Worked, ages untouched leads and hands off to explicit workflow',async()=>{
+    await pool.query('BEGIN');
+    try {
+      const add=async(name,{worked=false,terminal=false,future=false,owner=user.id}={})=>{
+        const id=randomUUID();
+        await pool.query(`INSERT INTO leads(id,full_name,phone,source,assigned_to_user_id,assigned_at,created_at,next_followup_at,stage)
+          VALUES($1,$2,'123','manual',$3,'2026-08-01T10:00:00+05:30','2026-07-01',CASE WHEN $4 THEN NOW()+INTERVAL '4 days' ELSE NULL END,$5)`,
+          [id,`carry-${name}`,owner,future,terminal?'won':'new']);
+        if(worked)await pool.query("INSERT INTO lead_remarks(id,lead_id,workflow_step,created_at) VALUES($1,$2,1,'2026-08-02')",[randomUUID(),id]);
+        return id;
+      };
+      const pending=await add('pending',{worked:true});
+      const untouched=await add('untouched');
+      const awaiting=await add('awaiting');
+      await pool.query(`INSERT INTO counselor_workflow_state(lead_id,assigned_to_user_id,assignment_at,awaiting_primary)
+        SELECT id,assigned_to_user_id,assigned_at,true FROM leads WHERE id=$1`,[awaiting]);
+      await add('closed',{terminal:true});await add('future',{future:true});await add('foreign',{owner:other.id});
+      const fresh=await add('fresh');
+      await pool.query('UPDATE leads SET assigned_at=NOW() WHERE id=$1',[fresh]);
+      const args={journey:'true',lead_view:'all_time',q:'carry-',view:'pending'};
+      let result=await lifecycle.workspace(user,args,true);
+      expect(result.rows.map(row=>row.id).sort()).toEqual([pending,untouched,awaiting].sort());
+      expect(result.summary).toMatchObject({received:6,new:1,pending:3,worked:1,worked_legacy:1,worked_n:0,worked_o:0,converted:1});
+      const summary=await lifecycle.workspace(user,args,false);
+      expect(summary.summary).toEqual(result.summary);
+      expect((await lifecycle.workspace(user,{...args,view:'new'},true)).rows.map(row=>row.id)).toEqual([fresh]);
+      expect((await lifecycle.workspace(user,{...args,view:'worked'},true)).rows.map(row=>row.id)).toEqual([pending]);
+      expect(result.rows.every(row=>row.history.length===0)).toBe(true);
+      // A saved explicit remark takes over from legacy Pending immediately.
+      await pool.query(`INSERT INTO counselor_workflow_state(lead_id,assigned_to_user_id,assignment_at,primary_status,journey_active,awaiting_primary)
+        SELECT id,assigned_to_user_id,assigned_at,'communication_completed',true,false FROM leads WHERE id=$1`,[pending]);
+      result=await lifecycle.workspace(user,args,true);
+      expect(result.summary).toMatchObject({pending:2,cc:1,worked:1,worked_legacy:1});
+      expect(result.rows.map(row=>row.id)).not.toContain(pending);
+      await pool.query("INSERT INTO counselor_workflow_events(lead_id,actor_id,is_work,work_source,occurred_at) VALUES($1,$2,true,'old',NOW())",[pending,user.id]);
+      expect((await lifecycle.workspace(user,args,false)).summary).toMatchObject({worked:1,worked_legacy:0,worked_o:1});
+    } finally {await pool.query('ROLLBACK');}
+  });
+  test('legacy New deadline matches the existing IST policy at office-hour boundaries',async()=>{
+    const {newAssignmentDeadlines}=require('../counselorWorkflowPolicies');
+    await pool.query('BEGIN');
+    try {
+      for(const time of ['08:59:59','09:00:00','17:00:00','17:00:01','23:00:00']) {
+        const id=randomUUID(),at=`2026-09-25T${time}+05:30`;
+        await pool.query("INSERT INTO leads(id,full_name,assigned_to_user_id,assigned_at,created_at) VALUES($1,'boundary-lead',$2,$3,$3)",[id,user.id,at]);
+        const result=await lifecycle.workspace(user,{journey:'true',lead_view:'all_time',q:'boundary-lead',view:'received'},true);
+        const row=result.rows.find(row=>row.id===id);
+        expect(new Date(row.first_contact_deadline).toISOString()).toBe(newAssignmentDeadlines(at).move_to_pending_at.toISOString());
+        expect(result.summary.new).toBe(0);
+      }
+    } finally {await pool.query('ROLLBACK');}
+  });
+
+  test('the first new remark transaction is not misreported as previous work',async()=>{
+    await pool.query('BEGIN');
+    try {
+      const id=randomUUID();
+      await pool.query("INSERT INTO leads(id,full_name,assigned_to_user_id,assigned_at,created_at) VALUES($1,'atomic-primary',$2,NOW()-INTERVAL '1 day',NOW()-INTERVAL '1 day')",[id,user.id]);
+      await pool.query('INSERT INTO lead_remarks(id,lead_id,workflow_step,created_at) VALUES($1,$2,1,NOW())',[randomUUID(),id]);
+      await pool.query("INSERT INTO counselor_workflow_events(lead_id,event_type,occurred_at) VALUES($1,'remark_saved',NOW()+INTERVAL '50 milliseconds')",[id]);
+      const result=await lifecycle.workspace(user,{journey:'true',lead_view:'all_time',q:'atomic-primary',view:'worked'},true);
+      expect(result.summary).toMatchObject({worked:0,worked_legacy:0});
+      expect(result.total).toBe(0);
+    } finally {await pool.query('ROLLBACK');}
+  });
+
 });

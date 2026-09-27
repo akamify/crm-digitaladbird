@@ -63,6 +63,7 @@ export interface LeadLifecycleResponse {
 }
 
 export interface WorkspaceSummary {
+  worked_legacy?: number;
   old: number; cc: number; responded: number; dim: number; hot: number; warm: number;
   special_category: number; call_reminder: number; handover_rm: number; not_attended: number; process_incomplete: number;
   worked_n: number; worked_o: number;
@@ -84,6 +85,7 @@ export interface WorkspaceSummary {
 }
 
 export interface WorkspaceLead {
+  legacy_worked?: boolean;
   history?: import('@/hooks/useCounselorWorkflow').WorkflowEvent[]; history_total?: number;
   worked_n?: boolean; worked_o?: boolean; read_only?: boolean;
   workflow_primary_status?: string|null; workflow_queue?: string|null;

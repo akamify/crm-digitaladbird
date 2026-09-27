@@ -250,3 +250,14 @@ test('existing lead rows show the recorded journey through Pending',()=>{
   for(const label of ['New','CC','OL','Pending'])assert.ok(html.includes(`>${label}</span>`));
   assert.match(html,/Journey history/);assert.match(html,/Open/);
 });
+
+
+test('dashboard uses the same journey classification and legacy work stays visible in original rows',()=>{
+  const h=harness('workspace_view=worked',{data:{summary:{worked:3,worked_n:1,worked_o:1,worked_legacy:1},total:1,rows:[{id:'previous',full_name:'Previous lead',legacy_worked:true,labels:[]}]}});
+  const Component=h.load('@/components/dashboard/CounselorLifecycleWorkspace').CounselorLifecycleWorkspace;
+  const html=renderToStaticMarkup(React.createElement(Component,{leadsPage:true}));
+  assert.match(html,/Previous 1/);assert.match(html,/Previous work/);assert.match(html,/Previous lead/);
+  const dashboard=renderToStaticMarkup(React.createElement(Component));
+  assert.equal(h.calls.at(-1).journey,true);
+  assert.match(dashboard,/Today&#x27;s work|Today&#39;s work/);
+});

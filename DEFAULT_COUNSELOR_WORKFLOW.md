@@ -10,15 +10,15 @@ The original Leads page and Step 1 remark-card design are retained. Counselor fu
 - Main boxes: Assigned Leads, New Leads, Old Leads, Worked Leads, Pending.
 - Existing small-chip row: CC, R, CI, CM, DIM, PM, Follow-up, Quotation, Hot, Warm, SC, CR, RM, NT, Converted, Cold, PI, Responses and TTE.
 - Kept the original gradient header, date control, inline filters, labels, row structure, Call/Open actions and expandable details.
-- Worked box shows N/O totals; Worked rows show the recorded N and/or O badges without duplicating a lead.
-- New remark options appear as cards inside the existing Step 1 design. The selected primary is submitted explicitly by counselor clients. Admin/RM remark options and dashboard layout retain their existing selection.
+- Worked box shows N/O and Previous totals; rows show recorded N/O badges or Previous work without duplicating a lead.
+- New remark options appear as cards inside the existing Step 1 design. The selected primary is submitted explicitly by counselor clients. Admin/RM remark options and the dashboard layout retain their existing selection.
 
 - Common Meeting reuses its existing Step 1 card and saves the CM journey status; no duplicate CM card is added. Historical attendance records remain unchanged.
 - Original lead rows reuse the compact journey tracker. A bounded batch query loads recent recorded events; expanded history retains earlier steps, including after Pending.
 
 ## Backend behavior
 
-The original counselor workspace endpoint supports a journey projection selected by the Leads page. This is a request for the documented data model, not an activation flag. Noncounselor roles cannot opt into these counselor-specific views. The dashboard keeps its original projection.
+The original counselor workspace endpoint supports a journey projection selected by the Leads page. This is a request for the documented data model, not an activation flag. Noncounselor roles cannot opt into these counselor-specific views. The dashboard now requests the same journey projection while keeping its original layout.
 
 Counters and rows use one shared classified query. Existing analytics filters remain server-side. Old and remark membership can overlap; Pending ends active remark membership. Worked uses the actual actor's work date, deduplicates each lead within N/O, and retains previously assigned leads as read-only. Leads assigned to another counselor cannot appear in current queue counts. Assignment timestamps must match workflow state before it can classify a current queue.
 
@@ -45,3 +45,31 @@ Existing timer durations and cutoff rules are reused. Future custom follow-ups r
 - Backend lint remains blocked by the previously identified missing ESLint 9 configuration. Diff checks passed.
 
 GO for code review. Live deployment and final visual acceptance remain pending. This report supersedes the earlier default-UI activation and emergency rollback instructions.
+
+
+## Legacy queue carry-forward correction
+
+The first journey projection required a matching workflow-state record, so older assigned leads disappeared from Pending/Worked. The dashboard still classified every untouched lead as New regardless of its age.
+
+Both existing screens now use the same server classification. This is a read-time compatibility migration: it does not rewrite historical data or fabricate journey events.
+
+- Unmanaged and awaiting-primary leads retain legacy Pending, Call Issues, meeting, follow-up and terminal memberships using the existing lifecycle records.
+- Untouched legacy leads remain New only before their first-contact deadline. After that deadline they appear in Pending. The clock uses assignment time, falling back to creation time when no assignment time exists; fresh reassignment must not inherit the lead's original age. The policy matches the existing 09:00-17:00 inclusive / two-hour / applicable 10:00 IST rules.
+- Future custom follow-ups retain priority. Terminal leads cannot re-enter New/Pending through the legacy fallback.
+- Previous work uses qualifying records since the current assignment and before the first explicit workflow-remark transaction. It retains the former assignment-period semantics. N/O keeps the existing work-period semantics. Total Worked is N + O + Previous; a lead counted in N/O is excluded from Previous in that period. No historical N/O attribution is guessed.
+- An explicit primary remark immediately takes over from legacy queue membership and starts the existing remark policy. Previously recorded work remains available. Legacy membership does not restart historical timers or invent an Old history.
+- The request-lead widget's Pending Work still uses the pre-existing unworked-lead metric. It is distinct from the workspace Pending action queue; distribution eligibility rules were not changed.
+
+Changed files for this correction: lifecycleService.js, CounselorLifecycleWorkspace.tsx, useLifecycle.ts, counselorWorkflowClassicWorkspace.test.js, counselor-leads.test.cjs and this report.
+
+No schema migration or production data write is required for carry-forward. Deployment of both backend and frontend is required. Live counts and responsive browser QA remain unverified.
+
+
+### Correction verification
+
+- Ordinary backend suite: 380 passed, 180 database-dependent tests skipped in that run.
+- Final isolated PostgreSQL workflow suite: 394 passed across eight suites, including legacy carry-forward, terminal/future-follow-up exclusions, summary/row parity, owner scope, fresh reassignment, IST boundary parity and first-primary transaction attribution.
+- Frontend component/hook suite: 21 passed, including dashboard journey-query parity and Previous work rendering.
+- Production Next.js build, TypeScript and frontend lint completed successfully; existing lint warnings remain. Backend lint was not rerun; its previously reported missing ESLint 9 config remains unresolved.
+- Node syntax and git diff checks passed. Original workspace fixture EXPLAIN ANALYZE: 1.458 ms; not a production-scale performance guarantee.
+- Production deployment and live/browser acceptance remain pending. GO for code review; no production PASS claim.
