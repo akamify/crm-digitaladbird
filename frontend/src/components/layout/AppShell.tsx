@@ -12,9 +12,10 @@ interface AppShellProps {
   subtitle?: string;
   roles?: Role[];
   right?: ReactNode;
+  compact?: boolean;
 }
 
-export function AppShell({ children, title, subtitle, roles, right }: AppShellProps) {
+export function AppShell({ children, title, subtitle, roles, right, compact = false }: AppShellProps) {
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   useSocketConnection();
@@ -75,7 +76,7 @@ export function AppShell({ children, title, subtitle, roles, right }: AppShellPr
 
         <div className={`flex min-w-0 flex-1 flex-col transition-[padding] duration-200 ${collapsed ? 'md:pl-20' : 'md:pl-60'}`}>
           <Topbar title={title} subtitle={subtitle} onMenuClick={() => setOpen(true)} right={right} />
-          <main className="flex-1 overflow-x-hidden px-4 py-5 sm:px-6 lg:px-8 page-enter">
+          <main className={`flex-1 overflow-x-hidden page-enter ${compact ? 'p-3 sm:p-4' : 'px-4 py-5 sm:px-6 lg:px-8'}`}>
             <div className="mx-auto w-full max-w-[1800px] space-y-5">
               {children}
             </div>

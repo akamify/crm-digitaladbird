@@ -371,7 +371,7 @@ export default function LeadsPage() {
     ? counselorWorkspaceHeading(searchParams.get('workspace_view'))
     : {title:'Leads',subtitle:'Browse, filter, and action your assigned leads'};
   return (
-    <AppShell title={heading.title} subtitle={heading.subtitle}>
+    <AppShell compact title={heading.title} subtitle={heading.subtitle}>
       <LeadsInner />
     </AppShell>
   );

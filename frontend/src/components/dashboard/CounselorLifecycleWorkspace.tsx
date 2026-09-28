@@ -144,7 +144,7 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
 
   return (
     <section className="min-w-0 max-w-full overflow-visible rounded-2xl border border-sky-200 bg-gradient-to-br from-sky-50 via-white to-amber-50 shadow-sm">
-      <div className="flex flex-col gap-4 border-b border-sky-100 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+      <div className={`flex flex-col gap-4 border-b border-sky-100 lg:flex-row lg:items-center lg:justify-between ${leadsPage ? 'px-3 py-3 sm:px-4' : 'px-5 py-4'}`}>
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">{leadsPage ? 'Lead Analytics' : 'Counselor Workspace'}</p>
           <h2 className="mt-1 text-lg font-semibold text-slate-950">{leadsPage ? 'Lead journey and work queues' : "Today's work, one clear queue"}</h2>
@@ -163,7 +163,7 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
         ))}
       </div>
 
-      <div className="space-y-4 bg-white/75 p-4 sm:p-5">
+      <div className={`bg-white/75 ${leadsPage ? 'space-y-3 p-3 sm:p-4' : 'space-y-4 p-4 sm:p-5'}`}>
         <div className="scroll-thin flex min-w-0 max-w-full gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Lead analytics views">
           {analyticsViews.map(([key, label], index) => {
             const active = view === key;

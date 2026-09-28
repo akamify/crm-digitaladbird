@@ -149,3 +149,11 @@ Final checks for Pending attribution: ordinary backend 388 passed / 184 skipped;
 - No backend, schema or timer changes in this UI update. Deployment and responsive browser verification remain pending.
 
 UI update verification: 29 frontend tests passed; production build/typecheck passed (exit 0), with existing frontend lint warnings. Diff check passed. GO for code review; deployment and browser visual acceptance pending.
+
+## Conversion numbering and compact Leads spacing
+
+- Conversion is displayed as Step 2 after Remark. Stored workflow step IDs and historical labels retain their existing meaning.
+- Both visible steps have one neutral outer border, without an extra surrounding card or shadow.
+- Leads list and profile opt into 12px mobile / 16px larger-screen page padding. Removed the additional workflow wrapper padding and reduced Leads workspace header/body padding. Other pages retain their existing shell spacing.
+- Existing controls and their touch target sizes are preserved. Spacing uses consistent increments, following https://m1.material.io/layout/metrics-keylines.html.
+- Verification: 29 frontend regression tests passed; TypeScript, targeted lint and the final production build completed successfully with existing lint warnings; diff check passed. Browser visual verification and production deployment remain pending.

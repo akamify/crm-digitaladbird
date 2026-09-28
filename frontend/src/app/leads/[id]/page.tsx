@@ -40,7 +40,7 @@ import { CounselorJourneyTracker, currentWorkflowLabel } from '@/components/lead
 
 export default function LeadDetailPage() {
   return (
-    <AppShell title="Lead Profile" subtitle="Actions, workflow, communication, and history">
+    <AppShell compact title="Lead Profile" subtitle="Actions, workflow, communication, and history">
       <LeadDetailInner />
     </AppShell>
   );
@@ -268,7 +268,7 @@ function LeadDetailInner() {
             {!readOnlyAccess&&<CounselorRemarkForm leadId={id}/>}
           </section>}
           {legacyWorkflowReady && (lifecycleEnabled || !readOnlyAccess) && (
-            <section className="min-w-0 p-3 sm:p-5">
+            <section className="min-w-0">
               <WorkflowBoundary>
                 {lifecycleEnabled ? (
                   <div className="space-y-4">

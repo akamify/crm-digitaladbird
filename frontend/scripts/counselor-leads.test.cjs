@@ -363,8 +363,11 @@ test('remark and conversion remain open without retired steps or accordion heade
     const remarkSection=html.match(/<section[^>]*aria-label="Step 1: Remark"/)[0];
     assert.equal((remarkSection.match(/\bborder\b(?!-)/g)||[]).length,1);
     assert.doesNotMatch(remarkSection,/shadow|ring-|border-2/);
-    assert.match(html,/Step 4: Conversion/);assert.match(html,/Transaction/);
-    assert.doesNotMatch(html,/Step 2|Step 3|Follow-up Tracker|Complete Step|Locked|of 4|border-green-300/);
+    assert.match(html,/Step 2: Conversion/);assert.match(html,/Transaction/);
+    const conversionSection=html.match(/<section[^>]*aria-label="Step 2: Conversion"/)[0];
+    assert.equal((conversionSection.match(/\bborder\b(?!-)/g)||[]).length,1);
+    assert.doesNotMatch(conversionSection,/shadow|ring-|border-2/);
+    assert.doesNotMatch(html,/Step 2: Lead Category|Step 3|Step 4: Conversion|Follow-up Tracker|Complete Step|Locked|of 4|border-green-300/);
     assert.doesNotMatch(html,/<button[^>]*>[^<]*Step 1/);
   }
 });
