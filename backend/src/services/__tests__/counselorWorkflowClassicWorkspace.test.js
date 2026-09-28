@@ -32,7 +32,7 @@ suite('original workspace with counselor journey views (PostgreSQL)',()=>{
       CREATE TABLE lead_label_assignments(lead_id uuid,label_id uuid,created_at timestamptz);
       CREATE TABLE counselor_workflow_state(lead_id uuid,assigned_to_user_id uuid,assignment_at timestamptz,primary_status text,
         queue text,journey_active boolean,awaiting_primary boolean DEFAULT false,move_to_old_at timestamptz,move_to_pending_at timestamptz,followup_override boolean);
-      CREATE TABLE counselor_workflow_events(lead_id uuid,actor_id uuid,is_work boolean,work_source text,occurred_at timestamptz,id uuid DEFAULT gen_random_uuid(),event_type text,recorded_at timestamptz DEFAULT NOW(),primary_status text,new_state jsonb,source text);
+      CREATE TABLE counselor_workflow_events(lead_id uuid,actor_id uuid,is_work boolean,work_source text,occurred_at timestamptz,id uuid DEFAULT gen_random_uuid(),event_type text,recorded_at timestamptz DEFAULT NOW(),primary_status text,new_state jsonb,previous_state jsonb,source text);
     `);
     user={id:randomUUID(),role:'member'};other={id:randomUUID(),role:'partner'};
     await pool.query('INSERT INTO users VALUES ($1,\'Counselor\'),($2,\'Other\')',[user.id,other.id]);
@@ -181,6 +181,20 @@ suite('original workspace with counselor journey views (PostgreSQL)',()=>{
         expect(result.rows[0].workflow_next_queue).toBe(next);
         expect(result.rows[0].workflow_deadline ? new Date(result.rows[0].workflow_deadline).toISOString().slice(0,10) : null).toBe(oldAt||pendingAt);
       }
+    } finally {await pool.query('ROLLBACK');}
+  });
+
+  test('recorded Pending work counts in O, excludes Previous and deduplicates',async()=>{
+    await pool.query('BEGIN');
+    try {
+      await pool.query("INSERT INTO lead_remarks(id,lead_id,workflow_step,created_at) VALUES($1,$2,1,'2026-09-25T06:00:00Z')",[randomUUID(),ids.pending]);
+      for(let i=0;i<2;i++)await pool.query(`INSERT INTO counselor_workflow_events(lead_id,actor_id,is_work,occurred_at,previous_state)
+        VALUES($1,$2,true,'2026-09-25T08:00:00Z','{"queue":"pending"}')`,[ids.pending,user.id]);
+      const result=await lifecycle.workspace(user,{...input,view:'worked',q:'pending'},true);
+      expect(result.summary).toMatchObject({worked:1,worked_n:0,worked_o:1,worked_legacy:0});
+      expect(result.rows).toHaveLength(1);expect(result.rows[0].worked_o).toBe(true);
+      expect((await lifecycle.workspace(other,{...input,view:'worked',q:'pending'},true)).total).toBe(0);
+      expect((await lifecycle.workspace(user,{...input,from:'2026-09-26',to:'2026-09-26',view:'worked',q:'pending'},true)).total).toBe(0);
     } finally {await pool.query('ROLLBACK');}
   });
 

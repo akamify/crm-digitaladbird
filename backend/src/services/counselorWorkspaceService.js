@@ -1,3 +1,4 @@
+const {workSourceSql}=require('./counselorWorkSource');
 const { AppError } = require('../utils/errors');
 
 const TABS = Object.freeze(['received','new','old','worked','pending','cc','responded','call_issues',
@@ -59,8 +60,8 @@ async function workspace(db,user,input,membership) {
   const page = Math.max(1,Math.min(100000,Number.parseInt(input.page,10)||1));
   const offset = add((page-1)*25);
   const {rows:[result]} = await db.query(`WITH bounds AS (SELECT $2::date AS from_date,$3::date AS to_date), work AS MATERIALIZED (
-    SELECT lead_id,BOOL_OR(work_source='new') AS n,BOOL_OR(work_source='old') AS o,MAX(occurred_at) AS worked_at
-    FROM counselor_workflow_events WHERE actor_id=$1 AND is_work AND work_source IN ('new','old') AND (${within('occurred_at')})
+    SELECT lead_id,BOOL_OR((${workSourceSql()})='new') AS n,BOOL_OR((${workSourceSql()})='old') AS o,MAX(occurred_at) AS worked_at
+    FROM counselor_workflow_events e WHERE actor_id=$1 AND is_work AND (${workSourceSql()}) IN ('new','old') AND (${within('occurred_at')})
     GROUP BY lead_id
   ), received AS MATERIALIZED (
     SELECT lead_id FROM lead_assignments WHERE COALESCE(assigned_to_user_id,user_id)=$1 AND (${within('assigned_at')})

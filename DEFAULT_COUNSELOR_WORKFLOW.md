@@ -120,3 +120,32 @@ Reference: https://tanstack.com/query/latest/docs/framework/react/guides/importa
 Files: WorkflowPanel.tsx, CallAttemptTracker.tsx, lead profile page, backend/routes/index.js, frontend regression suite and conversionWithoutRetiredSteps.test.js.
 
 Checks: 27 frontend tests passed; existing backend suite 380 passed (182 database-dependent tests skipped), plus two new conversion-handler tests passed. Node syntax and diff checks passed. Browser visual QA and production deployment remain pending; backend lint configuration limitation is unchanged.
+
+
+## Pending work attribution correction
+
+The user clarified the reporting rule: work performed while New belongs to N; work performed while Old or Pending belongs to O. Previously applyRemark only recognized New/Old and recorded a null work_source for Pending.
+
+- New Pending remarks now record work_source=old in the same transaction as the remark and workflow event.
+- Both workspace queries use the same source expression. Previously saved is_work events with a null source and previous_state.queue=pending count as O on their actual work date and for their recorded actor. Current lead state is never used to guess historical work.
+- Repeated Pending/Old work deduplicates within O for the reporting period. Existing N remains independent. A lead counted in O is excluded from Previous by the existing carry-forward predicate.
+- No database rewrite/schema migration is required. Events lacking historical queue evidence remain unattributed rather than being guessed. Live screenshot records were not directly inspected.
+- Guide and O-badge tooltip now explicitly include Pending. No queue timers or UI layout changed.
+
+Files: counselorWorkSource.js (shared attribution), counselorWorkflowService.js, counselorWorkspaceService.js, lifecycleService.js, their tests, CrmGuide.tsx and CounselorLifecycleWorkspace.tsx.
+
+Frontend regression suite: 27 passed. TypeScript check passed. Build/lint not rerun for the text-only frontend changes; prior lint limitations remain. Production deployment and live count verification remain pending.
+
+Final checks for Pending attribution: ordinary backend 388 passed / 184 skipped; isolated PostgreSQL 397 passed across eight suites (exit 0). Query-plan checks passed on fixtures, not production benchmarks. GO for review; production verification pending.
+
+
+## Remark outline, mobile CC tile and contextual header
+
+- Remark now has one neutral outer border with responsive padding; it remains permanently open without an added ring/shadow or surrounding second card.
+- The two-column mobile/tablet summary has a sixth CC tile next to Pending, using the same live CC count and selection as the existing chip. The desktop summary retains its five columns.
+- Counselor Leads header reads the selected workspace_view from the URL. Remark tabs show short codes and full descriptions, e.g. CC / Communication Completed and CM / Common Meeting. Queue tabs use descriptive titles/subtitles, e.g. Pending / Leads awaiting action. Unknown views fall back to Assigned Leads. Other roles keep their existing header.
+- Heading wording follows descriptive-heading guidance: https://www.w3.org/WAI/WCAG21/Understanding/headings-and-labels
+- Files: WorkflowPanel.tsx, CounselorLifecycleWorkspace.tsx, counselorLeadTabs.ts, app/leads/page.tsx, frontend regression tests and this report. Earlier Pending/O work remains intact.
+- No backend, schema or timer changes in this UI update. Deployment and responsive browser verification remain pending.
+
+UI update verification: 29 frontend tests passed; production build/typecheck passed (exit 0), with existing frontend lint warnings. Diff check passed. GO for code review; deployment and browser visual acceptance pending.

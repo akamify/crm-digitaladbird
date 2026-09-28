@@ -165,7 +165,7 @@ function createService(db, options = {}) {
     }
     const prior = await ensureState(client, lead, startedAt, remarkId);
     const isWork = COUNSELORS.has(user.role) && user.id === lead.assigned_to_user_id;
-    const workSource = isWork && ['new','old'].includes(prior.queue) ? prior.queue : null;
+    const workSource = isWork ? require('./counselorWorkSource').workSource(prior.queue) : null;
     const terminal = explicit && TERMINAL.has(primaryStatus);
     const deadlines = explicit ? journeyDeadlines(primaryStatus, startedAt) : null;
     const after = await save(client, { ...prior, primary_status: explicit ? primaryStatus : prior.primary_status,

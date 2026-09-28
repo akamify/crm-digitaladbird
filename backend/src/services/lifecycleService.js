@@ -1,3 +1,4 @@
+const {workSourceSql}=require('./counselorWorkSource');
 const { query, withTransaction } = require('../config/database');
 const { AppError } = require('../utils/errors');
 const { getVisibleUserIds } = require('../middleware/rbac');
@@ -797,9 +798,9 @@ function workspaceCte(period, scopeSql, filterSql, journey = false, actor = null
            ((($2::date + 1)::timestamp) AT TIME ZONE 'Asia/Kolkata') AS to_at,
            $3::uuid[] AS visible_users
   )${journey ? `, counselor_work AS MATERIALIZED (
-    SELECT lead_id, BOOL_OR(work_source='new') AS n, BOOL_OR(work_source='old') AS o
+    SELECT lead_id, BOOL_OR((${workSourceSql()})='new') AS n, BOOL_OR((${workSourceSql()})='old') AS o
     FROM counselor_workflow_events e CROSS JOIN bounds b
-    WHERE actor_id=${actor} AND is_work AND work_source IN ('new','old') AND ${onPeriod('e.occurred_at')}
+    WHERE actor_id=${actor} AND is_work AND (${workSourceSql()}) IN ('new','old') AND ${onPeriod('e.occurred_at')}
     GROUP BY lead_id
   )` : ''}, classified AS MATERIALIZED (
     SELECT ${journey ? `cw.primary_status AS workflow_primary_status,cw.queue AS workflow_queue,cw.journey_active,(cw.lead_id IS NOT NULL AND NOT COALESCE(cw.awaiting_primary,FALSE)) AS workflow_managed,

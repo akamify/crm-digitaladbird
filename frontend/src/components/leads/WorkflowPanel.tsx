@@ -136,7 +136,7 @@ function StepCard({ step, config, completed, savedValue, savedAt, children }: {
   savedValue?: string; savedAt?: string; children: React.ReactNode;
 }) {
   const Icon = config.icon;
-  return <section className="min-w-0 space-y-4" aria-label={`Step ${step}: ${config.label}`}>
+  return <section className={clsx("min-w-0 space-y-4", step === 1 && "rounded-xl border border-slate-200 bg-white p-3 sm:p-4")} aria-label={`Step ${step}: ${config.label}`}>
     <div className="flex flex-wrap items-start gap-3">
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600"><Icon className="h-5 w-5" /></div>
       <div className="min-w-0 flex-1">

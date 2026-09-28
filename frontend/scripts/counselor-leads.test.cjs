@@ -286,13 +286,13 @@ test('clean rows show latest primary once and the actual next queue, respecting 
   for(const [next,override,label] of [['old',false,'Moves to Old Leads'],['pending',false,'Moves to Pending'],['old',true,'Custom follow-up']]) {
     const h=harness('',{data:{summary:{},rows:[{id:'lead',workflow_managed:true,workflow_primary_status:'communication_completed',last_call_result:'communication_completed',workflow_deadline:'2026-09-28T10:00:00Z',workflow_next_queue:next,followup_override:override,next_followup_at:'2026-10-01T10:00:00Z',history:[]}]}});
     const html=renderToStaticMarkup(React.createElement(h.load('@/components/dashboard/CounselorLifecycleWorkspace').CounselorLifecycleWorkspace,{leadsPage:true}));
-    assert.match(html,new RegExp(label));assert.equal((html.match(/Communication Completed/g)||[]).length,1);
+    assert.match(html,new RegExp(label));assert.equal((html.match(/<article[\s\S]*?<\/article>/)[0].match(/Communication Completed/g)||[]).length,1);
     assert.doesNotMatch(html,/More details|View history details|Category:|Campaign:|Latest interaction:/);
     if(override)assert.doesNotMatch(html,/Moves to Old Leads|Moves to Pending/);
   }
   const h=harness('',{data:{summary:{},rows:[{id:'legacy',journey_stage:'common_meeting',last_call_result:'communication_completed'}]}});
   const html=renderToStaticMarkup(React.createElement(h.load('@/components/dashboard/CounselorLifecycleWorkspace').CounselorLifecycleWorkspace,{leadsPage:true}));
-  assert.equal((html.match(/Communication Completed/g)||[]).length,1);
+  assert.equal((html.match(/<article[\s\S]*?<\/article>/)[0].match(/Communication Completed/g)||[]).length,1);
   assert.doesNotMatch(html,/Common Meeting<\/div>/);
 });
 
@@ -360,8 +360,32 @@ test('remark and conversion remain open without retired steps or accordion heade
       '@/components/leads/CallAttemptTracker':{CallAttemptTracker:()=>null}});
     const html=renderToStaticMarkup(React.createElement(h.load('@/components/leads/WorkflowPanel').WorkflowPanel,{leadId:'lead'}));
     assert.match(html,/Step 1: Remark/);assert.match(html,/Communication Completed/);
+    const remarkSection=html.match(/<section[^>]*aria-label="Step 1: Remark"/)[0];
+    assert.equal((remarkSection.match(/\bborder\b(?!-)/g)||[]).length,1);
+    assert.doesNotMatch(remarkSection,/shadow|ring-|border-2/);
     assert.match(html,/Step 4: Conversion/);assert.match(html,/Transaction/);
     assert.doesNotMatch(html,/Step 2|Step 3|Follow-up Tracker|Complete Step|Locked|of 4|border-green-300/);
     assert.doesNotMatch(html,/<button[^>]*>[^<]*Step 1/);
   }
+});
+
+
+test('workspace headings cover every tab with short titles and clear descriptions',()=>{
+  const tabs=harness().load('@/components/leads/counselorLeadTabs');
+  for(const tab of [...tabs.COUNSELOR_LEAD_TABS,...tabs.LEGACY_COUNSELOR_VIEWS]) {
+    const heading=tabs.counselorWorkspaceHeading(tab.key);
+    assert.ok(heading.title);assert.ok(heading.subtitle);assert.doesNotMatch(heading.subtitle,/Browse, filter/);
+  }
+  assert.deepEqual(tabs.counselorWorkspaceHeading('cc'),{title:'CC',subtitle:'Communication Completed'});
+  assert.deepEqual(tabs.counselorWorkspaceHeading('common_meeting'),{title:'CM',subtitle:'Common Meeting'});
+  for(const invalid of ['bad','constructor','__proto__'])assert.equal(tabs.counselorWorkspaceHeading(invalid).title,'Assigned Leads');
+});
+
+test('mobile summary fills the sixth slot with the actual CC query and count',()=>{
+  const h=harness('workspace_view=cc',{data:{summary:{cc:7},total:7,rows:[]}});
+  const html=renderToStaticMarkup(React.createElement(h.load('@/components/dashboard/CounselorLifecycleWorkspace').CounselorLifecycleWorkspace,{leadsPage:true}));
+  assert.equal(h.calls[0].view,'cc');
+  const tile=html.match(/<button[^>]*title="Communication Completed"[\s\S]*?<\/button>/)[0];
+  assert.match(tile,/lg:hidden/);assert.match(tile,/>7<\/div>/);assert.match(tile,/Communication Completed/);
+  assert.match(tile,/shadow-\[inset/);
 });

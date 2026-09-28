@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AlertTriangle, CalendarDays, ChevronLeft, ChevronRight, Eye, Inbox, Lock, Mail, MessageCircle, MessageSquarePlus, MoreHorizontal, MoreVertical, Phone, Plus, ScrollText, Tag, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { counselorWorkspaceHeading } from '@/components/leads/counselorLeadTabs';
 import { AppShell } from '@/components/layout/AppShell';
 import { LeadCategoryBadge } from '@/components/leads/LeadCategoryBadge';
 import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
@@ -364,8 +365,13 @@ function LeadMetricFilterRow({
 }
 
 export default function LeadsPage() {
+  const searchParams = useSearchParams();
+  const {user} = useAuth();
+  const heading = user?.role === 'member' || user?.role === 'partner'
+    ? counselorWorkspaceHeading(searchParams.get('workspace_view'))
+    : {title:'Leads',subtitle:'Browse, filter, and action your assigned leads'};
   return (
-    <AppShell title="Leads" subtitle="Browse, filter, and action your assigned leads">
+    <AppShell title={heading.title} subtitle={heading.subtitle}>
       <LeadsInner />
     </AppShell>
   );

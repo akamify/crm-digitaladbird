@@ -272,6 +272,19 @@ integration('counselor workflow PostgreSQL transactions', () => {
       FROM counselor_workflow_events WHERE actor_id=$1 AND is_work GROUP BY work_source`,[user.id]);
     expect(result.rows).toEqual(expect.arrayContaining([{work_source:'new',count:1},{work_source:'old',count:1}]));
   });
+  test('Pending remarks count as O and historical Pending events are read as O',async()=>{
+    const saved=await service.recordRemark(user,leadId,input());
+    const scheduled=await schedule(saved.state.generation);
+    await processOld(scheduled.state.generation);
+    await service.processDeadline({leadId,generation:scheduled.state.generation,kind:'pending',dueAt:pendingAt});
+    const pending=await state();expect(pending.queue).toBe('pending');
+    const result=await service.recordRemark(user,leadId,input(pending.generation));
+    expect(result.event).toMatchObject({is_work:true,work_source:'old',previous_state:{queue:'pending'}});
+    expect((await service.workspace(user,{view:'worked'})).worked).toEqual({n:1,o:1});
+    // Older deployed versions recorded this source as null. The saved snapshot is sufficient evidence.
+    await query('UPDATE counselor_workflow_events SET work_source=NULL WHERE id=$1',[result.event.id]);
+    expect((await service.workspace(user,{view:'worked'})).worked).toEqual({n:1,o:1});
+  });
   test('custom follow-up is reused, preserved on omission, and blocks default deadlines', async () => {
     const next = new Date(Date.now()+86400000).toISOString();
     let saved = await service.recordRemark(user,leadId,{...input(),next_followup_at:next});
