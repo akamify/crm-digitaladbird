@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
 import {
-  CheckCircle2, Loader2,
+  CheckCircle2, ChevronDown, Loader2,
   Clock, History, MessageSquare, BarChart3, Target, Trophy,
   Zap, Upload, Paperclip, X, ExternalLink, FileText,
 } from 'lucide-react';
@@ -109,7 +109,7 @@ export function WorkflowPanel({ leadId }: Props) {
         </StepCard>
 
         <StepCard
-          step={2} config={STEP_CONFIG[3]}
+          step={2} config={STEP_CONFIG[3]} collapsible
           completed={completedSteps[3]}
           savedValue={wfData.conversion?.customer_type ? `${humanize(wfData.conversion.customer_type)} — ₹${Number(wfData.conversion.total_payment || 0).toLocaleString()}` : undefined}
           savedAt={wfData.conversion?.submitted_at || undefined}
@@ -131,13 +131,12 @@ export function WorkflowPanel({ leadId }: Props) {
 
 /* ── Accordion Step Card ──────────────────────────────────────────── */
 
-function StepCard({ step, config, completed, savedValue, savedAt, children }: {
+function StepCard({ step, config, completed, savedValue, savedAt, children, collapsible = false }: {
   step: number; config: typeof STEP_CONFIG[0]; completed: boolean;
-  savedValue?: string; savedAt?: string; children: React.ReactNode;
+  savedValue?: string; savedAt?: string; children: React.ReactNode; collapsible?: boolean;
 }) {
   const Icon = config.icon;
-  return <section className="min-w-0 space-y-4 rounded-xl border border-slate-200 bg-white p-3 sm:p-4" aria-label={`Step ${step}: ${config.label}`}>
-    <div className="flex flex-wrap items-start gap-3">
+  const header = <div className="flex min-w-0 items-start gap-3">
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600"><Icon className="h-5 w-5" /></div>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-semibold text-slate-900">Step {step}: {config.label}</h3>
@@ -146,8 +145,17 @@ function StepCard({ step, config, completed, savedValue, savedAt, children }: {
         {savedValue && <p className="mt-1 break-words text-xs text-slate-600">{savedValue}</p>}
         {savedAt && <p className="mt-1 text-[10px] text-slate-400">{fmtDate(savedAt)}</p>}
       </div>
-    </div>
-    <div className="min-w-0">{children}</div>
+      {collapsible && <ChevronDown className="mt-2 h-4 w-4 shrink-0 text-slate-500 transition-transform group-open:rotate-180" aria-hidden="true" />}
+    </div>;
+  const content = <div className="min-w-0 [overflow-wrap:anywhere]">{children}</div>;
+  const className = 'min-w-0 rounded-xl border border-slate-200 bg-white p-3 sm:p-4';
+  if (collapsible) return <details className={`group ${className}`} aria-label={`Step ${step}: ${config.label}`}>
+    <summary className="cursor-pointer list-none rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500 [&::-webkit-details-marker]:hidden">{header}</summary>
+    <div className="mt-4">{content}</div>
+  </details>;
+  return <section className={`${className} space-y-4`} aria-label={`Step ${step}: ${config.label}`}>
+    {header}
+    {content}
   </section>;
 }
 

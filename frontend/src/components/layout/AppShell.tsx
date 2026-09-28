@@ -76,7 +76,7 @@ export function AppShell({ children, title, subtitle, roles, right, compact = fa
 
         <div className={`flex min-w-0 flex-1 flex-col transition-[padding] duration-200 ${collapsed ? 'md:pl-20' : 'md:pl-60'}`}>
           <Topbar title={title} subtitle={subtitle} onMenuClick={() => setOpen(true)} right={right} />
-          <main className={`flex-1 overflow-x-hidden page-enter ${compact ? 'p-3 sm:p-4' : 'px-4 py-5 sm:px-6 lg:px-8'}`}>
+          <main className={`min-w-0 flex-1 page-enter ${compact ? 'overflow-x-clip p-3 sm:p-4' : 'overflow-x-hidden px-4 py-5 sm:px-6 lg:px-8'}`}>
             <div className="mx-auto w-full max-w-[1800px] space-y-5">
               {children}
             </div>

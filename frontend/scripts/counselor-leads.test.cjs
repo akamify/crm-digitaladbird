@@ -351,7 +351,7 @@ test('workspace cache reuses fresh tabs and still refetches on invalidation',asy
 });
 
 
-test('remark and conversion remain open without retired steps or accordion headers',()=>{
+test('remark remains open and conversion defaults to a closed native disclosure',()=>{
   for(const current_step of [1,2,3,4,5]) {
     const h=harness('',{}, {
       '@/hooks/useWorkflow':{useLeadWorkflow:()=>({data:{current_step,workflow:{},remark_options:['communication_completed'],workflow_step_1_statuses:[],lead_category:'trader'}}),
@@ -364,9 +364,10 @@ test('remark and conversion remain open without retired steps or accordion heade
     assert.equal((remarkSection.match(/\bborder\b(?!-)/g)||[]).length,1);
     assert.doesNotMatch(remarkSection,/shadow|ring-|border-2/);
     assert.match(html,/Step 2: Conversion/);assert.match(html,/Transaction/);
-    const conversionSection=html.match(/<section[^>]*aria-label="Step 2: Conversion"/)[0];
+    const conversionSection=html.match(/<details[^>]*aria-label="Step 2: Conversion"/)[0];
     assert.equal((conversionSection.match(/\bborder\b(?!-)/g)||[]).length,1);
-    assert.doesNotMatch(conversionSection,/shadow|ring-|border-2/);
+    assert.doesNotMatch(conversionSection,/shadow|ring-|border-2|\sopen(?:[\s=>])/);
+    assert.match(html,/<summary[^>]*>/);
     assert.doesNotMatch(html,/Step 2: Lead Category|Step 3|Step 4: Conversion|Follow-up Tracker|Complete Step|Locked|of 4|border-green-300/);
     assert.doesNotMatch(html,/<button[^>]*>[^<]*Step 1/);
   }
@@ -391,4 +392,18 @@ test('mobile summary fills the sixth slot with the actual CC query and count',()
   const tile=html.match(/<button[^>]*title="Communication Completed"[\s\S]*?<\/button>/)[0];
   assert.match(tile,/lg:hidden/);assert.match(tile,/>7<\/div>/);assert.match(tile,/Communication Completed/);
   assert.match(tile,/shadow-\[inset/);
+});
+
+
+test('relocated journey preserves history and empty/loading/unavailable states',()=>{
+  const render=result=>{
+    const h=harness('',{}, {'@/hooks/useLifecycle':{useLeadLifecycle:()=>result}});
+    return renderToStaticMarkup(React.createElement(h.load('@/components/leads/LeadLifecyclePanel').LeadJourneyCard,{leadId:'lead'}));
+  };
+  assert.match(render({data:{enabled:true,state:{},events:[]}}),/No lifecycle activity recorded yet/);
+  const history=render({data:{enabled:true,state:{},events:[{id:'event',event_type:'communication_completed',occurred_at:'2026-09-28T10:00:00Z',user_name:'Counselor'}]}});
+  assert.match(history,/Lead Journey/);assert.match(history,/Communication Completed/);assert.match(history,/Counselor/);
+  assert.equal(render({isError:true}),'');
+  assert.equal(render({data:{enabled:false}}),'');
+  assert.match(render({isLoading:true}),/skeleton-shimmer/);
 });

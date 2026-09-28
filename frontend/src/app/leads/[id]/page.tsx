@@ -23,7 +23,7 @@ import { LeadActionBar } from '@/components/leads/LeadActionBar';
 import { RemarkModal } from '@/components/leads/RemarkModal';
 import { ReassignModal } from '@/components/leads/ReassignModal';
 import { WorkflowPanel } from '@/components/leads/WorkflowPanel';
-import { LeadLifecyclePanel } from '@/components/leads/LeadLifecyclePanel';
+import { LeadJourneyCard, LeadLifecyclePanel } from '@/components/leads/LeadLifecyclePanel';
 import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
 import { LeadSessionsCard } from '@/components/leads/LeadSessionsCard';
 import { LeadLabelsCard } from '@/components/leads/LeadLabelsCard';
@@ -258,7 +258,7 @@ function LeadDetailInner() {
       )}
 
       <div className="grid min-w-0 items-start gap-5 lg:grid-cols-[minmax(0,1.85fr)_minmax(280px,1fr)]">
-        <main className="min-w-0 space-y-5">
+        <div className="min-w-0 space-y-5">
           {counselorRole && !counselorWorkflow.data && <section className="card p-3" role={counselorWorkflow.isError ? 'alert' : 'status'}>
             {counselorWorkflow.isError ? <>Could not load counselor workflow. <button className="underline" onClick={() => counselorWorkflow.refetch()}>Retry</button></> : 'Loading counselor workflow…'}
           </section>}
@@ -305,9 +305,9 @@ function LeadDetailInner() {
             canAdd={!readOnlyAccess && canAddRmUpdate}
             addLabel="Add RM Update"
           />
-        </main>
+        </div>
 
-        <aside className="min-w-0 lg:sticky lg:top-20 lg:h-fit lg:self-start">
+        <aside className="min-w-0 self-start">
           <div className="space-y-4">
             <LeadSummaryCard lead={lead} />
             <AssignmentCard lead={lead} />
@@ -320,6 +320,7 @@ function LeadDetailInner() {
               canManage={!readOnlyAccess}
               createSignal={sessionCreateSignal}
             />
+            {legacyWorkflowReady && lifecycleEnabled && <WorkflowBoundary><LeadJourneyCard leadId={id} /></WorkflowBoundary>}
             {canSeeTechnical && <TechnicalMetaDetails lead={lead} />}
           </div>
         </aside>

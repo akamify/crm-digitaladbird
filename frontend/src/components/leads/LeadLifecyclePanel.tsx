@@ -220,10 +220,7 @@ export function LeadLifecyclePanel({
 
       {callIssuesPanel}
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-3 sm:p-5">
-        <div className="mb-4 flex items-center justify-between"><div className="flex items-center gap-2"><History className="h-4 w-4 text-sky-600" /><h2 className="text-sm font-semibold text-slate-900">Lead Journey</h2></div><span className="text-xs text-slate-500">{data.events.length} events</span></div>
-        {!data.events.length ? <p className="rounded-xl border border-dashed border-slate-300 py-8 text-center text-sm text-slate-500">No lifecycle activity recorded yet.</p> : <ol className="space-y-0">{data.events.map(event => <li key={event.id} className="relative border-l border-slate-200 pb-5 pl-5 last:pb-0"><span className="absolute -left-1.5 top-1 h-3 w-3 rounded-full border-2 border-white bg-sky-500" /><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-sm font-semibold text-slate-900">{humanize(event.event_type)}</p><p className="text-xs text-slate-500">{event.reason ? humanize(event.reason) : humanize(event.call_result || '')}{event.stage_after ? ` / ${humanize(event.stage_after)}` : ''}</p></div><div className="text-right text-[11px] text-slate-400">{fmtDate(event.occurred_at, 'd MMM yyyy, h:mm a')}<br />{event.user_name || 'System'}</div></div></li>)}</ol>}
-      </section>
+
 
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={reopenMode ? 'Reopen Lead' : completeMode ? 'Complete Required Action' : 'Record Activity'} description={reopenMode ? 'Reopen with one clear, scheduled next action.' : 'Record what happened and always leave one clear next action.'} size="md" footer={<><Button variant="ghost" onClick={() => setModalOpen(false)}>Cancel</Button><Button onClick={submit} disabled={record.isPending || complete.isPending || close.isPending || reopen.isPending}>Save lifecycle</Button></>}>
         <div className="space-y-4">
@@ -237,4 +234,17 @@ export function LeadLifecyclePanel({
 
 function SummaryCell({ icon, label, value, warning = false }: { icon: ReactNode; label: string; value: string; warning?: boolean }) {
   return <div className="bg-white p-4"><div className={`flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide ${warning ? 'text-rose-600' : 'text-slate-500'}`}>{warning ? <AlertTriangle className="h-4 w-4" /> : icon}{label}</div><div className={`mt-2 text-sm font-semibold ${warning ? 'text-rose-700' : 'text-slate-900'}`}>{value}</div></div>;
+}
+
+export function LeadJourneyCard({ leadId }: { leadId: string }) {
+  const lifecycle = useLeadLifecycle(leadId);
+  if (lifecycle.isLoading) return <Skeleton className="h-40" />;
+  if (lifecycle.isError || !lifecycle.data?.enabled || !lifecycle.data.state) return null;
+  const data = lifecycle.data;
+  return (
+      <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-3 [overflow-wrap:anywhere] sm:p-5">
+        <div className="mb-4 flex items-center justify-between"><div className="flex items-center gap-2"><History className="h-4 w-4 text-sky-600" /><h2 className="text-sm font-semibold text-slate-900">Lead Journey</h2></div><span className="text-xs text-slate-500">{data.events.length} events</span></div>
+        {!data.events.length ? <p className="rounded-xl border border-dashed border-slate-300 py-8 text-center text-sm text-slate-500">No lifecycle activity recorded yet.</p> : <ol className="space-y-0">{data.events.map(event => <li key={event.id} className="relative border-l border-slate-200 pb-5 pl-5 last:pb-0"><span className="absolute -left-1.5 top-1 h-3 w-3 rounded-full border-2 border-white bg-sky-500" /><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-sm font-semibold text-slate-900">{humanize(event.event_type)}</p><p className="text-xs text-slate-500">{event.reason ? humanize(event.reason) : humanize(event.call_result || '')}{event.stage_after ? ` / ${humanize(event.stage_after)}` : ''}</p></div><div className="text-right text-[11px] text-slate-400">{fmtDate(event.occurred_at, 'd MMM yyyy, h:mm a')}<br />{event.user_name || 'System'}</div></div></li>)}</ol>}
+      </section>
+  );
 }

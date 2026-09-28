@@ -157,3 +157,13 @@ UI update verification: 29 frontend tests passed; production build/typecheck pas
 - Leads list and profile opt into 12px mobile / 16px larger-screen page padding. Removed the additional workflow wrapper padding and reduced Leads workspace header/body padding. Other pages retain their existing shell spacing.
 - Existing controls and their touch target sizes are preserved. Spacing uses consistent increments, following https://m1.material.io/layout/metrics-keylines.html.
 - Verification: 29 frontend regression tests passed; TypeScript, targeted lint and the final production build completed successfully with existing lint warnings; diff check passed. Browser visual verification and production deployment remain pending.
+
+
+## Lead profile scrolling, collapsed Conversion and journey placement
+
+- Compact Leads pages use overflow-x-clip instead of overflow-x-hidden, avoiding an implicit vertical scroll container. Profile content uses one main landmark and a normal-flow sidebar rather than a tall sticky sidebar. The screenshot symptom still requires browser confirmation.
+- Remark remains open with one outer border. Step 2 Conversion uses a native details/summary disclosure, closed by default, with keyboard support and its existing form preserved when toggled.
+- Lead Journey moved below Sessions / Webinar Attendance in the right column, using the existing cached lifecycle query and unchanged history. Long content wraps within cards. Columns follow actual content height rather than adding blank filler.
+- Browser verification blocked by browser connection error: missing sandboxPolicy. Production deployment has not been performed.
+
+Verification: 30 frontend tests passed. Production build, including typecheck and lint, passed with existing lint warnings. Diff check passed. GO for code review; responsive visual acceptance and production verification remain pending.
