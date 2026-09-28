@@ -5,12 +5,11 @@
 @tailwind utilities;
 
 @layer base {
-  html, body { @apply h-full; }
-  /* overflow-x lock at the viewport — last-resort defence against any
-     stray fixed-width element that would otherwise force horizontal
-     scroll on small phones (320–375px). Inner scrollable surfaces
-     like tables still scroll via their own overflow-x-auto wrappers. */
-  html, body { overflow-x: hidden; max-width: 100vw; }
+  html { height: 100%; overflow-x: hidden; }
+  /* Keep document scrolling on the root. A fixed-height body with hidden
+     horizontal overflow also becomes a vertical scroll container. */
+  body { min-height: 100%; overflow-x: clip; }
+  html, body { max-width: 100%; }
   body { @apply text-slate-800 bg-slate-50; }
   * { @apply border-slate-200; }
   /* Better touch behaviour on iOS: no rubber-band bounce inside scroll containers */

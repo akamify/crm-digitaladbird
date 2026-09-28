@@ -167,3 +167,13 @@ UI update verification: 29 frontend tests passed; production build/typecheck pas
 - Browser verification blocked by browser connection error: missing sandboxPolicy. Production deployment has not been performed.
 
 Verification: 30 frontend tests passed. Production build, including typecheck and lint, passed with existing lint warnings. Diff check passed. GO for code review; responsive visual acceptance and production verification remain pending.
+
+
+## Remove embedded Communication and correct document scroll ownership
+
+- Removed Communication panel from the lead profile. Header/mobile Chat actions and Call Logs & Remarks remain. No backend communication data or endpoints were removed.
+- Root cause in global CSS: both html and body had fixed 100% height with overflow-x:hidden. The body computed overflow-y:auto and scrolled independently. Body now grows with content using min-height:100% and overflow-x:clip; the document root owns page scrolling.
+- Isolated Edge browser comparison using actual global base CSS reproduced body scrolling with the old rules at 320, 360, 375, 390, 430, 768 and 1280px. Corrected rules passed at all seven widths: body scrollTop=0, document scrolling active, no horizontal overflow, 12px intended bottom padding, and native Conversion disclosure geometry working. This is a CSS fixture, not authenticated full-profile visual QA.
+- 31 frontend regression tests passed, including Communication removal and preserved Chat/history. In-app browser remains blocked by missing sandboxPolicy; production deployment and full-page visual verification are pending.
+
+Final checks: production build (including typecheck/lint) passed with existing lint warnings; diff check passed. GO for review, live verification pending.

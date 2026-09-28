@@ -24,7 +24,6 @@ import { RemarkModal } from '@/components/leads/RemarkModal';
 import { ReassignModal } from '@/components/leads/ReassignModal';
 import { WorkflowPanel } from '@/components/leads/WorkflowPanel';
 import { LeadJourneyCard, LeadLifecyclePanel } from '@/components/leads/LeadLifecyclePanel';
-import { LeadCommunicationPanel } from '@/components/leads/LeadCommunicationPanel';
 import { LeadSessionsCard } from '@/components/leads/LeadSessionsCard';
 import { LeadLabelsCard } from '@/components/leads/LeadLabelsCard';
 import { PersonalMeetingModal } from '@/components/leads/PersonalMeetingModal';
@@ -293,10 +292,6 @@ function LeadDetailInner() {
                 )}
               </WorkflowBoundary>
             </section>
-          )}
-
-          {!readOnlyAccess && (
-            <LeadCommunicationPanel leadId={id} lead={lead} remarks={lead.remarks} />
           )}
 
           <LeadRemarkTimeline

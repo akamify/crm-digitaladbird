@@ -407,3 +407,11 @@ test('relocated journey preserves history and empty/loading/unavailable states',
   assert.equal(render({data:{enabled:false}}),'');
   assert.match(render({isLoading:true}),/skeleton-shimmer/);
 });
+
+
+test('profile removes embedded communication while preserving chat and remark history',()=>{
+  const source=fs.readFileSync(path.join(root,'app/leads/[id]/page.tsx'),'utf8');
+  assert.doesNotMatch(source,/LeadCommunicationPanel/);
+  assert.match(source,/router.push\(`\/chat\?leadId=\$\{id\}`\)/);
+  assert.match(source,/<LeadRemarkTimeline/);
+});
