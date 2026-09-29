@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useDeferredValue, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowRight, Clock3, Loader2, Phone, RefreshCw, Search } from 'lucide-react';
-import { JourneySteps } from '@/components/leads/CounselorJourneyTracker';
+import { LeadDeadline, LeadRowJourney } from '@/components/leads/LeadRowProgress';
 import { Skeleton } from '@/components/ui/Modal';
 import { LeadAnalyticsPeriodControl } from '@/components/leads/LeadAnalyticsPeriodControl';
 import { LeadFilters } from '@/components/leads/LeadFilters';
@@ -36,11 +36,19 @@ const LEADS_METRICS: typeof METRICS = [
   {key:'cc',label:'CC',hint:'Communication Completed'},
 ];
 const LEADS_VIEWS: typeof ANALYTICS_VIEWS = [
-  ['cc','CC'],['responded','R'],['call_issues','CI'],['common_meeting','CM'],['dim','DIM'],['personal_meeting','PM'],
+  ['cc','Communication Completed'],['responded','Responded (HI)'],['call_issues','Call Issues'],['common_meeting','Common Meeting'],['dim','Discussed in Meeting'],['personal_meeting','Personal Meeting'],
   ['follow_up','Follow-up'],['quotation','Quotation'],['hot','Hot'],['warm','Warm'],
-  ['special_category','SC'],['call_reminder','CR'],['handover_rm','RM'],['not_attended','NT'],
-  ['converted','Converted'],['cold','Cold'],['process_incomplete','PI'],['responses','Responses'],['tte','TTE'],
+  ['special_category','Special Category'],['call_reminder','Call Reminder'],['handover_rm','Handover to Relationship Manager'],['not_attended','Not Attended'],
+  ['converted','Converted'],['cold','Cold'],['process_incomplete','Process Incomplete'],['responses','Responses'],['tte','TTE'],
 ];
+const QUEUE_TONES: Record<string,string> = {
+  received:'bg-indigo-50 text-indigo-900 hover:bg-indigo-100',
+  new:'bg-yellow-50 text-yellow-900 hover:bg-yellow-100',
+  old:'bg-orange-50 text-orange-900 hover:bg-orange-100',
+  worked:'bg-emerald-50 text-emerald-900 hover:bg-emerald-100',
+  pending:'bg-rose-100 text-rose-900 hover:bg-rose-200',
+  cc:'bg-sky-50 text-sky-900 hover:bg-sky-100',
+};
 const SELECTABLE_VIEWS = new Set<WorkspaceView>([
   ...METRICS.map(metric => metric.key as WorkspaceView),
   ...ANALYTICS_VIEWS.map(([key]) => key),
@@ -155,9 +163,9 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
 
       <div className={`grid grid-cols-2 gap-px bg-slate-200/70 ${leadsPage ? 'lg:grid-cols-5' : 'lg:grid-cols-6'}`}>
         {metrics.map(metric => (
-          <button key={metric.key} type="button" title={metric.hint} onClick={() => selectView(metric.key as WorkspaceView)} className={`${leadsPage && metric.key === 'cc' ? 'lg:hidden ' : ''}min-h-24 bg-white px-4 py-3 text-left transition hover:bg-sky-50 ${view === metric.key ? 'shadow-[inset_0_-3px_0_#0284c7]' : ''}`}>
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{metric.label}</div>
-            {leads.isLoading && !leads.data ? <Skeleton className="mt-3 h-7 w-14" /> : <div className="mt-2 text-2xl font-bold tabular-nums text-slate-950">{Number(leads.data?.summary?.[metric.key] || 0).toLocaleString()}</div>}
+          <button key={metric.key} type="button" aria-pressed={view === metric.key} title={metric.hint} onClick={() => selectView(metric.key as WorkspaceView)} className={`${leadsPage && metric.key === 'cc' ? 'lg:hidden ' : ''}min-h-24 px-4 py-3 text-left transition ${leadsPage ? QUEUE_TONES[metric.key] || 'bg-white' : 'bg-white hover:bg-sky-50'} ${view === metric.key ? 'shadow-[inset_0_-3px_0_#0284c7]' : ''}`}>
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-current">{metric.label}</div>
+            {leads.isLoading && !leads.data ? <Skeleton className="mt-3 h-7 w-14" /> : <div className="mt-2 text-2xl font-bold tabular-nums text-current">{Number(leads.data?.summary?.[metric.key] || 0).toLocaleString()}</div>}
             <div className="mt-1 line-clamp-1 text-[10px] text-slate-400">{leadsPage&&metric.key==='worked'?`N ${leads.data?.summary?.worked_n ?? 0} / O ${leads.data?.summary?.worked_o ?? 0} / Previous ${leads.data?.summary?.worked_legacy ?? 0}`:leadsPage&&metric.key==='cc'?'Communication Completed':'Selected period'}</div>
           </button>
         ))}
@@ -192,10 +200,10 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
                 <div className="grid gap-3 lg:grid-cols-[minmax(0,1.25fr)_0.8fr_1fr_auto] lg:items-center">
                   <div className="min-w-0"><div className="truncate text-sm font-semibold text-slate-900">{lead.full_name || 'Unnamed lead'}</div><div className="mt-0.5 text-xs text-slate-500">{lead.phone || 'No phone'} / {humanize(lead.source || 'manual')}</div><div className="mt-1 flex flex-wrap gap-1">{leadsPage&&view==='worked'&&<>{lead.legacy_worked&&!lead.worked_n&&!lead.worked_o&&<span className="chip-slate">Previous work</span>}{lead.worked_n&&<span className="chip-blue" title="Worked while New">N</span>}{lead.worked_o&&<span className="chip-slate" title="Worked while Old or Pending">O</span>}</>}{lead.labels?.slice(0, 3).map(label => <span key={label.id} className="rounded-full border px-1.5 py-0.5 text-[9px] font-semibold" style={{ borderColor: label.color || '#cbd5e1', color: label.color || '#475569' }}>{label.name}</span>)}</div></div>
                   <div className="text-xs text-slate-600"><div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Journey / Last result</div><div className="mt-1 font-semibold text-slate-800">{humanize((managed && lead.workflow_primary_status) || lead.last_call_result || lead.terminal_state || lead.journey_stage)}</div></div>
-                  <div className="text-xs text-slate-600"><div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Next required action</div><div className="mt-1 font-semibold text-slate-800">{managed?(lead.followup_override?'Custom follow-up':lead.workflow_queue==='pending'?'Add next remark':due?(lead.workflow_next_queue==='old'?'Moves to Old Leads':lead.workflow_next_queue==='pending'?'Moves to Pending':'Workflow deadline'):'Add next remark'):nextActionLabel(lead.current_action_type, lead.current_action_reason, lead.has_call_issue)}</div>{due && <div className={`mt-0.5 flex items-center gap-1 ${(managed?lead.workflow_queue==='pending':lead.is_pending) ? 'font-semibold text-rose-600' : ''}`}><Clock3 className="h-3 w-3" />{fmtDate(due, 'd MMM, h:mm a')} | {fmtRelative(due)}</div>}{(managed?lead.workflow_queue==='pending':lead.is_pending) && <span className="mt-1 inline-flex rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700">{managed?'Pending':`Pending cycle ${lead.pending_occurrences || 1}`}</span>}</div>
+                  <div className="text-xs text-slate-600"><div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Next required action</div><div className={`mt-1 inline-flex rounded-md px-2 py-1 font-semibold ${managed && (lead.workflow_queue==='pending' || lead.workflow_next_queue==='pending') ? 'bg-rose-50 text-rose-800' : managed && lead.workflow_next_queue==='old' && !lead.followup_override ? 'bg-orange-50 text-orange-800' : 'bg-sky-50 text-sky-800'}`}>{managed?(lead.followup_override?'Custom follow-up':lead.workflow_queue==='pending'?'Add next remark':due?(lead.workflow_next_queue==='old'?'Moves to Old Leads':lead.workflow_next_queue==='pending'?'Moves to Pending':'Workflow deadline'):'Add next remark'):nextActionLabel(lead.current_action_type, lead.current_action_reason, lead.has_call_issue)}</div>{due && <div className={`mt-0.5 flex items-center gap-1 ${(managed?lead.workflow_queue==='pending':lead.is_pending) ? 'font-semibold text-rose-600' : ''}`}><Clock3 className="h-3 w-3" />{leadsPage ? <LeadDeadline due={due}/> : <>{fmtDate(due, 'd MMM, h:mm a')} | {fmtRelative(due)}</>}</div>}{(managed?lead.workflow_queue==='pending':lead.is_pending) && <span className="mt-1 inline-flex rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700">{managed?'Pending':`Pending cycle ${lead.pending_occurrences || 1}`}</span>}</div>
                   <div className="flex items-center gap-2 lg:justify-end">{!lead.read_only && lead.phone && <a href={`tel:${lead.phone}`} className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-emerald-200 px-3 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"><Phone className="h-3.5 w-3.5" />Call</a>}<Link href={`/leads/${lead.id}?returnTo=${encodeURIComponent(returnTo)}`} className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-brand-200 px-3 text-xs font-semibold text-brand-700 hover:bg-brand-50">Open<ArrowRight className="h-3.5 w-3.5" /></Link></div>
                 </div>
-                {leadsPage&&Boolean(lead.history?.length)&&<div className="mt-2"><JourneySteps events={lead.history||[]}/></div>}
+                {leadsPage&&Boolean(lead.history?.length)&&<div className="mt-2"><LeadRowJourney events={lead.history||[]} currentStatus={managed && lead.workflow_queue!=='pending' ? lead.workflow_primary_status : null} href={`/leads/${lead.id}?returnTo=${encodeURIComponent(returnTo)}`}/></div>}
 
               </article>
             );})}

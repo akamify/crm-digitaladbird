@@ -18,12 +18,13 @@ import {
   LatestRmUpdateCard,
   TechnicalMetaDetails,
 } from '@/components/leads/LeadProfileSidebar';
+import { CurrentRemarkStatus } from '@/components/leads/CurrentRemarkStatus';
 import { LeadRemarkTimeline } from '@/components/leads/LeadRemarkTimeline';
 import { LeadActionBar } from '@/components/leads/LeadActionBar';
 import { RemarkModal } from '@/components/leads/RemarkModal';
 import { ReassignModal } from '@/components/leads/ReassignModal';
 import { WorkflowPanel } from '@/components/leads/WorkflowPanel';
-import { LeadJourneyCard, LeadLifecyclePanel } from '@/components/leads/LeadLifecyclePanel';
+import { LeadLifecyclePanel } from '@/components/leads/LeadLifecyclePanel';
 import { LeadSessionsCard } from '@/components/leads/LeadSessionsCard';
 import { LeadLabelsCard } from '@/components/leads/LeadLabelsCard';
 import { PersonalMeetingModal } from '@/components/leads/PersonalMeetingModal';
@@ -55,7 +56,7 @@ function LeadDetailInner() {
   const deleteLead = useDeleteLead();
   const updateCategory = useUpdateLeadCategory();
   const workflowSettings = useWorkflowSettings();
-  const counselorWorkflow = useCounselorWorkflowDetail(id,1,false);
+  const counselorWorkflow = useCounselorWorkflowDetail(id,1,Boolean(user && ['member','partner'].includes(user.role)));
 
   const [rmRemarkOpen, setRmRemarkOpen] = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
@@ -293,13 +294,6 @@ function LeadDetailInner() {
               </WorkflowBoundary>
             </section>
           )}
-
-          <LeadRemarkTimeline
-            remarks={lead.remarks}
-            onAdd={() => setRmRemarkOpen(true)}
-            canAdd={!readOnlyAccess && canAddRmUpdate}
-            addLabel="Add RM Update"
-          />
         </div>
 
         <aside className="min-w-0 self-start">
@@ -315,7 +309,13 @@ function LeadDetailInner() {
               canManage={!readOnlyAccess}
               createSignal={sessionCreateSignal}
             />
-            {legacyWorkflowReady && lifecycleEnabled && <WorkflowBoundary><LeadJourneyCard leadId={id} /></WorkflowBoundary>}
+            <LeadRemarkTimeline
+              remarks={lead.remarks}
+              status={<CurrentRemarkStatus query={counselorWorkflow} latestStatus={lead.latest_remark_status || lead.workflow_step_1_status || lead.call_status} nextFollowup={lead.next_followup_at} enabled={['member','partner'].includes(user.role)} />}
+              onAdd={() => setRmRemarkOpen(true)}
+              canAdd={!readOnlyAccess && canAddRmUpdate}
+              addLabel="Add RM Update"
+            />
             {canSeeTechnical && <TechnicalMetaDetails lead={lead} />}
           </div>
         </aside>

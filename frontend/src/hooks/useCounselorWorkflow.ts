@@ -11,6 +11,7 @@ export function useCounselorWorkflowConfig(enabled:boolean) {
     queryFn:()=>apiGet<{enabled:boolean}>('/counselor-workflow/v1/config'),staleTime:15000,refetchInterval:30000});
 }
 export interface WorkflowState {
+  awaiting_primary?: boolean;
   primary_status: string | null; queue: 'new'|'old'|'pending'|null; journey_active: boolean;
   generation: number; move_to_old_at: string|null; move_to_pending_at: string|null; followup_override: boolean;
 }
@@ -30,6 +31,7 @@ export interface CounselorWorkspaceResponse {
   rows: CounselorLead[]; total: number; page: number; page_size: number;
 }
 export interface CounselorDetail {
+  assignment_current?: boolean;
   enabled: boolean; managed: boolean; read_only: boolean; state: WorkflowState|null;
   events: WorkflowEvent[]; has_more: boolean; status_options: string[];
 }

@@ -177,3 +177,24 @@ Verification: 30 frontend tests passed. Production build, including typecheck an
 - 31 frontend regression tests passed, including Communication removal and preserved Chat/history. In-app browser remains blocked by missing sandboxPolicy; production deployment and full-page visual verification are pending.
 
 Final checks: production build (including typecheck/lint) passed with existing lint warnings; diff check passed. GO for review, live verification pending.
+
+
+## Sidebar Call Logs & Remarks and current deadline
+
+- Removed Lead Journey from the profile and moved Call Logs & Remarks to its place below Sessions / Webinar Attendance. History records are retained.
+- Free-text notes use padded amber surfaces; legacy Status: entries use padded sky surfaces. General badges are replaced with Note/Remark; counselor/RM attribution remains. Status entries no longer show a potentially conflicting call-status chip.
+- The card shows the latest primary remark, current queue, next Old/Pending destination, deadline and relative time. It reads the existing counselor detail endpoint for member/partner roles only; no timer policy or backend mutation was introduced. Pending, follow-up overrides, awaiting-primary and outdated-assignment states are respected. Relative time refreshes every minute, existing query polling refreshes authoritative state.
+- Verification: 33 frontend regression tests and TypeScript passed. Browser visual acceptance and production deployment remain pending.
+
+Production build, including lint/typecheck, passed with existing lint warnings. Diff check passed. GO for review; live verification pending.
+
+
+## Compact lead-row timeline and queue styling
+
+- Rows display at most five recent history steps, with View timeline linking to the same profile/return URL as Open. Stored history is unchanged. The latest occurrence of the authoritative active primary remark is green and explicitly labelled Current; pending/history-only entries are not labelled current.
+- Deadline actions have soft destination colours and the row countdown includes seconds. Countdown updates locally, preserves absolute due time, and waits for backend confirmation at expiry.
+- Small workflow tabs use full names where defined; TTE retains its existing name because no authoritative expansion was found. Tabs continue scrolling inside their container with keyboard navigation.
+- Assigned/New/Old/Worked/Pending summary tiles use soft indigo/yellow/orange/emerald/rose tones and expose selected state. Labels accompany colour per https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.
+- 35 frontend tests passed. Existing uncommitted sidebar work preserved. Live responsive verification and deployment remain pending.
+
+Final row UI checks: production build/typecheck passed; lint completed with warnings. Diff check passed. GO for review; production and full-page visual acceptance pending.

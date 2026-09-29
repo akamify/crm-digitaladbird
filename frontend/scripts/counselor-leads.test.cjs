@@ -169,7 +169,7 @@ test('emergency rollback restores both original counselor screens',()=>{
   const detail=fs.readFileSync(path.join(root,'app/leads/[id]/page.tsx'),'utf8');
   assert.match(detail,/const counselorEnabled = false/);
   assert.match(detail,/const legacyWorkflowReady = true/);
-  assert.match(detail,/useCounselorWorkflowDetail\(id,1,false\)/);
+  assert.ok(detail.includes("useCounselorWorkflowDetail(id,1,Boolean(user && ['member','partner'].includes(user.role)))"));
 });
 
 test('remark form requires an explicit primary and offers follow-up preservation', () => {
@@ -248,7 +248,7 @@ test('existing lead rows show the recorded journey through Pending',()=>{
   const h=harness('workspace_view=pending',{data:{summary:{pending:1},total:1,rows:[{id:'journey',full_name:'Tracked lead',workflow_managed:true,workflow_queue:'pending',history,history_total:4}]}});
   const html=renderToStaticMarkup(React.createElement(h.load('@/components/dashboard/CounselorLifecycleWorkspace').CounselorLifecycleWorkspace,{leadsPage:true}));
   for(const label of ['New','CC','OL','Pending'])assert.ok(html.includes(`>${label}</span>`));
-  assert.match(html,/Journey history/);assert.match(html,/Open/);
+  assert.match(html,/Recent journey history/);assert.match(html,/Open/);
 });
 
 
@@ -316,15 +316,15 @@ test('classic workspace distinguishes initial load, tab transition and backgroun
   };
   const data={summary:{cc:1},total:1,rows:[{id:'current',full_name:'Current lead',phone:'123'}]};
   const initial=render({isLoading:true,isFetching:true});
-  assert.match(initial,/Loading CC/);assert.doesNotMatch(initial,/No leads in/);
+  assert.match(initial,/Loading Communication Completed/);assert.doesNotMatch(initial,/No leads in/);
   const transition=render({isFetching:true,isPlaceholderData:true,data});
-  assert.match(transition,/Loading CC/);assert.doesNotMatch(transition,/Current lead|No leads in/);
+  assert.match(transition,/Loading Communication Completed/);assert.doesNotMatch(transition,/Current lead|No leads in/);
   const background=render({isFetching:true,isPlaceholderData:false,data});
-  assert.match(background,/1 CC/);assert.match(background,/Current lead/);
+  assert.match(background,/1 Communication Completed/);assert.match(background,/Current lead/);
   assert.doesNotMatch(background,/Loading CC|Updating results|opacity-45|inert=""/);
   assert.match(background,/aria-label="Refreshing leads"/);assert.match(background,/h-4 w-4 animate-spin/);
   const cached=render({isFetching:false,isPlaceholderData:false,data});
-  assert.match(cached,/1 CC/);assert.doesNotMatch(cached,/Loading CC|opacity-45/);
+  assert.match(cached,/1 Communication Completed/);assert.doesNotMatch(cached,/Loading CC|opacity-45/);
   assert.match(cached,/aria-label="Refresh leads"/);
   const error=render({isError:true,isFetching:false,data});
   assert.match(error,/could not be loaded/);assert.match(error,/Retry/);assert.match(error,/Current lead/);
@@ -414,4 +414,47 @@ test('profile removes embedded communication while preserving chat and remark hi
   assert.doesNotMatch(source,/LeadCommunicationPanel/);
   assert.match(source,/router.push\(`\/chat\?leadId=\$\{id\}`\)/);
   assert.match(source,/<LeadRemarkTimeline/);
+});
+
+
+test('sidebar remarks distinguish notes and status remarks without General labels',()=>{
+ const h=harness(); const Component=h.load('@/components/leads/LeadRemarkTimeline').LeadRemarkTimeline;
+ const html=renderToStaticMarkup(React.createElement(Component,{canAdd:false,onAdd(){},remarks:[
+ {id:'note',remark:'Customer wants a meeting',note_type:'general',created_at:'2026-09-28T10:00:00Z'},
+ {id:'status',remark:'Status: Communication Completed',note_type:'general',call_status:'interested',created_at:'2026-09-28T10:00:00Z'}]}));
+ assert.match(html,/bg-amber-50/);assert.match(html,/bg-sky-50/);assert.match(html,/>Note</);assert.match(html,/>Remark</);
+ assert.doesNotMatch(html,/>General<|>Interested</);
+ const source=fs.readFileSync(path.join(root,'app/leads/[id]/page.tsx'),'utf8');
+ assert.doesNotMatch(source,/LeadJourneyCard/);
+ assert.ok(source.indexOf('<LeadRemarkTimeline')>source.indexOf('<aside'));
+});
+
+test('current remark uses server queue deadlines and respects pending and overrides',()=>{
+ const Component=harness().load('@/components/leads/CurrentRemarkStatus').CurrentRemarkStatus;
+ const render=(state,extra={})=>renderToStaticMarkup(React.createElement(Component,{enabled:true,latestStatus:'interested',nextFollowup:'2026-10-02T10:00:00Z',query:{data:{enabled:true,managed:true,assignment_current:true,state,...extra},isLoading:false,isError:false,refetch(){}}}));
+ assert.match(render({primary_status:'communication_completed',move_to_old_at:'2026-10-01T10:00:00Z'}),/Communication Completed[\s\S]*Moves to Old Leads/);
+ assert.match(render({queue:'old',move_to_pending_at:'2026-10-01T10:00:00Z'}),/Moves to Pending/);
+ const pending=render({queue:'pending',move_to_old_at:'2026-10-01T10:00:00Z'});
+ assert.match(pending,/Pending . add next remark/);assert.doesNotMatch(pending,/Moves to Old Leads/);
+ const override=render({followup_override:true,move_to_old_at:'2026-10-01T10:00:00Z'});
+ assert.match(override,/Custom follow-up/);assert.doesNotMatch(override,/Moves to Old Leads/);
+ assert.doesNotMatch(render({move_to_old_at:'2026-10-01T10:00:00Z'},{assignment_current:false}),/Moves to Old Leads/);
+});
+
+
+test('row journey is bounded and highlights only latest current occurrence',()=>{
+ const C=harness().load('@/components/leads/LeadRowProgress');
+ const events=Array.from({length:9},(_,i)=>({id:String(i),event_type:'remark_saved',primary_status:i%2?'nracm':'communication_completed',occurred_at:'2026-09-28T10:00:00Z'}));
+ const html=renderToStaticMarkup(React.createElement(C.LeadRowJourney,{events,currentStatus:'communication_completed',href:'/leads/one?returnTo=%2Fleads'}));
+ assert.equal((html.match(/<li /g)||[]).length,5);assert.equal((html.match(/aria-current="step"/g)||[]).length,1);
+ assert.match(html,/bg-emerald-100/);assert.match(html,/View timeline/);assert.match(html,/href="\/leads\/one\?returnTo=%2Fleads"/);
+ const pending=renderToStaticMarkup(React.createElement(C.LeadRowJourney,{events,currentStatus:null,href:'/leads/one'}));
+ assert.doesNotMatch(pending,/aria-current/);
+});
+
+test('countdown includes seconds and handles expiry and invalid deadlines',()=>{
+ const {countdownText}=harness().load('@/components/leads/LeadRowProgress');const now=Date.parse('2026-09-28T10:00:00Z');
+ assert.equal(countdownText('2026-09-28T10:45:09Z',now),'45m 09s remaining');
+ assert.equal(countdownText('2026-09-28T10:00:00Z',now),'Due now \u2014 awaiting update');
+ assert.equal(countdownText('bad',now),'Deadline unavailable');
 });
