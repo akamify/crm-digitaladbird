@@ -41,6 +41,8 @@ export function CounselorLeadsWorkspace() {
   const debouncedSearch = useDebouncedValue(search,300);
   const tabRefs = useRef<Array<HTMLButtonElement|null>>([]);
   const tabStrip = useRef<HTMLDivElement>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const scrolledView = useRef<string|null>(null);
   const currentParams = useRef(searchParams);
   currentParams.current = searchParams;
   const leads = useCounselorWorkflowLeads({view:legacy?'received':activeTab.key,scope,filters,page:legacy?1:page});
@@ -48,7 +50,10 @@ export function CounselorLeadsWorkspace() {
   const rows = data?.enabled ? data.rows : [];
   const activeIndex = COUNSELOR_LEAD_TABS.findIndex(tab=>tab.key===activeTab.key);
   const navigate = (params:URLSearchParams)=>router.replace(`/leads?${params}`,{scroll:false});
-  function selectView(key:string) { const params=new URLSearchParams(currentParams.current.toString());params.set('workspace_view',key);params.delete('page');navigate(params); }
+  function scrollToResults() {
+    window.requestAnimationFrame(()=>resultsRef.current?.scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'}));
+  }
+  function selectView(key:string) { const params=new URLSearchParams(currentParams.current.toString());params.set('workspace_view',key);params.delete('page');navigate(params);scrollToResults(); }
   function changePage(next:number) { const params=new URLSearchParams(currentParams.current.toString());params.set('page',String(next));navigate(params); }
   function changeFilters(next:LeadFilters) {
     setSearch(next.q||''); const params=new URLSearchParams(currentParams.current.toString());
@@ -56,6 +61,13 @@ export function CounselorLeadsWorkspace() {
     params.delete('page');navigate(params);
   }
   useEffect(()=>{setSearch(filters.q||'');},[filters.q]);
+  useEffect(()=>{
+    const selectedView=searchParams.get('workspace_view');
+    if(!selectedView||selectedView!==activeTab.key||!data||scrolledView.current===selectedView)return;
+    scrolledView.current=selectedView;
+    const frame=window.requestAnimationFrame(()=>resultsRef.current?.scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'}));
+    return ()=>window.cancelAnimationFrame(frame);
+  },[activeTab.key,data,searchParams]);
   useEffect(()=>{
     if(debouncedSearch===(currentParams.current.get('q')||''))return;
     const params=new URLSearchParams(currentParams.current.toString());if(debouncedSearch)params.set('q',debouncedSearch);else params.delete('q');params.delete('page');router.replace(`/leads?${params}`,{scroll:false});
@@ -80,12 +92,12 @@ export function CounselorLeadsWorkspace() {
         <span>{tab.label}{tab.key==='worked'&&data?.enabled&&<span className="block text-[10px] font-normal" title="N = New worked; O = Old worked">N {data.worked.n} · O {data.worked.o}</span>}</span><span className="rounded-md bg-black/5 px-1.5 py-0.5 tabular-nums">{data?.enabled?data.summary[tab.key]??'—':'—'}</span>
       </button>)}
     </div>
-    <div id="counselor-results" role="tabpanel" aria-labelledby={activeIndex>=0?`counselor-tab-${activeTab.key}`:undefined} aria-label={activeIndex<0?activeTab.label:undefined} aria-busy={leads.isFetching} className="min-w-0 space-y-3">
+    <div id="counselor-results" ref={resultsRef} role="tabpanel" aria-labelledby={activeIndex>=0?`counselor-tab-${activeTab.key}`:undefined} aria-label={activeIndex<0?activeTab.label:undefined} aria-busy={leads.isFetching} className="min-w-0 scroll-mt-36 space-y-3">
       {leads.isError&&<div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm">Leads could not be loaded. <button className="min-h-10 underline" onClick={()=>leads.refetch()}>Retry</button></div>}
       {!data&&leads.isFetching&&<div role="status" className="space-y-2"><span className="text-xs">Loading…</span>{[1,2,3].map(key=><Skeleton key={key} className="h-36"/>)}</div>}
       {data&&!data.enabled&&<p role="status" className="card p-4 text-sm">The counselor workflow is not enabled yet. No workflow counts are available.</p>}
       {legacy?<LegacyView view={activeTab.key as 'responses'|'tte'} scope={scope} filters={filters} page={page} onPage={changePage}/>:data?.enabled&&<>
-        <h2 className="text-sm font-semibold">{activeTab.key==='worked'?`Worked: ${data.summary.worked} · ${data.total} leads`:`${data.total.toLocaleString()} ${activeTab.label}`}</h2>
+        <h2 className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 text-sm font-bold text-slate-950 shadow-sm">{activeTab.key==='worked'?`Worked: ${data.summary.worked} · ${data.total} leads`:`${data.total.toLocaleString()} ${activeTab.label}`}</h2>
         {activeTab.key==='worked'&&<p className="text-xs text-slate-600">N {data.worked.n} · O {data.worked.o} — New worked + Old worked. A lead can count once in each bucket.</p>}
         {!rows.length?<p className="rounded-xl border border-dashed p-6 text-center text-sm text-slate-500">No leads in {activeTab.label}.</p>:<div className="min-w-0 space-y-3">{rows.map(lead=><article key={lead.id} className="min-w-0 break-words rounded-xl border border-slate-200 bg-white p-3 [overflow-wrap:anywhere]">
           <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
