@@ -20,3 +20,15 @@ export function managerLeadHref(params:URLSearchParams,metric:string,rmId?:strin
   if(counselorId)next.set('counselor_id',counselorId);
   return `/leads?${next.toString()}`;
 }
+
+export function distributionReportHref(params: URLSearchParams, metric: string, rmId: string, counselorId?: string) {
+  const target = new URL(managerLeadHref(params, metric, rmId, counselorId), 'https://local.invalid');
+  if (counselorId) {
+    target.searchParams.set('view', target.searchParams.get('lead_view') || 'all_time');
+    target.searchParams.set('metric', managerMetric(metric));
+    target.searchParams.delete('lead_view');
+    target.searchParams.delete('workflow_view');
+  }
+  const path = counselorId ? `counselor/${encodeURIComponent(counselorId)}` : 'leads';
+  return `/leads/distribution/rm/${encodeURIComponent(rmId)}/${path}?${target.searchParams.toString()}`;
+}

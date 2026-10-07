@@ -569,6 +569,7 @@ export interface LeadDistributionLeadResponse {
 }
 
 export interface PageResult<T> {
+  rm?: { id: string; full_name: string } | null;
   summary?: LeadDistributionSummary;
   call_issue_buckets?: Record<string,number>;
   call_issue_labels?: Record<string,string>;

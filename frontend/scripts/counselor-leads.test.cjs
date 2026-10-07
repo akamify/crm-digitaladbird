@@ -360,12 +360,15 @@ test('clean rows show latest primary once and the actual next queue, respecting 
 test('parent URL effect preserves counselor state and waits for auth',()=>{
   const source=fs.readFileSync(path.join(root,'app/leads/page.tsx'),'utf8');
   const body=source.match(/useEffect\(\(\) => \{(\s*if \(!user \|\| isCounselorLeadsView\)[\s\S]*?)\}, \[filters,/)[1];
-  const run=new Function('user','isCounselorLeadsView','isSuperAdminLeadsView','filters','router','selectedLeadView','restoringUrl={current:false}','syncedUrl={current:null}',body);
+  const run=new Function('user','isCounselorLeadsView','isSuperAdminLeadsView','filters','router','selectedLeadView','restoringUrl={current:false}','syncedUrl={current:null}',"pathname='/leads'",body);
   const calls=[];
   for(const [user,counselor] of [[null,false],[{role:'member'},true],[{role:'partner'},true]])run(user,counselor,false,{}, {replace:url=>calls.push(url)},'daily');
   assert.equal(calls.length,0);
   run({role:'rm'},false,false,{q:'kept'}, {replace:url=>calls.push(url)},'daily');
   assert.deepEqual(calls,['/leads?q=kept']);
+  const report='/leads/distribution/rm/11111111-1111-1111-1111-111111111111/leads';
+  run({role:'super_admin'},false,true,{workflow_view:'pending'}, {replace:url=>calls.push(url)},'all_time',undefined,undefined,report);
+  assert.equal(calls[1],report+'?workflow_view=pending');
 });
 
 
@@ -528,7 +531,7 @@ test('manager reports render workflow tabs, distinct total and labelled scoped d
   const html=renderToStaticMarkup(React.createElement(DistributionSummaryGrid,{summary:{received:7,worked:1,worked_n:1,worked_o:1},activeMetric:'worked',onMetricChange(){}}));
   for(const text of ['Assigned Leads','New Leads','Old Leads','Worked Leads','Pending','Communication Completed','Discussed in Meeting','Process Incomplete'])assert.ok(html.includes(text));
   assert.match(html,/aria-label="Open Assigned Leads"/);
-  assert.match(html,/workflow_view=cc/);assert.match(html,/counselor_id=counselor-id/);assert.match(html,/rm_id=rm-id/);
+  assert.match(html,/metric=cc/);assert.match(html,/counselor_id=counselor-id/);assert.match(html,/rm_id=rm-id/);
   assert.match(html,/source=meta/);assert.match(html,/from=2026-09-25/);assert.match(html,/work_source=old/);
   assert.match(html,/overflow-x-auto/);
 });
@@ -561,7 +564,7 @@ test('RM and counselor cards retain hierarchy and clickable workflow reports',()
     const href=`/leads/distribution/rm/rm-id${kind==='counselor'?'/counselor/person-id':''}?view=daily&from=2026-09-25&to=2026-09-25`;
     const html=renderToStaticMarkup(React.createElement(DistributionPersonCard,{kind,href,person:{id:'person-id',full_name:'Report owner',cc:3,old:2,pending:1,worked_n:1,worked_o:2}}));
     assert.ok(html.includes(kind==='rm'?'View Counselors':'View Lead Details'));
-    for(const metric of ['cc','old','pending'])assert.ok(html.includes(`workflow_view=${metric}`));
+    for(const metric of ['cc','old','pending'])assert.ok(html.includes(`${kind==='rm'?'workflow_view':'metric'}=${metric}`));
     assert.match(html,/rm_id=rm-id/);
     if(kind==='counselor')assert.match(html,/counselor_id=person-id/);
     assert.match(html,/work_source=old/);
@@ -607,4 +610,34 @@ test('counselor report keeps metric controls while loading only selected rows', 
   assert.match(loading,/Loading selected leads/);
   assert.doesNotMatch(loading,/Previous tab lead|No leads found/);
   assert.match(render(false),/Previous tab lead/);
+});
+
+
+test('distribution metric navigation opens scoped reports and keeps selected dates and filters',()=>{
+  const {distributionReportHref}=harness().load('@/lib/managerWorkflow');
+  const input=new URLSearchParams('view=daily&from=2026-10-07&to=2026-10-07&source=meta&q=Smith&page=8&search=RM&call_issue_type=cnr');
+  for(const counselor of [undefined,'person']) {
+    const link=new URL(distributionReportHref(input,'pending','rm',counselor),'https://example.test');
+    assert.equal(link.pathname,`/leads/distribution/rm/rm/${counselor?'counselor/person':'leads'}`);
+    assert.equal(link.searchParams.get(counselor?'metric':'workflow_view'),'pending');
+    assert.equal(link.searchParams.get(counselor?'view':'lead_view'),'daily');
+    for(const key of ['from','to','source','q']) assert.equal(link.searchParams.get(key),input.get(key));
+    for(const key of ['page','search','call_issue_type']) assert.equal(link.searchParams.get(key),null);
+    const old=new URL(distributionReportHref(link.searchParams,'old','rm',counselor),'https://example.test');
+    assert.equal(old.pathname,link.pathname);
+    assert.equal(old.searchParams.get('rm_id'),'rm');
+    assert.equal(old.searchParams.get(counselor?'metric':'workflow_view'),'old');
+  }
+  const safe=harness().load('@/lib/leadReturnPath').leadReturnPath;
+  const report='/leads/distribution/rm/11111111-1111-1111-1111-111111111111/leads?workflow_view=pending';
+  assert.equal(safe(report),report);
+  assert.equal(safe(report.replace('/leads?','/leads/../../admin?')),'/leads');
+});
+
+test('RM distribution gives cards two desktop columns with health below',()=>{
+  const source=fs.readFileSync(path.join(root,'app/leads/distribution/page.tsx'),'utf8');
+  assert.match(source,/section className="grid min-w-0 gap-4"/);
+  assert.match(source,/grid gap-4 md:grid-cols-2"/);
+  assert.doesNotMatch(source,/360px|2xl:grid-cols-3/);
+  assert.ok(source.indexOf('Distribution Health')>source.indexOf('data.rms.map'));
 });

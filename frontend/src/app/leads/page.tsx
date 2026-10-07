@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { DistributionSummaryGrid, DistributionError } from '@/components/leads/LeadDistributionUi';
 import { managerMetric } from '@/lib/managerWorkflow';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { AlertTriangle, CalendarDays, ChevronLeft, ChevronRight, Eye, Inbox, Lock, Mail, MessageCircle, MessageSquarePlus, MoreHorizontal, MoreVertical, Phone, Plus, ScrollText, Tag, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { counselorWorkspaceHeading } from '@/components/leads/counselorLeadTabs';
@@ -290,12 +290,13 @@ function LeadRowActionsMenu({
 
 export default function LeadsPage() {
   const searchParams = useSearchParams();
+  const { rmId } = useParams<{ rmId?: string }>();
   const {user} = useAuth();
   const heading = user?.role === 'member' || user?.role === 'partner'
     ? counselorWorkspaceHeading(searchParams.get('workspace_view'))
-    : {title:'Leads',subtitle:'Browse, filter, and action your assigned leads'};
+    : rmId ? {title:'RM Lead Report',subtitle:'Browse workflow queues for the selected RM'} : {title:'Leads',subtitle:'Browse, filter, and action your assigned leads'};
   return (
-    <AppShell compact title={heading.title} subtitle={heading.subtitle}>
+    <AppShell compact title={heading.title} subtitle={heading.subtitle} roles={rmId ? ['super_admin', 'admin', 'rm'] : undefined}>
       <LeadsInner />
     </AppShell>
   );
@@ -303,6 +304,8 @@ export default function LeadsPage() {
 
 function LeadsInner() {
   const router = useRouter();
+  const pathname = usePathname();
+  const { rmId } = useParams<{ rmId?: string }>();
   const sp = useSearchParams();
   const { user } = useAuth();
   const isSuperAdminLeadsView = user?.role === 'super_admin';
@@ -313,7 +316,7 @@ function LeadsInner() {
     const scope = normalizeAnalyticsScope(view, sp.get('from') || sp.get('selected_date'), sp.get('to') || sp.get('selected_date'));
     return ({
     workflow_view: managerMetric(sp.get('workflow_view') || sp.get('daily_metric') || sp.get('all_time_metric') || (sp.get('pending') === 'true' ? 'pending' : null)),
-    rm_id: sp.get('rm_id') || '',
+    rm_id: rmId || sp.get('rm_id') || '',
     counselor_id: sp.get('counselor_id') || '',
     assigned_to: sp.get('assigned_to') || '',
     work_source: sp.get('work_source') || '',
@@ -356,7 +359,7 @@ function LeadsInner() {
     sort: 'created_at',
     order: 'desc',
     });
-  }, [sp]);
+  }, [sp, rmId]);
 
   const [filters, setFilters] = useState<LeadFilterType>(initial);
   const syncedUrl = useRef(sp.toString());
@@ -382,7 +385,7 @@ function LeadsInner() {
   const [bulkStatuses, setBulkStatuses] = useState<CallStatus[]>([]);
   const debouncedSearch = useDebouncedValue(filters.q || '');
   const effectiveFilters = useMemo(() => {
-    const next: LeadFilterType = { ...filters, q: debouncedSearch || undefined };
+    const next: LeadFilterType = { ...filters, ...(rmId ? {rm_id: rmId} : {}), q: debouncedSearch || undefined };
     if (isManagerReportingView) {
       next.workflow_view = managerMetric(next.workflow_view);
       delete next.selected_date;
@@ -400,7 +403,7 @@ function LeadsInner() {
     if (next.assignment === 'unassigned') next.assigned_to = '__unassigned';
     delete next.assignment;
     return next;
-  }, [filters, debouncedSearch, isManagerReportingView]);
+  }, [filters, debouncedSearch, isManagerReportingView, rmId]);
   const { data: queryData, isLoading, isFetching, isPlaceholderData, isError, refetch } = useLeadList(effectiveFilters, { enabled: Boolean(user) && !isCounselorLeadsView });
   const data = isPlaceholderData ? undefined : queryData;
   const bulkAddRemark = useBulkAddRemark();
@@ -446,8 +449,8 @@ function LeadsInner() {
       }
     });
     syncedUrl.current = params.toString();
-    router.replace(`/leads${params.toString() ? `?${params.toString()}` : ''}`, {scroll:false});
-  }, [filters, isCounselorLeadsView, isSuperAdminLeadsView, router, selectedLeadView, user]);
+    router.replace(`${pathname}${params.toString() ? `?${params.toString()}` : ''}`, {scroll:false});
+  }, [filters, isCounselorLeadsView, isSuperAdminLeadsView, router, pathname, selectedLeadView, user]);
 
   function setAnalyticsScope(scope: LeadAnalyticsScope) {
     setSelectedIds([]);
@@ -486,7 +489,7 @@ function LeadsInner() {
   function openLeadFromRow(event: React.MouseEvent<HTMLTableRowElement>, leadId: string) {
     const target = event.target as HTMLElement | null;
     if (target?.closest('a,button,input,select,textarea,[role="button"]')) return;
-    router.push(`/leads/${leadId}?returnTo=${encodeURIComponent(`/leads?${sp.toString()}`)}`);
+    router.push(`/leads/${leadId}?returnTo=${encodeURIComponent(`${pathname}?${sp.toString()}`)}`);
   }
 
   function toggleLeadSelection(leadId: string, checked: boolean) {
@@ -559,8 +562,9 @@ function LeadsInner() {
 
   return (
     <div className="space-y-4">
+      {rmId && <nav aria-label="Report navigation" className="flex flex-wrap items-center gap-2 text-sm text-slate-500"><Link href={`/leads/distribution?${distributionParams.toString()}`} className="text-brand-700 hover:underline">Lead Distribution</Link><span>/</span><Link href={distributionHref} className="text-brand-700 hover:underline">View Counselors</Link><span>/</span><span className="font-medium text-slate-900">{queryData?.rm?.full_name || 'RM Lead Report'}</span></nav>}
       {(canAddManualLead || user?.role === 'member' || user?.role === 'partner') && (
-        <div className="flex flex-wrap justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2">
           {isManagerReportingView && (
             <Link href={distributionHref} className="btn-outline inline-flex min-h-10 items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold">
               <Eye className="h-4 w-4" aria-hidden="true" /> View Distribution
@@ -805,7 +809,7 @@ function LeadsInner() {
                 <article key={lead.id} className="p-3">
                   <div className="flex items-start gap-3">
                     <input type="checkbox" disabled={lead.read_only_access} checked={selectedIds.includes(lead.id)} onChange={event => toggleLeadSelection(lead.id, event.target.checked)} aria-label={`Select ${displayLeadName(lead)}`} className="mt-3 h-4 w-4 shrink-0" />
-                    <Link href={`/leads/${lead.id}?returnTo=${encodeURIComponent(`/leads?${sp.toString()}`)}`} className="min-w-0 flex-1 rounded-xl py-2 focus:outline-none focus:ring-2 focus:ring-brand-200">
+                    <Link href={`/leads/${lead.id}?returnTo=${encodeURIComponent(`${pathname}?${sp.toString()}`)}`} className="min-w-0 flex-1 rounded-xl py-2 focus:outline-none focus:ring-2 focus:ring-brand-200">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5 font-semibold text-slate-900"><span className="truncate">{displayLeadName(lead)}</span>{locked && <Lock className="h-3.5 w-3.5 shrink-0 text-amber-500" />}</div>
@@ -823,7 +827,7 @@ function LeadsInner() {
                         <div><div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Assigned</div><div className="mt-1 truncate font-medium text-slate-700">{lead.assigned_to_name || 'Unassigned'}</div></div>
                       </div>
                     </Link>
-                    {!lead.read_only_access && <LeadRowActionsMenu phone={lead.phone} isRmUser={isRmUser} onCall={() => { triggerPhoneCall(lead.phone); openCommunication(lead, 'calls'); }} onChat={() => openCommunication(lead, 'chat')} onCreateNotes={() => router.push(`/notes?leadId=${encodeURIComponent(lead.id)}&compose=1`)} onAddPersonalMeeting={() => router.push(`/personal-meetings?leadId=${encodeURIComponent(lead.id)}&create=1`)} onAddRemark={() => router.push(`/leads/${lead.id}?returnTo=${encodeURIComponent(`/leads?${sp.toString()}`)}`)} onDelete={canDeleteLead ? () => setDeleteLeadItem(lead) : undefined} />}
+                    {!lead.read_only_access && <LeadRowActionsMenu phone={lead.phone} isRmUser={isRmUser} onCall={() => { triggerPhoneCall(lead.phone); openCommunication(lead, 'calls'); }} onChat={() => openCommunication(lead, 'chat')} onCreateNotes={() => router.push(`/notes?leadId=${encodeURIComponent(lead.id)}&compose=1`)} onAddPersonalMeeting={() => router.push(`/personal-meetings?leadId=${encodeURIComponent(lead.id)}&create=1`)} onAddRemark={() => router.push(`/leads/${lead.id}?returnTo=${encodeURIComponent(`${pathname}?${sp.toString()}`)}`)} onDelete={canDeleteLead ? () => setDeleteLeadItem(lead) : undefined} />}
                   </div>
                   <details className="ml-7 mt-1 text-xs text-slate-600">
                     <summary className="flex min-h-11 cursor-pointer items-center font-medium text-brand-700">More details</summary>
@@ -904,7 +908,7 @@ function LeadsInner() {
                         />
                       </td>
                       <td className="px-4 py-3">
-                        <Link href={`/leads/${lead.id}?returnTo=${encodeURIComponent(`/leads?${sp.toString()}`)}`} className="block">
+                        <Link href={`/leads/${lead.id}?returnTo=${encodeURIComponent(`${pathname}?${sp.toString()}`)}`} className="block">
                           <div className="flex min-w-0 items-center gap-2 font-medium text-slate-900 hover:text-brand-700">
                             <span className="truncate">{displayLeadName(lead)}</span>
                             {locked && <Lock className="h-3 w-3 text-amber-500" aria-label="Locked" />}
@@ -1051,7 +1055,7 @@ function LeadsInner() {
                       </td>
                       <td className="px-4 py-3">
                         {lead.read_only_access ? (
-                          <Link href={`/leads/${lead.id}?returnTo=${encodeURIComponent(`/leads?${sp.toString()}`)}`} className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50">
+                          <Link href={`/leads/${lead.id}?returnTo=${encodeURIComponent(`${pathname}?${sp.toString()}`)}`} className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50">
                             <Eye className="h-3 w-3" /> View
                           </Link>
                         ) : (
@@ -1065,7 +1069,7 @@ function LeadsInner() {
                             onChat={() => openCommunication(lead, 'chat')}
                             onCreateNotes={() => router.push(`/notes?leadId=${encodeURIComponent(lead.id)}&compose=1`)}
                             onAddPersonalMeeting={() => router.push(`/personal-meetings?leadId=${encodeURIComponent(lead.id)}&create=1`)}
-                            onAddRemark={() => router.push(`/leads/${lead.id}?returnTo=${encodeURIComponent(`/leads?${sp.toString()}`)}`)}
+                            onAddRemark={() => router.push(`/leads/${lead.id}?returnTo=${encodeURIComponent(`${pathname}?${sp.toString()}`)}`)}
                             onDelete={canDeleteLead ? () => setDeleteLeadItem(lead) : undefined}
                           />
                         )}

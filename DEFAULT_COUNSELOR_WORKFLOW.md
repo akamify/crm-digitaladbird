@@ -242,3 +242,12 @@ Release gate: implementation complete; staging/live visual and count verificatio
 - Counselor distribution reports hide previous-tab rows and conversion evidence during transitions, while preserving summary controls and disabling pagination until the selected rows arrive.
 - Follows TanStack Query v5 guidance on placeholderData/isPlaceholderData and staleTime. No metric, workflow, API or database changes.
 - Verification: 46 frontend regression tests passed, TypeScript check passed, lint passed with existing warnings, and production build completed (48 static pages). Live browser/API timing and deployment were not verified.
+
+
+### Distribution layout and scoped navigation (7 October 2026)
+
+- RM cards use two desktop columns (one on mobile); Distribution Health sits below the card section rather than narrowing it.
+- RM metric links open `/leads/distribution/rm/[rmId]/leads`, a thin route reusing the existing Leads page, queries, filters and actions. The clicked workflow tab is selected and the route RM remains authoritative when switching filters.
+- Counselor metric links use the existing counselor report. View Counselors hierarchy navigation remains available. Dates and active lead filters are preserved; unrelated hierarchy search and stale pagination are cleared.
+- Lead detail return links preserve the scoped report route. No backend, database or permission changes.
+- Verification: all 48 frontend regression tests passed; typecheck passed; lint passed with existing warnings; production build passed, including the scoped RM route. Deployment and live visual verification were not performed.
