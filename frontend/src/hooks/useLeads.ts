@@ -2,6 +2,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { sameReportScope } from '@/lib/reportQueryScope';
 import type {
   Lead, LeadDetail, LeadFilters, PageResult, CallStatus, LeadSession, LeadCategory, LeadStage,
   LeadRemarkCategory, LeadRemarkCustomerInterest, LeadRemarkNoteType, LeadRemarkPriority,
@@ -12,17 +13,19 @@ function toQueryString(f: LeadFilters): string {
   Object.entries(f).forEach(([k, v]) => {
     if (v !== undefined && v !== null && v !== '') params.set(k, String(v));
   });
+  params.sort();
   return params.toString();
 }
 
 export function useLeadList(filters: LeadFilters, options: { enabled?: boolean } = {}) {
   const {user}=useAuth();
   const qs = toQueryString(filters);
+  const queryKey = ['leads', user?.id, qs];
   return useQuery({
-    queryKey: ['leads', user?.id, qs],
+    queryKey,
     queryFn: ({signal}) => apiGet<PageResult<Lead>>(`${filters.workflow_view !== undefined ? '/leads/distribution/workflow' : '/leads'}?${qs}`, undefined, {signal}),
     enabled: options.enabled !== false,
-    placeholderData: (previous, query) => query?.queryKey[1] === user?.id ? previous : undefined,
+    placeholderData: (previous, query) => sameReportScope(query?.queryKey, queryKey) ? previous : undefined,
     staleTime: 60_000,
     retry: false,
   });

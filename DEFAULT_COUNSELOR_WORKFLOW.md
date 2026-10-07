@@ -232,3 +232,13 @@ Release gate: implementation complete; staging/live visual and count verificatio
 - PostgreSQL: 408 tests passed, including date alias regression and existing workflow/permission parity. With 7,500 irrelevant historical leads, daily classification processed eight relevant leads; local EXPLAIN execution was 31.683 ms. This is fixture timing, not live response latency.
 - Frontend regression tests: 43 passed. Production deployment and live server timings remain separate verification steps.
 - Final production frontend build passed (48 pages), including typecheck and lint; existing lint warnings remain. Backend syntax checks and final diff check passed.
+
+
+### Report loading UX (7 October 2026)
+
+- All tab counts arrive with the selected report; other tabs' lead rows are fetched on demand. Manager analytics now retain same-scope counts while the selected rows load, instead of replacing every tab with a skeleton.
+- Query placeholders are limited to the same actor, profile, date range and filters. Counselor workspace cache keys now include the actor. Dates and ownership changes do not reuse unrelated counts.
+- Query strings are sorted for stable cache identity. Fresh report tabs reuse their cache for 60 seconds; existing invalidation and counselor polling remain active. Background refresh retains data.
+- Counselor distribution reports hide previous-tab rows and conversion evidence during transitions, while preserving summary controls and disabling pagination until the selected rows arrive.
+- Follows TanStack Query v5 guidance on placeholderData/isPlaceholderData and staleTime. No metric, workflow, API or database changes.
+- Verification: 46 frontend regression tests passed, TypeScript check passed, lint passed with existing warnings, and production build completed (48 static pages). Live browser/API timing and deployment were not verified.

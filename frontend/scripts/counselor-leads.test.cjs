@@ -7,6 +7,66 @@ const ts = require('typescript');
 const React = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
 
+test('report counts are retained only for the same actor, dates, ownership and filters', () => {
+  const h = harness('', {}, {'@tanstack/react-query': {...require('@tanstack/react-query'), useQuery: options => options}});
+  const leads = h.load(path.join(root, 'hooks/useLeads.ts')).useLeadList;
+  const distribution = h.load('@/hooks/useLeadDistribution');
+  const workspace = h.load(path.join(root, 'hooks/useLifecycle.ts')).useCounselorWorkspaceLeads;
+  const filters = {lead_view:'daily',from:'2026-10-07',to:'2026-10-07',workflow_view:'cc',page:1};
+  const previous = leads(filters);
+  const payload = {summary:{cc:4,dim:1},rows:[{id:'cc-lead'}]};
+  for (const changes of [{workflow_view:'dim'}, {page:2}, {workflow_view:'worked',work_source:'old'}, {workflow_view:'call_issues',call_issue_type:'cnr'}]) {
+    assert.equal(leads({...filters,...changes}).placeholderData(payload,previous),payload);
+  }
+  for (const changes of [{from:'2026-10-06'}, {to:'2026-10-08'}, {lead_view:'all_time'}, {q:'Other'}, {assigned_to:'other'}, {rm_id:'other'}, {source:'manual'}, {call_status:'cnr'}]) {
+    assert.equal(leads({...filters,...changes}).placeholderData(payload,previous),undefined);
+  }
+  assert.equal(previous.placeholderData(payload,{queryKey:['leads','other',previous.queryKey.at(-1)]}),undefined);
+  assert.deepEqual(leads({page:1,workflow_view:'cc',to:filters.to,from:filters.from,lead_view:'daily'}).queryKey, previous.queryKey);
+  const profile = distribution.useCounselorDistributionLeads('rm','person',{view:'daily',from:filters.from,metric:'cc'});
+  assert.equal(distribution.useCounselorDistributionLeads('rm','person',{view:'daily',from:filters.from,metric:'dim'}).placeholderData(payload,profile),payload);
+  assert.equal(distribution.useCounselorDistributionLeads('rm','other',{view:'daily',from:filters.from,metric:'dim'}).placeholderData(payload,profile),undefined);
+  assert.equal(distribution.useCounselorDistributionLeads('other','person',{view:'daily',from:filters.from,metric:'dim'}).placeholderData(payload,profile),undefined);
+  const args = {scope:{view:'daily',from:filters.from,to:filters.to},view:'cc',page:1};
+  const counselor = workspace(args);
+  assert.equal(workspace({...args,view:'dim'}).placeholderData(payload,counselor),payload);
+  assert.equal(workspace({...args,scope:{view:'all_time'}}).placeholderData(payload,counselor),undefined);
+  assert.equal(workspace({...args,filters:{q:'Other'}}).placeholderData(payload,counselor),undefined);
+});
+
+test('manager observer retains summary during tab loading and reuses cached rows', async () => {
+  const {QueryClient, QueryObserver} = require('@tanstack/react-query');
+  const h = harness('', {}, {'@tanstack/react-query': {...require('@tanstack/react-query'),useQuery: options => options}});
+  const hook = h.load(path.join(root,'hooks/useLeads.ts')).useLeadList;
+  const client = new QueryClient({defaultOptions:{queries:{retry:false,gcTime:Infinity}}});
+  let requests=0;
+  const assigned = {...hook({workflow_view:'received',lead_view:'all_time'}),queryFn:async()=>{requests++;return {summary:{received:7,dim:1},rows:[{id:'assigned'}],total:7};}};
+  let resolveDim;
+  const dim = {...hook({workflow_view:'dim',lead_view:'all_time'}),queryFn:()=>{requests++;return new Promise(resolve=>{resolveDim=resolve;});}};
+  const observer = new QueryObserver(client,assigned);
+  const unsubscribe=observer.subscribe(()=>{});
+  try {
+    await observer.refetch();
+    observer.setOptions(dim);
+    const loading=observer.getCurrentResult();
+    assert.equal(loading.isPlaceholderData,true);
+    assert.equal(loading.data.summary.dim,1);
+    assert.equal(loading.isLoading,false);
+    resolveDim({summary:{received:7,dim:1},rows:[{id:'dim'}],total:1});
+    await observer.refetch();
+    assert.equal(observer.getCurrentResult().isPlaceholderData,false);
+    observer.setOptions(assigned);
+    assert.equal(observer.getCurrentResult().isFetching,false);
+    assert.equal(observer.getCurrentResult().data.rows[0].id,'assigned');
+    assert.equal(requests,2);
+    observer.setOptions({...hook({workflow_view:'dim',lead_view:'daily',from:'2026-10-08',to:'2026-10-08'}),queryFn:async()=>{throw new Error('offline');}});
+    assert.equal(observer.getCurrentResult().data,undefined);
+    await observer.refetch();
+    assert.equal(observer.getCurrentResult().isError,true);
+    assert.equal(observer.getCurrentResult().data,undefined);
+  } finally {unsubscribe();client.clear();}
+});
+
 const root = path.resolve(__dirname, '../src');
 function harness(query = '', result = {}, overrides = {}) {
   if (result.data) result = {...result, data: {enabled:true,worked:{n:0,o:0},status_options:[],summary:{},...result.data}};
@@ -530,4 +590,21 @@ test('counselor failure displays unavailable counts instead of a zero-lead resul
   assert.match(html,/Unavailable/);
   assert.match(html,/Unable to load Communication Completed/);
   assert.doesNotMatch(html,/No leads in Communication Completed|>0 Communication Completed/);
+});
+
+
+test('counselor report keeps metric controls while loading only selected rows', () => {
+  const render = placeholder => {
+    const h = harness('', {}, {
+      'next/navigation': {useParams:()=>({rmId:'rm',counselorId:'person'}),useRouter:()=>({replace(){}}),useSearchParams:()=>new URLSearchParams('metric=dim&view=all_time')},
+      '@/components/layout/AppShell': {AppShell:({children})=>React.createElement('main',null,children)},
+      '@/hooks/useLeadDistribution': {useCounselorDistributionLeads:()=>({isPlaceholderData:placeholder,isFetching:placeholder,data:{rm:{full_name:'RM'},counselor:{full_name:'Counselor'},summary:{received:7,dim:1},rows:[{id:'previous',full_name:'Previous tab lead'}],call_issue_buckets:{},call_issue_labels:{},total:7,page:1,page_size:25}})},
+    });
+    return renderToStaticMarkup(React.createElement(h.load('@/app/leads/distribution/rm/[rmId]/counselor/[counselorId]/page').default));
+  };
+  const loading = render(true);
+  assert.match(loading,/Discussed in Meeting/);
+  assert.match(loading,/Loading selected leads/);
+  assert.doesNotMatch(loading,/Previous tab lead|No leads found/);
+  assert.match(render(false),/Previous tab lead/);
 });

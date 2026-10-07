@@ -1,6 +1,8 @@
 'use client';
 
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAuth } from '@/lib/auth';
+import { sameReportScope } from '@/lib/reportQueryScope';
 import { apiGet, apiPatch, apiPost } from '@/lib/api';
 import { DISTRIBUTION_FILTER_KEYS } from '@/lib/leadAnalytics';
 import type { LeadAnalyticsScope, LeadFilters } from '@/types';
@@ -150,16 +152,19 @@ export function useCounselorWorkspaceSummary(scope: LeadAnalyticsScope, filters:
 }
 
 export function useCounselorWorkspaceLeads(input: { view: WorkspaceView; scope: LeadAnalyticsScope; filters?: LeadFilters; page: number; enabled?: boolean; journey?: boolean }) {
+  const { user } = useAuth();
   const params = workspaceParams(input.scope, input.filters);
   if(input.journey) params.set('journey','true');
   params.set('view', input.view);
   params.set('page', String(input.page));
   params.set('page_size', '25');
+  params.sort();
+  const queryKey = ['counselor-workspace', 'leads', user?.id, params.toString()];
   return useQuery({
-    queryKey: ['counselor-workspace', 'leads', params.toString()],
+    queryKey,
     queryFn: ({signal}) => apiGet<{ enabled: boolean; summary: WorkspaceSummary; rows: WorkspaceLead[]; total: number; page: number; page_size: number }>(`/counselor-workspace/leads?${params}`, undefined, {signal}),
     enabled: input.enabled !== false,
-    placeholderData: keepPreviousData,
+    placeholderData: (previous, query) => sameReportScope(query?.queryKey, queryKey, ['view', 'page', 'page_size']) ? previous : undefined,
     // Reopening a recently visited tab uses its cache. Polling and mutation
     // invalidation still refresh current queue membership in the background.
     retry: false,
