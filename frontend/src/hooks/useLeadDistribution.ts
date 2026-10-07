@@ -1,7 +1,8 @@
 'use client';
 
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { apiGet } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import type {
   LeadDistributionCounselorResponse,
   LeadDistributionLeadResponse,
@@ -19,23 +20,25 @@ function queryString(input: LeadDistributionQuery) {
 }
 
 export function useRmDistribution(input: LeadDistributionQuery) {
-  const qs = queryString(input);
+  const {user}=useAuth();
+  const qs = queryString({...input,workflow:'true'});
   return useQuery({
-    queryKey: ['lead-distribution', 'rms', qs],
+    queryKey: ['lead-distribution', user?.id, 'rms', qs],
     queryFn: () => apiGet<LeadDistributionRmResponse>(`/leads/distribution/rms${qs ? `?${qs}` : ''}`),
-    placeholderData: keepPreviousData,
+    placeholderData: (previous, query) => query?.queryKey[1] === user?.id ? previous : undefined,
     staleTime: 30_000,
     retry: 1,
   });
 }
 
 export function useRmCounselorDistribution(rmId: string, input: LeadDistributionQuery) {
-  const qs = queryString(input);
+  const {user}=useAuth();
+  const qs = queryString({...input,workflow:'true'});
   return useQuery({
-    queryKey: ['lead-distribution', 'rm', rmId, 'counselors', qs],
+    queryKey: ['lead-distribution', user?.id, 'rm', rmId, 'counselors', qs],
     queryFn: () => apiGet<LeadDistributionCounselorResponse>(`/leads/distribution/rms/${rmId}/counselors${qs ? `?${qs}` : ''}`),
     enabled: Boolean(rmId),
-    placeholderData: keepPreviousData,
+    placeholderData: (previous, query) => query?.queryKey[1] === user?.id ? previous : undefined,
     staleTime: 30_000,
     retry: 1,
   });
@@ -46,14 +49,15 @@ export function useCounselorDistributionLeads(
   counselorId: string,
   input: LeadDistributionQuery,
 ) {
-  const qs = queryString(input);
+  const {user}=useAuth();
+  const qs = queryString({...input,...(user && ['super_admin','admin','rm'].includes(user.role) ? {workflow:'true'} : {})});
   return useQuery({
-    queryKey: ['lead-distribution', 'rm', rmId, 'counselor', counselorId, 'leads', qs],
+    queryKey: ['lead-distribution', user?.id, 'rm', rmId, 'counselor', counselorId, 'leads', qs],
     queryFn: () => apiGet<LeadDistributionLeadResponse>(
       `/leads/distribution/rms/${rmId}/counselors/${counselorId}/leads${qs ? `?${qs}` : ''}`,
     ),
     enabled: Boolean(rmId && counselorId),
-    placeholderData: keepPreviousData,
+    placeholderData: (previous, query) => query?.queryKey[1] === user?.id ? previous : undefined,
     staleTime: 20_000,
     retry: 1,
   });

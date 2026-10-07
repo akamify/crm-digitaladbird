@@ -129,7 +129,7 @@ function RmDashboardInner() {
           ) : teamAnalytics.isError ? (
             <DistributionError onRetry={() => teamAnalytics.refetch()} />
           ) : teamAnalytics.data ? (
-            <DistributionSummaryGrid summary={teamAnalytics.data.summary} activeMetric={analyticsMetric} onMetricChange={setAnalyticsMetric} />
+            <DistributionSummaryGrid leadParams={teamDistributionParams} summary={teamAnalytics.data.summary} activeMetric={analyticsMetric} onMetricChange={setAnalyticsMetric} />
           ) : null}
         </div>
       </section>

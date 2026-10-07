@@ -1,6 +1,7 @@
 'use client';
-import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import type {
   Lead, LeadDetail, LeadFilters, PageResult, CallStatus, LeadSession, LeadCategory, LeadStage,
   LeadRemarkCategory, LeadRemarkCustomerInterest, LeadRemarkNoteType, LeadRemarkPriority,
@@ -15,12 +16,13 @@ function toQueryString(f: LeadFilters): string {
 }
 
 export function useLeadList(filters: LeadFilters, options: { enabled?: boolean } = {}) {
+  const {user}=useAuth();
   const qs = toQueryString(filters);
   return useQuery({
-    queryKey: ['leads', qs],
-    queryFn: () => apiGet<PageResult<Lead>>(`/leads?${qs}`),
+    queryKey: ['leads', user?.id, qs],
+    queryFn: () => apiGet<PageResult<Lead>>(`${filters.workflow_view !== undefined ? '/leads/distribution/workflow' : '/leads'}?${qs}`),
     enabled: options.enabled !== false,
-    placeholderData: keepPreviousData,
+    placeholderData: (previous, query) => query?.queryKey[1] === user?.id ? previous : undefined,
     staleTime: 15_000,
     retry: 2,
   });

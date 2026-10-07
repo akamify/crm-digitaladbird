@@ -311,6 +311,7 @@ router.get('/lead-saved-views', authenticate, requireRole('super_admin', 'admin'
 router.post('/lead-saved-views', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner', 'client'), leadSavedViews.create);
 router.patch('/lead-saved-views/:viewId', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner', 'client'), leadSavedViews.update);
 router.delete('/lead-saved-views/:viewId', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner', 'client'), leadSavedViews.remove);
+router.get('/leads/distribution/workflow', authenticate, requireRole('super_admin', 'admin', 'rm'), asyncHandler(async (req,res) => { res.json({success:true,data:await require('../services/managerWorkflowReporting').report(req.user,req.query)}); }));
 router.get('/leads/distribution/rms', authenticate, requireRole('super_admin', 'admin', 'rm'), leadDistributionAnalytics.rms);
 router.get('/leads/distribution/rms/:rmId/counselors', authenticate, requireRole('super_admin', 'admin', 'rm'), leadDistributionAnalytics.counselors);
 router.get('/leads/distribution/rms/:rmId/counselors/:counselorId/leads', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), leadDistributionAnalytics.counselorLeads);

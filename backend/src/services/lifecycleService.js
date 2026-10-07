@@ -789,7 +789,7 @@ function legacyWorkSql() {
     }).join(' OR ');
 }
 
-function workspaceCte(period, scopeSql, filterSql, journey = false, actor = null) {
+function workspaceCte(period, scopeSql, filterSql, journey = false, actor = null, reporting = false) {
   const onPeriod = expression => period.view === 'all_time'
     ? 'TRUE'
     : `(${expression} >= b.from_at AND ${expression} < b.to_at)`;
@@ -798,12 +798,16 @@ function workspaceCte(period, scopeSql, filterSql, journey = false, actor = null
            ((($2::date + 1)::timestamp) AT TIME ZONE 'Asia/Kolkata') AS to_at,
            $3::uuid[] AS visible_users
   )${journey ? `, counselor_work AS MATERIALIZED (
-    SELECT lead_id, BOOL_OR((${workSourceSql()})='new') AS n, BOOL_OR((${workSourceSql()})='old') AS o
+    SELECT lead_id, ${reporting ? 'actor_id,' : ''} BOOL_OR((${workSourceSql()})='new') AS n, BOOL_OR((${workSourceSql()})='old') AS o
     FROM counselor_workflow_events e CROSS JOIN bounds b
-    WHERE actor_id=${actor} AND is_work AND (${workSourceSql()}) IN ('new','old') AND ${onPeriod('e.occurred_at')}
-    GROUP BY lead_id
-  )` : ''}, classified AS MATERIALIZED (
-    SELECT ${journey ? `cw.primary_status AS workflow_primary_status,cw.queue AS workflow_queue,cw.journey_active,(cw.lead_id IS NOT NULL AND NOT COALESCE(cw.awaiting_primary,FALSE)) AS workflow_managed,
+    WHERE ${reporting ? '(b.visible_users IS NULL OR actor_id=ANY(b.visible_users))' : `actor_id=${actor}`} AND is_work AND (${workSourceSql()}) IN ('new','old') AND ${onPeriod('e.occurred_at')}
+    GROUP BY lead_id${reporting ? ',actor_id' : ''}
+  )${reporting ? `, report_actors AS MATERIALIZED (
+    SELECT id AS lead_id,assigned_to_user_id AS id FROM leads WHERE deleted_at IS NULL
+    UNION SELECT work.lead_id,work.actor_id FROM counselor_work work
+      JOIN lead_assignments access ON access.lead_id=work.lead_id AND access.previous_user_id=work.actor_id
+  )` : ''}` : ''}, classified AS MATERIALIZED (
+    SELECT ${reporting ? 'report_actor.id AS reporting_actor_id,l.pool_rm_id,' : ''} ${journey ? `cw.primary_status AS workflow_primary_status,cw.queue AS workflow_queue,cw.journey_active,(cw.lead_id IS NOT NULL AND NOT COALESCE(cw.awaiting_primary,FALSE)) AS workflow_managed,
       (${legacyWorkSql()}) AS legacy_worked,
       COALESCE(cw.move_to_old_at,cw.move_to_pending_at) AS workflow_deadline,cw.followup_override,
       CASE WHEN cw.followup_override THEN NULL WHEN cw.move_to_old_at IS NOT NULL THEN 'old'
@@ -841,10 +845,11 @@ function workspaceCte(period, scopeSql, filterSql, journey = false, actor = null
        OR (COALESCE(ls.terminal_state, CASE WHEN l.stage::text='won' OR l.call_status::text='converted' THEN 'converted' WHEN l.stage::text IN ('lost','dropped') OR l.call_status::text='not_interested' THEN 'cold' END) IS NULL
            AND a.id IS NULL AND NOT EXISTS(SELECT 1 FROM lead_call_attempt_sequences seq WHERE seq.lead_id=l.id AND seq.status='active'))) AS is_pending
     FROM leads l CROSS JOIN bounds b
+    ${reporting ? 'JOIN report_actors report_actor ON report_actor.lead_id=l.id' : ''}
     ${journey ? `LEFT JOIN counselor_workflow_state cw ON cw.lead_id=l.id
       AND cw.assigned_to_user_id=l.assigned_to_user_id AND cw.assignment_at IS NOT DISTINCT FROM l.assigned_at
       AND l.assigned_to_user_id=${actor}
-    LEFT JOIN counselor_work w ON w.lead_id=l.id
+    LEFT JOIN counselor_work w ON w.lead_id=l.id ${reporting ? 'AND w.actor_id=report_actor.id' : ''}
     LEFT JOIN LATERAL (
       SELECT MIN(LEAST(e.occurred_at,e.recorded_at)) AS at FROM counselor_workflow_events e
       WHERE e.lead_id=l.id AND e.event_type='remark_saved'
@@ -913,9 +918,8 @@ async function workspace(user, input = {}, includeRows = false) {
   const filters = buildAnalyticsFilters(input, params, 'l');
   const cte = workspaceCte(period, scopeSql, filters.join(' AND '),journey,actor);
   const views = journey ? counselorJourneyViews(actor) : VIEW_SQL;
-  const summarySql = Object.entries(views).map(([key, condition]) => journey && key==='worked'
-    ? `(COALESCE(SUM(worked_n::int + worked_o::int),0)+COUNT(*) FILTER(WHERE ${views.worked_legacy}))::int AS "worked"`
-    : `COUNT(*) FILTER (WHERE ${condition})::int AS "${key}"`).join(',');
+  const summarySql = Object.entries(views).map(([key, condition]) =>
+    `COUNT(*) FILTER (WHERE ${condition})::int AS "${key}"`).join(',');
   if (!includeRows) {
     const { rows: [summary] } = await query(`${cte} SELECT ${summarySql} FROM classified`, params);
     return { enabled, period, summary };
@@ -1035,6 +1039,7 @@ async function updateSettings(user, input = {}) {
 }
 
 module.exports = {
+  workspaceCte, counselorJourneyViews, QUALIFYING_EVENTS,
   ACTION_TYPES, COLD_REASONS, EVENT_TYPES, JOURNEY_STAGES, WORKSPACE_VIEWS,
   getSettings, isEnabledFor, getLifecycle, recordEvent, completeAction, closeLifecycle,
   reopenLifecycle, workspace, updateSettings, ensureState, createPrimaryAction,

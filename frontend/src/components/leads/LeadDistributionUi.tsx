@@ -2,37 +2,42 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useParams, useSearchParams } from 'next/navigation';
+import { MANAGER_METRICS, managerLeadHref } from '@/lib/managerWorkflow';
 import { AlertCircle, ArrowRight, Clock3, PhoneCall, RefreshCw, Search, UserRound, Users, X } from 'lucide-react';
 import { Skeleton } from '@/components/ui/Modal';
 import { clsx, initials } from '@/lib/format';
 import { formatAnalyticsPeriod } from '@/lib/leadAnalytics';
 import type { LeadAnalyticsScope, LeadDistributionPerson, LeadDistributionSummary, LeadDailyMetric } from '@/types';
 
-export const DISTRIBUTION_METRICS: Array<{ key: LeadDailyMetric; label: string; shortLabel: string }> = [
-  { key: 'received', label: 'Leads Received', shortLabel: 'Received' },
-  { key: 'worked', label: 'Worked', shortLabel: 'Worked' },
-  { key: 'pending', label: 'Pending', shortLabel: 'Pending' },
-  { key: 'session_9pm', label: 'Common Meeting', shortLabel: 'Common Meeting' },
-  { key: 'personal_meeting', label: 'Personal Meeting', shortLabel: 'Personal Meeting' },
-  { key: 'converted', label: 'Converted', shortLabel: 'Converted' },
-  { key: 'call_issues', label: 'Call Issues', shortLabel: 'Call Issues' },
-];
+export const DISTRIBUTION_METRICS = MANAGER_METRICS;
 
-export function DistributionSummaryGrid({ summary, activeMetric, onMetricChange }: {
+export function DistributionSummaryGrid({ summary, activeMetric, onMetricChange, leadParams }: {
   summary: LeadDistributionSummary;
   activeMetric?: LeadDailyMetric;
   onMetricChange?: (metric: LeadDailyMetric) => void;
+  leadParams?: URLSearchParams;
 }) {
-  return <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-7">{DISTRIBUTION_METRICS.map(metric => {
-    const active = metric.key === activeMetric;
-    const className = clsx(
-      'min-h-[82px] rounded-xl border px-3 py-3 text-left shadow-sm transition',
-      active ? 'border-brand-500 bg-brand-600 text-white shadow-blue-200' : 'border-slate-200 bg-white text-slate-900',
-      onMetricChange && !active && 'hover:border-brand-200 hover:bg-blue-50/40',
-    );
-    const content = <><div className={clsx('text-[10px] font-semibold uppercase tracking-wide', active ? 'text-blue-100' : 'text-slate-500')}>{metric.label}</div><div className="mt-2 text-2xl font-bold tabular-nums">{Number(summary[metric.key] || 0).toLocaleString()}</div></>;
-    return onMetricChange ? <button key={metric.key} type="button" onClick={() => onMetricChange(metric.key)} className={className}>{content}</button> : <div key={metric.key} className={className}>{content}</div>;
-  })}</div>;
+  const search = useSearchParams();
+  const route = useParams<{rmId?: string; counselorId?: string}>();
+  const params = leadParams || new URLSearchParams(search.toString());
+  const href = (key: string) => managerLeadHref(params, key, route.rmId, route.counselorId);
+  return <div className="min-w-0 space-y-3">
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">{DISTRIBUTION_METRICS.slice(0,5).map(metric =>
+      <div key={metric.key} className={clsx('relative rounded-xl border p-3', activeMetric === metric.key ? 'border-brand-300 bg-blue-50' : 'border-slate-200 bg-white')}>
+        <button type="button" aria-pressed={activeMetric === metric.key} onClick={() => onMetricChange?.(metric.key)} className="w-full pr-5 text-left">
+          <span className="block text-[10px] font-semibold uppercase text-slate-500">{metric.label}</span>
+          <span className="mt-2 block text-2xl font-bold tabular-nums">{Number(summary[metric.key] || 0).toLocaleString()}</span>
+        </button>
+        <Link href={href(metric.key)} aria-label={`Open ${metric.label}`} title={`Open ${metric.label}`} className="absolute right-2 top-2 rounded p-1 text-brand-600 hover:bg-blue-100"><ArrowRight className="h-4 w-4" /></Link>
+        {metric.key === 'worked' && <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-slate-600">{[['new','N','worked_n'],['old','O','worked_o'],['previous','Previous','worked_legacy']].map(([source,label,key]) => <Link key={source} href={`${href('worked')}&work_source=${source}`} className="hover:text-brand-600 hover:underline">{label} {summary[key as LeadDailyMetric] || 0}</Link>)}</div>}
+      </div>)}</div>
+    <div className="flex max-w-full gap-2 overflow-x-auto pb-2">{DISTRIBUTION_METRICS.slice(5).map(metric => <div key={metric.key} className={clsx('flex shrink-0 items-center rounded-full border text-xs',activeMetric===metric.key ? 'border-brand-300 bg-blue-50 text-brand-700':'border-slate-200 bg-white text-slate-600')}>
+      <button type="button" aria-pressed={activeMetric === metric.key} onClick={() => onMetricChange?.(metric.key)} className="rounded-l-full px-3 py-2">{metric.label} <strong className="ml-1 tabular-nums">{summary[metric.key] || 0}</strong></button>
+      <Link href={href(metric.key)} aria-label={`Open ${metric.label}`} className="rounded-r-full p-2 text-brand-600 hover:bg-blue-100"><ArrowRight className="h-3 w-3" /></Link>
+    </div>)}</div>
+    <p className="text-xs text-slate-500">Assigned Leads retains the original received-date total. Queue and remark tabs use assignment date; Worked uses work date. Old and remark tabs can overlap.</p>
+  </div>;
 }
 
 export function DistributionPersonCard({ person, href, kind }: {
@@ -40,6 +45,10 @@ export function DistributionPersonCard({ person, href, kind }: {
   href: string;
   kind: 'rm' | 'counselor';
 }) {
+  const target = new URL(href, 'https://local.invalid');
+  const path = target.pathname.split('/');
+  const rmId = path[path.indexOf('rm') + 1];
+  const counselorId = kind === 'counselor' ? person.id || undefined : undefined;
   const role = kind === 'rm' ? 'Relationship Manager' : 'Counselor';
   const action = kind === 'rm' ? 'View Counselors' : 'View Lead Details';
   return <article className="group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-lg hover:shadow-blue-100/70">
@@ -48,7 +57,8 @@ export function DistributionPersonCard({ person, href, kind }: {
       <div className="min-w-0 flex-1"><h3 className="truncate font-semibold text-slate-950">{person.full_name}</h3><p className="mt-0.5 text-xs text-slate-500">{role}{person.team_name ? ` - ${person.team_name}` : ''}</p></div>
       {kind === 'rm' && <div className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600"><Users className="h-3 w-3" />{person.counselor_count || 0}</div>}
     </div>
-    <div className="grid grid-cols-2 gap-px bg-slate-100 sm:grid-cols-4">{DISTRIBUTION_METRICS.map(metric => <div key={metric.key} className="bg-white px-3 py-2.5"><div className="truncate text-[9px] font-semibold uppercase tracking-wide text-slate-400">{metric.shortLabel}</div><div className={clsx('mt-1 text-sm font-bold tabular-nums', metric.key === 'converted' && person[metric.key] ? 'text-emerald-600' : metric.key === 'call_issues' && person[metric.key] ? 'text-rose-600' : metric.key === 'pending' && person[metric.key] ? 'text-amber-600' : 'text-slate-800')}>{Number(person[metric.key] || 0).toLocaleString()}</div></div>)}</div>
+    <div className="grid grid-cols-2 gap-px bg-slate-100 sm:grid-cols-4">{DISTRIBUTION_METRICS.map(metric => <Link key={metric.key} href={managerLeadHref(target.searchParams, metric.key, rmId, counselorId)} className="bg-white px-3 py-2.5 hover:bg-blue-50 focus-visible:bg-blue-50"><div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">{metric.shortLabel}</div><div className={clsx('mt-1 text-sm font-bold tabular-nums', metric.key === 'converted' && person[metric.key] ? 'text-emerald-600' : metric.key === 'call_issues' && person[metric.key] ? 'text-rose-600' : metric.key === 'pending' && person[metric.key] ? 'text-amber-600' : 'text-slate-800')}>{Number(person[metric.key] || 0).toLocaleString()}</div></Link>)}</div>
+    <div className="flex flex-wrap gap-3 px-3 pt-3 text-xs text-slate-600">{[['new','New (N)','worked_n'],['old','Old (O)','worked_o'],['previous','Previous work','worked_legacy']].map(([source,label,key])=><Link key={source} href={`${managerLeadHref(target.searchParams,'worked',rmId,counselorId)}&work_source=${source}`} className="hover:text-brand-700 hover:underline">{label}: {person[key as LeadDailyMetric] || 0}</Link>)}</div>
     {kind === 'rm' && <div className="px-4 pt-3"><div className="mb-1 flex justify-between text-[10px] font-medium text-slate-500"><span>Distribution share</span><span>{person.distribution_share || 0}%</span></div><div className="h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-brand-500" style={{ width: `${Math.min(100, person.distribution_share || 0)}%` }} /></div></div>}
     {kind === 'counselor' && <div className="flex items-center justify-between px-4 pt-3 text-[10px] text-slate-500"><span>Work rate</span><span className="font-semibold text-slate-700">{person.work_rate || 0}%</span></div>}
     <Link href={href} className="m-3 flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5 text-xs font-semibold text-brand-700 transition group-hover:bg-brand-50"><span>{action}</span><ArrowRight className="h-4 w-4" /></Link>

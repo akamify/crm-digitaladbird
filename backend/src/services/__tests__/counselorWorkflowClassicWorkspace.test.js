@@ -57,7 +57,7 @@ suite('original workspace with counselor journey views (PostgreSQL)',()=>{
   test('assigned leads and queue counts exclude other owners and preserve original row fields',async()=>{
     const result=await lifecycle.workspace(user,{...input,view:'received'},true);
     expect(result.total).toBe(3);
-    expect(result.summary).toMatchObject({received:3,new:1,old:1,pending:1,cc:1,worked:3,worked_n:1,worked_o:2});
+    expect(result.summary).toMatchObject({received:3,new:1,old:1,pending:1,cc:1,worked:2,worked_n:1,worked_o:2});
     expect(result.rows[0]).toEqual(expect.objectContaining({labels:[],phone:'123'}));
     const [sql,params]=database.query.mock.calls.find(([sql])=>sql.includes('counselor_work AS MATERIALIZED'));
     const plan=await pool.query(`EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) ${sql}`,params);
@@ -74,7 +74,7 @@ suite('original workspace with counselor journey views (PostgreSQL)',()=>{
   test('Worked uses work date, deduplicates each bucket and retains read-only reassigned work',async()=>{
     const result=await lifecycle.workspace(user,{...input,view:'worked'},true);
     expect(result.total).toBe(2);
-    expect(result.summary.worked).toBe(3);
+    expect(result.summary.worked).toBe(2);
     expect(result.rows.find(row=>row.id===ids.worked)).toMatchObject({worked_n:true,worked_o:true,read_only:false});
     expect(result.rows.find(row=>row.id===ids.reassigned)).toMatchObject({worked_n:false,worked_o:true,read_only:true});
   });

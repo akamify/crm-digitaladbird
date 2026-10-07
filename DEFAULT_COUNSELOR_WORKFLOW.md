@@ -198,3 +198,26 @@ Production build, including lint/typecheck, passed with existing lint warnings. 
 - 35 frontend tests passed. Existing uncommitted sidebar work preserved. Live responsive verification and deployment remain pending.
 
 Final row UI checks: production build/typecheck passed; lint completed with warnings. Diff check passed. GO for review; production and full-page visual acceptance pending.
+
+
+## Super Admin / RM workflow reporting ? 6 October 2026
+
+Implemented in the existing Leads and View Distribution screens:
+- Assigned Leads display name preserves the original received/created-date total, including existing unassigned records.
+- New, Old, Pending and current remark tabs reuse counselor assignment-date membership. Worked uses recorded work dates; historical Previous work keeps its existing classification.
+- Worked totals count distinct leads. N and O can overlap and are independently selectable.
+- RM/counselor cards and labelled open links navigate to scoped `/leads` lists. Date, metric and supported list filters are retained; profile Back restores the list.
+- Server-side RM/counselor authorization remains enforced. Reassigned work remains attributable and read-only outside the current team.
+- Row labels, latest notes, workflow/session fields, call-attempt evidence and conversion evidence reuse existing query projections.
+- No schema migrations, historical rewrites, workflow timer changes or production deployment.
+
+Verification:
+- Isolated PostgreSQL workflow suite: 406 tests passed (9 suites), including manager parity, authorization, dates, reassignment, pagination and N/O overlap.
+- Legacy distribution/daily/all-time analytics: 18 tests passed.
+- Frontend regression suite: 38 tests passed.
+- Existing local Edge document-scroll fixture: passed at 320, 360, 375, 390, 430, 768 and 1280px. This is a fixture check, not authenticated CRM visual QA.
+- Production build completed (48 pages), including type validation and frontend lint; repository lint warnings remain.
+- Backend lint cannot run: ESLint 9 has no eslint.config file in the existing repository. Backend syntax checks passed.
+- EXPLAIN ANALYZE executed on isolated reporting fixtures; production-scale query plans and live count parity still require staging verification.
+
+Release gate: implementation complete; staging/live visual and count verification pending. No production PASS is claimed.

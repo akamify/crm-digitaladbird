@@ -382,6 +382,11 @@ export interface CustomerNoteFilters {
 }
 
 export interface LeadFilters {
+  workflow_view?: string;
+  work_source?: string;
+  rm_id?: string;
+  counselor_id?: string;
+  call_issue_type?: string;
   q?: string;
   category?: LeadCategory | '';
   stage?: LeadStage | '';
@@ -435,7 +440,7 @@ export interface LeadSavedView {
   updated_at: string;
 }
 
-export type LeadDailyMetric = 'received' | 'worked' | 'pending' | 'session_9pm' | 'personal_meeting' | 'converted' | 'call_issues';
+export type LeadDailyMetric = 'new' | 'old' | 'cc' | 'responded' | 'common_meeting' | 'dim' | 'follow_up' | 'quotation' | 'hot' | 'warm' | 'special_category' | 'call_reminder' | 'handover_rm' | 'not_attended' | 'cold' | 'process_incomplete' | 'responses' | 'tte' | 'worked_n' | 'worked_o' | 'worked_legacy' | 'received' | 'worked' | 'pending' | 'session_9pm' | 'personal_meeting' | 'converted' | 'call_issues';
 export type LeadAllTimeMetric = 'all' | 'worked' | 'pending' | 'session_9pm' | 'personal_meeting' | 'converted' | 'call_issues';
 export type LeadViewMode = 'all_time' | 'daily';
 
@@ -470,7 +475,7 @@ export interface LeadAnalyticsScope {
   to: string | null;
 }
 
-export interface LeadDistributionSummary {
+export interface LeadDistributionSummary extends Partial<Record<LeadDailyMetric, number>> {
   received: number;
   worked: number;
   pending: number;
@@ -564,6 +569,9 @@ export interface LeadDistributionLeadResponse {
 }
 
 export interface PageResult<T> {
+  summary?: LeadDistributionSummary;
+  call_issue_buckets?: Record<string,number>;
+  call_issue_labels?: Record<string,string>;
   rows: T[];
   total: number;
   page: number;

@@ -300,7 +300,7 @@ test('clean rows show latest primary once and the actual next queue, respecting 
 test('parent URL effect preserves counselor state and waits for auth',()=>{
   const source=fs.readFileSync(path.join(root,'app/leads/page.tsx'),'utf8');
   const body=source.match(/useEffect\(\(\) => \{(\s*if \(!user \|\| isCounselorLeadsView\)[\s\S]*?)\}, \[filters,/)[1];
-  const run=new Function('user','isCounselorLeadsView','isSuperAdminLeadsView','filters','router','selectedLeadView',body);
+  const run=new Function('user','isCounselorLeadsView','isSuperAdminLeadsView','filters','router','selectedLeadView','restoringUrl={current:false}','syncedUrl={current:null}',body);
   const calls=[];
   for(const [user,counselor] of [[null,false],[{role:'member'},true],[{role:'partner'},true]])run(user,counselor,false,{}, {replace:url=>calls.push(url)},'daily');
   assert.equal(calls.length,0);
@@ -457,4 +457,30 @@ test('countdown includes seconds and handles expiry and invalid deadlines',()=>{
  assert.equal(countdownText('2026-09-28T10:45:09Z',now),'45m 09s remaining');
  assert.equal(countdownText('2026-09-28T10:00:00Z',now),'Due now \u2014 awaiting update');
  assert.equal(countdownText('bad',now),'Deadline unavailable');
+});
+
+
+test('manager reports render workflow tabs, distinct total and labelled scoped drill-down links', () => {
+  const h=harness('view=daily&from=2026-09-25&to=2026-09-25&source=meta',{}, {
+    'next/navigation': {useSearchParams:()=>new URLSearchParams('view=daily&from=2026-09-25&to=2026-09-25&source=meta'),useParams:()=>({rmId:'rm-id',counselorId:'counselor-id'})}
+  });
+  const {DistributionSummaryGrid}=h.load('@/components/leads/LeadDistributionUi');
+  const html=renderToStaticMarkup(React.createElement(DistributionSummaryGrid,{summary:{received:7,worked:1,worked_n:1,worked_o:1},activeMetric:'worked',onMetricChange(){}}));
+  for(const text of ['Assigned Leads','New Leads','Old Leads','Worked Leads','Pending','Communication Completed','Discussed in Meeting','Process Incomplete'])assert.ok(html.includes(text));
+  assert.match(html,/aria-label="Open Assigned Leads"/);
+  assert.match(html,/workflow_view=cc/);assert.match(html,/counselor_id=counselor-id/);assert.match(html,/rm_id=rm-id/);
+  assert.match(html,/source=meta/);assert.match(html,/from=2026-09-25/);assert.match(html,/work_source=old/);
+  assert.match(html,/overflow-x-auto/);
+});
+test('manager link builder preserves filters and aliases while clearing stale pagination',()=>{
+  const {managerLeadHref}=harness().load('@/lib/managerWorkflow');
+  const href=managerLeadHref(new URLSearchParams('view=daily&from=2026-09-25&to=2026-09-26&q=Smith&page=7&call_issue_type=cnr'),'session_9pm','rm','counselor');
+  const params=new URL(href,'https://example.test').searchParams;
+  assert.equal(params.get('workflow_view'),'common_meeting');assert.equal(params.get('lead_view'),'daily');
+  assert.equal(params.get('q'),'Smith');assert.equal(params.get('page'),null);assert.equal(params.get('call_issue_type'),null);
+});
+test('distribution return URLs are internal and preserve the profile scope',()=>{
+  const safe=harness().load('@/lib/leadReturnPath').leadReturnPath;
+  const path='/leads/distribution/rm/11111111-1111-1111-1111-111111111111/counselor/22222222-2222-2222-2222-222222222222?metric=cc&view=all_time';
+  assert.equal(safe(path),path);assert.equal(safe('//evil.test/leads'),'/leads');assert.equal(safe('/leads/distribution/../../admin'),'/leads');
 });
