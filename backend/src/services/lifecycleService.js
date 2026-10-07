@@ -6,6 +6,7 @@ const { assertLeadCommunicationAccess } = require('./leadCommunicationAccess');
 const { normalizeScope: normalizeAnalyticsScope, buildAnalyticsFilters } = require('./leadDistributionAnalyticsService');
 
 const IST_OFFSET = '+05:30';
+const ACTION_OVERDUE_GRACE_MINUTES = 60;
 const TERMINAL_STATES = new Set(['converted', 'cold']);
 const JOURNEY_STAGES = new Set(['new', 'response', 'common_meeting', 'tte', 'personal_meeting', 'quotation']);
 const ACTION_TYPES = new Set([
@@ -454,7 +455,7 @@ async function syncLegacyRemark({ client, user, leadId, statuses = [], remarkId 
       await client.query(`UPDATE lead_actions SET status='paused',updated_at=NOW() WHERE id=$1 AND status IN ('scheduled','in_progress','overdue')`, [state.current_primary_action_id]);
     }
   } else if (state.current_primary_action_id) {
-    await client.query(`UPDATE lead_actions SET status=CASE WHEN due_at<=NOW() THEN 'overdue' ELSE 'scheduled' END,updated_at=NOW() WHERE id=$1 AND status='paused'`, [state.current_primary_action_id]);
+    await client.query(`UPDATE lead_actions SET status=CASE WHEN due_at<=NOW()-($2 * INTERVAL '1 minute') THEN 'overdue' ELSE 'scheduled' END,updated_at=NOW() WHERE id=$1 AND status='paused'`, [state.current_primary_action_id, ACTION_OVERDUE_GRACE_MINUTES]);
   }
   return { enabled: true, synced: true, action_id: action?.id || null };
 }
@@ -851,7 +852,7 @@ function workspaceCte(period, scopeSql, filterSql, journey = false, actor = null
        OR EXISTS(SELECT 1 FROM lead_remarks r WHERE r.lead_id=l.id AND r.workflow_step IS NOT NULL AND r.created_at>=COALESCE(l.assigned_at,l.created_at))
        OR EXISTS(SELECT 1 FROM lead_call_logs cl WHERE cl.lead_id=l.id AND cl.created_at>=COALESCE(l.assigned_at,l.created_at))
        OR EXISTS(SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id=l.id AND ca.status='completed' AND COALESCE(ca.attempted_at,ca.created_at)>=COALESCE(l.assigned_at,l.created_at))) AS is_unworked,
-      ((a.status='overdue' OR (a.status='scheduled' AND a.due_at<=NOW()))
+      ((a.status IN ('overdue','scheduled') AND a.due_at<=NOW()-(${ACTION_OVERDUE_GRACE_MINUTES} * INTERVAL '1 minute'))
        OR EXISTS(SELECT 1 FROM lead_call_attempts ca JOIN lead_call_attempt_sequences seq ON seq.id=ca.sequence_id AND seq.status='active' WHERE ca.lead_id=l.id AND ca.status='scheduled' AND ca.scheduled_at<=NOW())
        OR (COALESCE(ls.terminal_state, CASE WHEN l.stage::text='won' OR l.call_status::text='converted' THEN 'converted' WHEN l.stage::text IN ('lost','dropped') OR l.call_status::text='not_interested' THEN 'cold' END) IS NULL
            AND a.id IS NULL AND NOT EXISTS(SELECT 1 FROM lead_call_attempt_sequences seq WHERE seq.lead_id=l.id AND seq.status='active'))) AS is_pending
@@ -892,12 +893,12 @@ function counselorJourneyViews(actor) {
   const legacy = `NOT workflow_managed AND terminal_state IS NULL`;
   const previousWork = `${own} AND legacy_worked AND NOT worked_n AND NOT worked_o`;
   Object.assign(views, {received:own,
-    new:`${own} AND (workflow_queue='new' OR (${legacy} AND is_unworked AND first_contact_deadline>NOW() AND next_followup_at IS NULL))`,
+    new:`${own} AND (workflow_queue='new' OR (${legacy} AND is_unworked AND first_contact_deadline>NOW()-(${ACTION_OVERDUE_GRACE_MINUTES} * INTERVAL '1 minute') AND next_followup_at IS NULL))`,
     old:`${own} AND workflow_queue='old'`,
     pending:`${own} AND (workflow_queue='pending' OR (${legacy} AND
-      ((is_unworked AND first_contact_deadline<=NOW() AND next_followup_at IS NULL)
-       OR (is_pending AND (is_worked OR first_contact_deadline<=NOW())
-         AND (next_followup_at IS NULL OR next_followup_at<=NOW())))))`,
+      ((is_unworked AND first_contact_deadline<=NOW()-(${ACTION_OVERDUE_GRACE_MINUTES} * INTERVAL '1 minute') AND next_followup_at IS NULL)
+       OR (is_pending AND (is_worked OR first_contact_deadline<=NOW()-(${ACTION_OVERDUE_GRACE_MINUTES} * INTERVAL '1 minute'))
+         AND (next_followup_at IS NULL OR next_followup_at<=NOW()-(${ACTION_OVERDUE_GRACE_MINUTES} * INTERVAL '1 minute')))))`,
     worked:`worked_n OR worked_o OR (${previousWork})`,worked_n:'worked_n',worked_o:'worked_o',
     worked_legacy:previousWork});
   const {membership}=require('./counselorWorkflowService');
@@ -1050,6 +1051,7 @@ async function updateSettings(user, input = {}) {
 }
 
 module.exports = {
+  ACTION_OVERDUE_GRACE_MINUTES,
   workspaceCte, counselorJourneyViews, QUALIFYING_EVENTS,
   ACTION_TYPES, COLD_REASONS, EVENT_TYPES, JOURNEY_STAGES, WORKSPACE_VIEWS,
   getSettings, isEnabledFor, getLifecycle, recordEvent, completeAction, closeLifecycle,

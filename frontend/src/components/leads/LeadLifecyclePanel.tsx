@@ -31,6 +31,7 @@ const COLD_REASONS = [
   ['purchased_elsewhere', 'Purchased Elsewhere'], ['timing_issue', 'Timing Issue'], ['duplicate', 'Duplicate'],
   ['invalid_lead', 'Invalid Lead'], ['other', 'Other'],
 ] as const;
+const ACTION_OVERDUE_GRACE_MINUTES = 60;
 
 function key() {
   return typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `lifecycle-${Date.now()}`;
@@ -96,6 +97,11 @@ export function LeadLifecyclePanel({
   const data = lifecycle.data;
   const state = data.state;
   const activeAction = state.current_action;
+  const actionGraceEndsAt = activeAction?.due_at
+    ? new Date(new Date(activeAction.due_at).getTime() + ACTION_OVERDUE_GRACE_MINUTES * 60_000).toISOString()
+    : null;
+  const actionIsDelayed = ['scheduled', 'overdue'].includes(activeAction?.status || '') && actionGraceEndsAt && Date.now() >= new Date(actionGraceEndsAt).getTime();
+  const actionIsInGrace = activeAction?.status === 'scheduled' && activeAction.due_at && Date.now() > new Date(activeAction.due_at).getTime() && !actionIsDelayed;
   const activeRetry = state.active_call_retry;
   const retryDueAt = activeRetry?.next_attempt?.scheduled_at || null;
   const retryAttempt = Number(activeRetry?.next_attempt?.attempt_number || 0);
@@ -202,8 +208,12 @@ export function LeadLifecyclePanel({
                       <>
                         <p className="mt-1 text-xs text-slate-500">Due {fmtDate(activeAction.due_at, 'd MMM yyyy, h:mm a')}</p>
                         {activeAction.due_at && (
-                          <p className={`mt-1 text-xs font-semibold ${activeAction.status === 'overdue' ? 'text-rose-600' : 'text-amber-700'}`}>
-                            {activeAction.status === 'overdue' ? 'Overdue' : 'Due'} {fmtRelative(activeAction.due_at)}
+                          <p className={`mt-1 text-xs font-semibold ${actionIsDelayed ? 'text-rose-600' : 'text-amber-700'}`}>
+                            {actionIsDelayed
+                              ? `Delayed ${fmtRelative(actionGraceEndsAt)}`
+                              : actionIsInGrace
+                                ? `Grace period · delay starts ${fmtRelative(actionGraceEndsAt)}`
+                                : `Due ${fmtRelative(activeAction.due_at)}`}
                           </p>
                         )}
                       </>
