@@ -156,6 +156,24 @@ describe('Counselor Lifecycle V2', () => {
     expect(balance).toBe(0);
   });
 
+  test('Common Meeting delay begins at its stored deadline; other actions keep the grace period', () => {
+    const condition = lifecycle.actionOverdueCondition('a');
+    expect(condition).toContain("a.action_type IN ('common_meeting','common_meeting_outcome') THEN 0");
+    expect(condition).toContain('ELSE 60 END * INTERVAL');
+  });
+
+  test('deadline worker selects Common Meeting outcomes at 11 AM internal deadline', async () => {
+    const client = { query: jest.fn(async () => ({ rows: [] })) };
+    database.withTransaction.mockImplementationOnce(callback => callback(client));
+
+    await deadlineJob.markOverdue({ enabled: true, pilotUserIds: [] });
+
+    const [sql, params] = client.query.mock.calls[0];
+    expect(sql).toContain("a.action_type IN ('common_meeting','common_meeting_outcome') THEN 0");
+    expect(sql).toContain('ELSE 60 END * INTERVAL');
+    expect(params).toEqual([null, 200]);
+  });
+
   test('legacy dual-write is a no-op while feature is disabled', async () => {
     const client = { query: jest.fn().mockResolvedValue({ rows: SETTINGS_ROWS }) };
     const result = await lifecycle.syncLegacyRemark({ client, user: { id: 'member-1' }, leadId: 'lead-1', statuses: ['cnr'] });

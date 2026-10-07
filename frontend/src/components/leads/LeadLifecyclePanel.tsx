@@ -97,11 +97,15 @@ export function LeadLifecyclePanel({
   const data = lifecycle.data;
   const state = data.state;
   const activeAction = state.current_action;
-  const actionGraceEndsAt = activeAction?.due_at
-    ? new Date(new Date(activeAction.due_at).getTime() + ACTION_OVERDUE_GRACE_MINUTES * 60_000).toISOString()
+  const isMeetingOutcome = ['common_meeting', 'common_meeting_outcome'].includes(activeAction?.action_type || '');
+  const actionDelayStartsAt = activeAction?.due_at
+    ? new Date(new Date(activeAction.due_at).getTime() + (isMeetingOutcome ? 0 : ACTION_OVERDUE_GRACE_MINUTES) * 60_000).toISOString()
     : null;
-  const actionIsDelayed = ['scheduled', 'overdue'].includes(activeAction?.status || '') && actionGraceEndsAt && Date.now() >= new Date(actionGraceEndsAt).getTime();
-  const actionIsInGrace = activeAction?.status === 'scheduled' && activeAction.due_at && Date.now() > new Date(activeAction.due_at).getTime() && !actionIsDelayed;
+  const actionDisplayDueAt = activeAction?.due_at && isMeetingOutcome
+    ? new Date(new Date(activeAction.due_at).getTime() - ACTION_OVERDUE_GRACE_MINUTES * 60_000).toISOString()
+    : activeAction?.due_at;
+  const actionIsDelayed = ['scheduled', 'overdue'].includes(activeAction?.status || '') && actionDelayStartsAt && Date.now() >= new Date(actionDelayStartsAt).getTime();
+  const actionIsInGrace = !isMeetingOutcome && activeAction?.status === 'scheduled' && activeAction.due_at && Date.now() > new Date(activeAction.due_at).getTime() && !actionIsDelayed;
   const activeRetry = state.active_call_retry;
   const retryDueAt = activeRetry?.next_attempt?.scheduled_at || null;
   const retryAttempt = Number(activeRetry?.next_attempt?.attempt_number || 0);
@@ -206,13 +210,15 @@ export function LeadLifecyclePanel({
                       <p className="mt-1 text-xs text-slate-500">Continue after the retry call.</p>
                     ) : (
                       <>
-                        <p className="mt-1 text-xs text-slate-500">Due {fmtDate(activeAction.due_at, 'd MMM yyyy, h:mm a')}</p>
+                        <p className="mt-1 text-xs text-slate-500">Due {fmtDate(actionDisplayDueAt, 'd MMM yyyy, h:mm a')}</p>
                         {activeAction.due_at && (
                           <p className={`mt-1 text-xs font-semibold ${actionIsDelayed ? 'text-rose-600' : 'text-amber-700'}`}>
                             {actionIsDelayed
-                              ? `Delayed ${fmtRelative(actionGraceEndsAt)}`
+                              ? `Delayed ${fmtRelative(actionDelayStartsAt)}`
+                              : isMeetingOutcome
+                                ? `Delay ${fmtRelative(actionDelayStartsAt)}`
                               : actionIsInGrace
-                                ? `Grace period · delay starts ${fmtRelative(actionGraceEndsAt)}`
+                                ? `Grace period · delay starts ${fmtRelative(actionDelayStartsAt)}`
                                 : `Due ${fmtRelative(activeAction.due_at)}`}
                           </p>
                         )}
@@ -235,7 +241,7 @@ export function LeadLifecyclePanel({
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={reopenMode ? 'Reopen Lead' : completeMode ? 'Complete Required Action' : 'Record Activity'} description={reopenMode ? 'Reopen with one clear, scheduled next action.' : 'Record what happened and always leave one clear next action.'} size="md" footer={<><Button variant="ghost" onClick={() => setModalOpen(false)}>Cancel</Button><Button onClick={submit} disabled={record.isPending || complete.isPending || close.isPending || reopen.isPending}>Save lifecycle</Button></>}>
         <div className="space-y-4">
           {!reopenMode && <><div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setTerminal('')} className={`rounded-xl border p-3 text-sm font-medium ${!terminal ? 'border-sky-500 bg-sky-50 text-sky-800' : 'border-slate-200'}`}>Continue journey</button><button type="button" onClick={() => setTerminal('converted')} className={`rounded-xl border p-3 text-sm font-medium ${terminal === 'converted' ? 'border-emerald-500 bg-emerald-50 text-emerald-800' : 'border-slate-200'}`}>Converted</button></div><button type="button" onClick={() => setTerminal('cold')} className={`w-full rounded-xl border p-3 text-sm font-medium ${terminal === 'cold' ? 'border-rose-500 bg-rose-50 text-rose-800' : 'border-slate-200'}`}>Close as Cold</button></>}
-          {terminal === 'cold' ? <><label className="block"><span className="label">Cold reason</span><select className="input" value={coldReason} onChange={event => setColdReason(event.target.value)}>{COLD_REASONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>{coldReason === 'other' && <label className="block"><span className="label">Reason details</span><textarea className="input min-h-20" value={coldNote} onChange={event => setColdNote(event.target.value)} /></label>}</> : terminal === 'converted' ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"><CheckCircle2 className="mr-2 inline h-4 w-4" />Future actions and retries will be cancelled; history remains.</div> : <>{!reopenMode && <label className="block"><span className="label">Activity</span><select className="input" value={activity} onChange={event => setActivity(event.target.value)}>{ACTIVITIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}<label className="block"><span className="label">What happens next?</span><select className="input" value={nextAction} onChange={event => setNextAction(event.target.value)}>{NEXT_ACTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>{nextAction === 'common_meeting' ? <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">Outcome update will be due automatically on the next working day at 11:00 AM IST. No individual meeting is created.</div> : <label className="block"><span className="label">Deadline</span><input type="datetime-local" className="input" value={dueAt} onChange={event => setDueAt(event.target.value)} /></label>}<label className="block"><span className="label">Reason / context</span><textarea className="input min-h-20" value={reason} onChange={event => setReason(event.target.value)} placeholder="Why is this the next action?" /></label></>}
+          {terminal === 'cold' ? <><label className="block"><span className="label">Cold reason</span><select className="input" value={coldReason} onChange={event => setColdReason(event.target.value)}>{COLD_REASONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>{coldReason === 'other' && <label className="block"><span className="label">Reason details</span><textarea className="input min-h-20" value={coldNote} onChange={event => setColdNote(event.target.value)} /></label>}</> : terminal === 'converted' ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"><CheckCircle2 className="mr-2 inline h-4 w-4" />Future actions and retries will be cancelled; history remains.</div> : <>{!reopenMode && <label className="block"><span className="label">Activity</span><select className="input" value={activity} onChange={event => setActivity(event.target.value)}>{ACTIVITIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}<label className="block"><span className="label">What happens next?</span><select className="input" value={nextAction} onChange={event => setNextAction(event.target.value)}>{NEXT_ACTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>{nextAction === 'common_meeting' ? <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">Outcome shows as due at 10:00 AM IST next working day. Delay counting starts at 11:00 AM IST. No individual meeting is created.</div> : <label className="block"><span className="label">Deadline</span><input type="datetime-local" className="input" value={dueAt} onChange={event => setDueAt(event.target.value)} /></label>}<label className="block"><span className="label">Reason / context</span><textarea className="input min-h-20" value={reason} onChange={event => setReason(event.target.value)} placeholder="Why is this the next action?" /></label></>}
         </div>
       </Modal>
     </div>

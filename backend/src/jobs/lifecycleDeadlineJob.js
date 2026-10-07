@@ -149,11 +149,11 @@ async function markOverdue(settings) {
              l.full_name AS lead_name
         FROM lead_actions a
         JOIN leads l ON l.id=a.lead_id
-       WHERE a.status='scheduled' AND a.due_at<=NOW()-($2 * INTERVAL '1 minute')
+       WHERE a.status='scheduled' AND ${lifecycle.actionOverdueCondition('a')}
          AND ($1::uuid[] IS NULL OR l.assigned_to_user_id=ANY($1::uuid[]))
        ORDER BY a.due_at ASC
        FOR UPDATE OF a SKIP LOCKED
-       LIMIT $3`, [scopeIds, lifecycle.ACTION_OVERDUE_GRACE_MINUTES, BATCH_SIZE]);
+       LIMIT $2`, [scopeIds, BATCH_SIZE]);
     for (const action of rows) {
       const pendingReason = ['common_meeting', 'common_meeting_outcome'].includes(action.action_type)
         ? 'COMMON_MEETING_OUTCOME_NOT_UPDATED'

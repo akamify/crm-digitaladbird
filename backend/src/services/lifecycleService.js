@@ -46,6 +46,10 @@ function text(value) {
   return String(value ?? '').trim();
 }
 
+function actionOverdueCondition(alias = 'a') {
+  return `${alias}.due_at<=NOW()-(CASE WHEN ${alias}.action_type IN ('common_meeting','common_meeting_outcome') THEN 0 ELSE ${ACTION_OVERDUE_GRACE_MINUTES} END * INTERVAL '1 minute')`;
+}
+
 function positiveInt(value, fallback, max = 100000) {
   const number = Number.parseInt(value, 10);
   return Number.isFinite(number) && number > 0 ? Math.min(number, max) : fallback;
@@ -455,7 +459,7 @@ async function syncLegacyRemark({ client, user, leadId, statuses = [], remarkId 
       await client.query(`UPDATE lead_actions SET status='paused',updated_at=NOW() WHERE id=$1 AND status IN ('scheduled','in_progress','overdue')`, [state.current_primary_action_id]);
     }
   } else if (state.current_primary_action_id) {
-    await client.query(`UPDATE lead_actions SET status=CASE WHEN due_at<=NOW()-($2 * INTERVAL '1 minute') THEN 'overdue' ELSE 'scheduled' END,updated_at=NOW() WHERE id=$1 AND status='paused'`, [state.current_primary_action_id, ACTION_OVERDUE_GRACE_MINUTES]);
+    await client.query(`UPDATE lead_actions AS a SET status=CASE WHEN ${actionOverdueCondition('a')} THEN 'overdue' ELSE 'scheduled' END,updated_at=NOW() WHERE a.id=$1 AND a.status='paused'`, [state.current_primary_action_id]);
   }
   return { enabled: true, synced: true, action_id: action?.id || null };
 }
@@ -852,7 +856,7 @@ function workspaceCte(period, scopeSql, filterSql, journey = false, actor = null
        OR EXISTS(SELECT 1 FROM lead_remarks r WHERE r.lead_id=l.id AND r.workflow_step IS NOT NULL AND r.created_at>=COALESCE(l.assigned_at,l.created_at))
        OR EXISTS(SELECT 1 FROM lead_call_logs cl WHERE cl.lead_id=l.id AND cl.created_at>=COALESCE(l.assigned_at,l.created_at))
        OR EXISTS(SELECT 1 FROM lead_call_attempts ca WHERE ca.lead_id=l.id AND ca.status='completed' AND COALESCE(ca.attempted_at,ca.created_at)>=COALESCE(l.assigned_at,l.created_at))) AS is_unworked,
-      ((a.status IN ('overdue','scheduled') AND a.due_at<=NOW()-(${ACTION_OVERDUE_GRACE_MINUTES} * INTERVAL '1 minute'))
+      ((a.status IN ('overdue','scheduled') AND ${actionOverdueCondition('a')})
        OR EXISTS(SELECT 1 FROM lead_call_attempts ca JOIN lead_call_attempt_sequences seq ON seq.id=ca.sequence_id AND seq.status='active' WHERE ca.lead_id=l.id AND ca.status='scheduled' AND ca.scheduled_at<=NOW())
        OR (COALESCE(ls.terminal_state, CASE WHEN l.stage::text='won' OR l.call_status::text='converted' THEN 'converted' WHEN l.stage::text IN ('lost','dropped') OR l.call_status::text='not_interested' THEN 'cold' END) IS NULL
            AND a.id IS NULL AND NOT EXISTS(SELECT 1 FROM lead_call_attempt_sequences seq WHERE seq.lead_id=l.id AND seq.status='active'))) AS is_pending
@@ -1052,7 +1056,7 @@ async function updateSettings(user, input = {}) {
 
 module.exports = {
   ACTION_OVERDUE_GRACE_MINUTES,
-  workspaceCte, counselorJourneyViews, QUALIFYING_EVENTS,
+  workspaceCte, counselorJourneyViews, actionOverdueCondition, QUALIFYING_EVENTS,
   ACTION_TYPES, COLD_REASONS, EVENT_TYPES, JOURNEY_STAGES, WORKSPACE_VIEWS,
   getSettings, isEnabledFor, getLifecycle, recordEvent, completeAction, closeLifecycle,
   reopenLifecycle, workspace, updateSettings, ensureState, createPrimaryAction,
