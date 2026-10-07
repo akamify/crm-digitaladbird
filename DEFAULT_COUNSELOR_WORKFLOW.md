@@ -251,3 +251,31 @@ Release gate: implementation complete; staging/live visual and count verificatio
 - Counselor metric links use the existing counselor report. View Counselors hierarchy navigation remains available. Dates and active lead filters are preserved; unrelated hierarchy search and stale pagination are cleared.
 - Lead detail return links preserve the scoped report route. No backend, database or permission changes.
 - Verification: all 48 frontend regression tests passed; typecheck passed; lint passed with existing warnings; production build passed, including the scoped RM route. Deployment and live visual verification were not performed.
+
+
+### Super Admin counselor filter in RM lead reports
+
+- Only Super Admin sees the counselor selector on `/leads/distribution/rm/[rmId]/leads`. Options use the existing RM-filtered `/users?role=member&rmId=...` endpoint, including the backend's partner-to-member role mapping.
+- Selecting a counselor sets the existing `counselor_id` report filter, resets pagination and conflicting assignee filters, and preserves the selected workflow tab, dates and other lead filters. Clearing the selection restores the RM-wide report.
+- Summary counts, remark tabs and lead rows continue to use the same server report scope and existing RM/counselor relationship validation. Options are cached separately by actor and RM and are not fetched by other roles.
+- Loading, unavailable selection, empty options and retry states are handled without silently clearing the current counselor.
+- Verification: 51 regression tests passed; standalone typecheck passed; production build including lint/type checks passed with existing lint warnings. Live browser/API verification and deployment were not performed.
+
+
+### Counselor dashboard analytics-only update
+
+- Member dashboard now displays current Assigned/New/Old/Worked/Pending and all remark metrics shared with the Leads workspace. Worked retains N/O/Previous counts.
+- Every metric opens `/leads` with its workspace view and selected period/filters. Dashboard no longer renders or requests lead lists, follow-up rows or legacy workflow-step analytics.
+- Uses the existing summary endpoint with `journey=true`, matching Leads workflow predicates without row hydration. Summary cache is actor-scoped, with cancellation, refresh, retry UI and one-minute polling.
+- Request Leads and ranking remain. Removed the request widget's legacy Pending Work count (not-worked calculation) to avoid confusing it with workflow Pending; authoritative Pending is in analytics. No backend policies or schemas changed.
+- Verification: 54 frontend regression tests passed. Production build (including lint/type checks) passed with existing warnings; standalone typecheck passed after build completion. No deployment or live browser verification performed.
+
+
+### Meta campaign CPL allocation on dashboards
+
+- Added actor-scoped `/reports/lead-costs` using current undeleted CRM leads joined once per campaign to synced Meta CPL and ad-account currency. Member/partner sees self, RM sees visible team, Super Admin sees all CRM leads. No owner query overrides or schema changes.
+- Counselor, RM, Super Admin dashboard and Super Admin analytics display total leads, priced leads, weighted average CPL and allocated lead cost (sum of campaign lead count multiplied by its CPL). Separate currencies are never added together.
+- This is explicitly All Time / current ownership / latest synced campaign CPL, not historical per-lead billing or daily spend. Reassignment changes who holds the allocated cost. Missing campaign/CPL/currency or failed metrics are excluded and counted as missing, not silently valued at zero.
+- Super Admin also sees Meta spend for included priced campaigns, counted once per campaign and distinguished from CRM allocation. Sync time is visible. Existing campaign metric sync remains the data source.
+- Meta sync now pairs cost with the same lead action type used for count, and clears obsolete metrics on an empty successful snapshot.
+- Verification: 10 backend tests (including aggregate SQL in pg-mem, actor scope, currency/unknown-cost handling and Meta sync action matching) and 55 frontend regressions passed. Backend syntax checks, standalone frontend typecheck and production build passed; build lint has existing warnings. Live PostgreSQL query plans, Meta API access/data parity, browser visuals and deployment were not verified.

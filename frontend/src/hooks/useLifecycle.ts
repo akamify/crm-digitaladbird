@@ -140,13 +140,17 @@ export function useWorkflowSettings() {
   });
 }
 
-export function useCounselorWorkspaceSummary(scope: LeadAnalyticsScope, filters: LeadFilters = {}, enabled = true) {
+export function useCounselorWorkspaceSummary(scope: LeadAnalyticsScope, filters: LeadFilters = {}, enabled = true, journey = false) {
+  const { user } = useAuth();
   const params = workspaceParams(scope, filters);
+  if (journey) params.set('journey', 'true');
+  params.sort();
   return useQuery({
-    queryKey: ['counselor-workspace', 'summary', params.toString()],
-    queryFn: () => apiGet<{ enabled: boolean; period: LeadAnalyticsScope; summary: WorkspaceSummary }>(`/counselor-workspace/summary?${params}`),
-    enabled,
-    staleTime: 15_000,
+    queryKey: ['counselor-workspace', 'summary', user?.id, params.toString()],
+    queryFn: ({signal}) => apiGet<{ enabled: boolean; period: LeadAnalyticsScope; summary: WorkspaceSummary }>(`/counselor-workspace/summary?${params}`, undefined, {signal}),
+    enabled: enabled && Boolean(user),
+    staleTime: 60_000,
+    retry: false,
     refetchInterval: 60_000,
   });
 }

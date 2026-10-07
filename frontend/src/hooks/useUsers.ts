@@ -2,6 +2,19 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiGet, apiPost, apiPatch } from '@/lib/api';
 import type { User, Role } from '@/types';
+import { useAuth } from '@/lib/auth';
+
+export function useRmReportCounselors(rmId: string) {
+  const { user } = useAuth();
+  const params = new URLSearchParams({role: 'member', rmId});
+  return useQuery({
+    queryKey: ['users', 'rm-report-counselors', user?.id, rmId],
+    queryFn: ({signal}) => apiGet<User[]>(`/users?${params}`, undefined, {signal}),
+    enabled: user?.role === 'super_admin' && Boolean(rmId),
+    staleTime: 60_000,
+    retry: false,
+  });
+}
 
 export function useUsers() {
   return useQuery({

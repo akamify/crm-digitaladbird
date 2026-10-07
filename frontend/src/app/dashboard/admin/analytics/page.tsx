@@ -7,6 +7,7 @@ import {
 } from 'recharts';
 import { format } from 'date-fns';
 import { AppShell } from '@/components/layout/AppShell';
+import { LeadCostCard } from '@/components/dashboard/LeadCostCard';
 import { Skeleton, EmptyState } from '@/components/ui/Modal';
 import { useAnalyticsOverview, useConversionAnalytics } from '@/hooks/useAdminEnterprise';
 import { clsx, humanize } from '@/lib/format';
@@ -33,6 +34,7 @@ function AnalyticsInner() {
 
   return (
     <div className="space-y-6">
+      <LeadCostCard />
       <div className="flex items-center gap-2">
         <Link href="/dashboard" className="text-slate-400 hover:text-slate-600"><ArrowLeft className="h-4 w-4" /></Link>
         <BarChart3 className="h-5 w-5 text-brand-600" />

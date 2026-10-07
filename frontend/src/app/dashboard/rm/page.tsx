@@ -13,6 +13,7 @@ import {
 } from 'recharts';
 import { format } from 'date-fns';
 import { AppShell } from '@/components/layout/AppShell';
+import { LeadCostCard } from '@/components/dashboard/LeadCostCard';
 import { KpiCard } from '@/components/dashboard/KpiCard';
 import { Skeleton, EmptyState, PageLoader } from '@/components/ui/Modal';
 import { useSummary, useDaily } from '@/hooks/useReports';
@@ -102,6 +103,7 @@ function RmDashboardInner() {
 
   return (
     <div className="space-y-6">
+      <LeadCostCard />
       {/* RM scope notice */}
       <div className="flex items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3">
         <Eye className="h-4 w-4 text-brand-600" />

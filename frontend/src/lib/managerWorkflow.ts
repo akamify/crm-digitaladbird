@@ -1,4 +1,9 @@
-import type { LeadDailyMetric } from '@/types';
+import type { LeadDailyMetric, LeadFilters } from '@/types';
+
+export function withReportCounselor(filters: LeadFilters, counselorId: string): LeadFilters {
+  // One owner selector controls both summary and rows; remove conflicting assignee filters.
+  return {...filters, counselor_id: counselorId, assigned_to: '', assignment: '', page: 1};
+}
 export const MANAGER_METRICS: Array<{key:LeadDailyMetric;label:string;shortLabel:string}> = [
   ['received','Assigned Leads'],['new','New Leads'],['old','Old Leads'],['worked','Worked Leads'],['pending','Pending'],
   ['cc','Communication Completed'],['responded','Responded'],['call_issues','Call Issues'],['common_meeting','Common Meeting'],

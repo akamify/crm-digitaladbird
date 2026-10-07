@@ -494,7 +494,8 @@ async function syncCampaignMetrics(campaignId) {
   if (!row) {
     await query(
       `UPDATE meta_campaigns
-          SET last_metrics_synced_at = NOW(),
+          SET impressions = NULL, reach = NULL, spend = NULL, leads = NULL, cost_per_result = NULL,
+              last_metrics_synced_at = NOW(),
               metrics_error = NULL
         WHERE campaign_id = $1`,
       [String(campaignId)]
@@ -504,7 +505,7 @@ async function syncCampaignMetrics(campaignId) {
   const actions = Array.isArray(row.actions) ? row.actions : [];
   const costs = Array.isArray(row.cost_per_action_type) ? row.cost_per_action_type : [];
   const leadAction = actions.find(action => /lead/i.test(String(action.action_type || '')));
-  const leadCost = costs.find(action => /lead/i.test(String(action.action_type || '')));
+  const leadCost = leadAction && costs.find(action => action.action_type === leadAction.action_type);
 
   await query(
     `UPDATE meta_campaigns

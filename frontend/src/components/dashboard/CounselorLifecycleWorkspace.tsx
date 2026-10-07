@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { LEADS_METRICS, LEADS_VIEWS, QUEUE_TONES } from '@/components/leads/counselorAnalyticsMetrics';
 import { useDeferredValue, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowRight, Clock3, Loader2, Phone, RefreshCw, Search } from 'lucide-react';
@@ -27,28 +28,6 @@ const ANALYTICS_VIEWS: Array<[WorkspaceView, string]> = [
   ['follow_up', 'Follow-up'], ['converted', 'Converted'], ['cold', 'Cold'],
 ];
 
-const LEADS_METRICS: typeof METRICS = [
-  {key:'received',label:'Assigned Leads',hint:'Leads assigned during the selected period.'},
-  {key:'new',label:'New Leads',hint:'Untouched leads in the New queue.'},
-  {key:'old',label:'Old Leads',hint:'Leads aged into Old; the remark tab can overlap.'},
-  {key:'worked',label:'Worked Leads',hint:'Recorded N/O work plus previous work carried forward without guessed attribution.'},
-  {key:'pending',label:'Pending',hint:'Leads whose workflow has moved to Pending.'},
-  {key:'cc',label:'CC',hint:'Communication Completed'},
-];
-const LEADS_VIEWS: typeof ANALYTICS_VIEWS = [
-  ['cc','Communication Completed'],['responded','Responded (HI)'],['call_issues','Call Issues'],['common_meeting','Common Meeting'],['dim','Discussed in Meeting'],['personal_meeting','Personal Meeting'],
-  ['follow_up','Follow-up'],['quotation','Quotation'],['hot','Hot'],['warm','Warm'],
-  ['special_category','Special Category'],['call_reminder','Call Reminder'],['handover_rm','Handover to Relationship Manager'],['not_attended','Not Attended'],
-  ['converted','Converted'],['cold','Cold'],['process_incomplete','Process Incomplete'],['responses','Responses'],['tte','TTE'],
-];
-const QUEUE_TONES: Record<string,string> = {
-  received:'bg-indigo-50 text-indigo-900 hover:bg-indigo-100',
-  new:'bg-yellow-50 text-yellow-900 hover:bg-yellow-100',
-  old:'bg-orange-50 text-orange-900 hover:bg-orange-100',
-  worked:'bg-emerald-50 text-emerald-900 hover:bg-emerald-100',
-  pending:'bg-rose-100 text-rose-900 hover:bg-rose-200',
-  cc:'bg-sky-50 text-sky-900 hover:bg-sky-100',
-};
 const SELECTABLE_VIEWS = new Set<WorkspaceView>([
   ...METRICS.map(metric => metric.key as WorkspaceView),
   ...ANALYTICS_VIEWS.map(([key]) => key),

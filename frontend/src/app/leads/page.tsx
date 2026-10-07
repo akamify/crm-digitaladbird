@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { DistributionSummaryGrid, DistributionError } from '@/components/leads/LeadDistributionUi';
-import { managerMetric } from '@/lib/managerWorkflow';
+import { managerMetric, withReportCounselor } from '@/lib/managerWorkflow';
+import { RmCounselorFilter } from '@/components/leads/RmCounselorFilter';
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { AlertTriangle, CalendarDays, ChevronLeft, ChevronRight, Eye, Inbox, Lock, Mail, MessageCircle, MessageSquarePlus, MoreHorizontal, MoreVertical, Phone, Plus, ScrollText, Tag, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -740,6 +741,7 @@ function LeadsInner() {
       <LeadSavedViews value={filters} role={user?.role} onApply={applySavedView} />
 
       {isManagerReportingView && <section className="min-w-0 space-y-3 rounded-xl border border-slate-200 bg-white p-3">
+        {isSuperAdminLeadsView && rmId && <RmCounselorFilter rmId={rmId} value={filters.counselor_id || ''} onChange={counselorId => {setSelectedIds([]); setFilters(current => withReportCounselor(current, counselorId));}} />}
         <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-sm font-semibold text-slate-900">Lead analytics</h2><LeadAnalyticsPeriodControl scope={selectedScope} onChange={setAnalyticsScope} /></div>
         {queryData?.summary ? <DistributionSummaryGrid summary={queryData.summary} leadParams={new URLSearchParams(Object.entries(effectiveFilters).filter(([,v])=>v!==undefined && v!==null && v!=='').map(([k,v])=>[k,String(v)]))} activeMetric={managerMetric(filters.workflow_view)} onMetricChange={metric=>{setSelectedIds([]);setFilters(f=>({...f,workflow_view:metric,work_source:'',call_issue_type:'',page:1}));}} /> : !isError ? <Skeleton className="h-44 rounded-xl" /> : null}
         {filters.workflow_view === 'worked' && <div className="flex gap-2">{[['','All work'],['new','New (N)'],['old','Old / Pending (O)'],['previous','Previous work']].map(([value,label])=><button key={value} className={clsx('rounded-lg border px-3 py-2 text-xs', (filters.work_source || '')===value && 'bg-blue-50 text-brand-700')} onClick={()=>setFilters(f=>({...f,work_source:value,page:1}))}>{label}</button>)}</div>}

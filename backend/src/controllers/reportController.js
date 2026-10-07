@@ -3,6 +3,10 @@ const { asyncHandler } = require('../utils/errors');
 const { getVisibleUserIds } = require('../middleware/rbac');
 const { notWorkedLeadCondition } = require('../utils/leadWorkMetrics');
 const { leadHasFollowupActivityCondition } = require('../utils/followupMetrics');
+exports.leadCosts = asyncHandler(async (req, res) => {
+  const data = await require('../services/leadCostReporting').leadCosts(req.user);
+  res.json({success: true, data});
+});
 
 function buildScope(visible, offset = 0) {
   if (visible === null) return { sql: '', params: [] };

@@ -18,6 +18,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { connectSocket } from '@/lib/socket';
 import { format } from 'date-fns';
 import { AppShell } from '@/components/layout/AppShell';
+import { LeadCostCard } from '@/components/dashboard/LeadCostCard';
 import { KpiCard } from '@/components/dashboard/KpiCard';
 import { Modal, Skeleton, EmptyState, PageLoader } from '@/components/ui/Modal';
 import { useSummary, useDaily, useByUser } from '@/hooks/useReports';
@@ -153,6 +154,7 @@ function AdminDashboardInner() {
 
   return (
     <div className="space-y-6">
+      <LeadCostCard />
       {/* Admin badge */}
       <div className="flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3">
         <Shield className="h-4 w-4 text-violet-600" />

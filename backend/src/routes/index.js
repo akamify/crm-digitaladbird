@@ -336,6 +336,7 @@ router.post ('/leads/:id/remarks',  authenticate, leads.addRemark);
 router.post ('/leads/:id/reassign', authenticate, requireRole('super_admin', 'rm'), leads.reassign);
 
 // ---- Reports (cached for performance) ---------------------------------
+router.get('/reports/lead-costs', authenticate, requireRole('super_admin', 'rm', 'member', 'partner'), reports.leadCosts);
 router.get('/reports/summary', authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), responseCache(15000), reports.summary);
 router.get('/reports/daily',   authenticate, requireRole('super_admin', 'admin', 'rm', 'member', 'partner'), responseCache(30000), reports.daily);
 router.get('/reports/by-user', authenticate, requireRole('super_admin', 'rm'), responseCache(15000), reports.byUser);

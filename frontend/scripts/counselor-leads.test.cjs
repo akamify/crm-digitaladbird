@@ -641,3 +641,100 @@ test('RM distribution gives cards two desktop columns with health below',()=>{
   assert.doesNotMatch(source,/360px|2xl:grid-cols-3/);
   assert.ok(source.indexOf('Distribution Health')>source.indexOf('data.rms.map'));
 });
+
+
+test('super admin counselor selection preserves report scope and resets conflicting ownership',()=>{
+  const {withReportCounselor,distributionReportHref}=harness().load('@/lib/managerWorkflow');
+  const current={rm_id:'rm',workflow_view:'pending',lead_view:'daily',from:'2026-10-07',to:'2026-10-07',q:'Test',page:4,assigned_to:'__unassigned',assignment:'unassigned'};
+  const selected=withReportCounselor(current,'member');
+  assert.equal(selected.counselor_id,'member'); assert.equal(selected.page,1);
+  assert.equal(selected.assigned_to,''); assert.equal(selected.assignment,'');
+  for(const key of ['rm_id','workflow_view','lead_view','from','to','q']) assert.equal(selected[key],current[key]);
+  const href=new URL(distributionReportHref(new URLSearchParams(selected),'old','rm'),'https://example.test');
+  assert.equal(href.searchParams.get('counselor_id'),'member');
+  assert.equal(href.searchParams.get('workflow_view'),'old');
+  assert.equal(withReportCounselor(selected,'').counselor_id,'');
+  assert.equal(current.page,4);
+});
+
+test('counselor options use RM-filtered users endpoint only for super admin',()=>{
+  for(const role of ['super_admin','admin','rm','member']) {
+    const h=harness('',{}, {'@tanstack/react-query':{...require('@tanstack/react-query'),useQuery:options=>options},'@/lib/auth':{useAuth:()=>({user:{id:'actor',role}})},'@/lib/api':{apiGet:url=>url}});
+    const hook=h.load('@/hooks/useUsers').useRmReportCounselors;
+    const query=hook('rm-one');
+    assert.equal(query.enabled,role==='super_admin');
+    assert.equal(query.queryFn({signal:undefined}),'/users?role=member&rmId=rm-one');
+    assert.notDeepEqual(query.queryKey,hook('rm-two').queryKey);
+    assert.equal(hook('').enabled,false);
+  }
+});
+
+test('counselor dropdown handles selection, loading, empty and retry states',()=>{
+  const render=result=>{
+    const h=harness('',{}, {'@/hooks/useUsers':{useRmReportCounselors:()=>result}});
+    return renderToStaticMarkup(React.createElement(h.load('@/components/leads/RmCounselorFilter').RmCounselorFilter,{rmId:'rm',value:'member',onChange(){}}));
+  };
+  const loaded=render({data:[{id:'member',full_name:'Example counselor'}]});
+  assert.match(loaded,/All counselors in this RM/); assert.match(loaded,/selected="">Example counselor/);
+  assert.match(render({isLoading:true}),/Loading counselors/);
+  assert.match(render({isError:true}),/Retry/);
+  assert.match(render({data:[]}),/No counselors in this RM/);
+  const source=fs.readFileSync(path.join(root,'app/leads/page.tsx'),'utf8');
+  assert.match(source,/isSuperAdminLeadsView && rmId && <RmCounselorFilter/);
+});
+
+
+test('member dashboard renders current analytics and scoped links without lead rows',()=>{
+  const calls=[];
+  const h=harness('lead_view=daily&from=2026-10-07&to=2026-10-07&source=meta',{}, {
+    '@/hooks/useLifecycle':{useCounselorWorkspaceSummary:(...args)=>{calls.push(args);return {data:{summary:{received:64,new:3,old:7,worked:12,worked_n:2,worked_o:10,pending:9,dim:2}}};}},
+  });
+  const html=renderToStaticMarkup(React.createElement(h.load('@/components/dashboard/CounselorDashboardAnalytics').CounselorDashboardAnalytics));
+  for(const label of ['Assigned Leads','New Leads','Old Leads','Worked Leads','Pending','Communication Completed','Discussed in Meeting','Personal Meeting','Responses','TTE']) assert.ok(html.includes(label));
+  for(const metric of ['received','old','pending','dim','personal_meeting']) assert.ok(html.includes(`workspace_view=${metric}`));
+  assert.match(html,/from=2026-10-07/); assert.match(html,/source=meta/);
+  assert.doesNotMatch(html,/<table|tel:|workspace-results|Search this queue|No leads in/);
+  assert.equal(calls[0][3],true); assert.equal(calls[0][1].source,'meta');
+  const page=fs.readFileSync(path.join(root,'app/dashboard/member/page.tsx'),'utf8');
+  assert.match(page,/<CounselorDashboardAnalytics \/>/);
+  assert.doesNotMatch(page,/useLeadList|useSummary|useWorkflowStats|CounselorLifecycleWorkspace|lifecycleEnabled|my_pending \?\?/);
+});
+
+test('dashboard summary uses count-only API with actor-scoped journey cache',()=>{
+  const h=harness('',{}, {'@tanstack/react-query':{...require('@tanstack/react-query'),useQuery:options=>options},'@/lib/api':{apiGet:url=>url}});
+  const hook=h.load(path.join(root,'hooks/useLifecycle.ts')).useCounselorWorkspaceSummary;
+  const query=hook({view:'all_time'},{},true,true);
+  assert.ok(query.queryKey.includes('counselor'));
+  const url=query.queryFn({signal:undefined});
+  assert.match(url,/^\/counselor-workspace\/summary\?/);
+  assert.match(url,/journey=true/); assert.match(url,/lead_view=all_time/);
+  assert.doesNotMatch(url,/page_size|\/leads/);
+  assert.equal(query.refetchInterval,60000);
+});
+
+test('dashboard analytics distinguishes loading and errors from real zero counts',()=>{
+  const render=result=>{
+    const h=harness('',{}, {'@/hooks/useLifecycle':{useCounselorWorkspaceSummary:()=>result}});
+    return renderToStaticMarkup(React.createElement(h.load('@/components/dashboard/CounselorDashboardAnalytics').CounselorDashboardAnalytics));
+  };
+  assert.match(render({isLoading:true}),/skeleton-shimmer/);
+  const failed=render({isError:true});
+  assert.match(failed,/Could not load analytics/); assert.match(failed,/Unavailable/); assert.match(failed,/Retry/);
+  const empty=render({data:{summary:{received:0}}});
+  assert.doesNotMatch(empty,/Unavailable|Could not load/);
+  assert.match(empty,/>0<\/div>/);
+});
+
+
+test('lead cost cards show allocated cost, missing coverage and independent currencies',()=>{
+  const render=(result,role='member')=>{
+    const h=harness('',{}, {'@tanstack/react-query':{useQuery:()=>result},'@/lib/auth':{useAuth:()=>({user:{id:'self',role}})}});
+    return renderToStaticMarkup(React.createElement(h.load('@/components/dashboard/LeadCostCard').LeadCostCard));
+  };
+  const html=render({data:{total_leads:22,missing_cost_leads:2,groups:[{currency:'INR',priced_leads:20,average_cpl:20,allocated_cost:400,oldest_sync:'2026-10-07T10:00:00Z'}]}});
+  for(const value of ['Your lead cost','400.00','20.00','Allocated lead cost','2 leads have no usable','All time'])assert.ok(html.includes(value));
+  assert.match(render({isError:true} ),/Retry/);
+  assert.match(render({isLoading:true}),/skeleton-shimmer/);
+  assert.equal(render({},'client'),'');
+  assert.match(render({data:{total_leads:0,missing_cost_leads:0,groups:[]}},'rm'),/No leads in this scope/);
+});
