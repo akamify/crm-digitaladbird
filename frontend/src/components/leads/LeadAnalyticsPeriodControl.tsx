@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react';
+import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { clsx } from '@/lib/format';
 import {
   businessToday,
@@ -15,6 +15,7 @@ import type { LeadAnalyticsScope } from '@/types';
 interface Props {
   scope: LeadAnalyticsScope;
   onChange: (scope: LeadAnalyticsScope) => void;
+  mobileFullWidth?: boolean;
 }
 
 function presetRange(preset: string): LeadAnalyticsScope {
@@ -29,7 +30,7 @@ function presetRange(preset: string): LeadAnalyticsScope {
   return { view: 'daily', from: today, to: today };
 }
 
-export function LeadAnalyticsPeriodControl({ scope, onChange }: Props) {
+export function LeadAnalyticsPeriodControl({ scope, onChange, mobileFullWidth = false }: Props) {
   const [open, setOpen] = useState(false);
   const [draftFrom, setDraftFrom] = useState(scope.from || businessToday());
   const [draftTo, setDraftTo] = useState(scope.to || scope.from || businessToday());
@@ -74,22 +75,23 @@ export function LeadAnalyticsPeriodControl({ scope, onChange }: Props) {
   }
 
   return (
-    <div ref={rootRef} className="relative flex items-center rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+    <div ref={rootRef} className={`relative flex items-center rounded-xl border border-slate-200 bg-white p-1 shadow-sm ${mobileFullWidth ? 'w-full justify-between lg:w-auto lg:justify-center' : ''}`}>
       {scope.view === 'daily' && (
-          <button type="button" onClick={() => move(-1)} aria-label="Previous period" className="rounded-lg p-2 text-slate-600 hover:bg-slate-100">
+          <button type="button" onClick={() => move(-1)} aria-label="Previous period" className={`rounded-lg p-2 text-slate-600 hover:bg-slate-100 ${mobileFullWidth ? 'max-lg:hidden' : ''}`}>
             <ChevronLeft className="h-4 w-4" />
           </button>
       )}
-      <button type="button" onClick={() => setOpen(value => !value)} className="inline-flex min-w-40 items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50" aria-haspopup="dialog" aria-expanded={open}>
-        <CalendarDays className="h-4 w-4 text-brand-600" /><span>{scope.view === 'all_time' ? 'All Time' : formatAnalyticsPeriod(scope)}</span>
+      <button type="button" onClick={() => setOpen(value => !value)} className={`inline-flex min-w-40 items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 ${mobileFullWidth ? 'min-w-0 flex-1 justify-start py-3 text-base lg:min-w-40 lg:flex-none lg:justify-center lg:py-2 lg:text-sm' : 'justify-center'}`} aria-haspopup="dialog" aria-expanded={open}>
+        <CalendarDays className="h-5 w-5 shrink-0 text-brand-600 lg:h-4 lg:w-4" /><span className="truncate">{scope.view === 'all_time' ? 'All Time' : formatAnalyticsPeriod(scope)}</span>{mobileFullWidth && <ChevronDown className="ml-auto h-5 w-5 shrink-0 text-slate-500 lg:hidden" />}
       </button>
       {scope.view === 'daily' && (
         <>
-          <button type="button" disabled={!canMoveForward} onClick={() => move(1)} aria-label="Next period" className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35">
+          <button type="button" disabled={!canMoveForward} onClick={() => move(1)} aria-label="Next period" className={`rounded-lg p-2 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35 ${mobileFullWidth ? 'max-lg:hidden' : ''}`}>
             <ChevronRight className="h-4 w-4" />
           </button>
           <button type="button" onClick={() => onChange(presetRange('today'))} className={clsx(
             'ml-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition',
+            mobileFullWidth && 'max-lg:hidden',
             scope.from === today && scope.to === today ? 'bg-brand-600 text-white' : 'text-brand-700 hover:bg-brand-50',
           )}>Today</button>
         </>

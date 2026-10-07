@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { LEADS_METRICS, LEADS_VIEWS, QUEUE_TONES } from '@/components/leads/counselorAnalyticsMetrics';
 import { useDeferredValue, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowRight, Clock3, Loader2, Phone, RefreshCw, Search } from 'lucide-react';
+import { ArrowRight, ChevronDown, Clock3, Loader2, Phone, RefreshCw, Search, SlidersHorizontal } from 'lucide-react';
 import { LeadDeadline, LeadRowJourney } from '@/components/leads/LeadRowProgress';
 import { Skeleton } from '@/components/ui/Modal';
 import { LeadAnalyticsPeriodControl } from '@/components/leads/LeadAnalyticsPeriodControl';
@@ -62,7 +62,10 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
   const [view, setView] = useState<WorkspaceView>(initialView);
   const [page, setPage] = useState(() => Math.max(1, Math.min(100000, Math.trunc(Number(searchParams.get('page')) || 1))));
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const shouldScrollToResults = useRef(Boolean(leadsPage && requestedView));
   const [dashboardSearch, setDashboardSearch] = useState(searchParams.get('q') || '');
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [filters, setFilters] = useState<LeadFilterState>(() => ({
     q: searchParams.get('q') || '', category: (searchParams.get('category') as LeadFilterState['category']) || '',
     stage: (searchParams.get('stage') as LeadFilterState['stage']) || '', call_status: (searchParams.get('call_status') as LeadFilterState['call_status']) || '',
@@ -75,6 +78,22 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
   }));
   const deferredFilters = useDeferredValue(leadsPage ? filters : { ...filters, q: dashboardSearch });
   const leads = useCounselorWorkspaceLeads({ view, scope, filters: deferredFilters, page, journey:true });
+  function scrollToResults() {
+    if (!leadsPage) return;
+    window.requestAnimationFrame(() => resultsRef.current?.scrollIntoView({
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      block: 'start',
+    }));
+  }
+  useEffect(() => {
+    if (!leadsPage || !shouldScrollToResults.current || !leads.data || leads.isPlaceholderData) return;
+    shouldScrollToResults.current = false;
+    const frame = window.requestAnimationFrame(() => resultsRef.current?.scrollIntoView({
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      block: 'start',
+    }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [leads.data, leads.isPlaceholderData, leadsPage]);
   const activeViewIndex = analyticsViews.findIndex(([key]) => key === view);
   const activeViewLabel = analyticsViews.find(([key]) => key === view)?.[1]
     || metrics.find(metric => metric.key === view)?.label
@@ -108,9 +127,10 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
   }, [returnTo, router]);
 
   function selectView(next: WorkspaceView) {
-    if (next === view) return;
+    if (leadsPage) shouldScrollToResults.current = true;
     setView(next);
     setPage(1);
+    scrollToResults();
   }
 
   function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
@@ -137,7 +157,7 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
           <h2 className="mt-1 text-lg font-semibold text-slate-950">{leadsPage ? 'Lead journey and work queues' : "Today's work, one clear queue"}</h2>
           <p className="text-xs text-slate-500">{leadsPage ? 'Assigned and queue tabs use assignment date; Worked uses work date. Old and remark tabs can overlap.' : 'Assigned and queue tabs use assignment date; N/O uses work date. Previous work is retained.'}</p>
         </div>
-        <LeadAnalyticsPeriodControl scope={scope} onChange={selectScope} />
+        <LeadAnalyticsPeriodControl scope={scope} onChange={selectScope} mobileFullWidth={leadsPage} />
       </div>
 
       <div className={`grid grid-cols-2 gap-px bg-slate-200/70 ${leadsPage ? 'lg:grid-cols-5' : 'lg:grid-cols-6'}`}>
@@ -157,11 +177,23 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
             return <button ref={node => { tabRefs.current[index] = node; }} id={`workspace-tab-${key}`} key={key} type="button" role="tab" aria-selected={active} aria-controls="workspace-results" tabIndex={active || (activeViewIndex < 0 && index === 0) ? 0 : -1} onKeyDown={event => handleTabKeyDown(event, index)} onClick={() => selectView(key)} className={`${active ? 'chip-blue' : 'chip-slate'} min-h-10 shrink-0`}>{active && isTransitioning && <Loader2 className="mr-1.5 inline h-3.5 w-3.5 animate-spin" aria-hidden="true" />}{label} <span className="ml-1 tabular-nums">{leads.isError && !leads.data ? '?' : leads.data?.summary?.[key] ?? 0}</span></button>;
           })}
         </div>
-        {leadsPage ? <LeadFilters value={filters} onChange={next => { setFilters(next); setPage(1); }} simplifiedAdmin /> : <label className="relative block max-w-md"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input className="input pl-9" value={dashboardSearch} onChange={event => { setDashboardSearch(event.target.value); setPage(1); }} placeholder="Search this queue..." /></label>}
+        {leadsPage ? <>
+          <div className="flex min-w-0 gap-2 md:hidden">
+            <label className="relative min-w-0 flex-1">
+              <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+              <input aria-label="Search leads" className="input min-h-11 pl-9" value={filters.q || ''} onChange={event => { setFilters(current => ({ ...current, q: event.target.value, page: 1 })); setPage(1); }} placeholder="Search name, number or remark..." />
+            </label>
+            <button type="button" aria-expanded={mobileFiltersOpen} onClick={() => setMobileFiltersOpen(open => !open)} className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm">
+              <SlidersHorizontal className="h-4 w-4 text-brand-700" /> Filters <ChevronDown className={`h-4 w-4 transition-transform ${mobileFiltersOpen ? 'rotate-180' : ''}`} />
+            </button>
+          </div>
+          <div className="hidden md:block"><LeadFilters value={filters} onChange={next => { setFilters(next); setPage(1); }} simplifiedAdmin /></div>
+          {mobileFiltersOpen && <div className="md:hidden"><LeadFilters value={filters} onChange={next => { setFilters(next); setPage(1); }} simplifiedAdmin panel /></div>}
+        </> : <label className="relative block max-w-md"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input className="input pl-9" value={dashboardSearch} onChange={event => { setDashboardSearch(event.target.value); setPage(1); }} placeholder="Search this queue..." /></label>}
 
-        <div id="workspace-results" role="tabpanel" aria-labelledby={activeViewIndex >= 0 ? `workspace-tab-${view}` : undefined} aria-label={activeViewIndex < 0 ? `${activeViewLabel} results` : undefined} aria-busy={isInitialLoading || isTransitioning} className="space-y-3 outline-none">
+        <div id="workspace-results" ref={resultsRef} role="tabpanel" aria-labelledby={activeViewIndex >= 0 ? `workspace-tab-${view}` : undefined} aria-label={activeViewIndex < 0 ? `${activeViewLabel} results` : undefined} aria-busy={isInitialLoading || isTransitioning} className="scroll-mt-36 space-y-3 outline-none">
           <div className="flex min-h-6 items-center justify-between gap-3" role="status" aria-live="polite">
-            <p className="text-sm font-semibold text-slate-800">{isInitialLoading || isTransitioning ? `Loading ${activeViewLabel}...` : leads.isError && !leads.data ? `Unable to load ${activeViewLabel}` : `${Number(leads.data?.total || 0).toLocaleString()} ${activeViewLabel}`}</p>
+            <p className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-bold text-slate-950 shadow-sm">{isInitialLoading || isTransitioning ? `Loading ${activeViewLabel}...` : leads.isError && !leads.data ? `Unable to load ${activeViewLabel}` : `${Number(leads.data?.total || 0).toLocaleString()} ${activeViewLabel}`}</p>
             <button type="button" onClick={() => { void leads.refetch(); }} disabled={leads.isFetching} aria-label={leads.isFetching ? 'Refreshing leads' : 'Refresh leads'} title={leads.isFetching ? 'Refreshing leads' : 'Refresh leads'} className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500 disabled:cursor-wait">
               <RefreshCw className={`h-4 w-4 ${leads.isFetching ? 'animate-spin motion-reduce:animate-none' : ''}`} aria-hidden="true" />
             </button>
@@ -170,17 +202,29 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
           {isInitialLoading || isTransitioning ? <div className="space-y-2">{[1, 2, 3].map(key => <Skeleton key={key} className="h-16" />)}</div> : !leads.data && leads.isError ? null : !leads.data?.rows.length ? (
             <div className="rounded-xl border border-dashed border-slate-300 px-4 py-10 text-center text-sm text-slate-500">No leads in {activeViewLabel}.</div>
           ) : (
-          <div className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <div className="space-y-3 md:space-y-0 md:divide-y md:divide-slate-100 md:overflow-hidden md:rounded-xl md:border md:border-slate-200 md:bg-white">
             {leads.data.rows.map(lead => {
               const managed=lead.workflow_managed;
               const due=managed?(lead.followup_override?lead.next_followup_at:lead.workflow_deadline):(lead.next_retry_at || lead.current_action_due_at || lead.next_followup_at);
               return (
-              <article key={lead.id} className="px-4 py-3 transition hover:bg-slate-50/80">
-                <div className="grid gap-3 lg:grid-cols-[minmax(0,1.25fr)_0.8fr_1fr_auto] lg:items-center">
-                  <div className="min-w-0"><div className="truncate text-sm font-semibold text-slate-900">{lead.full_name || 'Unnamed lead'}</div><div className="mt-0.5 text-xs text-slate-500">{lead.phone || 'No phone'} / {humanize(lead.source || 'manual')}</div><div className="mt-1 flex flex-wrap gap-1">{leadsPage&&view==='worked'&&<>{lead.legacy_worked&&!lead.worked_n&&!lead.worked_o&&<span className="chip-slate">Previous work</span>}{lead.worked_n&&<span className="chip-blue" title="Worked while New">N</span>}{lead.worked_o&&<span className="chip-slate" title="Worked while Old or Pending">O</span>}</>}{lead.labels?.slice(0, 3).map(label => <span key={label.id} className="rounded-full border px-1.5 py-0.5 text-[9px] font-semibold" style={{ borderColor: label.color || '#cbd5e1', color: label.color || '#475569' }}>{label.name}</span>)}</div></div>
-                  <div className="text-xs text-slate-600"><div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Journey / Last result</div><div className="mt-1 font-semibold text-slate-800">{humanize((managed && lead.workflow_primary_status) || lead.last_call_result || lead.terminal_state || lead.journey_stage)}</div></div>
-                  <div className="text-xs text-slate-600"><div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Next required action</div><div className={`mt-1 inline-flex rounded-md px-2 py-1 font-semibold ${managed && (lead.workflow_queue==='pending' || lead.workflow_next_queue==='pending') ? 'bg-rose-50 text-rose-800' : managed && lead.workflow_next_queue==='old' && !lead.followup_override ? 'bg-orange-50 text-orange-800' : 'bg-sky-50 text-sky-800'}`}>{managed?(lead.followup_override?'Custom follow-up':lead.workflow_queue==='pending'?'Add next remark':due?(lead.workflow_next_queue==='old'?'Moves to Old Leads':lead.workflow_next_queue==='pending'?'Moves to Pending':'Workflow deadline'):'Add next remark'):nextActionLabel(lead.current_action_type, lead.current_action_reason, lead.has_call_issue)}</div>{due && <div className={`mt-0.5 flex items-center gap-1 ${(managed?lead.workflow_queue==='pending':lead.is_pending) ? 'font-semibold text-rose-600' : ''}`}><Clock3 className="h-3 w-3" />{leadsPage ? <LeadDeadline due={due}/> : <>{fmtDate(due, 'd MMM, h:mm a')} | {fmtRelative(due)}</>}</div>}{(managed?lead.workflow_queue==='pending':lead.is_pending) && <span className="mt-1 inline-flex rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700">{managed?'Pending':`Pending cycle ${lead.pending_occurrences || 1}`}</span>}</div>
-                  <div className="flex items-center gap-2 lg:justify-end">{!lead.read_only && lead.phone && <a href={`tel:${lead.phone}`} className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-emerald-200 px-3 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"><Phone className="h-3.5 w-3.5" />Call</a>}<Link href={`/leads/${lead.id}?returnTo=${encodeURIComponent(returnTo)}`} className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-brand-200 px-3 text-xs font-semibold text-brand-700 hover:bg-brand-50">Open<ArrowRight className="h-3.5 w-3.5" /></Link></div>
+              <article key={lead.id} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm transition hover:border-sky-200 hover:shadow-md md:rounded-none md:border-0 md:px-4 md:py-3 md:shadow-none md:hover:bg-slate-50/80">
+                <div className="grid grid-cols-2 gap-x-4 gap-y-3 md:grid-cols-[minmax(0,1.2fr)_0.8fr_1fr_auto_auto] md:items-center">
+                  <div className="col-span-2 min-w-0 md:col-span-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0"><div className="truncate text-base font-bold text-slate-900 md:text-sm">{lead.full_name || 'Unnamed lead'}</div><div className="mt-0.5 text-sm text-slate-500 md:text-xs">{lead.phone || 'No phone'} <span className="px-1 text-slate-300">|</span> {humanize(lead.source || 'manual')}</div></div>
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${lead.category === 'trader' ? 'bg-blue-50 text-blue-700' : lead.category === 'partner' ? 'bg-violet-50 text-violet-700' : 'bg-slate-100 text-slate-600'}`}>{lead.category === 'unknown' ? 'Uncategorized' : `${humanize(lead.category)} lead`}</span>
+                        {(managed ? lead.workflow_queue === 'pending' : lead.is_pending) && <span className="rounded-full bg-rose-50 px-2.5 py-1 text-[10px] font-bold text-rose-700">{managed ? 'Pending' : `Pending cycle ${lead.pending_occurrences || 1}`}</span>}
+                      </div>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1">{leadsPage&&view==='worked'&&<>{lead.legacy_worked&&!lead.worked_n&&!lead.worked_o&&<span className="chip-slate">Previous work</span>}{lead.worked_n&&<span className="chip-blue" title="Worked while New">N</span>}{lead.worked_o&&<span className="chip-slate" title="Worked while Old or Pending">O</span>}</>}{lead.labels?.slice(0, 3).map(label => <span key={label.id} className="rounded-full border px-2 py-0.5 text-[10px] font-semibold" style={{ borderColor: label.color || '#cbd5e1', color: label.color || '#475569' }}>{label.name}</span>)}</div>
+                  </div>
+                  <div className="col-span-2 grid min-w-0 grid-cols-2 gap-3 md:contents">
+                    <div className="min-w-0 border-r border-slate-100 pr-2 text-xs text-slate-600"><div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Journey / Last result</div><div className="mt-1 font-semibold leading-5 text-slate-800">{humanize((managed && lead.workflow_primary_status) || lead.last_call_result || lead.terminal_state || lead.journey_stage)}</div></div>
+                    <div className="min-w-0 text-xs text-slate-600"><div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Next required action</div><div className={`mt-1 inline-flex max-w-full rounded-lg px-2.5 py-1.5 font-semibold leading-5 ${managed && (lead.workflow_queue==='pending' || lead.workflow_next_queue==='pending') ? 'bg-rose-50 text-rose-800' : managed && lead.workflow_next_queue==='old' && !lead.followup_override ? 'bg-orange-50 text-orange-800' : 'bg-sky-50 text-sky-800'}`}>{managed?(lead.followup_override?'Custom follow-up':lead.workflow_queue==='pending'?'Add next remark':due?(lead.workflow_next_queue==='old'?'Moves to Old Leads':lead.workflow_next_queue==='pending'?'Moves to Pending':'Workflow deadline'):'Add next remark'):nextActionLabel(lead.current_action_type, lead.current_action_reason, lead.has_call_issue)}</div></div>
+                  </div>
+                  {due && <div className={`col-span-2 flex min-w-0 items-start gap-2 border-t border-slate-100 pt-2 text-xs ${(managed?lead.workflow_queue==='pending':lead.is_pending) ? 'font-semibold text-rose-600' : 'text-slate-600'} md:col-span-1 md:border-0 md:pt-0`}><Clock3 className="mt-0.5 h-4 w-4 shrink-0" />{leadsPage ? <LeadDeadline due={due}/> : <>{fmtDate(due, 'd MMM, h:mm a')} | {fmtRelative(due)}</>}</div>}
+                  <div className="col-span-2 flex items-center gap-2 border-t border-slate-100 pt-3 md:col-span-1 md:justify-end md:border-0 md:pt-0">{!lead.read_only && lead.phone && <a href={`tel:${lead.phone}`} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/50 px-4 text-sm font-semibold text-emerald-700 hover:bg-emerald-50"><Phone className="h-4 w-4" />Call</a>}<Link href={`/leads/${lead.id}?returnTo=${encodeURIComponent(returnTo)}`} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-brand-200 bg-brand-50/50 px-4 text-sm font-semibold text-brand-700 hover:bg-brand-50">Open<ArrowRight className="h-4 w-4" /></Link></div>
                 </div>
                 {leadsPage&&Boolean(lead.history?.length)&&<div className="mt-2"><LeadRowJourney events={lead.history||[]} currentStatus={managed && lead.workflow_queue!=='pending' ? lead.workflow_primary_status : null} href={`/leads/${lead.id}?returnTo=${encodeURIComponent(returnTo)}`}/></div>}
 
