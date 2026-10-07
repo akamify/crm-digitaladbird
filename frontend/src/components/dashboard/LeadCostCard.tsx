@@ -10,7 +10,7 @@ interface LeadCosts {
 }
 export function LeadCostCard() {
   const { user } = useAuth();
-  const allowed = Boolean(user && ['super_admin','rm','member','partner'].includes(user.role));
+  const allowed = user?.role === 'super_admin';
   const query = useQuery({queryKey: ['reports','lead-costs',user?.id], enabled: allowed,
     queryFn: ({signal}) => apiGet<LeadCosts>('/reports/lead-costs', undefined, {signal}), staleTime: 60000, retry: false});
   if (!allowed) return null;
