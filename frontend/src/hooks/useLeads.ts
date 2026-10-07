@@ -20,11 +20,11 @@ export function useLeadList(filters: LeadFilters, options: { enabled?: boolean }
   const qs = toQueryString(filters);
   return useQuery({
     queryKey: ['leads', user?.id, qs],
-    queryFn: () => apiGet<PageResult<Lead>>(`${filters.workflow_view !== undefined ? '/leads/distribution/workflow' : '/leads'}?${qs}`),
+    queryFn: ({signal}) => apiGet<PageResult<Lead>>(`${filters.workflow_view !== undefined ? '/leads/distribution/workflow' : '/leads'}?${qs}`, undefined, {signal}),
     enabled: options.enabled !== false,
     placeholderData: (previous, query) => query?.queryKey[1] === user?.id ? previous : undefined,
-    staleTime: 15_000,
-    retry: 2,
+    staleTime: 60_000,
+    retry: false,
   });
 }
 

@@ -157,11 +157,12 @@ export function useCounselorWorkspaceLeads(input: { view: WorkspaceView; scope: 
   params.set('page_size', '25');
   return useQuery({
     queryKey: ['counselor-workspace', 'leads', params.toString()],
-    queryFn: () => apiGet<{ enabled: boolean; summary: WorkspaceSummary; rows: WorkspaceLead[]; total: number; page: number; page_size: number }>(`/counselor-workspace/leads?${params}`),
+    queryFn: ({signal}) => apiGet<{ enabled: boolean; summary: WorkspaceSummary; rows: WorkspaceLead[]; total: number; page: number; page_size: number }>(`/counselor-workspace/leads?${params}`, undefined, {signal}),
     enabled: input.enabled !== false,
     placeholderData: keepPreviousData,
     // Reopening a recently visited tab uses its cache. Polling and mutation
     // invalidation still refresh current queue membership in the background.
+    retry: false,
     staleTime: 60_000,
     refetchInterval: 60_000,
   });

@@ -802,8 +802,19 @@ function workspaceCte(period, scopeSql, filterSql, journey = false, actor = null
     FROM counselor_workflow_events e CROSS JOIN bounds b
     WHERE ${reporting ? '(b.visible_users IS NULL OR actor_id=ANY(b.visible_users))' : `actor_id=${actor}`} AND is_work AND (${workSourceSql()}) IN ('new','old') AND ${onPeriod('e.occurred_at')}
     GROUP BY lead_id${reporting ? ',actor_id' : ''}
+  ), workspace_candidates AS MATERIALIZED (
+    SELECT l.* FROM leads l CROSS JOIN bounds b
+    WHERE ${filterSql} ${scopeSql}
+      ${period.view === 'all_time' ? '' : `AND (
+        ${onPeriod('COALESCE(l.assigned_at,l.created_at)')}
+        ${reporting ? `OR ${onPeriod('l.created_at')}` : ''}
+        OR EXISTS(SELECT 1 FROM counselor_work w WHERE w.lead_id=l.id)
+        OR (l.next_followup_at<=NOW() AND EXISTS(SELECT 1 FROM counselor_workflow_state active_followup
+          WHERE active_followup.lead_id=l.id AND active_followup.assigned_to_user_id=l.assigned_to_user_id
+            AND active_followup.assignment_at IS NOT DISTINCT FROM l.assigned_at AND active_followup.followup_override))
+      )`}
   )${reporting ? `, report_actors AS MATERIALIZED (
-    SELECT id AS lead_id,assigned_to_user_id AS id FROM leads WHERE deleted_at IS NULL
+    SELECT id AS lead_id,assigned_to_user_id AS id FROM workspace_candidates
     UNION SELECT work.lead_id,work.actor_id FROM counselor_work work
       JOIN lead_assignments access ON access.lead_id=work.lead_id AND access.previous_user_id=work.actor_id
   )` : ''}` : ''}, classified AS MATERIALIZED (
@@ -844,7 +855,7 @@ function workspaceCte(period, scopeSql, filterSql, journey = false, actor = null
        OR EXISTS(SELECT 1 FROM lead_call_attempts ca JOIN lead_call_attempt_sequences seq ON seq.id=ca.sequence_id AND seq.status='active' WHERE ca.lead_id=l.id AND ca.status='scheduled' AND ca.scheduled_at<=NOW())
        OR (COALESCE(ls.terminal_state, CASE WHEN l.stage::text='won' OR l.call_status::text='converted' THEN 'converted' WHEN l.stage::text IN ('lost','dropped') OR l.call_status::text='not_interested' THEN 'cold' END) IS NULL
            AND a.id IS NULL AND NOT EXISTS(SELECT 1 FROM lead_call_attempt_sequences seq WHERE seq.lead_id=l.id AND seq.status='active'))) AS is_pending
-    FROM leads l CROSS JOIN bounds b
+    FROM ${journey ? 'workspace_candidates' : 'leads'} l CROSS JOIN bounds b
     ${reporting ? 'JOIN report_actors report_actor ON report_actor.lead_id=l.id' : ''}
     ${journey ? `LEFT JOIN counselor_workflow_state cw ON cw.lead_id=l.id
       AND cw.assigned_to_user_id=l.assigned_to_user_id AND cw.assignment_at IS NOT DISTINCT FROM l.assigned_at
@@ -858,7 +869,7 @@ function workspaceCte(period, scopeSql, filterSql, journey = false, actor = null
     LEFT JOIN users u ON u.id=l.assigned_to_user_id
     LEFT JOIN lead_lifecycle_state ls ON ls.lead_id=l.id
     LEFT JOIN lead_actions a ON a.id=ls.current_primary_action_id AND a.status IN ('scheduled','in_progress','overdue')
-    WHERE ${filterSql} ${journey ? '' : 'AND l.assigned_to_user_id IS NOT NULL'} ${scopeSql}
+    WHERE ${journey ? 'TRUE' : `${filterSql} AND l.assigned_to_user_id IS NOT NULL ${scopeSql}`}
   )`;
 }
 

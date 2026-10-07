@@ -165,8 +165,8 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
         {metrics.map(metric => (
           <button key={metric.key} type="button" aria-pressed={view === metric.key} title={metric.hint} onClick={() => selectView(metric.key as WorkspaceView)} className={`${leadsPage && metric.key === 'cc' ? 'lg:hidden ' : ''}min-h-24 px-4 py-3 text-left transition ${leadsPage ? QUEUE_TONES[metric.key] || 'bg-white' : 'bg-white hover:bg-sky-50'} ${view === metric.key ? 'shadow-[inset_0_-3px_0_#0284c7]' : ''}`}>
             <div className="text-[10px] font-semibold uppercase tracking-wide text-current">{metric.label}</div>
-            {leads.isLoading && !leads.data ? <Skeleton className="mt-3 h-7 w-14" /> : <div className="mt-2 text-2xl font-bold tabular-nums text-current">{Number(leads.data?.summary?.[metric.key] || 0).toLocaleString()}</div>}
-            <div className="mt-1 line-clamp-1 text-[10px] text-slate-400">{leadsPage&&metric.key==='worked'?`N ${leads.data?.summary?.worked_n ?? 0} / O ${leads.data?.summary?.worked_o ?? 0} / Previous ${leads.data?.summary?.worked_legacy ?? 0}`:leadsPage&&metric.key==='cc'?'Communication Completed':'Selected period'}</div>
+            {leads.isLoading && !leads.data ? <Skeleton className="mt-3 h-7 w-14" /> : <div className="mt-2 text-2xl font-bold tabular-nums text-current">{leads.isError && !leads.data ? 'Unavailable' : Number(leads.data?.summary?.[metric.key] || 0).toLocaleString()}</div>}
+            <div className="mt-1 line-clamp-1 text-[10px] text-slate-400">{leads.isError && !leads.data ? 'Retry to load counts' : leadsPage&&metric.key==='worked'?`N ${leads.data?.summary?.worked_n ?? 0} / O ${leads.data?.summary?.worked_o ?? 0} / Previous ${leads.data?.summary?.worked_legacy ?? 0}`:leadsPage&&metric.key==='cc'?'Communication Completed':'Selected period'}</div>
           </button>
         ))}
       </div>
@@ -175,14 +175,14 @@ export function CounselorLifecycleWorkspace({ leadsPage = false }: { leadsPage?:
         <div className="scroll-thin flex min-w-0 max-w-full gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Lead analytics views">
           {analyticsViews.map(([key, label], index) => {
             const active = view === key;
-            return <button ref={node => { tabRefs.current[index] = node; }} id={`workspace-tab-${key}`} key={key} type="button" role="tab" aria-selected={active} aria-controls="workspace-results" tabIndex={active || (activeViewIndex < 0 && index === 0) ? 0 : -1} onKeyDown={event => handleTabKeyDown(event, index)} onClick={() => selectView(key)} className={`${active ? 'chip-blue' : 'chip-slate'} min-h-10 shrink-0`}>{active && isTransitioning && <Loader2 className="mr-1.5 inline h-3.5 w-3.5 animate-spin" aria-hidden="true" />}{label} <span className="ml-1 tabular-nums">{leads.data?.summary?.[key] ?? 0}</span></button>;
+            return <button ref={node => { tabRefs.current[index] = node; }} id={`workspace-tab-${key}`} key={key} type="button" role="tab" aria-selected={active} aria-controls="workspace-results" tabIndex={active || (activeViewIndex < 0 && index === 0) ? 0 : -1} onKeyDown={event => handleTabKeyDown(event, index)} onClick={() => selectView(key)} className={`${active ? 'chip-blue' : 'chip-slate'} min-h-10 shrink-0`}>{active && isTransitioning && <Loader2 className="mr-1.5 inline h-3.5 w-3.5 animate-spin" aria-hidden="true" />}{label} <span className="ml-1 tabular-nums">{leads.isError && !leads.data ? '?' : leads.data?.summary?.[key] ?? 0}</span></button>;
           })}
         </div>
         {leadsPage ? <LeadFilters value={filters} onChange={next => { setFilters(next); setPage(1); }} simplifiedAdmin /> : <label className="relative block max-w-md"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input className="input pl-9" value={dashboardSearch} onChange={event => { setDashboardSearch(event.target.value); setPage(1); }} placeholder="Search this queue..." /></label>}
 
         <div id="workspace-results" role="tabpanel" aria-labelledby={activeViewIndex >= 0 ? `workspace-tab-${view}` : undefined} aria-label={activeViewIndex < 0 ? `${activeViewLabel} results` : undefined} aria-busy={isInitialLoading || isTransitioning} className="space-y-3 outline-none">
           <div className="flex min-h-6 items-center justify-between gap-3" role="status" aria-live="polite">
-            <p className="text-sm font-semibold text-slate-800">{isInitialLoading || isTransitioning ? `Loading ${activeViewLabel}...` : `${Number(leads.data?.total || 0).toLocaleString()} ${activeViewLabel}`}</p>
+            <p className="text-sm font-semibold text-slate-800">{isInitialLoading || isTransitioning ? `Loading ${activeViewLabel}...` : leads.isError && !leads.data ? `Unable to load ${activeViewLabel}` : `${Number(leads.data?.total || 0).toLocaleString()} ${activeViewLabel}`}</p>
             <button type="button" onClick={() => { void leads.refetch(); }} disabled={leads.isFetching} aria-label={leads.isFetching ? 'Refreshing leads' : 'Refresh leads'} title={leads.isFetching ? 'Refreshing leads' : 'Refresh leads'} className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500 disabled:cursor-wait">
               <RefreshCw className={`h-4 w-4 ${leads.isFetching ? 'animate-spin motion-reduce:animate-none' : ''}`} aria-hidden="true" />
             </button>

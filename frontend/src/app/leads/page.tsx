@@ -737,7 +737,7 @@ function LeadsInner() {
 
       {isManagerReportingView && <section className="min-w-0 space-y-3 rounded-xl border border-slate-200 bg-white p-3">
         <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-sm font-semibold text-slate-900">Lead analytics</h2><LeadAnalyticsPeriodControl scope={selectedScope} onChange={setAnalyticsScope} /></div>
-        {data?.summary ? <DistributionSummaryGrid summary={data.summary} leadParams={new URLSearchParams(Object.entries(effectiveFilters).filter(([,v])=>v!==undefined && v!==null && v!=='').map(([k,v])=>[k,String(v)]))} activeMetric={managerMetric(filters.workflow_view)} onMetricChange={metric=>{setSelectedIds([]);setFilters(f=>({...f,workflow_view:metric,work_source:'',call_issue_type:'',page:1}));}} /> : <Skeleton className="h-44 rounded-xl" />}
+        {data?.summary ? <DistributionSummaryGrid summary={data.summary} leadParams={new URLSearchParams(Object.entries(effectiveFilters).filter(([,v])=>v!==undefined && v!==null && v!=='').map(([k,v])=>[k,String(v)]))} activeMetric={managerMetric(filters.workflow_view)} onMetricChange={metric=>{setSelectedIds([]);setFilters(f=>({...f,workflow_view:metric,work_source:'',call_issue_type:'',page:1}));}} /> : !isError ? <Skeleton className="h-44 rounded-xl" /> : null}
         {filters.workflow_view === 'worked' && <div className="flex gap-2">{[['','All work'],['new','New (N)'],['old','Old / Pending (O)'],['previous','Previous work']].map(([value,label])=><button key={value} className={clsx('rounded-lg border px-3 py-2 text-xs', (filters.work_source || '')===value && 'bg-blue-50 text-brand-700')} onClick={()=>setFilters(f=>({...f,work_source:value,page:1}))}>{label}</button>)}</div>}
         {filters.workflow_view === 'call_issues' && <div className="flex gap-2 overflow-x-auto"><button className="shrink-0 rounded-lg border px-3 py-2 text-xs" onClick={()=>setFilters(f=>({...f,call_issue_type:'',page:1}))}>All Call Issues</button>{Object.entries(data?.call_issue_buckets || {}).map(([issue,count])=><button key={issue} className={clsx('shrink-0 rounded-lg border px-3 py-2 text-xs',filters.call_issue_type===issue && 'bg-blue-50 text-brand-700')} onClick={()=>setFilters(f=>({...f,call_issue_type:issue,page:1}))}>{data?.call_issue_labels?.[issue] || humanize(issue)} {count}</button>)}</div>}
       </section>}
@@ -776,7 +776,7 @@ function LeadsInner() {
         </div>
       )}
 
-      <div className="card overflow-hidden" aria-busy={isLoading || isPlaceholderData}>
+      {(!isError || data) && <div className="card overflow-hidden" aria-busy={isLoading || isPlaceholderData}>
         <div className="flex flex-col gap-2 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-sm">
             <span className="font-semibold text-slate-900">{isLoading || isPlaceholderData ? 'Loading' : total.toLocaleString()}</span>
@@ -1100,7 +1100,7 @@ function LeadsInner() {
             </button>
           </div>
         )}
-      </div>
+      </div>}
 
       <Modal open={!!communicationLead} onClose={() => setCommunicationLead(null)} title="Lead Communication" size="lg">
         {communicationLead && (

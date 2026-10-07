@@ -52,12 +52,14 @@ async function context(actor,input={}) {
   const scopeClauses=['TRUE'];
   if(rm) scopeClauses.push(`f.distribution_rm_id=${add(rm.id)}::uuid`);
   if(counselor) scopeClauses.push(`f.distribution_counselor_id=${add(counselor.id)}::uuid`);
-  const cte=`${base}, attributed AS MATERIALIZED (
-    SELECT c.*,${flags},
+  const cte=`${base}, metric_flags AS (
+    SELECT classified.*,${flags} FROM classified
+  ), attributed AS MATERIALIZED (
+    SELECT c.*,
       CASE WHEN rm.role::text='rm' AND rm.deleted_at IS NULL THEN rm.id END AS distribution_rm_id,
       CASE WHEN u.role::text IN ('member','partner') AND u.deleted_at IS NULL AND u.status::text='active' AND u.report_to_id=rm.id THEN u.id END AS distribution_counselor_id,
       CASE WHEN c.workflow_managed THEN c.workflow_primary_status ELSE c.last_call_result END AS effective_call_issue
-    FROM classified c LEFT JOIN users u ON u.id=c.reporting_actor_id
+    FROM metric_flags c LEFT JOIN users u ON u.id=c.reporting_actor_id
     LEFT JOIN users rm ON rm.id=CASE WHEN u.role::text='rm' THEN u.id WHEN u.role::text IN ('member','partner') THEN COALESCE(u.report_to_id,c.pool_rm_id) ELSE c.pool_rm_id END
   ), report_scope AS MATERIALIZED (SELECT f.* FROM attributed f WHERE ${scopeClauses.join(' AND ')})`;
   let predicate=`f.metric_${selected}`;

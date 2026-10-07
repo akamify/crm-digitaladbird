@@ -17,7 +17,7 @@ suite('manager workflow reporting PostgreSQL',()=>{
    await pool.query('CREATE SCHEMA manager_workflow_test; SET search_path TO manager_workflow_test');
    database.query.mockImplementation((...args)=>pool.query(...args));
    await pool.query(`      CREATE TABLE workflow_settings(key text,value jsonb,label text,updated_at timestamptz);
-      CREATE TABLE users(id uuid PRIMARY KEY,full_name text,role text,report_to_id uuid,team_name text,status text DEFAULT 'active',deleted_at timestamptz);
+      CREATE TABLE users(id uuid PRIMARY KEY,full_name text,role text,report_to_id uuid,team_name text,created_at timestamptz DEFAULT NOW(),updated_at timestamptz DEFAULT NOW(),status text DEFAULT 'active',deleted_at timestamptz);
       CREATE TABLE leads(id uuid,full_name text,phone text,email text,source text,campaign_name text,campaign_label text,category text,
         pool_rm_id uuid,assigned_to_user_id uuid,assigned_at timestamptz,created_at timestamptz,updated_at timestamptz,last_call_at timestamptz,
         next_followup_at timestamptz,call_status text DEFAULT 'not_called',stage text DEFAULT 'new',deleted_at timestamptz);
@@ -144,6 +144,27 @@ suite('manager workflow reporting PostgreSQL',()=>{
    expect((await reporting.report(admin,{...daily,workflow_view:'worked',work_source:'previous'})).total).toBe(0);
    expect((await reporting.report(admin,{...daily,q:'nonexistent'})).total).toBe(0);
    expect((await reporting.report(admin,{...daily,workflow_view:'session_9pm'})).metric).toBe('common_meeting');
+ });
+ test('production-shaped timestamps reproduce the former date ambiguity and daily reports resolve it',async()=>{
+   await expect(pool.query('SELECT created_at FROM leads l LEFT JOIN users u ON u.id=l.assigned_to_user_id')).rejects.toMatchObject({code:'42702'});
+   for(const actor of [admin,rm]) {
+     const result=await reporting.report(actor,{...daily,workflow_view:'dim'});
+     expect(Array.isArray(result.rows)).toBe(true);
+     expect(result.total).toBe(result.summary.dim);
+   }
+ });
+ test('daily classification excludes thousands of irrelevant historical leads before history lookups',async()=>{
+   await pool.query('BEGIN');
+   try {
+     await pool.query("INSERT INTO leads(id,full_name,assigned_to_user_id,assigned_at,created_at) SELECT gen_random_uuid(),'historical-'||n,$1,'2025-01-01','2025-01-01' FROM generate_series(1,7500) n",[counselor.id]);
+     const c=await reporting.context(admin,daily);
+     const started=Date.now();
+     const counts=await pool.query(`${c.cte} SELECT COUNT(*)::int AS n FROM classified`,c.params);
+     expect(counts.rows[0].n).toBe(8);
+     const plan=await pool.query(`EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) ${c.cte} SELECT COUNT(*) FROM classified`,c.params);
+     console.info('7500 historical leads, narrowed daily classification ms:',Date.now()-started,'plan execution ms:',plan.rows[0]['QUERY PLAN'][0]['Execution Time']);
+     const result=await reporting.report(admin,daily);expect(result.total).toBe(7);
+   } finally {await pool.query('ROLLBACK');}
  });
  test('aggregate execution plan uses one report query without per-counselor requests',async()=>{
    database.query.mockClear();await reporting.rms(admin,daily);

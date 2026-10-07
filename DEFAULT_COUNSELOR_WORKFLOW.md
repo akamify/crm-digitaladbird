@@ -221,3 +221,14 @@ Verification:
 - EXPLAIN ANALYZE executed on isolated reporting fixtures; production-scale query plans and live count parity still require staging verification.
 
 Release gate: implementation complete; staging/live visual and count verification pending. No production PASS is claimed.
+
+
+## Report date errors and loading ? 7 October 2026
+
+- Daily manager metrics previously evaluated an unqualified `created_at` beside joined users. Users also have timestamps in the application schema; the isolated fixture omitted them. The fixture now includes both timestamps, and metric expressions are evaluated before user joins.
+- Shared journey reports now narrow candidates before classification/history lookups. The union retains assignment-date leads, manager received-date leads, work-date evidence and due follow-up overrides. Counselor/RM ownership and history attribution remain unchanged.
+- Manager lists reuse fresh tab data for 60 seconds. Manager, distribution and counselor list requests pass abort signals so superseded browser requests can be cancelled. Automatic failure retries are disabled; manual Retry remains available. This does not claim database cancellation after the server has accepted a request.
+- Failed manager requests stop skeletons and do not render a false zero-lead empty list. Counselor failures show unavailable counts instead of zero.
+- PostgreSQL: 408 tests passed, including date alias regression and existing workflow/permission parity. With 7,500 irrelevant historical leads, daily classification processed eight relevant leads; local EXPLAIN execution was 31.683 ms. This is fixture timing, not live response latency.
+- Frontend regression tests: 43 passed. Production deployment and live server timings remain separate verification steps.
+- Final production frontend build passed (48 pages), including typecheck and lint; existing lint warnings remain. Backend syntax checks and final diff check passed.

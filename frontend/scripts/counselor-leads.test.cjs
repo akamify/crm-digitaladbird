@@ -508,3 +508,26 @@ test('RM and counselor cards retain hierarchy and clickable workflow reports',()
     assert.match(html,/from=2026-09-25/);
   }
 });
+
+
+test('failed manager request does not show a loading summary or an empty zero-count list',()=>{
+  const source=fs.readFileSync(path.join(root,'app/leads/page.tsx'),'utf8');
+  assert.match(source, /!isError \? <Skeleton className="h-44 rounded-xl" \/> : null/);
+  assert.match(source, /\(!isError \|\| data\) && <div className="card overflow-hidden"/);
+});
+test('report requests support cancellation and do not automatically repeat server failures',()=>{
+  for(const file of ['hooks/useLeads.ts','hooks/useLeadDistribution.ts','hooks/useLifecycle.ts']) {
+    const source=fs.readFileSync(path.join(root,file),'utf8');
+    assert.match(source,/queryFn: \(\{signal\}\)/);
+    assert.match(source,/undefined, \{signal\}/);
+    assert.match(source,/retry: false/);
+  }
+});
+
+test('counselor failure displays unavailable counts instead of a zero-lead result',()=>{
+  const h=harness('workspace_view=cc',{isError:true,isLoading:false});
+  const html=renderToStaticMarkup(React.createElement(h.load('@/components/dashboard/CounselorLifecycleWorkspace').CounselorLifecycleWorkspace,{leadsPage:true}));
+  assert.match(html,/Unavailable/);
+  assert.match(html,/Unable to load Communication Completed/);
+  assert.doesNotMatch(html,/No leads in Communication Completed|>0 Communication Completed/);
+});

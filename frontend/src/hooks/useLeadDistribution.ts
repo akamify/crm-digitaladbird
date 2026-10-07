@@ -24,10 +24,10 @@ export function useRmDistribution(input: LeadDistributionQuery) {
   const qs = queryString({...input,workflow:'true'});
   return useQuery({
     queryKey: ['lead-distribution', user?.id, 'rms', qs],
-    queryFn: () => apiGet<LeadDistributionRmResponse>(`/leads/distribution/rms${qs ? `?${qs}` : ''}`),
+    queryFn: ({signal}) => apiGet<LeadDistributionRmResponse>(`/leads/distribution/rms${qs ? `?${qs}` : ''}`, undefined, {signal}),
     placeholderData: (previous, query) => query?.queryKey[1] === user?.id ? previous : undefined,
     staleTime: 30_000,
-    retry: 1,
+    retry: false,
   });
 }
 
@@ -36,11 +36,11 @@ export function useRmCounselorDistribution(rmId: string, input: LeadDistribution
   const qs = queryString({...input,workflow:'true'});
   return useQuery({
     queryKey: ['lead-distribution', user?.id, 'rm', rmId, 'counselors', qs],
-    queryFn: () => apiGet<LeadDistributionCounselorResponse>(`/leads/distribution/rms/${rmId}/counselors${qs ? `?${qs}` : ''}`),
+    queryFn: ({signal}) => apiGet<LeadDistributionCounselorResponse>(`/leads/distribution/rms/${rmId}/counselors${qs ? `?${qs}` : ''}`, undefined, {signal}),
     enabled: Boolean(rmId),
     placeholderData: (previous, query) => query?.queryKey[1] === user?.id ? previous : undefined,
     staleTime: 30_000,
-    retry: 1,
+    retry: false,
   });
 }
 
@@ -53,12 +53,12 @@ export function useCounselorDistributionLeads(
   const qs = queryString({...input,...(user && ['super_admin','admin','rm'].includes(user.role) ? {workflow:'true'} : {})});
   return useQuery({
     queryKey: ['lead-distribution', user?.id, 'rm', rmId, 'counselor', counselorId, 'leads', qs],
-    queryFn: () => apiGet<LeadDistributionLeadResponse>(
-      `/leads/distribution/rms/${rmId}/counselors/${counselorId}/leads${qs ? `?${qs}` : ''}`,
+    queryFn: ({signal}) => apiGet<LeadDistributionLeadResponse>(
+      `/leads/distribution/rms/${rmId}/counselors/${counselorId}/leads${qs ? `?${qs}` : ''}`, undefined, {signal},
     ),
     enabled: Boolean(rmId && counselorId),
     placeholderData: (previous, query) => query?.queryKey[1] === user?.id ? previous : undefined,
     staleTime: 20_000,
-    retry: 1,
+    retry: false,
   });
 }

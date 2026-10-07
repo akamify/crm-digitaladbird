@@ -141,8 +141,8 @@ api.interceptors.response.use(
 );
 
 /** Convenience wrappers — extract `.data.data` automatically. */
-export async function apiGet<T = any>(url: string, params?: any): Promise<T> {
-  const { data } = await api.get(url, { params });
+export async function apiGet<T = any>(url: string, params?: any, options?: Pick<AxiosRequestConfig, 'signal'>): Promise<T> {
+  const { data } = await api.get(url, { params, ...options });
   return data.data;
 }
 export async function apiPost<T = any>(url: string, body?: any): Promise<T> {
