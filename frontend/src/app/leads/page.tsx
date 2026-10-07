@@ -561,6 +561,11 @@ function LeadsInner() {
     <div className="space-y-4">
       {(canAddManualLead || user?.role === 'member' || user?.role === 'partner') && (
         <div className="flex flex-wrap justify-end gap-2">
+          {isManagerReportingView && (
+            <Link href={distributionHref} className="btn-outline inline-flex min-h-10 items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold">
+              <Eye className="h-4 w-4" aria-hidden="true" /> View Distribution
+            </Link>
+          )}
           <Link
             href="/notes"
             className="btn-outline inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm"
@@ -731,7 +736,7 @@ function LeadsInner() {
       <LeadSavedViews value={filters} role={user?.role} onApply={applySavedView} />
 
       {isManagerReportingView && <section className="min-w-0 space-y-3 rounded-xl border border-slate-200 bg-white p-3">
-        <div className="flex flex-wrap items-center justify-between gap-3"><Link href={distributionHref} className="text-sm font-semibold text-brand-600">View Distribution</Link><LeadAnalyticsPeriodControl scope={selectedScope} onChange={setAnalyticsScope} /></div>
+        <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-sm font-semibold text-slate-900">Lead analytics</h2><LeadAnalyticsPeriodControl scope={selectedScope} onChange={setAnalyticsScope} /></div>
         {data?.summary ? <DistributionSummaryGrid summary={data.summary} leadParams={new URLSearchParams(Object.entries(effectiveFilters).filter(([,v])=>v!==undefined && v!==null && v!=='').map(([k,v])=>[k,String(v)]))} activeMetric={managerMetric(filters.workflow_view)} onMetricChange={metric=>{setSelectedIds([]);setFilters(f=>({...f,workflow_view:metric,work_source:'',call_issue_type:'',page:1}));}} /> : <Skeleton className="h-44 rounded-xl" />}
         {filters.workflow_view === 'worked' && <div className="flex gap-2">{[['','All work'],['new','New (N)'],['old','Old / Pending (O)'],['previous','Previous work']].map(([value,label])=><button key={value} className={clsx('rounded-lg border px-3 py-2 text-xs', (filters.work_source || '')===value && 'bg-blue-50 text-brand-700')} onClick={()=>setFilters(f=>({...f,work_source:value,page:1}))}>{label}</button>)}</div>}
         {filters.workflow_view === 'call_issues' && <div className="flex gap-2 overflow-x-auto"><button className="shrink-0 rounded-lg border px-3 py-2 text-xs" onClick={()=>setFilters(f=>({...f,call_issue_type:'',page:1}))}>All Call Issues</button>{Object.entries(data?.call_issue_buckets || {}).map(([issue,count])=><button key={issue} className={clsx('shrink-0 rounded-lg border px-3 py-2 text-xs',filters.call_issue_type===issue && 'bg-blue-50 text-brand-700')} onClick={()=>setFilters(f=>({...f,call_issue_type:issue,page:1}))}>{data?.call_issue_labels?.[issue] || humanize(issue)} {count}</button>)}</div>}

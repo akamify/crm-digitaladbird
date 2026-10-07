@@ -484,3 +484,27 @@ test('distribution return URLs are internal and preserve the profile scope',()=>
   const path='/leads/distribution/rm/11111111-1111-1111-1111-111111111111/counselor/22222222-2222-2222-2222-222222222222?metric=cc&view=all_time';
   assert.equal(safe(path),path);assert.equal(safe('//evil.test/leads'),'/leads');assert.equal(safe('/leads/distribution/../../admin'),'/leads');
 });
+
+test('View Distribution remains a top action before analytics, independent of report loading',()=>{
+  const source=fs.readFileSync(path.join(root,'app/leads/page.tsx'),'utf8');
+  const toolbar=source.slice(source.indexOf('<div className="flex flex-wrap justify-end gap-2">'),source.indexOf('{isManagerReportingView ? ('));
+  assert.match(toolbar,/isManagerReportingView &&/);
+  assert.match(toolbar,/href=\{distributionHref\} className="btn-outline/);
+  assert.match(toolbar,/View Distribution/);
+  assert.doesNotMatch(toolbar,/data\?\.summary|isLoading/);
+  assert.equal((source.match(/View Distribution/g)||[]).length,1);
+});
+
+test('RM and counselor cards retain hierarchy and clickable workflow reports',()=>{
+  const {DistributionPersonCard}=harness().load('@/components/leads/LeadDistributionUi');
+  for(const kind of ['rm','counselor']) {
+    const href=`/leads/distribution/rm/rm-id${kind==='counselor'?'/counselor/person-id':''}?view=daily&from=2026-09-25&to=2026-09-25`;
+    const html=renderToStaticMarkup(React.createElement(DistributionPersonCard,{kind,href,person:{id:'person-id',full_name:'Report owner',cc:3,old:2,pending:1,worked_n:1,worked_o:2}}));
+    assert.ok(html.includes(kind==='rm'?'View Counselors':'View Lead Details'));
+    for(const metric of ['cc','old','pending'])assert.ok(html.includes(`workflow_view=${metric}`));
+    assert.match(html,/rm_id=rm-id/);
+    if(kind==='counselor')assert.match(html,/counselor_id=person-id/);
+    assert.match(html,/work_source=old/);
+    assert.match(html,/from=2026-09-25/);
+  }
+});
