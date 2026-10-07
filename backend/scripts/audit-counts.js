@@ -14,6 +14,7 @@
  *
  * No psql required — uses the same node + pg client the backend uses.
  */
+
 require('dotenv').config();
 const { Client } = require('pg');
 const jwt = require('jsonwebtoken');
