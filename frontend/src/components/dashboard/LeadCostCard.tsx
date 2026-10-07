@@ -32,7 +32,7 @@ export function LeadCostCard() {
         {group.campaign_spend !== undefined && <p className="mt-2 text-xs text-slate-600">Meta spend for included priced campaigns: {money(group.campaign_spend,group.currency)}. Campaign spend can differ from allocated CRM cost.</p>}
       </div>)}
       {query.data.missing_cost_leads > 0 && <p className="mt-3 text-xs text-amber-800">{query.data.missing_cost_leads.toLocaleString()} leads have no usable synced campaign CPL/currency and are excluded from cost totals.</p>}
-      {!query.data.groups.length && <p className="mt-3 text-sm text-slate-500">{query.data.total_leads ? 'Meta cost data unavailable. Sync campaign metrics in Meta settings.' : 'No leads in this scope.'}</p>}
+      {!query.data.groups.length && <p className="mt-3 text-sm text-slate-500">{query.data.total_leads ? 'Verified Meta CPL unavailable. Sync campaign metrics in Meta settings; unverified amounts are excluded.' : 'No leads in this scope.'}</p>}
     </>}
   </section>;
 }

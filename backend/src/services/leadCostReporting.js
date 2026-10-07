@@ -1,6 +1,7 @@
 const { query } = require('../config/database');
 const { getVisibleUserIds } = require('../middleware/rbac');
 const { AppError } = require('../utils/errors');
+const { hasVerifiedLeadCost } = require('./metaLeadCost');
 
 function summarizeCosts(rows, showSpend) {
   let total = 0, missing = 0;
@@ -10,7 +11,7 @@ function summarizeCosts(rows, showSpend) {
     total += count;
     const cpl = row.cost_per_result == null ? NaN : Number(row.cost_per_result);
     const currency = String(row.currency || '').toUpperCase();
-    if (!Number.isFinite(cpl) || cpl < 0 || !/^[A-Z]{3}$/.test(currency) || !row.last_metrics_synced_at || row.metrics_error) {
+    if (!hasVerifiedLeadCost(row) || !Number.isFinite(cpl) || cpl < 0 || !/^[A-Z]{3}$/.test(currency) || !row.last_metrics_synced_at || row.metrics_error) {
       missing += count;
       continue;
     }
@@ -41,7 +42,8 @@ async function leadCosts(actor) {
     FROM leads l WHERE l.deleted_at IS NULL
       AND ($1::uuid[] IS NULL OR l.assigned_to_user_id = ANY($1::uuid[]))
     GROUP BY l.meta_campaign_id
-  ) SELECT c.lead_count, m.cost_per_result, m.spend, m.last_metrics_synced_at, m.metrics_error, a.currency
+  ) SELECT c.lead_count, m.cost_per_result, m.spend, m.last_metrics_synced_at, m.metrics_error, a.currency,
+      m.raw_meta->'crm_lead_cost' AS cost_evidence
     FROM campaign_counts c LEFT JOIN meta_campaigns m ON m.campaign_id = c.meta_campaign_id
     LEFT JOIN meta_ad_accounts a ON a.account_id = m.ad_account_id`, [visible]);
   return summarizeCosts(rows, actor.role === 'super_admin');

@@ -22,6 +22,7 @@ const { resolveLeadCategory, resolveAndPersistLeadCategory } = require('./leadCa
 const { validateLead } = require('./leadValidator');
 const graphClient = require('./metaGraphClient');
 const metaTokens = require('./metaTokenResolver');
+const { readCampaignLeadCost } = require('./metaLeadCost');
 const { resolveCampaignName } = require('./leadCampaignResolver');
 const { backfillLeadName, normalizeFieldKey, parseNameFromFieldData } = require('./leadNameService');
 const { getCampaignLeadReceptionPolicy, recordSkippedCampaignLead } = require('./metaCampaignLeadControlService');
@@ -199,7 +200,7 @@ async function syncCampaigns(adAccountId) {
              budget_remaining = EXCLUDED.budget_remaining,
              spend_cap = EXCLUDED.spend_cap,
              special_ad_categories = EXCLUDED.special_ad_categories,
-             raw_meta = EXCLUDED.raw_meta,
+             raw_meta = EXCLUDED.raw_meta || jsonb_build_object('crm_lead_cost', meta_campaigns.raw_meta->'crm_lead_cost'),
              raw_status_payload = EXCLUDED.raw_status_payload,
              source = 'meta_api',
              last_meta_status_checked_at = NOW(),
@@ -502,10 +503,7 @@ async function syncCampaignMetrics(campaignId) {
     );
     return;
   }
-  const actions = Array.isArray(row.actions) ? row.actions : [];
-  const costs = Array.isArray(row.cost_per_action_type) ? row.cost_per_action_type : [];
-  const leadAction = actions.find(action => /lead/i.test(String(action.action_type || '')));
-  const leadCost = leadAction && costs.find(action => action.action_type === leadAction.action_type);
+  const leadCost = readCampaignLeadCost(row);
 
   await query(
     `UPDATE meta_campaigns
@@ -514,6 +512,7 @@ async function syncCampaignMetrics(campaignId) {
             spend = $4,
             leads = $5,
             cost_per_result = $6,
+            raw_meta = COALESCE(raw_meta, '{}'::jsonb) || jsonb_build_object('crm_lead_cost', $7::jsonb),
             last_metrics_synced_at = NOW(),
             metrics_error = NULL
       WHERE campaign_id = $1`,
@@ -522,8 +521,9 @@ async function syncCampaignMetrics(campaignId) {
       toBigIntOrNull(row.impressions),
       toBigIntOrNull(row.reach),
       toNumberOrNull(row.spend),
-      toBigIntOrNull(leadAction?.value),
-      toNumberOrNull(leadCost?.value),
+      leadCost?.leads ?? null,
+      leadCost?.cpl ?? null,
+      JSON.stringify(leadCost),
     ]
   );
 }

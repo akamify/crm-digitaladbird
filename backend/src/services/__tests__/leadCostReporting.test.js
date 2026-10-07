@@ -3,8 +3,14 @@ jest.mock('../../middleware/rbac', () => ({getVisibleUserIds: jest.fn()}));
 const {query} = require('../../config/database');
 const {getVisibleUserIds} = require('../../middleware/rbac');
 const {leadCosts, summarizeCosts} = require('../leadCostReporting');
-const campaign = (count, cpl, currency = 'INR') => ({lead_count:count,cost_per_result:cpl,currency,spend:400,last_metrics_synced_at:'2026-10-07T10:00:00Z'});
+const campaign = (count, cpl, currency = 'INR') => ({lead_count:count,cost_per_result:cpl,currency,spend:cpl === 0 ? 0 : 400,cost_evidence:{version:1,action_type:'lead',period:'maximum',leads:cpl > 0 ? 400/cpl : 20,cpl,spend:cpl === 0 ? 0 : 400},last_metrics_synced_at:'2026-10-07T10:00:00Z'});
 beforeEach(() => jest.clearAllMocks());
+
+test('legacy unverified CPL never produces dashboard cost totals', () => {
+  const row = campaign(64,11454.43);
+  delete row.cost_evidence;
+  expect(summarizeCosts([row],true)).toMatchObject({total_leads:64,missing_cost_leads:64,groups:[]});
+});
 test('20 leads at Meta CPL 20 cost 400, multiple campaign CPLs are weighted', () => {
   expect(summarizeCosts([campaign(20,20)],false).groups[0]).toMatchObject({allocated_cost:400,average_cpl:20,priced_leads:20});
   const result = summarizeCosts([campaign(20,20),campaign(10,50)],true);
@@ -20,7 +26,7 @@ test('currencies remain separate; real zero CPL works; dates show oldest sync', 
   expect(result.groups[0]).toMatchObject({allocated_cost:40,oldest_sync:'2026-10-06T10:00:00Z'});
   expect(result.groups[0]).not.toHaveProperty('campaign_spend');
   expect(summarizeCosts([],false)).toMatchObject({total_leads:0,groups:[]});
-  expect(summarizeCosts([{...campaign(2,20),spend:null}],true).groups[0]).not.toHaveProperty('campaign_spend');
+  expect(summarizeCosts([{...campaign(2,20),spend:null}],true).groups).toEqual([]);
 });
 test.each(['member','partner'])('counselor %s is scoped to self regardless of supplied owner', async role => {
   query.mockResolvedValue({rows:[]});
@@ -50,10 +56,10 @@ test('generated aggregate SQL counts deleted/owned/unassigned leads correctly', 
   const {newDb}=require('pg-mem');
   const db=newDb();
   db.public.none(`CREATE TABLE leads(id text, meta_campaign_id text, assigned_to_user_id uuid, deleted_at timestamp);
-    CREATE TABLE meta_campaigns(campaign_id text UNIQUE,cost_per_result numeric,spend numeric,last_metrics_synced_at timestamp,metrics_error text,ad_account_id text);
+    CREATE TABLE meta_campaigns(campaign_id text UNIQUE,cost_per_result numeric,spend numeric,last_metrics_synced_at timestamp,metrics_error text,ad_account_id text,raw_meta jsonb);
     CREATE TABLE meta_ad_accounts(account_id text UNIQUE,currency text);
     INSERT INTO meta_ad_accounts VALUES ('account','INR');
-    INSERT INTO meta_campaigns VALUES ('campaign',20,400,'2026-10-07',NULL,'account');
+    INSERT INTO meta_campaigns VALUES ('campaign',20,400,'2026-10-07',NULL,'account','{"crm_lead_cost":{"version":1,"action_type":"lead","period":"maximum","leads":20,"cpl":20,"spend":400}}');
     INSERT INTO leads VALUES ('one','campaign','11111111-1111-1111-1111-111111111111',NULL),('two','campaign',NULL,NULL),('deleted','campaign',NULL,'2026-10-07');`);
   const adapter=db.adapters.createPg();const pool=new adapter.Pool();
   query.mockImplementation((sql,params)=>pool.query(sql,params));getVisibleUserIds.mockResolvedValue(null);
@@ -70,8 +76,8 @@ test('Meta sync pairs CPL with the selected lead action and clears empty snapsho
   const start=source.indexOf('async function syncCampaignMetrics(');
   const end=source.indexOf('//',start);
   const graph=jest.fn();const write=jest.fn();
-  const sync=new Function('graphGet','query','toBigIntOrNull','toNumberOrNull',source.slice(start,end)+'; return syncCampaignMetrics;')(graph,write,v=>v==null?null:Number(v),v=>v==null?null:Number(v));
-  graph.mockResolvedValue({data:[{spend:'400',actions:[{action_type:'lead',value:'20'}],cost_per_action_type:[{action_type:'other_lead',value:'999'},{action_type:'lead',value:'20'}]}]});
+  const sync=new Function('graphGet','query','toBigIntOrNull','toNumberOrNull','readCampaignLeadCost',source.slice(start,end)+'; return syncCampaignMetrics;')(graph,write,v=>v==null?null:Number(v),v=>v==null?null:Number(v),require('../metaLeadCost').readCampaignLeadCost);
+  graph.mockResolvedValue({data:[{spend:'400',actions:[{action_type:'qualified_lead',value:'1'},{action_type:'lead',value:'20'}],cost_per_action_type:[{action_type:'qualified_lead',value:'400'},{action_type:'lead',value:'20'}]}]});
   await sync('campaign');expect(write.mock.calls[0][1][5]).toBe(20);
   graph.mockResolvedValue({data:[]});await sync('campaign');expect(write.mock.calls[1][0]).toContain('cost_per_result = NULL');
 });
