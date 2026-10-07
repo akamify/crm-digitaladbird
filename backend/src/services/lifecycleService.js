@@ -898,7 +898,7 @@ function counselorJourneyViews(actor) {
     pending:`${own} AND (workflow_queue='pending' OR (${legacy} AND
       ((is_unworked AND first_contact_deadline<=NOW()-(${ACTION_OVERDUE_GRACE_MINUTES} * INTERVAL '1 minute') AND next_followup_at IS NULL)
        OR (is_pending AND (is_worked OR first_contact_deadline<=NOW()-(${ACTION_OVERDUE_GRACE_MINUTES} * INTERVAL '1 minute'))
-         AND (next_followup_at IS NULL OR next_followup_at<=NOW()-(${ACTION_OVERDUE_GRACE_MINUTES} * INTERVAL '1 minute')))))`,
+         AND (next_followup_at IS NULL OR next_followup_at<=NOW()-(${ACTION_OVERDUE_GRACE_MINUTES} * INTERVAL '1 minute'))))))`,
     worked:`worked_n OR worked_o OR (${previousWork})`,worked_n:'worked_n',worked_o:'worked_o',
     worked_legacy:previousWork});
   const {membership}=require('./counselorWorkflowService');

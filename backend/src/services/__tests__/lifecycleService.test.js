@@ -8,7 +8,7 @@ jest.mock('../leadCommunicationAccess', () => ({ assertLeadCommunicationAccess: 
 // with UUIDs and PostgreSQL in counselorWorkflow.test.js.
 jest.mock('../counselorWorkflowService', () => ({
   observeRemark: jest.fn(async () => ({})), invalidateLegacy: jest.fn(async () => ({})),
-  tick: jest.fn(async () => ({skipped:true})),
+  tick: jest.fn(async () => ({skipped:true})), membership: jest.fn(() => 's.journey_active'),
 }));
 
 const database = require('../../config/database');
@@ -147,6 +147,13 @@ describe('Counselor Lifecycle V2', () => {
     expect(summarySql).toContain('is_received AND terminal_state IS NULL AND has_call_issue');
     expect(summarySql).toContain('is_received AND terminal_state IS NULL AND is_pending');
     expect(summarySql).not.toContain('e.occurred_at >= b.from_at');
+  });
+
+  test('counselor journey Pending predicate has balanced SQL grouping', () => {
+    const pending = lifecycle.counselorJourneyViews('$5').pending;
+    const balance = [...pending].reduce((count, character) =>
+      count + (character === '(' ? 1 : character === ')' ? -1 : 0), 0);
+    expect(balance).toBe(0);
   });
 
   test('legacy dual-write is a no-op while feature is disabled', async () => {
